@@ -19,10 +19,10 @@ module.exports = {
     productName: 'BISHENG Work Dev',
     dshDesktopChannel: 'development'
   },
-  artifactName: 'dsh-desktop-dev-${os}-${arch}.${ext}',
+  artifactName: 'bisheng-work-dev-${os}-${arch}.${ext}',
   nsis: {
     ...packageJson.build.nsis,
-    artifactName: 'dsh-desktop-dev-windows-${arch}-setup.${ext}'
+    artifactName: 'bisheng-work-dev-windows-${arch}-setup.${ext}'
   },
   publish: null
 }

@@ -23,8 +23,8 @@ import {
   type MessageBoxOptions
 } from 'electron'
 import { clearStaleLoopbackHttpCache } from './cache-maintenance'
+import { harnessPreferredPort, mobileBridgePort } from './desktop-ports'
 import {
-  DEFAULT_HARNESS_PORT,
   extractFailureCause,
   extractPluginFailureReferences,
   HarnessRuntime,
@@ -3324,9 +3324,9 @@ async function bootstrap(): Promise<void> {
     dshMarketPatchPath: desktopResourcePath('dsh-desktop-market.patch.yml'),
     dshHome: join(app.getPath('userData'), 'harness'),
     logPath: join(app.getPath('logs'), 'harness.log'),
-    // Keep the Harness origin stable across launches. These ports are separate
-    // from the production/development mobile bridge ports (43127/43128).
-    preferredPort: DEFAULT_HARNESS_PORT + (developmentBuild ? 1 : 0),
+    // Keep the Harness origin stable across launches, on a port DSH Desktop
+    // does not use. The mobile bridge listens on a different port.
+    preferredPort: harnessPreferredPort(developmentBuild),
     extraEnvironment: () => {
       enterpriseDesktop?.rotateCapability()
       return enterpriseDesktop?.harnessEnvironment() ?? {}
@@ -3387,7 +3387,7 @@ async function bootstrap(): Promise<void> {
     cloudflaredCacheDir: join(app.getPath('userData'), 'bin'),
     forceCloudflareFailure: process.env.DSH_TUNNEL_FORCE_PINGGY === '1',
     tunnelLog: (message) => console.warn(message),
-    port: developmentBuild ? 43128 : 43127,
+    port: mobileBridgePort(developmentBuild),
     onReconnectRequested: () => {
       void showMobilePairing().catch(showUnexpectedError)
     },
