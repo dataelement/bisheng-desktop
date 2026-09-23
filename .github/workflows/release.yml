@@ -93,6 +93,12 @@ jobs:
       - name: Skip validation for tag and pull_request
         if: github.event_name != 'workflow_dispatch'
         run: echo "No dispatch inputs to validate."
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Test enterprise first-install helper
+        run: python3 -m unittest discover -s test -p 'test_dsh_enterprise_installer.py'
 
   macos-apple-silicon:
     name: macOS Apple Silicon
