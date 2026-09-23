@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop",
-  "version": "0.1.1",
+  "version": "1.0.0",
   "description": "A cross-platform desktop shell for DeepSeek Harness.",
   "private": true,
   "type": "module",
@@ -305,13 +305,13 @@
     "koffi": "3.1.5"
   },
   "build": {
-    "appId": "io.dsh.desktop",
-    "productName": "DSH Desktop",
+    "appId": "io.bisheng.work",
+    "productName": "BISHENG Work",
     "protocols": [
       {
-        "name": "DSH Desktop Enterprise Login",
+        "name": "BISHENG Work Enterprise Login",
         "schemes": [
-          "dsh-desktop"
+          "bisheng-work"
         ]
       }
     ],
