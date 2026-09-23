@@ -37,14 +37,6 @@ describe('desktop update state', () => {
     expect(status.manual).toBe(true)
   })
 
-  it('carries downgrade through transient events and clears it on reset', () => {
-    const base = { ...initialUpdateStatus('1.5.0'), downgrade: true }
-    expect(reduceUpdateStatus(base, { type: 'available', version: '1.2.0' }).downgrade).toBe(true)
-    expect(reduceUpdateStatus(base, { type: 'progress', percent: 40 }).downgrade).toBe(true)
-    expect(reduceUpdateStatus(base, { type: 'downloaded', version: '1.2.0' }).downgrade).toBe(true)
-    expect(reduceUpdateStatus(base, { type: 'reset' }).downgrade).toBeUndefined()
-  })
-
   it('clamps invalid download percentages', () => {
     const status = {
       ...initialUpdateStatus('1.0.0'),

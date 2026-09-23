@@ -32,15 +32,6 @@ export function updateHeadline(status: UpdateStatus, locale: UpdateLocale): Upda
   const zh = locale === 'zh'
   const version = status.availableVersion ? `v${status.availableVersion}` : ''
 
-  if (status.downgrade && status.availableVersion) {
-    return {
-      title: zh ? `正在降级到 ${version}` : `Downgrading to ${version}`,
-      description: zh
-        ? `将当前 v${status.currentVersion} 回退到 ${version}`
-        : `Rolling back v${status.currentVersion} to ${version}`
-    }
-  }
-
   switch (status.phase) {
     case 'checking':
       return {
@@ -91,19 +82,6 @@ export function updateHeadline(status: UpdateStatus, locale: UpdateLocale): Upda
 export function updateMessage(status: UpdateStatus, locale: UpdateLocale): string {
   const zh = locale === 'zh'
   const version = status.availableVersion ? ` ${status.availableVersion}` : ''
-
-  if (status.downgrade && status.availableVersion) {
-    const percent = Math.round(status.percent ?? 0)
-    if (status.phase === 'downloading') {
-      return zh ? `正在降级到 ${status.availableVersion}（${percent}%）` : `Downgrading to ${status.availableVersion} (${percent}%)`
-    }
-    if (status.phase === 'downloaded') {
-      return zh
-        ? `降级包 ${status.availableVersion} 已就绪，重启后生效`
-        : `Downgrade ${status.availableVersion} is ready to install`
-    }
-    return zh ? `正在准备降级到 ${status.availableVersion}` : `Preparing to downgrade to ${status.availableVersion}`
-  }
 
   switch (status.phase) {
     case 'checking':

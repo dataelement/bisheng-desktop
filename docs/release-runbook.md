@@ -5,10 +5,12 @@
 The `Release desktop installers` workflow accepts a `mode` on `workflow_dispatch`. `target` is always honored: `macos` does not start Windows jobs, and `windows` does not start macOS jobs.
 
 - `development` (default): unsigned Dev packages, no signing, no publish.
-- `signed`: production-identity signed packages only. Fill `signed_version` with a non-`v` semver such as `0.9.2-test.1`. Artifacts stay on the workflow run; GitHub Release, ModelScope, rollout, and Feishu do not run. These builds use the production app id and update feed, so an installed copy may later see the live `latest` channel.
-- `prerelease`: production-identity signed packages. Fill `prerelease_tag` with a non-`v` semver such as `2.1.0-rc.1`. Publish to GitHub `--prerelease` and ModelScope `releases/prerelease/` only when `target` is `all`. A single-platform prerelease signs that platform and skips publish.
+- `signed`: production-identity signed packages only. Fill `signed_version` with a non-`v` semver such as `0.9.2-test.1`. Artifacts stay on the workflow run; GitHub Release and Feishu do not run. Online update checks remain disabled in these builds.
+- `prerelease`: production-identity signed packages. Fill `prerelease_tag` with a non-`v` semver such as `2.1.0-rc.1`. Publish to GitHub `--prerelease` only when `target` is `all`. A single-platform prerelease signs that platform and skips publish.
 
 Official releases are still created by pushing a `v*` tag, not by filling the dispatch form. Do not put `v0.9.1` in `prerelease_tag` or `signed_version`.
+
+Online update checks remain disabled while `dataelement/bisheng-work` is private. The package metadata names GitHub Release as the planned feed, but installed clients do not query it or the legacy DSH feed. Before enabling checks, provide a publicly accessible feed and verify a complete signed release on installed macOS and Windows builds; do not embed a GitHub token in the app.
 
 ## Local macOS packaging runner
 
@@ -31,11 +33,10 @@ Add these under **Settings → Secrets and variables → Actions** for this repo
 | `DESKTOP_APPLE_API_ISSUER` | Signed macOS | App Store Connect issuer UUID |
 | `DESKTOP_APPLE_TEAM_ID` | Signed macOS | Apple Developer team ID matching the certificate and notarization key |
 | `DESKTOP_WINDOWS_SIGNING_PIN` | Signed Windows | PIN for the SafeNet UKey connected to the local runner |
-| `MODELSCOPE_TOKEN` | Full tag release or `target=all` prerelease publication | ModelScope upload token |
 
-`MODELS_TOKEN` only enables generated release notes; the workflow has a deterministic fallback. `CRASH_ADMIN_TOKEN` and `FEISHU_RELEASE_WEBHOOK` enable optional rollout and notification steps. GitHub supplies `GITHUB_TOKEN` automatically for GitHub Release publication. CoAligne's GCP parameters are not used by this workflow.
+`MODELS_TOKEN` only enables generated release notes; the workflow has a deterministic fallback. `FEISHU_RELEASE_WEBHOOK` enables optional notifications. GitHub supplies `GITHUB_TOKEN` automatically for GitHub Release publication. Neither `MODELSCOPE_TOKEN` nor `CRASH_ADMIN_TOKEN` is needed by this release workflow. CoAligne's GCP parameters are not used by this workflow.
 
-For a signing-only trial, dispatch `mode=signed` with `target=macos` or `target=windows` and a non-`v` `signed_version`. The output remains a workflow artifact. A tag release requires both macOS architectures, Windows signing, and `MODELSCOPE_TOKEN` before publication can finish.
+For a signing-only trial, dispatch `mode=signed` with `target=macos` or `target=windows` and a non-`v` `signed_version`. The output remains a workflow artifact. A tag release requires both macOS architectures and Windows signing before publication can finish.
 
 ## Local Windows UKey signing runner
 

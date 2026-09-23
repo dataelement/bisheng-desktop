@@ -37,13 +37,4 @@ export interface UpdateStatus {
   percent?: number
   message?: string
   manual: boolean
-  /** Set while an explicitly chosen older version is being installed. */
-  downgrade?: boolean
-}
-
-/** One past release the user may install or roll back to, from the update index. */
-export interface AvailableRelease {
-  version: string
-  tag: string
-  archiveUrl: string
 }

@@ -1,12 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { compareVersions } from '../update/version-catalog'
 
 export const SERVICE_URL = 'https://dshdesktop.com/crash'
 export type DesktopPlatform = 'mac' | 'mac-intel' | 'windows'
 export type FailureKind = 'startup-failure' | 'harness-crash' | 'renderer-crash' | 'gpu-crash' | 'main-crash' | 'unclean-exit'
-export type UpdateDecision = { updateAvailable: false } | { updateAvailable: true; version: string; feedUrl: string }
 type Request = (url: string, init?: RequestInit) => Promise<Response>
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const semver = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([\da-zA-Z-]+(?:\.[\da-zA-Z-]+)*))?(?:\+[\da-zA-Z-]+(?:\.[\da-zA-Z-]+)*)?$/
@@ -125,13 +123,4 @@ export class DesktopService {
     }
   }
 
-  async checkUpdate(): Promise<UpdateDecision> {
-    const query = new URLSearchParams({ installationId: this.installationId, currentVersion: this.options.version, platform: this.platform })
-    const response = await this.options.request(`${SERVICE_URL}/v1/updates/check?${query}`, { signal: AbortSignal.timeout(5000), redirect: 'error' })
-    if (!response.ok) throw new Error(`Update policy unavailable (${response.status})`)
-    const policy = await response.json() as Record<string, unknown>
-    if (policy?.updateAvailable === false) return { updateAvailable: false }
-    if (policy?.updateAvailable !== true || !isVersion(policy.version) || compareVersions(policy.version.split('+')[0]!, this.options.version.split('+')[0]!) <= 0 || (!isPrereleaseVersion(this.options.version) && isPrereleaseVersion(policy.version)) || policy.feedUrl !== `https://dshdesktop.com/updates/archive/${policy.version}/`) throw new Error('Invalid update policy')
-    return { updateAvailable: true, version: policy.version, feedUrl: policy.feedUrl as string }
-  }
 }

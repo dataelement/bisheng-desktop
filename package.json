@@ -430,8 +430,9 @@
     ],
     "publish": [
       {
-        "provider": "generic",
-        "url": "https://dshdesktop.com/updates/latest/"
+        "provider": "github",
+        "owner": "dataelement",
+        "repo": "bisheng-work"
       }
     ],
     "detectUpdateChannel": false,

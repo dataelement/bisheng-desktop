@@ -98,9 +98,9 @@ The public tunnel is optional and forwards only the paired mobile surface; it do
 
 ## Updates
 
-Installed macOS and Windows builds use `electron-updater`. The app checks shortly after startup, every six hours, and after a long system resume. A newly available version is offered before download. Download begins only after user consent, and installation begins only when the user chooses to restart and install. Users can skip one version without suppressing later releases.
+The update manager remains in installed macOS and Windows builds, but online checks are disabled while the release repository is private. The app reports that online updates are unavailable, and it neither queries the legacy DSH feed nor downloads a DSH Desktop package.
 
-Update metadata and artifacts are produced by the native release workflow. macOS arm64 and x64 metadata is merged for the generic provider; the signed Windows installer has its blockmap and metadata regenerated after signing.
+The planned update source is the latest published, non-prerelease GitHub Release of `dataelement/bisheng-work`. It requires a publicly accessible feed; a private repository cannot serve unauthenticated installed clients. The About dialog no longer offers historical installs or downgrades. Update metadata and artifacts are produced by the native release workflow. macOS arm64 and x64 metadata is merged before publication; the signed Windows installer has its blockmap and metadata regenerated after signing. Enable checks only after verifying the installed-client download and install flow on both platforms.
 
 ## Desktop customization boundary
 

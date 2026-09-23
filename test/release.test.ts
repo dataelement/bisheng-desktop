@@ -254,7 +254,7 @@ describe('GitHub release contract', () => {
 
     expect(packageJson.dependencies['electron-updater']).toBeTruthy()
     expect(packageJson.build.publish).toEqual([
-      { provider: 'generic', url: 'https://dshdesktop.com/updates/latest/' }
+      { provider: 'github', owner: 'dataelement', repo: 'bisheng-work' }
     ])
     expect(packageJson.build.win.verifyUpdateCodeSignature).toBe(false)
     for (const asset of [
@@ -498,9 +498,11 @@ describe('prerelease parity workflow', () => {
     ).toHaveLength(4)
   })
 
-  it('mirrors a prerelease to an isolated ModelScope directory', async () => {
+  it('publishes prereleases without the legacy update mirror', async () => {
     const yml = await load()
-    expect(yml).toContain('releases/prerelease/')
+    expect(yml).toContain('gh release create "$RELEASE_TAG" release-assets/*')
+    expect(yml).toContain('--prerelease')
+    expect(yml).not.toContain('MODELSCOPE_TOKEN')
   })
 
   it('parametrises the Windows smoke test executable', async () => {
@@ -510,15 +512,15 @@ describe('prerelease parity workflow', () => {
   })
 })
 
-describe('rollback catalog publication', () => {
-  it('archives each release and rebuilds the version index', async () => {
+describe('GitHub-only update publication', () => {
+  it('does not publish legacy archives or configure DSH rollout', async () => {
     const yml = await readFile(
       path.join(projectRoot, '.github/workflows/release.yml'),
       'utf8'
     )
-    expect(yml).toContain('releases/archive/')
-    expect(yml).toContain('scripts/build-version-index.mjs')
-    expect(yml).toContain('releases/versions.json')
+    expect(yml).not.toContain('releases/archive/')
+    expect(yml).not.toContain('releases/versions.json')
+    expect(yml).not.toContain('CRASH_ADMIN_TOKEN')
   })
 })
 

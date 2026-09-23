@@ -144,21 +144,6 @@ describe('desktop service', () => {
     new DesktopService({ ...options, version: '0.9.0' }).beginSession()
     expect(queued(service, dir).map(r => r.kind)).toEqual(['main-crash'])
   })
-  it('queries with no channel/arch and rejects invalid or downgraded policy responses', async () => {
-    const { service, request } = fixture()
-    request.mockResolvedValue(new Response(JSON.stringify({ updateAvailable: false })))
-    expect(await service.checkUpdate()).toEqual({ updateAvailable: false })
-    const url = new URL(request.mock.calls[0]![0])
-    expect(url.searchParams.get('platform')).toBe('mac'); expect(url.searchParams.has('channel')).toBe(false); expect(url.searchParams.has('arch')).toBe(false)
-    for (const version of ['0.7.0', '0.8.0', '0.9.0-rc.1', '../../evil', '0.9.0-01']) {
-      request.mockResolvedValue(new Response(JSON.stringify({ updateAvailable: true, version, feedUrl: `https://dshdesktop.com/updates/archive/${version}/` })))
-      await expect(service.checkUpdate()).rejects.toThrow('Invalid')
-    }
-    request.mockResolvedValue(new Response(JSON.stringify({ updateAvailable: true, version: '0.9.0', feedUrl: 'https://evil.test/' })))
-    await expect(service.checkUpdate()).rejects.toThrow('Invalid')
-    request.mockResolvedValue(new Response(JSON.stringify({ updateAvailable: true, version: '0.9.0', feedUrl: 'https://dshdesktop.com/updates/archive/0.9.0/' })))
-    expect(await service.checkUpdate()).toMatchObject({ updateAvailable: true, version: '0.9.0' })
-  })
 })
 describe('diagnostic event integration', () => {
   it('waits for log flush, distinguishes startup from runtime failure, and ignores repeated failed snapshots', async () => {

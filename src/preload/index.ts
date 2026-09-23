@@ -571,7 +571,6 @@ function skipButton(status: UpdateStatus): HTMLButtonElement {
   return skip
 }
 
-
 function mountAbout(): void {
   if (document.getElementById(ABOUT_ROOT_ID)) return
 
@@ -657,8 +656,6 @@ function renderAbout(): void {
 
   overlay.replaceChildren(card)
 }
-
-
 function dismissCurrent(): void {
   if (!currentStatus) return
   if (currentStatus.availableVersion) {
@@ -934,49 +931,6 @@ const aboutStyles = `
   .btn-action:hover:not(:disabled) {
     background: var(--dsw-alias-interactive-bg-hover, rgba(32, 33, 36, 0.1));
   }
-  .btn-action.active {
-    background: rgba(77, 107, 254, 0.12);
-    border-color: rgba(77, 107, 254, 0.35);
-    color: #4d6bfe;
-  }
-  .version-picker-container {
-    margin-top: 14px;
-    padding-top: 12px;
-    border-top: 1px solid var(--dsw-alias-border-l2, rgba(32, 33, 36, 0.1));
-  }
-  .version-group {
-    margin-top: 10px;
-  }
-  .version-group-title {
-    margin: 0 0 6px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--dsw-alias-label-secondary, #666b73);
-  }
-  .version-buttons {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .version-tag-btn {
-    min-height: 28px;
-    padding: 4px 11px;
-    border-radius: 999px;
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--dsw-alias-label-secondary, #666b73);
-    background: transparent;
-    border: 1px solid var(--dsw-alias-border-l2, rgba(32, 33, 36, 0.16));
-  }
-  .version-tag-btn:hover:not(:disabled) {
-    color: var(--dsw-alias-label-primary, #202124);
-    background: var(--dsw-alias-interactive-bg-hover, rgba(32, 33, 36, 0.08));
-  }
-  .version-status-text {
-    margin: 6px 0;
-    font-size: 12px;
-    color: var(--dsw-alias-label-secondary, #666b73);
-  }
   @media (prefers-color-scheme: dark) {
     .about-card {
       color: var(--dsw-alias-label-primary, #f3f4f6);
@@ -985,7 +939,7 @@ const aboutStyles = `
       box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5), 0 2px 10px rgba(0, 0, 0, 0.25);
     }
     .about-title, .about-body { color: var(--dsw-alias-label-primary, #f3f4f6); }
-    .about-hint, .version-status-text, .about-close { color: var(--dsw-alias-label-secondary, #a9adb5); }
+    .about-hint, .about-close { color: var(--dsw-alias-label-secondary, #a9adb5); }
     .about-close:hover { color: var(--dsw-alias-label-primary, #f3f4f6); background: rgba(255, 255, 255, 0.1); }
     .btn-action {
       color: var(--dsw-alias-label-primary, #f3f4f6);
@@ -993,18 +947,6 @@ const aboutStyles = `
       border-color: var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.18));
     }
     .btn-action:hover:not(:disabled) { background: rgba(255, 255, 255, 0.13); }
-    .btn-action.active {
-      background: rgba(77, 107, 254, 0.2);
-      border-color: rgba(77, 107, 254, 0.45);
-      color: #7b93ff;
-    }
-    .version-picker-container { border-top-color: var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.14)); }
-    .version-group-title, .version-tag-btn { color: var(--dsw-alias-label-secondary, #a9adb5); }
-    .version-tag-btn { border-color: var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.18)); }
-    .version-tag-btn:hover:not(:disabled) {
-      color: var(--dsw-alias-label-primary, #f3f4f6);
-      background: rgba(255, 255, 255, 0.1);
-    }
   }
 `
 

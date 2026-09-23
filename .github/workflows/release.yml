@@ -70,7 +70,7 @@ jobs:
                 exit 1
               fi
               if [ "$TARGET" != "all" ]; then
-                echo "::notice::target=$TARGET with prerelease mode will sign only and skip GitHub/ModelScope publish"
+                echo "::notice::target=$TARGET with prerelease mode will sign only and skip GitHub publish"
               fi
               ;;
             signed)
@@ -820,95 +820,6 @@ jobs:
               --title "BISHENG Work $RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY"
           fi
-      - name: Mirror release assets to ModelScope
-        env:
-          MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
-          MODELSCOPE_REPO_ID: alexyaojin/dsh-desktop
-        run: |
-          set -euo pipefail
-          test -n "$MODELSCOPE_TOKEN" || { echo "::error::Missing secret MODELSCOPE_TOKEN"; exit 1; }
-          python3 -m venv "$RUNNER_TEMP/ms-env"
-          "$RUNNER_TEMP/ms-env/bin/pip" install -q modelscope
-          "$RUNNER_TEMP/ms-env/bin/python3" <<'PY'
-          import os, pathlib
-          from modelscope.hub.api import HubApi
-
-          api = HubApi()
-          token = os.environ["MODELSCOPE_TOKEN"]
-          repo_id = os.environ["MODELSCOPE_REPO_ID"]
-          tag = os.environ.get("GITHUB_REF_NAME", "unknown")
-          src = pathlib.Path("release-assets")
-
-          version = tag[1:] if tag.startswith("v") else tag
-
-          api.upload_folder(
-              repo_id=repo_id,
-              folder_path=str(src),
-              path_in_repo="releases/latest",
-              commit_message=f"Release {tag}",
-              token=token,
-          )
-          print(f"✅ Uploaded {src} -> {repo_id}/releases/latest")
-
-          # Immutable per-version archive so the desktop client can roll back.
-          api.upload_folder(
-              repo_id=repo_id,
-              folder_path=str(src),
-              path_in_repo=f"releases/archive/{version}",
-              commit_message=f"Archive {tag}",
-              token=token,
-          )
-          print(f"✅ Archived {src} -> {repo_id}/releases/archive/{version}")
-
-          # Rebuild the rollback index from the versions we know exist: whatever
-          # the current published index lists, plus the one just archived. This
-          # avoids a read-modify-write race and any dependency on directory
-          # listing.
-          import json, subprocess, tempfile, urllib.request
-
-          known = {version}
-          try:
-              with urllib.request.urlopen(
-                  "https://dshdesktop.com/updates/versions.json", timeout=15
-              ) as response:
-                  current = json.load(response)
-              for entry in current.get("versions", []):
-                  name = entry.get("version")
-                  if isinstance(name, str) and name:
-                      known.add(name)
-          except Exception as error:  # first release, or index temporarily missing
-              print(f"⚠️ Could not read existing version index: {error}")
-
-          with tempfile.TemporaryDirectory() as work:
-              names_file = pathlib.Path(work) / "names.json"
-              index_file = pathlib.Path(work) / "versions.json"
-              names_file.write_text(json.dumps(sorted(known)))
-              subprocess.run(
-                  ["node", "scripts/build-version-index.mjs", str(names_file), str(index_file)],
-                  check=True,
-              )
-              api.upload_file(
-                  path_or_fileobj=str(index_file),
-                  path_in_repo="releases/versions.json",
-                  repo_id=repo_id,
-                  commit_message=f"Version index after {tag}",
-                  token=token,
-              )
-          print("✅ Rebuilt releases/versions.json")
-          PY
-
-      - name: Configure initial 5% rollout on crash service
-        env:
-          CRASH_ADMIN_TOKEN: ${{ secrets.CRASH_ADMIN_TOKEN }}
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          if [ -z "${CRASH_ADMIN_TOKEN:-}" ]; then
-            echo "⚠️ CRASH_ADMIN_TOKEN secret not set; skipping rollout configuration."
-            exit 0
-          fi
-          node scripts/configure-rollout.mjs "${RELEASE_TAG#v}" 5
-
       - name: Build Feishu release note prompt
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -1023,37 +934,6 @@ jobs:
               --title "BISHENG Work $RELEASE_TAG（预发布）" \
               --repo "$GITHUB_REPOSITORY"
           fi
-      - name: Mirror pre-release assets to ModelScope
-        env:
-          MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
-          MODELSCOPE_REPO_ID: alexyaojin/dsh-desktop
-          PRERELEASE_TAG: ${{ inputs.prerelease_tag }}
-        run: |
-          set -euo pipefail
-          test -n "$MODELSCOPE_TOKEN" || { echo "::error::Missing secret MODELSCOPE_TOKEN"; exit 1; }
-          python3 -m venv "$RUNNER_TEMP/ms-env"
-          "$RUNNER_TEMP/ms-env/bin/pip" install -q modelscope
-          "$RUNNER_TEMP/ms-env/bin/python3" <<'PY'
-          import os, pathlib
-          from modelscope.hub.api import HubApi
-
-          api = HubApi()
-          token = os.environ["MODELSCOPE_TOKEN"]
-          repo_id = os.environ["MODELSCOPE_REPO_ID"]
-          tag = os.environ["PRERELEASE_TAG"]
-          src = pathlib.Path("release-assets")
-
-          for path_in_repo in (f"releases/prerelease/{tag}", "releases/prerelease/latest"):
-              api.upload_folder(
-                  repo_id=repo_id,
-                  folder_path=str(src),
-                  path_in_repo=path_in_repo,
-                  commit_message=f"Pre-release {tag}",
-                  token=token,
-              )
-              print(f"✅ Uploaded {src} -> {repo_id}/{path_in_repo}")
-          PY
-
       - name: Build Feishu prerelease note prompt
         env:
           RELEASE_TAG: ${{ inputs.prerelease_tag }}

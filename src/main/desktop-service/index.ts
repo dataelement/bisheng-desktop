@@ -39,7 +39,3 @@ export function initializeDesktopService(): void {
     console.warn('[desktop-service] initialization failed', error instanceof Error ? error.name : 'Unknown error')
   }
 }
-export async function checkDesktopUpdate() {
-  if (!service) throw new Error('Desktop update service is unavailable')
-  return service.checkUpdate()
-}
