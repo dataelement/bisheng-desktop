@@ -12,7 +12,7 @@ const releaseAssets = [
 ]
 
 /** The exact Harness build every `@deepseek-ai/dsh-*` production dep is pinned to. */
-const HARNESS_VERSION = '0.1.5-rc.2'
+const HARNESS_VERSION = '0.1.7-rc.2'
 
 describe('GitHub release contract', () => {
   it('keeps the package and lockfile versions aligned', async () => {
@@ -244,7 +244,7 @@ describe('GitHub release contract', () => {
       dependencies: Record<string, string>
       build: {
         publish: Array<{ provider: string; url?: string; owner?: string; repo?: string }>
-        win: { verifyUpdateCodeSignature: boolean }
+        win: { verifyUpdateCodeSignature: boolean; signtoolOptions: { publisherName: string } }
       }
     }
     const workflow = await readFile(
@@ -256,7 +256,8 @@ describe('GitHub release contract', () => {
     expect(packageJson.build.publish).toEqual([
       { provider: 'github', owner: 'dataelement', repo: 'bisheng-work' }
     ])
-    expect(packageJson.build.win.verifyUpdateCodeSignature).toBe(false)
+    expect(packageJson.build.win.verifyUpdateCodeSignature).toBe(true)
+    expect(packageJson.build.win.signtoolOptions.publisherName).toBe('Beijing Shuju Xiangsu Intelligence Technology Co., Ltd.')
     for (const asset of [
       'latest-mac-arm64.yml',
       'latest-mac-x64.yml',

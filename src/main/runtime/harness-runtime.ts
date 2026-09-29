@@ -7,6 +7,8 @@ import { dirname, join, posix, win32 } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import type { RuntimePhase, RuntimeSnapshot } from '../../shared/contracts'
 import { SAFE_MODE_PROFILE } from '../state/safe-mode-profile'
+import { prepareHostDisabledPluginsPatch } from '../state/host-disabled-plugins'
+import { prepareHostPluginSourcesPatch } from '../state/host-plugin-sources'
 import { parsePluginStartupFailures, type PluginStartupFailure } from '../../shared/plugin-startup-failure'
 import { removeStaleWriterLocks } from './stale-writer-locks'
 
@@ -310,9 +312,8 @@ export function buildHarnessSpawnOptions(
   const pathApi = platform === 'win32' ? win32 : posix
 
   // ELECTRON_RUN_AS_NODE must not reach the Harness process itself: the macOS
-  // utility process is launched with Chromium switches (--type=utility, …)
-  // that Node rejects as bad options. The Harness entry re-declares Node mode
-  // from the inside, for its children only.
+  // utility process starts with Chromium switches that Node rejects. The
+  // Harness entry declares Node mode only for its Electron children.
   //
   // On Windows, `detached: true` puts the Harness in its own process group
   // and console. Without it, a child process that calls `os.kill(pid, 0)`
@@ -469,7 +470,7 @@ export class HarnessRuntime {
       return
     }
     if (!existsSync(this.options.nodeExecutablePath)) {
-      this.setState('failed', `Bundled Node.js runtime was not found: ${this.options.nodeExecutablePath}`)
+      this.setState('failed', `Harness Node executable was not found: ${this.options.nodeExecutablePath}`)
       return
     }
     if (!existsSync(this.options.nodeEntryPath)) {
@@ -478,13 +479,17 @@ export class HarnessRuntime {
     }
     // Profile isolation alone is insufficient: --patch is applied afterwards.
     // Never reintroduce optional product plugins into the recovery profile.
-    const patchPath = profile === SAFE_MODE_PROFILE
+    const sourcePatchPath = profile === SAFE_MODE_PROFILE
       ? this.options.dshSafePatchPath
       : this.options.dshPatchPath
-    if (!existsSync(patchPath)) {
-      this.setState('failed', `BISHENG Work patch was not found: ${patchPath}`)
+    if (!existsSync(sourcePatchPath)) {
+      this.setState('failed', `BISHENG Work patch was not found: ${sourcePatchPath}`)
       return
     }
+    await mkdir(this.options.dshHome, { recursive: true })
+    const patchPath = profile === SAFE_MODE_PROFILE
+      ? sourcePatchPath
+      : await prepareHostPluginSourcesPatch(this.options.dshHome, sourcePatchPath, this.options.dshEntryPath)
     const marketPatchPath = this.options.dshMarketPatchPath
     const patchPaths = profile !== SAFE_MODE_PROFILE &&
       marketPatchPath !== undefined &&
@@ -492,6 +497,10 @@ export class HarnessRuntime {
       await profileBootsMarket(join(this.options.dshHome, 'profiles', profile))
       ? [patchPath, marketPatchPath]
       : [patchPath]
+    if (profile !== SAFE_MODE_PROFILE) {
+      const disabledPatch = await prepareHostDisabledPluginsPatch(this.options.dshHome, sourcePatchPath)
+      if (disabledPatch) patchPaths.push(disabledPatch)
+    }
 
     await mkdir(this.options.dshHome, { recursive: true })
     await mkdir(dirname(this.options.logPath), { recursive: true })
