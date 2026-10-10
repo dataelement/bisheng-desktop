@@ -11,6 +11,30 @@ import feishu_release_notes as sender
 
 
 class SignedNotificationTest(unittest.TestCase):
+    def test_current_packaging_names(self):
+        package = json.loads((Path(__file__).resolve().parents[1] / "package.json").read_text())
+        build = package["build"]
+        mac_template = build["artifactName"]
+        windows_template = build["nsis"]["artifactName"]
+        names_by_target = {
+            "macos": [mac_template.replace("${os}", "mac").replace("${arch}", arch).replace("${ext}", "dmg") for arch in ["arm64", "x64"]],
+            "windows": [windows_template.replace("${arch}", "x64").replace("${ext}", "exe")],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            for names in names_by_target.values():
+                for name in names:
+                    (directory / name).write_bytes(b"installer")
+            for target in ["macos", "windows", "all"]:
+                names = sum(names_by_target.values(), []) if target == "all" else names_by_target[target]
+                with self.subTest(target=target), patch.object(module, "verify_download") as verify, patch.object(module, "send_feishu_notification") as send:
+                    module.notify(directory, target, "0.11.0-test.2", "owner/product", "hook")
+                    urls = [f"https://modelscope.cn/models/owner/product/resolve/master/releases/test/0.11.0-test.2/{name}" for name in names]
+                    self.assertEqual(verify.call_args_list, [unittest.mock.call(url, 9) for url in urls])
+                    send.assert_called_once()
+                    for url in urls:
+                        self.assertIn(url, send.call_args.kwargs["download_links"])
+
     def test_platform_links(self):
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
