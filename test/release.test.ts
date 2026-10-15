@@ -439,8 +439,8 @@ describe('GitHub release contract', () => {
     expect(workflow).toContain('signed_version:')
     expect(workflow).toContain('mode:')
     expect(workflow).toContain('--prerelease')
-    expect(workflow).toContain('name: windows-x64-dev')
-    expect(workflow).toContain('dist-dev/bisheng-dev-windows-x64-setup.exe')
+    expect(workflow).toContain('Store windows-x64-dev in draft release')
+    expect(workflow).toContain('node scripts/stage-development-assets.mjs windows')
     for (const asset of releaseAssets) expect(workflow).toContain(asset)
     expect(
       workflow.match(
@@ -487,7 +487,7 @@ describe('GitHub release contract', () => {
       'utf8'
     )
 
-    expect(workflow).toContain('name: windows-x64-unsigned')
+    expect(workflow).toContain('Stage unsigned Windows assets in draft release')
     expect(workflow).toContain('Sign Windows package locally with UKey')
     expect(workflow).toContain('runs-on: [self-hosted, macOS, ARM64]')
     expect(workflow).toContain('--storetype ETOKEN')
@@ -674,32 +674,5 @@ describe('AI-organized GitHub release body', () => {
   it('ships a RELEASE_NOTES.md style reference', async () => {
     const notes = await readFile(path.join(projectRoot, 'RELEASE_NOTES.md'), 'utf8')
     expect(notes.startsWith('# ')).toBe(true)
-  })
-})
-
-
-describe('signed test artifact exclusion', () => {
-  it('skips all Actions artifact transfers when signed mode is dispatched', async () => {
-    const yaml = createRequire(import.meta.url)('js-yaml') as {
-      load: (source: string) => { jobs: Record<string, {
-        steps: Array<{ uses?: string; if?: string }>
-      }> }
-    }
-    const workflow = yaml.load(await readFile(
-      path.join(projectRoot, '.github/workflows/release.yml'), 'utf8'
-    ))
-    for (const job of Object.values(workflow.jobs)) {
-      for (const step of job.steps.filter((entry) => entry.uses?.includes('artifact@'))) {
-        expect(step.if).toBeDefined()
-        const expression = (step.if ?? '').replace(/^\$\{\{\s*|\s*\}\}$/g, '')
-        const evaluate = new Function('github', 'inputs', 'startsWith', 'always', `return (${expression})`) as
-          (github: { event_name: string; ref: string }, inputs: { mode: string; target: string },
-           startsWith: (value: string, prefix: string) => boolean, always: () => boolean) => boolean
-        for (const target of ['all', 'windows', 'macos']) {
-          expect(evaluate({ event_name: 'workflow_dispatch', ref: 'refs/heads/main' },
-            { mode: 'signed', target }, (value, prefix) => value.startsWith(prefix), () => true)).toBe(false)
-        }
-      }
-    }
   })
 })

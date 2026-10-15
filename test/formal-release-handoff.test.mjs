@@ -8,10 +8,10 @@ it('uses draft releases for formal and complete pre-release handoff before Model
   const jobs = YAML.parse(source).jobs
   const step = (job, name) => jobs[job].steps.find(item => item.name === name)
   const formal = "startsWith(github.ref, 'refs/tags/v')"
-  const staged = "inputs.mode == 'signed' || (inputs.mode == 'prerelease' && inputs.target == 'all')"
+  const staged = "inputs.mode == 'signed' || inputs.mode == 'prerelease'"
 
   expect(step('validate-dispatch', 'Prepare draft release for verified publication').if).toContain(formal)
-  expect(step('validate-dispatch', 'Prepare draft release for verified publication').if).toContain(staged)
+  expect(step('validate-dispatch', 'Prepare draft release for verified publication').if).toContain("github.event_name == 'workflow_dispatch'")
   for (const [job, name] of [
     ['macos-apple-silicon', 'Stage signed Apple Silicon assets in draft release'],
     ['macos-intel', 'Stage signed Intel assets in draft release'],
@@ -22,21 +22,12 @@ it('uses draft releases for formal and complete pre-release handoff before Model
     expect(step(job, name).if).toContain(staged)
     expect(step(job, name).run).toContain('gh release upload')
   }
-  for (const job of ['macos-apple-silicon', 'macos-intel', 'windows-x64', 'sign-windows']) {
-    for (const item of jobs[job].steps.filter(item => item.uses?.startsWith('actions/upload-artifact@'))) {
-      expect(item.if).toContain("github.event_name == 'workflow_dispatch'")
-      expect(item.if).not.toContain("inputs.mode == 'signed'")
-      expect(item.if).toMatch(/inputs.mode == 'development'|inputs.target != 'all'/)
-    }
+  for (const job of Object.values(jobs)) {
+    expect(job.steps.some(item => /actions\/(upload|download)-artifact@/.test(item.uses ?? ''))).toBe(false)
   }
-
+  expect(step('sign-windows', 'Download unsigned Windows assets from draft release').if).toContain(staged)
   expect(step('sign-windows', 'Download unsigned Windows assets from draft release').run)
     .toContain('verify-release-staging.mjs')
-  expect(jobs['sign-windows'].steps.find(item => item.uses?.startsWith('actions/download-artifact@')).if)
-    .toContain("inputs.mode == 'prerelease' && inputs.target != 'all'")
-  expect(jobs.publish.steps.some(item => item.uses?.startsWith('actions/download-artifact@'))).toBe(false)
-  expect(jobs['publish-prerelease'].steps.some(item => item.uses?.startsWith('actions/download-artifact@'))).toBe(false)
-  expect(jobs['publish-signed'].steps.some(item => item.uses?.startsWith('actions/download-artifact@'))).toBe(false)
   const names = jobs.publish.steps.map(item => item.name)
   expect(names.indexOf('Download verified platform assets from draft release'))
     .toBeLessThan(names.indexOf('Verify release assets before publication'))

@@ -48,6 +48,7 @@ permissions:
 
 env:
   RELEASE_NOTES_MODEL: gpt-6-luna
+  DEV_RELEASE_TAG: dev-${{ github.run_id }}-${{ github.run_attempt }}
 
 concurrency:
   group: desktop-release-${{ github.ref }}
@@ -126,7 +127,7 @@ jobs:
         run: |
           test -n "$FEISHU_RELEASE_WEBHOOK" || { echo "::error::Missing secret FEISHU_RELEASE_WEBHOOK"; exit 1; }
       - name: Prepare draft release for verified publication
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || (inputs.mode == 'prerelease' && inputs.target == 'all')))
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
           MODE: ${{ inputs.mode }}
@@ -142,6 +143,10 @@ jobs:
             release_tag="$SIGNED_VERSION"
             tag_args=(--target "$GITHUB_SHA")
             note_args=(--notes 'Signed test build in progress.')
+          elif [ "${MODE:-}" = "development" ]; then
+            release_tag="$DEV_RELEASE_TAG"
+            tag_args=(--target "$GITHUB_SHA")
+            note_args=(--notes "Development build and diagnostics: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Draft assets are retained until this draft is deleted.")
           else
             release_tag="$PRERELEASE_TAG"
             tag_args=(--target "$GITHUB_SHA")
@@ -158,6 +163,7 @@ jobs:
               "${note_args[@]}" \
               --repo "$GITHUB_REPOSITORY"
           fi
+          echo "Draft assets: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$release_tag (open repository Releases to access drafts)." >> "$GITHUB_STEP_SUMMARY"
 
   macos-apple-silicon:
     name: macOS Apple Silicon
@@ -292,7 +298,7 @@ jobs:
           spctl --assess --type open --context context:primary-signature --verbose=4 dist/bisheng-mac-arm64.dmg
           xcrun stapler validate dist/bisheng-mac-arm64.dmg
       - name: Stage signed Apple Silicon assets in draft release
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || (inputs.mode == 'prerelease' && inputs.target == 'all')))
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (inputs.mode == 'signed' && inputs.signed_version || inputs.prerelease_tag) }}
@@ -303,27 +309,11 @@ jobs:
             dist/bisheng-mac-arm64.zip.blockmap \
             dist/latest-mac-arm64.yml \
             --clobber --repo "$GITHUB_REPOSITORY"
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'prerelease' && inputs.target != 'all'
-        with:
-          name: macos-apple-silicon
-          retention-days: 7
-          path: |
-            dist/bisheng-mac-arm64.dmg
-            dist/bisheng-mac-arm64.zip
-            dist/bisheng-mac-arm64.zip.blockmap
-            dist/latest-mac-arm64.yml
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - name: Store macos-apple-silicon-dev in draft release
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'development'
-        with:
-          name: macos-apple-silicon-dev
-          retention-days: 3
-          path: |
-            dist-dev/bisheng-dev-mac-arm64.dmg
-            dist-dev/bisheng-dev-mac-arm64.zip
-            dist-dev/bisheng-dev-mac-arm64.zip.blockmap
-          if-no-files-found: error
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/stage-development-assets.mjs arm64
 
   macos-intel:
     name: macOS Intel
@@ -473,7 +463,7 @@ jobs:
           spctl --assess --type open --context context:primary-signature --verbose=4 dist/bisheng-mac-x64.dmg
           xcrun stapler validate dist/bisheng-mac-x64.dmg
       - name: Stage signed Intel assets in draft release
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || (inputs.mode == 'prerelease' && inputs.target == 'all')))
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (inputs.mode == 'signed' && inputs.signed_version || inputs.prerelease_tag) }}
@@ -484,27 +474,11 @@ jobs:
             dist/bisheng-mac-x64.zip.blockmap \
             dist/latest-mac-x64.yml \
             --clobber --repo "$GITHUB_REPOSITORY"
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'prerelease' && inputs.target != 'all'
-        with:
-          name: macos-intel
-          retention-days: 7
-          path: |
-            dist/bisheng-mac-x64.dmg
-            dist/bisheng-mac-x64.zip
-            dist/bisheng-mac-x64.zip.blockmap
-            dist/latest-mac-x64.yml
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - name: Store macos-intel-dev in draft release
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'development'
-        with:
-          name: macos-intel-dev
-          retention-days: 3
-          path: |
-            dist-dev/bisheng-dev-mac-x64.dmg
-            dist-dev/bisheng-dev-mac-x64.zip
-            dist-dev/bisheng-dev-mac-x64.zip.blockmap
-          if-no-files-found: error
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/stage-development-assets.mjs x64
 
   windows-x64:
     name: Windows x64
@@ -542,15 +516,21 @@ jobs:
       - name: Check recovery UI on native Windows at three display scales
         if: github.event_name == 'workflow_dispatch' && inputs.windows_recovery_ui == true
         run: node scripts/check-recovery-ui.mjs
-      - uses: actions/upload-artifact@v4
+      - name: Store Windows recovery diagnostics in draft release
         if: always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'development' && inputs.windows_recovery_ui == true
-        with:
-          name: windows-recovery-ui
-          retention-days: 7
-          path: |
-            artifacts/recovery-ui/scale-*/*.png
-            artifacts/recovery-ui/scale-*/results.json
-          if-no-files-found: warn
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if (-not (Test-Path artifacts/recovery-ui)) {
+            Write-Output '::warning::No recovery UI diagnostics were produced.'
+            exit 0
+          }
+          $archive = Join-Path $env:RUNNER_TEMP 'windows-recovery-ui.tar.gz'
+          tar -czf "$archive" -C artifacts recovery-ui
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gh release upload "$env:DEV_RELEASE_TAG" "$archive" --clobber --repo "$env:GITHUB_REPOSITORY"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build Windows release package
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         run: npm run package:win
@@ -698,7 +678,7 @@ jobs:
         run: |
           tar -czf dist/win-unpacked.tar.gz -C dist win-unpacked
       - name: Stage unsigned Windows assets in draft release
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || (inputs.mode == 'prerelease' && inputs.target == 'all')))
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -711,27 +691,12 @@ jobs:
             dist/latest.yml `
             --clobber --repo "$env:GITHUB_REPOSITORY"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'prerelease' && inputs.target != 'all'
-        with:
-          name: windows-x64-unsigned
-          path: |
-            dist/bisheng-windows-x64-setup.exe
-            dist/win-unpacked.tar.gz
-            dist/bisheng-windows-x64-setup.exe.blockmap
-            dist/latest.yml
-          if-no-files-found: error
-          retention-days: 1
-      - uses: actions/upload-artifact@v4
+      - name: Store windows-x64-dev in draft release
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'development'
-        with:
-          name: windows-x64-dev
-          retention-days: 3
-          path: |
-            dist-dev/bisheng-dev-windows-x64-setup.exe
-            dist-dev/bisheng-dev-windows-x64-setup.exe.blockmap
-            dist-dev/latest.yml
-          if-no-files-found: error
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/stage-development-assets.mjs windows
 
   sign-windows:
     name: Sign Windows package locally with UKey
@@ -774,7 +739,7 @@ jobs:
           mkdir -p "$work_dir/release"
           echo "WINDOWS_SIGNING_WORK_DIR=$work_dir" >> "$GITHUB_ENV"
       - name: Download unsigned Windows assets from draft release
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || (inputs.mode == 'prerelease' && inputs.target == 'all')))
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (inputs.mode == 'signed' && inputs.signed_version || inputs.prerelease_tag) }}
@@ -791,11 +756,6 @@ jobs:
             bisheng-windows-x64-setup.exe \
             bisheng-windows-x64-setup.exe.blockmap \
             win-unpacked.tar.gz latest.yml
-      - uses: actions/download-artifact@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'prerelease' && inputs.target != 'all'
-        with:
-          name: windows-x64-unsigned
-          path: ${{ runner.temp }}/dsh-windows-${{ github.run_id }}/release
       - name: Download and verify Jsign
         run: |
           set -euo pipefail
@@ -873,7 +833,7 @@ jobs:
           test -f "$WINDOWS_SIGNING_WORK_DIR/release/latest.yml"
           test -f "$WINDOWS_SIGNING_WORK_DIR"/release/*.exe.blockmap
       - name: Stage signed Windows assets in draft release
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || (inputs.mode == 'prerelease' && inputs.target == 'all')))
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (inputs.mode == 'signed' && inputs.signed_version || inputs.prerelease_tag) }}
@@ -883,16 +843,6 @@ jobs:
             "$WINDOWS_SIGNING_WORK_DIR/release/bisheng-windows-x64-setup.exe.blockmap" \
             "$WINDOWS_SIGNING_WORK_DIR/release/latest.yml" \
             --clobber --repo "$GITHUB_REPOSITORY"
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'prerelease' && inputs.target != 'all'
-        with:
-          name: windows-x64
-          retention-days: 7
-          path: |
-            ${{ runner.temp }}/dsh-windows-${{ github.run_id }}/release/bisheng-windows-x64-setup.exe
-            ${{ runner.temp }}/dsh-windows-${{ github.run_id }}/release/bisheng-windows-x64-setup.exe.blockmap
-            ${{ runner.temp }}/dsh-windows-${{ github.run_id }}/release/latest.yml
-          if-no-files-found: error
       - name: Remove local signing files
         if: always()
         run: |
