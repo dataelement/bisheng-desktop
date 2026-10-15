@@ -163,7 +163,8 @@ jobs:
               "${note_args[@]}" \
               --repo "$GITHUB_REPOSITORY"
           fi
-          echo "Draft assets: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$release_tag (open repository Releases to access drafts)." >> "$GITHUB_STEP_SUMMARY"
+          release_url="$(gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" --json url --jq .url)"
+          echo "Draft assets: [$release_tag]($release_url)" >> "$GITHUB_STEP_SUMMARY"
 
   macos-apple-silicon:
     name: macOS Apple Silicon

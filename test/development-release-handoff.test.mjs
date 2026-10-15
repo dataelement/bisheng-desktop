@@ -58,6 +58,10 @@ const fs = require('node:fs')
 const args = process.argv.slice(2)
 fs.appendFileSync(process.env.CALLS, JSON.stringify(args) + '\\n')
 if (args[1] === 'view') {
+  if (args.includes('url')) {
+    process.stdout.write('https://github.com/example/desktop/releases/tag/untagged-test\\n')
+    process.exit(0)
+  }
   if (process.env.PUBLISHED === 'true') process.stdout.write('false\\n')
   else process.exitCode = 1
 }
@@ -74,7 +78,7 @@ if (args[1] === 'view') {
   const create = invocations.find(args => args[1] === 'create')
   expect(create.slice(0, 3)).toEqual(['release', 'create', expectedTag])
   expect(create).toContain('--draft')
-  expect(await readFile(env.GITHUB_STEP_SUMMARY, 'utf8')).toContain(expectedTag)
+  expect(await readFile(env.GITHUB_STEP_SUMMARY, 'utf8')).toContain(`[${expectedTag}](https://github.com/example/desktop/releases/tag/untagged-test)`)
   expect(() => execFileSync('bash', [script], { env: { ...env, PUBLISHED: 'true' }, stdio: 'pipe' }))
     .toThrow()
 })
