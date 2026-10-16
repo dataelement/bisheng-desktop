@@ -1,3 +1,9 @@
+## 2026-10-16 — 设置入口提示位置
+
+- 基线：远端 bisheng-work/V1.2.0@859c9b33a146d9c2fea35aa6ff93de4ad141af57，工作目录 bisheng-work-chat-work，Harness 0.2.0-rc.2。
+- 根因：设置提示默认向右展开，跨入原生 WebContentsView 的区域后被遮挡。沿用 Harness Tooltip，方向改为 top，让提示位于侧栏内。现有 settings.launcher slot 用于替换整个入口；此处保留原入口、快捷键、状态与无障碍逻辑，仅通过锁定依赖的可重放修正调整 Tooltip 参数。
+- 验证：干净离线 npm ci 与全部依赖修正重放通过；类型检查、构建、完整 219 文件 / 1872 项测试通过、1 项跳过。企业测试桌面已启动更新版本；运行时提示浮层的视觉复验待完成，用户正在操作窗口。本次尚未生成安装包。
+
 ## 2026-10-16 — 首次发送即时收起 Chat / Work
 
 - 基线：本次核对远端 bisheng-work/V1.2.0 为 5b14db873105d2b3d937e7512619e20e4914507f，工作目录为 bisheng-work-chat-work，开发分支 codex/chat-work-integration，已安装 Harness 0.2.0-rc.2。

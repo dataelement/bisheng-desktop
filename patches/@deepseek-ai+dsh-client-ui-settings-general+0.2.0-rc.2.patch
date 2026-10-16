@@ -1,5 +1,5 @@
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-settings-general/lib/client.js b/node_modules/@deepseek-ai/dsh-client-ui-settings-general/lib/client.js
-index a8ec1c7..cfb6388 100644
+index a8ec1c7..f9431ce 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-settings-general/lib/client.js
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-settings-general/lib/client.js
 @@ -63,7 +63,7 @@ window.__ModuleLoader__.load({
@@ -49,3 +49,11 @@ index a8ec1c7..cfb6388 100644
  			const onboardingStep = requestedOnboarding !== void 0 ? onboardingSteps.find((step) => step.id === requestedOnboarding) : onboardingActive ? onboardingSteps.find((step) => !completedOnboarding.has(step.id)) : void 0;
  			(0, react.useEffect)(() => {
  				if (onboardingActive) return;
+@@ -446,6 +458,7 @@ window.__ModuleLoader__.load({
+ 							}
+ 						}, { fallback: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
+ 							disabled: open,
++							side: "top",
+ 							label: t("trigger"),
+ 							shortcutKeys: shortcut?.keys,
+ 							children: (0, react_jsx_runtime.jsx)("button", {
