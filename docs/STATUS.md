@@ -1,3 +1,10 @@
+## 2026-10-16 — macOS 浅色侧栏与窗口主题同步
+
+- 基线实时核验：bisheng-work/V1.2.0@7edfd09170c23b005c81a78b65a42360377fc87d；工作目录 bisheng-work-chat-work，分支 codex/chat-work-integration，Harness 0.2.0-rc.2。
+- 根因：macOS 窗口持续使用半透明 sidebar 材质，浅色页面透出深色原生底层；页面主题的实时同步此前仅覆盖 Windows。浅色窗口改用稳定的 #f9fafb 底色，深色保持原生材质；macOS 订阅 Harness 已解析的主题标记，通过既有可信 IPC 更新窗口，并在隐藏、最小化和恢复时保留当前页面主题。
+- 自动验证：窗口主题及隐藏/恢复回归通过，类型检查、生产构建和 diff-check 通过。企业测试客户端实际验证浅色 Chat、浅色 Work、浅色→深色→浅色切换，侧栏与正文主题同步；保留用户当前浅色偏好。截图：主工作区 outputs/sidebar-theme-20261016/light-chat.png。
+- 交付范围为桌面源码与已重启的企业测试客户端；正式安装包、Windows 实机及系统外观自动切换另行验收。
+
 ## 2026-10-16 — Chat / Work 侧栏行与上下文展示对齐
 
 - 基线实时核验：bisheng-work/V1.2.0@e0359f330bceb95d41d0defa849adeec300895d1；工作目录 bisheng-work-chat-work，分支 codex/chat-work-integration，Harness 0.2.0-rc.2。

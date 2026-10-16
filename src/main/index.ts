@@ -1007,7 +1007,7 @@ function createWindow(): BrowserWindow {
     ...(process.platform === 'darwin' ? {
       titleBarStyle: 'hiddenInset' as const,
       trafficLightPosition: { x: 16, y: 18 },
-      vibrancy: 'sidebar' as const,
+      ...(nativeTheme.shouldUseDarkColors ? { vibrancy: 'sidebar' as const } : {}),
       visualEffectState: 'active' as const
     } : {}),
     ...(isWindows
@@ -1017,7 +1017,9 @@ function createWindow(): BrowserWindow {
         autoHideMenuBar: true
       }
       : {}),
-    backgroundColor: process.platform === 'darwin' ? '#00000000' : nativeTheme.shouldUseDarkColors ? '#141416' : '#f8f8f6',
+    backgroundColor: process.platform === 'darwin'
+      ? nativeTheme.shouldUseDarkColors ? '#00000000' : '#f9fafb'
+      : nativeTheme.shouldUseDarkColors ? '#141416' : '#f8f8f6',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -1028,7 +1030,8 @@ function createWindow(): BrowserWindow {
   })
   if (process.platform === 'darwin') {
     window.setWindowButtonVisibility(true)
-    const applyBackdrop = (): void => applyMacosWindowBackdrop(window, nativeTheme.shouldUseDarkColors)
+    applyMacosWindowBackdrop(window, nativeTheme.shouldUseDarkColors)
+    const applyBackdrop = (): void => applyMacosWindowBackdrop(window)
     window.on('minimize', applyBackdrop)
     window.on('hide', applyBackdrop)
     window.on('restore', applyBackdrop)
@@ -1770,7 +1773,7 @@ function registerHarnessHandlers(): void {
     if (typeof isDark !== 'boolean') {
       throw new Error('The BISHENG titlebar theme must be a boolean.')
     }
-    if (process.platform === 'win32' && mainWindow) {
+    if (mainWindow) {
       applyWindowChromeTheme(mainWindow, isDark)
     }
     return { ok: true }

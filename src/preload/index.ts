@@ -12,6 +12,7 @@ import { isPluginLoadError } from './plugin-error-view'
 import { mountPluginErrorToast } from './plugin-error-toast'
 import { findBootFailureText } from './boot-failure'
 import { markWindowsTitlebar, mountWindowsTitlebarLayout } from './windows-titlebar'
+import { mountMacosWindowTheme } from './macos-window-theme'
 import { mountMacosWindowChrome } from './macos-window-chrome'
 import { createHostPathsBridge, HOST_PATHS_BRIDGE } from './host-paths'
 
@@ -387,6 +388,10 @@ ipcRenderer.on('mobile:status-changed', (_event, status: { connected?: boolean }
 })
 
 function initializeUi(): void {
+  if (process.platform === 'darwin') {
+    const dispose = mountMacosWindowTheme(document, ipcRenderer)
+    window.addEventListener('unload', dispose, { once: true })
+  }
   if (process.platform === 'win32') {
     mountWindowsTitlebarLayout({ document, ipcRenderer })
   }
