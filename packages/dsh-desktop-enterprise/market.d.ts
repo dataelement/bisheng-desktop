@@ -2,7 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { MarketRuntimeFiber } from './market-runtime.js'
 export interface InstalledMarketPlugin {
   name: string; version: string; digest: string; directory: string; generation_id: string; plugin_id: string;
-  version_id: string; revision: number; enabled: boolean; status: string; display_name: string; error?: string; config?: Record<string, unknown>; description?: string
+  version_id: string; revision: number; enabled: boolean; status: string; display_name: string; error?: string; config?: Record<string, unknown>; description?: string; integrity?: string
 }
 export interface MarketAccount {
   connected: boolean; desktopVersion?: string; base?: string; user?: { id: string }; tenant?: { id: string; name?: string }; sessionExpiresAt?: string
@@ -22,6 +22,7 @@ export declare function createMarketController(ctx: Context, account: {
   state(): MarketAccount
   marketRequest(path: string, body?: unknown, binary?: boolean): Promise<unknown>
 }, options?: { home?: string; target?: string; publicKey?: string; desktopVersion?: string; dshEntryPath?: string;
+  installOptions?: Partial<import('dsh-desktop-market-installer/generations/installer').GenerationInstallOptions>;
   load?: (record: InstalledMarketPlugin) => Promise<MarketRuntimeFiber> }): MarketController
 
 export declare function applyEnterpriseMarket(ctx: Context, account: {

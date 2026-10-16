@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { generationId, writeGenerationMeta } from 'dsh-desktop-market-installer/generations/registry'
 import { verifyGenerationPeers } from 'dsh-desktop-market-installer/generations/installer'
 
-export const MAX_ARCHIVE = 256 * 1024 * 1024
+export const MAX_ARCHIVE = 512 * 1024 * 1024
 const MAX_EXPANDED = 1024 * 1024 * 1024
 export const sha256 = data => createHash('sha256').update(data).digest('hex')
 export const safePath = value => typeof value === 'string' && value.length > 0 &&
@@ -15,7 +15,7 @@ const fail = message => { throw new Error(message) }
 
 /** Read bounded ZIP entries without extracting paths or executing build scripts. */
 export function readBundleZip(bytes) {
-  if (bytes.length > MAX_ARCHIVE) fail('Bundle exceeds 256 MiB.')
+  if (bytes.length > MAX_ARCHIVE) fail('Bundle exceeds 512 MiB.')
   let end = -1
   for (let offset = bytes.length - 22; offset >= Math.max(0, bytes.length - 65557); offset--) {
     if (bytes.readUInt32LE(offset) === 0x06054b50 && offset + 22 + bytes.readUInt16LE(offset + 20) === bytes.length) { end = offset; break }
@@ -85,6 +85,12 @@ export function validateOfflineBundle(bytes, expected, target) {
 }
 
 export async function installOfflineBundle(home, bytes, expected, target, options = {}) {
+  const zip = bytes.subarray(0, 2).toString() === 'PK' ? readBundleZip(bytes) : undefined
+  const community = zip && [...zip.keys()].some(path => path === 'package.json' || /^[^/]+\/package\.json$/u.test(path))
+  if (community || !zip?.has('manifest.json')) {
+    const { installCommunityPackage } = await import('./community-install.js')
+    return installCommunityPackage(home, bytes, expected, target, options)
+  }
   const { files, manifest } = validateOfflineBundle(bytes, expected, target)
   // Host singletons are checked against the running installation when its DSH
   // entry is supplied. A missing entry must not fall through to an unanchored
@@ -124,6 +130,10 @@ export async function installOfflineBundle(home, bytes, expected, target, option
 export async function verifyInstalledBundle(generation, target) {
   if (!(await lstat(generation.directory)).isDirectory() || (await lstat(generation.directory)).isSymbolicLink()) fail('Invalid generation directory.')
   const bytes = await readFile(join(generation.directory, 'enterprise-bundle.zip'))
+  if (generation.integrity) {
+    const { verifyCommunityPackage } = await import('./community-install.js')
+    return verifyCommunityPackage(generation, bytes, target)
+  }
   const { files, manifest } = validateOfflineBundle(bytes, generation, target)
   const observed = new Set()
   const walk = async relative => {

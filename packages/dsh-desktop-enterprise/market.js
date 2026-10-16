@@ -27,6 +27,11 @@ export function isMarketVersionCompatible(version, minimum) {
   return Boolean(semver.valid(version) && semver.valid(minimum) && semver.gte(version, minimum))
 }
 
+function compatibleArtifact(manifest, target, version) {
+  return Boolean(manifest?.targets?.[target]) && (manifest.schema_version === 2 && manifest.format === 'npm'
+    ? Boolean(semver.valid(version)) : isMarketVersionCompatible(version, manifest?.plugin?.desktop_min))
+}
+
 function validatedCatalog(value) {
   if (!value || !Array.isArray(value.data) || value.data.length > 100 ||
       !Number.isSafeInteger(value.total) || value.total < 0 || value.total > MAX_CATALOG_SIZE) {
@@ -207,7 +212,7 @@ export function createMarketController(ctx, accountController, options = {}) {
       const catalog = validatedCatalog(await request(`/catalog?q=${encodeURIComponent(query.trim().slice(0, 200))}&page=${page}&size=100`))
       if (startedEpoch !== epoch) throw new Error('Enterprise account changed.')
       const data = catalog.data.map(plugin => ({ ...plugin, versions: plugin.versions.map(version => ({
-        ...version, compatible: Boolean(version.manifest?.targets?.[target]) && isMarketVersionCompatible(desktopVersion(), version.manifest?.plugin?.desktop_min)
+        ...version, compatible: compatibleArtifact(version.manifest, target, desktopVersion())
       })) }))
       return { ...state(), data, total: catalog.total, installReady: online }
     }),
@@ -263,8 +268,7 @@ export function createMarketController(ctx, accountController, options = {}) {
       }
       const version = selected?.versions.find(v => v.id === selected.current_version_id)
       if (!version || (input.version_id && version.id !== input.version_id)) throw new Error('Published version changed. Refresh the market.')
-      const metadata = version.manifest.plugin
-      if (!version.manifest.targets[target] || !isMarketVersionCompatible(desktopVersion(), metadata.desktop_min)) throw new Error('Plugin is incompatible with this Desktop or platform.')
+      if (!compatibleArtifact(version.manifest, target, desktopVersion())) throw new Error('Plugin is incompatible with this Desktop or platform.')
       if (!semver.valid(version.version)) throw new Error('Invalid plugin version.')
       if (previous && (!semver.valid(previous.version) || semver.gt(previous.version, version.version))) throw new Error('The enterprise version is older. Uninstall before choosing a lower version.')
       const bytes = await accountController.marketRequest(`${PREFIX}/plugins/${selected.id}/versions/${version.id}/artifact`, undefined, true)
@@ -273,10 +277,11 @@ export function createMarketController(ctx, accountController, options = {}) {
       const dshEntryPath = typeof options.dshEntryPath === 'string' && options.dshEntryPath.length > 0
         ? options.dshEntryPath
         : hostDshEntryPath()
-      const generation = await installOfflineBundle(home, bytes, expected, target, { dshEntryPath })
+      const generation = await installOfflineBundle(home, bytes, expected, target, { dshEntryPath, installOptions: options.installOptions })
       await synchronize()
       if (startedEpoch !== epoch || !online) throw new Error('Enterprise authorization changed during installation.')
       const record = { ...expected, directory: generation.directory, generation_id: generation.id, plugin_id: selected.id,
+        ...(generation.integrity ? { integrity: generation.integrity } : {}),
         version_id: version.id, revision: selected.revision, enabled: true, status: 'disabled', display_name: selected.display_name, description: selected.description, config: input.config ?? previous?.config ?? {} }
       if (!authorized(record) || policy.policies.find(p => p.plugin_id === record.plugin_id)?.current_version_id !== record.version_id) throw new Error('Published version changed during installation.')
       const previousRecords = document.installed
