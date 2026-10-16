@@ -317,10 +317,19 @@ window.__ModuleLoader__.load({
             select('work')
           })
           const settings = (event) => publish({ settingsOpen: event.detail?.open === true })
+          let workSession, unsubscribeWork = () => {}
           const workState = () => {
             const list = ctx.sessions.list.getSnapshot()
             const current = Object.values(list.byId).find(row => (row.retainedBy.mainView ?? 0) > 0)
-            publish({ workLanding: current ? current.blank === true : list.phase === 'ready' })
+            const session = current && ctx.sessions.binding(current.id)?.session
+            if (session !== workSession) {
+              unsubscribeWork()
+              workSession = session
+              unsubscribeWork = session ? session.subscribe(workState) : () => {}
+            }
+            const live = session?.getSnapshot()
+            const blank = live ? live.blank && live.pendingSubmissions.length === 0 && !live.running && !live.awaitingFirstTurn : current?.blank
+            publish({ workLanding: current ? blank === true : list.phase === 'ready' })
           }
           const panel = () => {
             const panelOpen = ctx.layout.panelInfo.getSnapshot().activePanelId !== null
@@ -328,13 +337,17 @@ window.__ModuleLoader__.load({
           }
           const unsubscribe = ctx.layout.panelInfo.subscribe(panel)
           const unsubscribeSessions = ctx.sessions.list.subscribe(workState)
+          const unsubscribeChat = window.dshEnterpriseChat?.subscribe?.((next) => {
+            revision++
+            publish(next)
+          })
           workState(); panel()
           window.addEventListener('dsh-desktop:enterprise-account-changed', account)
           window.addEventListener('dsh-desktop:settings-visibility', settings)
           window.addEventListener('focus', sync)
           void poll()
           return () => {
-            active = false; revision++; historyRequest++; clearTimeout(timer); unsubscribe(); unsubscribeSessions()
+            active = false; revision++; historyRequest++; clearTimeout(timer); unsubscribe(); unsubscribeSessions(); unsubscribeWork(); unsubscribeChat?.()
             window.removeEventListener('dsh-desktop:enterprise-account-changed', account)
             disposeNavigation()
             window.removeEventListener('dsh-desktop:settings-visibility', settings)
@@ -402,7 +415,7 @@ window.__ModuleLoader__.load({
         void window.dshEnterpriseChat?.present({ visible: false, bounds: { x: 0, y: 48, width: 0, height: 0 }, theme: 'light' }).catch(() => {})
       }, [])
       const showModePicker = !settingsOpen && (mode === 'chat'
-        ? state.conversationId === 'new'
+        ? state.conversationId === 'new' && state.landing !== false
         : state.workLanding && !state.panelOpen)
       const select = navigation.choose
       const keyDown = (event) => {

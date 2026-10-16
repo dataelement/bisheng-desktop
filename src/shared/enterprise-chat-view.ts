@@ -6,6 +6,7 @@ export interface EnterpriseChatPresentation {
 
 export interface EnterpriseChatViewState {
   epoch?: number
+  landing?: boolean
   conversationId?: string
   connected?: boolean
   phase: 'idle' | 'loading' | 'ready' | 'error'

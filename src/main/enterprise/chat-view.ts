@@ -1,10 +1,12 @@
+import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { session, shell, WebContentsView, type BrowserWindow, type Session } from 'electron'
 import { parseChatPage, parseChatId, parseChatPresentation, type EnterpriseChatHistory, type EnterpriseChatPresentation, type EnterpriseChatViewState } from '../../shared/enterprise-chat-view'
 import type { EnterpriseDesktopRuntime } from './enterprise-desktop'
 
-/** Remote Chat gets its own in-memory browser session and no privileged preload. */
+/** Remote Chat gets its own in-memory browser session and a presentation-only preload. */
 export class EnterpriseChatView {
+  private landing?: boolean
   private origin?: string
   private routes = new Map<string, string>()
   private view?: WebContentsView
@@ -28,7 +30,11 @@ export class EnterpriseChatView {
   }
 
   snapshot(): EnterpriseChatViewState {
-    return { ...this.state, epoch: this.generation, conversationId: this.view?.webContents.getURL().match(/\/workspace\/(?:c|chat|linsight)\/([a-zA-Z0-9_-]+)/u)?.[1], connected: this.enterprise.snapshot().connected }
+    return { ...this.state, landing: this.landing, epoch: this.generation, conversationId: this.view?.webContents.getURL().match(/\/workspace\/(?:c|chat|linsight)\/([a-zA-Z0-9_-]+)/u)?.[1], connected: this.enterprise.snapshot().connected }
+  }
+
+  private notify(): void {
+    if (this.owner && !this.owner.isDestroyed()) this.owner.webContents.send('enterprise-chat:changed', this.snapshot())
   }
 
   present(window: BrowserWindow, input: unknown): EnterpriseChatViewState {
@@ -142,7 +148,7 @@ export class EnterpriseChatView {
           callback(permission === 'clipboard-sanitized-write' && details.requestingUrl.startsWith(origin + '/'))
         })
         isolated.setPermissionCheckHandler((_contents, permission, requestingOrigin) => permission === 'clipboard-sanitized-write' && requestingOrigin === origin)
-        const view = new WebContentsView({ webPreferences: { session: isolated, contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true } })
+        const view = new WebContentsView({ webPreferences: { session: isolated, preload: join(import.meta.dirname, '../preload/enterprise-chat.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true } })
         view.setVisible(false)
         view.setBackgroundColor(this.presentation?.theme === 'dark' ? '#141416' : '#ffffff')
         view.webContents.setWindowOpenHandler(({ url }) => {
@@ -152,6 +158,22 @@ export class EnterpriseChatView {
         const allowNavigation = (event: Electron.Event, url: string): void => {
           if (new URL(url).origin !== origin) event.preventDefault()
         }
+        view.webContents.on('ipc-message', (event, channel, input: unknown) => {
+          if (channel !== 'enterprise-chat:landing' || generation !== this.generation || this.view !== view || event.senderFrame !== view.webContents.mainFrame) return
+          const url = new URL(view.webContents.getURL())
+          if (url.origin !== origin || !/^\/workspace\/c\/[a-zA-Z0-9_-]+$/u.test(url.pathname)) return
+          if (!input || typeof input !== 'object') return
+          const report = input as Record<string, unknown>
+          if (typeof report.landing !== 'boolean' || report.path !== url.pathname) return
+          this.landing = url.pathname === '/workspace/c/new' && report.landing
+          this.notify()
+        })
+        view.webContents.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
+          if (isMainFrame && generation === this.generation && this.view === view) {
+            this.landing = undefined
+            this.notify()
+          }
+        })
         view.webContents.on('will-navigate', allowNavigation)
         view.webContents.on('will-redirect', allowNavigation)
         view.webContents.on('will-attach-webview', (event) => event.preventDefault())
@@ -159,7 +181,7 @@ export class EnterpriseChatView {
         view.webContents.on('did-finish-load', () => {
           if (generation !== this.generation) return
           if (new URL(view.webContents.getURL()).pathname.startsWith('/workspace')) {
-            this.state = { phase: 'ready' }; this.layout()
+            this.state = { phase: 'ready' }; this.layout(); this.notify()
           } else {
             this.state = { phase: 'error' }; this.layout(); this.note('[enterprise-chat] unexpected_login_redirect')
           }
@@ -186,6 +208,7 @@ export class EnterpriseChatView {
   }
 
   private clear(): void {
+    this.landing = undefined
     this.generation += 1
     clearTimeout(this.timer)
     this.timer = undefined

@@ -1,3 +1,10 @@
+## 2026-10-16 — 首次发送即时收起 Chat / Work
+
+- 基线：本次核对远端 bisheng-work/V1.2.0 为 5b14db873105d2b3d937e7512619e20e4914507f，工作目录为 bisheng-work-chat-work，开发分支 codex/chat-work-integration，已安装 Harness 0.2.0-rc.2。
+- 根因：Work 读取持久化会话摘要，Chat 等待服务器返回会话 ID 后通过 1500ms 轮询更新。修复后 Work 订阅原生 Session 的乐观发送状态；Chat 用自身消息/流式状态上报 landing，再由主进程推送给桌面。当前视图、主 frame、企业来源、路径和身份代际校验覆盖远程上报。
+- 验证：定向 23 项通过；完整回归 219 文件、1872 项通过、1 项跳过；类型检查和生产构建通过。真实 Electron 隔离 fixture 使用沙箱 WebContentsView，在 URL 保持 new 时完成 true/false/true 状态推送（本机测量 0–1ms）；远程页仅有 reportLanding，Node 与企业账号接口均不可见。
+- 交付边界：源码与原生展示桥验证完成。本次需要桌面与网页同时更新；3006 当前 beta4 发布、正在运行的企业测试窗口及安装包尚未更新，实际企业登录后发送复验待执行。网页改动随 PR #2495 交付到 feat/bisheng-work-103。
+
 ## 2026-10-16 — 聊天侧栏统一为标题与时间
 
 - 桌面基线：bisheng-work/V1.2.0@61dfddf7376aaa09e6a2d335dcaec245e513f578，GitHub API 实时复核，Harness 0.2.0-rc.2。移除最近标题栏的刷新按钮、云端气泡图标及本地电脑图标贡献项；自动刷新、按来源导航及项目归属继续由原控制器管理。

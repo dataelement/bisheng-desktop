@@ -93,7 +93,7 @@ PR #357 展示了两种应区别处理的变化：
 
 `dsh-client-ui-settings-general` 接收 `dsh-desktop:open-settings-section`（detail.id 对应已注册页）及 `dsh-desktop:close-settings`，绑定现有 store actions；发送 `dsh-desktop:settings-visibility`（detail.open 布尔值），设置打开时暂停原生 Chat view 展示，关闭后恢复。事件只控制本地呈现，认证由主进程执行。
 
-主进程仅向可信宿主主 frame 暴露 Chat history(page) 与 open(id)，固定 API 路径、校验页码和标识。使用内存隔离 cookie session；会话打开按本次身份查询到的路径映射执行。身份 generation 改变后丢弃异步响应并清理云端列表、路径和网页存储。远程网页维持无 preload 的隔离环境。
+主进程仅向可信宿主主 frame 暴露 Chat history(page) 与 open(id)，固定 API 路径、校验页码和标识。使用内存隔离 cookie session；会话打开按本次身份查询到的路径映射执行。身份 generation 改变后丢弃异步响应并清理云端列表、路径和网页存储。远程网页使用独立的展示状态 preload，仅暴露 reportLanding(boolean)，由主进程校验当前视图、主 frame、企业来源、路径和身份代际。
 
 毕昇 `/workspace/?embed=dsh` 在路由跳转前记录本浏览会话的嵌入布局标识，嵌入布局由 React 直接呈现内容。独立网页继续显示自己的聊天导航。该标识只影响布局与主题。
 
@@ -103,4 +103,8 @@ PR #357 展示了两种应区别处理的变化：
 
 企业身份拥有一个远程 Chat 文档；Work/设置切换只改变展示状态，隐藏时保留网页尺寸与背景。贡献项卸载时清理展示，身份代际变化时由主进程清理文档和凭据。首次加载的 dshTheme 查询参数仅携带 dark/light 呈现值。
 
-主进程 open(id) 先从该身份已读取的历史路由映射得到路径，再发送可取消的 dsh:navigate 事件；网页 Root 校验 c、linsight、chat 三种明确路由结构后确认并调用 React Router。宿主以 defaultPrevented 作为页面内导航确认，旧网页沿用完整加载。异步返回检查身份 epoch 和视图所有权。网页无 preload；事件携带路由，不携带身份凭据或本地执行能力。
+主进程 open(id) 先从该身份已读取的历史路由映射得到路径，再发送可取消的 dsh:navigate 事件；网页 Root 校验 c、linsight、chat 三种明确路由结构后确认并调用 React Router。宿主以 defaultPrevented 作为页面内导航确认，旧网页沿用完整加载。异步返回检查身份 epoch 和视图所有权。路由事件携带页面路径。网页专用 preload 仅上报欢迎页状态，企业凭据和本地执行 API 由宿主独立持有。
+
+### 首次发送的即时模式收起（2026-10-16）
+
+Work 从 sessions.binding(id).session 订阅当前主视图的 pendingSubmissions、blank、running、awaitingFirstTurn，发送回显到达后立即收起模式选择；会话切换和卸载释放旧订阅。ChatView 使用自己的乐观消息状态在 layout effect 上报欢迎页状态，KeepAlive 页面只在路由匹配时上报。主进程经受限 preload 接收布尔值，向可信宿主推送快照，旧轮询响应按 revision 丢弃。轮询继续刷新历史及连接兜底，首次发送的模式收起由实时状态驱动。新会话恢复选择；发送拒绝后的可见状态与实际消息列表一致。

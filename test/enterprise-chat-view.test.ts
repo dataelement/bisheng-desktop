@@ -21,7 +21,7 @@ vi.mock('electron', async () => {
       setBackgroundColor = vi.fn()
       constructor(public options: any) {
         let url = ''
-        this.webContents = Object.assign(new EventEmitter(), { session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), getURL: () => url, close: vi.fn(), executeJavaScript: vi.fn(async () => {}), loadURL: vi.fn(async (next) => { url = next; this.webContents.emit('did-finish-load') }) })
+        this.webContents = Object.assign(new EventEmitter(), { session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), mainFrame: {}, getURL: () => url, close: vi.fn(), executeJavaScript: vi.fn(async () => {}), loadURL: vi.fn(async (next) => { url = next; this.webContents.emit('did-finish-load') }) })
         fake.views.push(this)
       }
     }
@@ -35,7 +35,7 @@ function fixture() {
   let state = { connected: true, connectionKey: 'tenant-a' }
   let change: (state: any) => void = () => {}
   const enterprise = { snapshot: () => state, subscribe: (listener: typeof change) => { change = listener; return vi.fn() }, webSession: vi.fn(async () => ({ base: 'https://enterprise.example', cookie: 'test-cookie', connectionKey: 'tenant-a', expiresAt: Date.now() + 300_000 })) }
-  const owner: any = Object.assign(new EventEmitter(), { isDestroyed: () => false, getContentSize: () => [1100, 800], contentView: { addChildView: vi.fn(), removeChildView: vi.fn() }, webContents: Object.assign(new EventEmitter(), { getZoomFactor: () => 1 }) })
+  const owner: any = Object.assign(new EventEmitter(), { isDestroyed: () => false, getContentSize: () => [1100, 800], contentView: { addChildView: vi.fn(), removeChildView: vi.fn() }, webContents: Object.assign(new EventEmitter(), { send: vi.fn(), getZoomFactor: () => 1 }) })
   const host = new EnterpriseChatView(enterprise as any, vi.fn())
   return { host, owner, enterprise, change: (next: typeof state) => { state = next; change(next) } }
 }
@@ -48,7 +48,7 @@ describe('enterprise Chat host boundary', () => {
       await flush()
       expect(f.host.snapshot().phase).toBe('ready')
       expect(fake.views[0].options.webPreferences).toMatchObject({ sandbox: true, nodeIntegration: false, contextIsolation: true, webSecurity: true })
-      expect(fake.views[0].options.webPreferences.preload).toBeUndefined()
+      expect(fake.views[0].options.webPreferences.preload).toMatch(/enterprise-chat\.cjs$/u)
       expect(fake.sessions[0].cookies.set).toHaveBeenCalledWith(expect.objectContaining({ httpOnly: true, sameSite: 'lax', secure: true, name: 'access_token_cookie' }))
       expect(fake.views[0].webContents.loadURL).toHaveBeenCalledWith('https://enterprise.example/workspace/?embed=dsh&dshTheme=dark')
       f.host.present(f.owner, { ...presentation, visible: false })
@@ -159,5 +159,28 @@ it('fills the conversation area when the new-conversation picker closes', async 
     expect(view.setBounds).toHaveBeenLastCalledWith({ x: 280, y: 0, width: 820, height: 800 })
     expect(view.webContents.loadURL).toHaveBeenCalledTimes(1)
     expect(fake.views).toHaveLength(1)
+  } finally { f.host.dispose() }
+})
+
+it('pushes landing state from the current remote main frame and rejects stale or foreign presentation reports', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    const wc = fake.views[0].webContents
+    await wc.loadURL('https://enterprise.example/workspace/c/new')
+    const report = (frame: unknown, input: unknown) => wc.emit('ipc-message', { senderFrame: frame }, 'enterprise-chat:landing', input)
+    report(wc.mainFrame, { landing: false, path: '/workspace/c/new' })
+    expect(f.host.snapshot()).toMatchObject({ landing: false, conversationId: 'new' })
+    expect(f.owner.webContents.send).toHaveBeenLastCalledWith('enterprise-chat:changed', expect.objectContaining({ landing: false }))
+    report({}, { landing: true, path: '/workspace/c/new' })
+    report(wc.mainFrame, { landing: true, path: '/workspace/c/old' })
+    report(wc.mainFrame, { landing: 'true', path: '/workspace/c/new' })
+    expect(f.host.snapshot().landing).toBe(false)
+    report(wc.mainFrame, { landing: true, path: '/workspace/c/new' })
+    expect(f.host.snapshot().landing).toBe(true)
+    f.change({ connected: false, connectionKey: 'tenant-a' })
+    report(wc.mainFrame, { landing: false, path: '/workspace/c/new' })
+    expect(f.host.snapshot().landing).toBeUndefined()
   } finally { f.host.dispose() }
 })

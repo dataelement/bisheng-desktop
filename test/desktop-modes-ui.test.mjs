@@ -17,7 +17,9 @@ afterEach(async () => {
 })
 async function mount(connected = false, collection = {}) {
   let snapshot = { connected, phase: 'ready', epoch: 1, conversationId: 'new' }
+  let chatListener
   window.dshEnterpriseChat = {
+    subscribe: fn => { chatListener = fn; return () => { chatListener = undefined } },
     state: vi.fn(async () => ({ ...snapshot })),
     present: vi.fn(async () => ({ ...snapshot })),
     retry: vi.fn(async () => {}),
@@ -27,6 +29,9 @@ async function mount(connected = false, collection = {}) {
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
   let plugin, navigate
   let sessionList = { phase: 'ready', byId: { draft: { id: 'draft', blank: true, retainedBy: { mainView: 1 } } } }
+  let liveState = { blank: true, pendingSubmissions: [], running: false, awaitingFirstTurn: false }
+  const liveListeners = new Set()
+  const liveSession = { getSnapshot: () => liveState, subscribe: fn => { liveListeners.add(fn); return () => liveListeners.delete(fn) } }
   let panelState = { activePanelId: null }
   const sessionListeners = new Set(), panelListeners = new Set()
   const setSessions = value => { sessionList = value; sessionListeners.forEach(fn => fn()) }
@@ -42,7 +47,7 @@ async function mount(connected = false, collection = {}) {
   new Function(await readFile('packages/dsh-desktop-client-ui/client.js', 'utf8'))()
   plugin.apply({
     uiWorkspace: { registerNavigationHandler: (fn) => { navigate = fn; return () => {} }, startSession: () => { navigate('new'); setSessions({ phase: 'ready', byId: { draft: { id: 'draft', blank: true, retainedBy: { mainView: 1 } } } }); setPanel(null) } },
-    sessions: { list: { getSnapshot: () => sessionList, subscribe: fn => { sessionListeners.add(fn); return () => sessionListeners.delete(fn) } } },
+    sessions: { binding: id => id === 'draft' ? { session: liveSession } : undefined, list: { getSnapshot: () => sessionList, subscribe: fn => { sessionListeners.add(fn); return () => sessionListeners.delete(fn) } } },
     layout: { panelInfo: { getSnapshot: () => panelState, subscribe: fn => { panelListeners.add(fn); return () => panelListeners.delete(fn) } } },
     remote: {}, locale: { register() {}, bind: () => key => key },
     effect(fn) { const dispose = fn(); if (typeof dispose === 'function') disposers.push(dispose) },
@@ -71,6 +76,9 @@ async function mount(connected = false, collection = {}) {
     async panel(id) { await act(async () => setPanel(id)) },
     async workSession(blank) { await act(async () => setSessions({ phase: 'ready', byId: { current: { id: 'current', blank, retainedBy: { mainView: 1 } } } })) },
     async cloudSession(id) { snapshot = { ...snapshot, conversationId: id }; await act(async () => window.dispatchEvent(new Event('focus'))) },
+    async workLive(patch) { await act(async () => { liveState = { ...liveState, ...patch }; liveListeners.forEach(fn => fn()) }) },
+    liveListenerCount: () => liveListeners.size,
+    async cloudLanding(landing) { snapshot = { ...snapshot, landing }; await act(async () => chatListener(snapshot)) },
     draft: () => container.querySelector('textarea')
   }
 }
@@ -210,5 +218,27 @@ it('chooses a new Work session when the previously selected local session is act
   await ui.workSession(false)
   await ui.click('work')
   expect(ui.selected()).toBe('work')
+  expect(ui.picker()).not.toBeNull()
+})
+
+it('hides Work mode selection on the local submission echo before catalog admission and restores after rejected send', async () => {
+  const ui = await mount()
+  expect(ui.picker()).not.toBeNull()
+  await ui.workLive({ pendingSubmissions: [{ requestId: 'pending' }] })
+  expect(ui.picker()).toBeNull()
+  await ui.workLive({ pendingSubmissions: [], blank: false, awaitingFirstTurn: true })
+  expect(ui.picker()).toBeNull()
+  await ui.workLive({ blank: true, awaitingFirstTurn: false })
+  expect(ui.picker()).not.toBeNull()
+  await ui.workSession(false)
+  expect(ui.liveListenerCount()).toBe(0)
+})
+
+it('hides Chat mode selection on pushed local state while the URL is still new', async () => {
+  const ui = await mount(true)
+  expect(ui.picker()).not.toBeNull()
+  await ui.cloudLanding(false)
+  expect(ui.picker()).toBeNull()
+  await ui.cloudLanding(true)
   expect(ui.picker()).not.toBeNull()
 })
