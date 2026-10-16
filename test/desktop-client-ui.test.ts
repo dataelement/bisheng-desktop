@@ -97,7 +97,6 @@ describe('BISHENG client slot occupants', () => {
     expect(registrations.map(({ config }) => config.name)).toEqual([
       'desktop.mode.content',
       'sidebar.workspaces.collection',
-      'sidebar.session.row.leading',
       'sidebar.brand.mark',
       'sidebar.brand.name',
       'conversation.hero.brand.mark',

@@ -343,12 +343,6 @@ window.__ModuleLoader__.load({
         }
       }
     }
-    function HistoryKindIcon({ kind, label }) {
-      return React.createElement('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, role: 'img', 'aria-label': label, className: 'dshHistoryKind' },
-        kind === 'chat'
-          ? React.createElement('path', { d: 'M20 11.5a8.5 8.5 0 0 1-8.5 8.5H4l1.5-4A8.5 8.5 0 1 1 20 11.5Z' })
-          : React.createElement('path', { d: 'M5 4h14v12H5zM2 20h20M9 16l-1 4m7-4 1 4' }))
-    }
     /** Cloud identities stay namespaced; project ownership is projected by Harness. */
     function SharedCollection({ projects, items, mode, query, archivedOnly, navigation, t }) {
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
@@ -361,12 +355,10 @@ window.__ModuleLoader__.load({
         projects(state.mode === 'work'),
         React.createElement('section', { className: 'dshRecentHistory', 'aria-label': t(mode === 'projects' ? 'recent' : mode === 'search' ? 'results' : 'all') },
           React.createElement('div', { className: 'dshHistoryHeading' },
-            React.createElement('span', null, t(mode === 'projects' ? 'recent' : mode === 'search' ? 'results' : 'all')),
-            state.connected && React.createElement('button', { type: 'button', title: t('refresh'), 'aria-label': t('refresh'), disabled: state.historyPhase === 'loading', onClick: () => navigation.refreshHistory() }, '↻')),
+            React.createElement('span', null, t(mode === 'projects' ? 'recent' : mode === 'search' ? 'results' : 'all'))),
           ...rows.map(item => item.kind === 'work'
             ? React.createElement('div', { key: item.key, 'data-history-kind': 'work' }, item.render(state.mode === 'work'))
             : React.createElement('button', { type: 'button', key: item.key, 'data-history-kind': 'chat', className: 'dshHistoryRow', 'aria-current': state.mode === 'chat' && state.conversationId === item.id ? 'page' : undefined, title: item.title, onClick: () => navigation.open(item.id) },
-                React.createElement(HistoryKindIcon, { kind: 'chat', label: t('cloud') }),
                 React.createElement('span', null, item.title || t('newChat')),
                 React.createElement('time', { dateTime: new Date(item.updatedAt).toISOString() }, historyTime(item.updatedAt, t)))),
           state.historyPhase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => navigation.refreshHistory() }, t('historyError')),
@@ -445,9 +437,7 @@ window.__ModuleLoader__.load({
           .dshWorkContent{display:grid;grid-template-rows:minmax(0,1fr);contain:layout paint}.dshWorkContent[hidden]{display:none}
           .dshSharedCollection{min-width:0}
           .dshRecentHistory{margin-top:12px;min-width:0}
-          .dshHistoryKind{flex:none;color:var(--dsw-alias-label-tertiary)}
           .dshHistoryHeading{display:flex;align-items:center;justify-content:space-between;padding:4px 8px 12px;color:var(--dsw-alias-label-secondary);font-size:13px}
-          .dshHistoryHeading button{border:0;background:transparent;color:inherit;cursor:pointer;font-size:18px;border-radius:6px}
           .dshHistoryRow{box-sizing:border-box;display:flex;align-items:center;gap:6px;width:100%;height:32px;margin-bottom:2px;padding:0 8px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;text-align:left;cursor:pointer}
           .dshHistoryRow:hover,.dshHistoryRow[aria-current=page]{background:var(--dsw-alias-interactive-bg-hover)}
           .dshHistoryRow span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dshHistoryRow time{color:var(--dsw-alias-label-tertiary);font-size:11px;white-space:nowrap}
@@ -461,7 +451,6 @@ window.__ModuleLoader__.load({
       })
       ctx.slots.inject('desktop.mode.content', () => ctx.slots.register({ name: 'desktop.mode.content', id: 'desktop-chat-work', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS) }) }, DesktopModes))
       ctx.slots.inject('sidebar.workspaces.collection', () => ctx.slots.register({ name: 'sidebar.workspaces.collection', id: 'desktop-shared-collection', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS) }) }, SharedCollection))
-      ctx.slots.inject('sidebar.session.row.leading', () => ctx.slots.register({ name: 'sidebar.session.row.leading', id: 'desktop-local-kind', order: 100, inject: () => ({ label: ctx.locale.bind(MODES_NS)('local'), kind: 'work' }) }, HistoryKindIcon))
     }
 
     const inject = ['slots', 'locale', 'remote', 'remote.session', 'sessions', 'uiWorkspace', 'layout']
