@@ -245,7 +245,7 @@ window.__ModuleLoader__.load({
     }
     /** One renderer-owned mode/history controller shared by the content and sidebar slots. */
     function createChatNavigation(ctx) {
-      let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false }
+      let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, workLanding: false, panelOpen: false }
       const listeners = new Set()
       let active = false, revision = 0, historyRequest = 0, timer, lastHistory = 0
       const publish = (patch) => { value = { ...value, ...patch }; listeners.forEach(fn => fn()) }
@@ -302,6 +302,12 @@ window.__ModuleLoader__.load({
         snapshot: () => value,
         subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn) },
         select, open, refreshHistory,
+        choose(mode) {
+          if (!select(mode)) return false
+          if (mode === 'chat' && value.conversationId !== 'new') void open('new')
+          if (mode === 'work' && (!value.workLanding || value.panelOpen)) ctx.uiWorkspace.startSession()
+          return true
+        },
         start() {
           active = true
           const poll = async () => { if (!document.hidden) await sync(); if (active) timer = setTimeout(poll, 1500) }
@@ -311,14 +317,24 @@ window.__ModuleLoader__.load({
             select('work')
           })
           const settings = (event) => publish({ settingsOpen: event.detail?.open === true })
-          const panel = () => { if (ctx.layout.panelInfo.getSnapshot().activePanelId !== null) select('work') }
+          const workState = () => {
+            const list = ctx.sessions.list.getSnapshot()
+            const current = Object.values(list.byId).find(row => (row.retainedBy.mainView ?? 0) > 0)
+            publish({ workLanding: current ? current.blank === true : list.phase === 'ready' })
+          }
+          const panel = () => {
+            const panelOpen = ctx.layout.panelInfo.getSnapshot().activePanelId !== null
+            publish({ panelOpen, ...(panelOpen ? { mode: 'work' } : {}) })
+          }
           const unsubscribe = ctx.layout.panelInfo.subscribe(panel)
+          const unsubscribeSessions = ctx.sessions.list.subscribe(workState)
+          workState(); panel()
           window.addEventListener('dsh-desktop:enterprise-account-changed', account)
           window.addEventListener('dsh-desktop:settings-visibility', settings)
           window.addEventListener('focus', sync)
           void poll()
           return () => {
-            active = false; revision++; historyRequest++; clearTimeout(timer); unsubscribe()
+            active = false; revision++; historyRequest++; clearTimeout(timer); unsubscribe(); unsubscribeSessions()
             window.removeEventListener('dsh-desktop:enterprise-account-changed', account)
             disposeNavigation()
             window.removeEventListener('dsh-desktop:settings-visibility', settings)
@@ -393,7 +409,10 @@ window.__ModuleLoader__.load({
       React.useEffect(() => () => {
         void window.dshEnterpriseChat?.present({ visible: false, bounds: { x: 0, y: 48, width: 0, height: 0 }, theme: 'light' }).catch(() => {})
       }, [])
-      const select = navigation.select
+      const showModePicker = !settingsOpen && (mode === 'chat'
+        ? state.conversationId === 'new'
+        : state.workLanding && !state.panelOpen)
+      const select = navigation.choose
       const keyDown = (event) => {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
         event.preventDefault()
@@ -401,11 +420,11 @@ window.__ModuleLoader__.load({
         if (select(next)) tabs.current[next]?.focus()
       }
       return React.createElement('div', { className: 'dshModes' },
-        React.createElement('header', { className: 'dshModesHeader' },
+        showModePicker && React.createElement('header', { className: 'dshModesHeader' },
           React.createElement('div', { role: 'tablist', 'aria-label': t('label'), className: 'dshModesTabs', onKeyDown: keyDown },
             ...['chat', 'work'].map((key) => React.createElement('button', { key, id: `dsh-mode-${key}`, type: 'button', role: 'tab', 'aria-selected': mode === key, 'aria-controls': `dsh-panel-${key}`, tabIndex: mode === key ? 0 : -1, ref: (node) => { tabs.current[key] = node }, onClick: () => select(key) }, t(key))))),
-        React.createElement('section', { id: 'dsh-panel-work', role: 'tabpanel', 'aria-labelledby': 'dsh-mode-work', hidden: mode !== 'work', className: 'dshModeBody dshWorkContent', style: { gridTemplateColumns: columns } }, work, resizeHandle),
-        React.createElement('section', { ref: panel, id: 'dsh-panel-chat', role: 'tabpanel', 'aria-labelledby': 'dsh-mode-chat', hidden: mode !== 'chat', className: 'dshModeBody' },
+        React.createElement('section', { id: 'dsh-panel-work', role: 'tabpanel', 'aria-label': t('work'), hidden: mode !== 'work', className: 'dshModeBody dshWorkContent', style: { gridTemplateColumns: columns } }, work, resizeHandle),
+        React.createElement('section', { ref: panel, id: 'dsh-panel-chat', role: 'tabpanel', 'aria-label': t('chat'), hidden: mode !== 'chat', className: 'dshModeBody' },
           React.createElement('div', { className: 'dshChatStatus', role: 'status' },
             React.createElement('p', null, state.phase === 'error' ? t('error') : state.phase === 'ready' ? '' : t('loading')),
             state.connected && state.phase === 'error' && React.createElement('button', { type: 'button', onClick: () => { void window.dshEnterpriseChat.retry().catch(() => {}) } }, t('retry')))))

@@ -148,3 +148,16 @@ it('discards a navigation completion after the enterprise identity changes', asy
     expect(f.host.snapshot().connected).toBe(false)
   } finally { f.host.dispose() }
 })
+
+it('fills the conversation area when the new-conversation picker closes', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0]
+    f.host.present(f.owner, { ...presentation, bounds: { x: 280, y: 0, width: 820, height: 800 } })
+    expect(view.setBounds).toHaveBeenLastCalledWith({ x: 280, y: 0, width: 820, height: 800 })
+    expect(view.webContents.loadURL).toHaveBeenCalledTimes(1)
+    expect(fake.views).toHaveLength(1)
+  } finally { f.host.dispose() }
+})

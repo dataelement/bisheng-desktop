@@ -100,7 +100,7 @@ export class EnterpriseChatView {
     const zoom = this.owner.webContents.getZoomFactor()
     const [width = 0, height = 0] = this.owner.getContentSize()
     const x = Math.max(0, Math.round(bounds.x * zoom))
-    const y = Math.max(48, Math.round(bounds.y * zoom))
+    const y = Math.max(0, Math.round(bounds.y * zoom))
     this.view.setBounds({ x, y, width: Math.max(0, Math.min(width - x, Math.round(bounds.width * zoom))), height: Math.max(0, Math.min(height - y, Math.round(bounds.height * zoom))) })
     this.view.setBackgroundColor(theme === 'dark' ? '#141416' : '#ffffff')
     if (this.state.phase === 'ready') {

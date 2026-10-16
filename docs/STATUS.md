@@ -1,3 +1,11 @@
+## 2026-10-16 — 新建会话页专属模式选择
+
+- 基线：bisheng-work/V1.2.0@322843d87155235c4113b1e5ec8a4b18d2255997，工作树 .worktrees/bisheng-work-chat-work，Harness 0.2.0-rc.2；本轮 GitHub API 实时复核一致。
+- 产品行为：聊天／工作选择器仅在新建 Chat 与空白 Work 显示。已有云端聊天、本地任务、插件及其他全局面板收起整条选择栏。侧栏按记录来源导航；新建页选择另一模式时进入其空白会话。聊天容器跟随内容区实际高度，收起选择栏后填满顶部空间。
+- 实现采用 Harness 的 sessions.list/mainView/blank 与 layout.panelInfo 公共状态；移除对固定顶部高度的依赖，补充模式可见性和容器布局回归。
+- 自动验证：完整 219 文件 / 1869 项通过，1 项跳过；类型检查、桌面构建及 diff-check 通过。初次受限运行的本地端口测试受沙箱限制，已在允许本地测试服务器的环境完整重跑通过。
+- 原生验证：同一企业测试窗口登录恢复；新建 Chat、新建 Work 显示选择器；已有 Chat、已有 Work、插件页收起选择器。已有消息正常呈现，云端容器顶部空隙已收起。截图位于主工作区 outputs/bisheng-mode-picker-20261016/。本轮覆盖桌面模式入口，正式安装包与 Windows 继续独立验收。
+
 ## 2026-10-16 — 企业分支研发交接
 
 - 用户授权将桌面 Chat/Work 功能直接提交到 bisheng-work/V1.2.0，供同事继续开发。GitHub API 实时读取目标基线 dde330fb7f2ab61ef5baab214a959f3fb437c66e，与本地 HEAD 一致；Harness 0.2.0-rc.2。

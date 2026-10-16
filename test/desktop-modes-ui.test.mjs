@@ -16,7 +16,7 @@ afterEach(async () => {
   vi.unstubAllGlobals()
 })
 async function mount(connected = false, collection = {}) {
-  let snapshot = { connected, phase: 'ready', epoch: 1 }
+  let snapshot = { connected, phase: 'ready', epoch: 1, conversationId: 'new' }
   window.dshEnterpriseChat = {
     state: vi.fn(async () => ({ ...snapshot })),
     present: vi.fn(async () => ({ ...snapshot })),
@@ -26,6 +26,11 @@ async function mount(connected = false, collection = {}) {
   }
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
   let plugin, navigate
+  let sessionList = { phase: 'ready', byId: { draft: { id: 'draft', blank: true, retainedBy: { mainView: 1 } } } }
+  let panelState = { activePanelId: null }
+  const sessionListeners = new Set(), panelListeners = new Set()
+  const setSessions = value => { sessionList = value; sessionListeners.forEach(fn => fn()) }
+  const setPanel = id => { panelState = { activePanelId: id }; panelListeners.forEach(fn => fn()) }
   const registrations = new Map()
   window.__ModuleLoader__ = { load({ factory }) {
     plugin = factory(name => {
@@ -36,8 +41,9 @@ async function mount(connected = false, collection = {}) {
   } }
   new Function(await readFile('packages/dsh-desktop-client-ui/client.js', 'utf8'))()
   plugin.apply({
-    uiWorkspace: { registerNavigationHandler: (fn) => { navigate = fn; return () => {} } },
-    layout: { panelInfo: { getSnapshot: () => ({ activePanelId: null }), subscribe: () => () => {} } },
+    uiWorkspace: { registerNavigationHandler: (fn) => { navigate = fn; return () => {} }, startSession: () => { navigate('new'); setSessions({ phase: 'ready', byId: { draft: { id: 'draft', blank: true, retainedBy: { mainView: 1 } } } }); setPanel(null) } },
+    sessions: { list: { getSnapshot: () => sessionList, subscribe: fn => { sessionListeners.add(fn); return () => sessionListeners.delete(fn) } } },
+    layout: { panelInfo: { getSnapshot: () => panelState, subscribe: fn => { panelListeners.add(fn); return () => panelListeners.delete(fn) } } },
     remote: {}, locale: { register() {}, bind: () => key => key },
     effect(fn) { const dispose = fn(); if (typeof dispose === 'function') disposers.push(dispose) },
     slots: {
@@ -57,10 +63,14 @@ async function mount(connected = false, collection = {}) {
     navigate: (...args) => navigate(...args),
     async click(mode) { await act(async () => container.querySelector(`#dsh-mode-${mode}`).click()) },
     async account(next) {
-      snapshot = { connected: next, phase: 'ready', epoch: 1 }
+      snapshot = { connected: next, phase: 'ready', epoch: 1, conversationId: 'new' }
       await act(async () => window.dispatchEvent(new CustomEvent('dsh-desktop:enterprise-account-changed')))
     },
-    selected: () => container.querySelector('[role=tab][aria-selected=true]').textContent,
+    selected: () => container.querySelector('#dsh-panel-chat').hidden ? 'work' : 'chat',
+    picker: () => container.querySelector('[role=tablist]'),
+    async panel(id) { await act(async () => setPanel(id)) },
+    async workSession(blank) { await act(async () => setSessions({ phase: 'ready', byId: { current: { id: 'current', blank, retainedBy: { mainView: 1 } } } })) },
+    async cloudSession(id) { snapshot = { ...snapshot, conversationId: id }; await act(async () => window.dispatchEvent(new Event('focus'))) },
     draft: () => container.querySelector('textarea')
   }
 }
@@ -167,4 +177,38 @@ it('switches modes without a transient light zero-sized presentation', async () 
   expect(window.dshEnterpriseChat.present).toHaveBeenCalledTimes(1)
   expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
   expect(window.dshEnterpriseChat.open).not.toHaveBeenCalled()
+})
+
+
+it('shows the picker only on the Work landing page and releases the header space on panels and active sessions', async () => {
+  const ui = await mount()
+  expect(ui.picker()).not.toBeNull()
+  await ui.panel('plugins')
+  expect(ui.picker()).toBeNull()
+  expect(container.querySelector('.dshModesHeader')).toBeNull()
+  await ui.panel(null)
+  expect(ui.picker()).not.toBeNull()
+  await ui.workSession(false)
+  expect(ui.picker()).toBeNull()
+  await ui.workSession(true)
+  expect(ui.picker()).not.toBeNull()
+})
+
+it('hides the picker after cloud submission or history navigation and restores it for New Session', async () => {
+  const ui = await mount(true)
+  expect(ui.picker()).not.toBeNull()
+  await ui.cloudSession('cloud-created')
+  expect(ui.picker()).toBeNull()
+  await act(async () => ui.navigate('new'))
+  expect(ui.picker()).not.toBeNull()
+  await act(async () => container.querySelector('.dshHistoryRow').click())
+  expect(ui.picker()).toBeNull()
+})
+
+it('chooses a new Work session when the previously selected local session is active', async () => {
+  const ui = await mount(true)
+  await ui.workSession(false)
+  await ui.click('work')
+  expect(ui.selected()).toBe('work')
+  expect(ui.picker()).not.toBeNull()
 })
