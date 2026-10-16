@@ -45,6 +45,7 @@ function fixture() {
   const workspaceState = { phase: 'ready', items: [{ workspaceId: 'project', path: '/project', createdAt: '2026-01-01T00:00:00Z', sessionIds: [] }], archivedSessionIds: [] }
   const listeners = new Set()
   const subscribe = listener => { listeners.add(listener); return () => listeners.delete(listener) }
+  service.navigationHandlers = new Set()
   service.sessionStarter = null
   service.sessionOpener = null
   service.sessionReuseFilter = null
@@ -611,4 +612,15 @@ describe('native Workspace navigation with workbench routing', () => {
     expect(uiWorkspace.selection.getSnapshot()).toEqual({})
     expect(uiWorkspace.ctx.layout.selectPanel).toHaveBeenLastCalledWith('desktop-workbenches')
   })
+})
+
+it('lets the shared shell handle New Chat while preserving the workbench starter and local record opening', () => {
+  const { service: uiWorkspace } = fixture()
+  const cloud = vi.fn((intent, workspaceId) => intent === 'new' && workspaceId === undefined)
+  const stop = uiWorkspace.registerNavigationHandler(cloud)
+  uiWorkspace.startSession()
+  expect(cloud).toHaveBeenCalledWith('new', undefined)
+  expect(uiWorkspace.sessions.create).not.toHaveBeenCalled()
+  stop()
+  expect(uiWorkspace.navigationHandlers.size).toBe(0)
 })

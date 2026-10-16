@@ -1,3 +1,4 @@
+import { EnterpriseChatView } from './enterprise/chat-view'
 import { initializeDesktopService, desktopDiagnostics } from './desktop-service'
 import { applyMacosWindowBackdrop } from './macos-window-backdrop'
 import { checkBlockingPluginUpdates, communityUpgradeBlocked, enterpriseRecoveryChecks, selectPluginRecoveryTarget, PluginRecoveryEvidence, planPluginRecovery, runPluginRecoveryPlan, type PluginRecoveryCheck } from './plugin-recovery-market'
@@ -229,6 +230,7 @@ let mobileWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let runtime: HarnessRuntime
 let enterpriseDesktop: EnterpriseDesktopRuntime | undefined
+let enterpriseChat: EnterpriseChatView | undefined
 let localWorkbenchCapability: string | undefined
 
 async function liveThirdPartyPluginsAllowed(): Promise<boolean> {
@@ -551,7 +553,7 @@ function applyWindowChromeTheme(window: BrowserWindow, isDark: boolean): void {
 function configureAppIdentity(): void {
   if (developmentBuild) {
     app.setName('BISHENG Dev')
-    app.setPath('userData', join(app.getPath('appData'), 'bisheng-dev'))
+    app.setPath('userData', process.env.BISHENG_DEV_USER_DATA || join(app.getPath('appData'), 'bisheng-dev'))
     return
   }
 
@@ -1672,6 +1674,27 @@ function registerHarnessHandlers(): void {
     }
   })
 
+  for (const channel of ['enterprise-chat:present', 'enterprise-chat:state', 'enterprise-chat:retry', 'enterprise-chat:history', 'enterprise-chat:open']) ipcMain.removeHandler(channel)
+  ipcMain.handle('enterprise-chat:present', (event, presentation: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    return enterpriseChat?.present(mainWindow!, presentation) ?? { phase: 'idle', connected: false }
+  })
+  ipcMain.handle('enterprise-chat:state', (event) => {
+    assertTrustedMainWindowEvent(event)
+    return enterpriseChat?.snapshot() ?? { phase: 'idle', connected: false }
+  })
+  ipcMain.handle('enterprise-chat:retry', (event) => {
+    assertTrustedMainWindowEvent(event)
+    enterpriseChat?.retry()
+  })
+  ipcMain.handle('enterprise-chat:history', (event, page: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    return enterpriseChat?.history(page)
+  })
+  ipcMain.handle('enterprise-chat:open', (event, id: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    return enterpriseChat?.open(id)
+  })
   ipcMain.removeHandler('harness:restart')
   ipcMain.handle('harness:restart', async (event) => {
     if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
@@ -3334,6 +3357,8 @@ async function bootstrap(): Promise<void> {
     runtime.note('[enterprise] start_failed')
     enterpriseDesktop = undefined
   }
+  if (enterpriseDesktop) enterpriseChat = new EnterpriseChatView(enterpriseDesktop, (line) => runtime.note(line))
+  app.once('before-quit', () => enterpriseChat?.dispose())
   registerHarnessHandlers()
   mobileBridge = new LanMobileBridge({
     harnessUrl: () => runtime.snapshot().url,

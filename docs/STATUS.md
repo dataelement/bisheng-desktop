@@ -1,3 +1,86 @@
+## 2026-10-16 — 企业分支研发交接
+
+- 用户授权将桌面 Chat/Work 功能直接提交到 bisheng-work/V1.2.0，供同事继续开发。GitHub API 实时读取目标基线 dde330fb7f2ab61ef5baab214a959f3fb437c66e，与本地 HEAD 一致；Harness 0.2.0-rc.2。
+- 交付范围：企业登录复用、隔离 Chat 容器、共享侧栏与项目/最近、模式和会话切换、页面保留、配套回归及开发交接文档。毕昇网页和后端由独立仓库维护，联调 3006 已具备所需接口。
+- 当前代码已完成本日干净安装重放、类型检查、构建和完整 219 文件/1865 项通过（1 项跳过）；本次整理交接文档并检查提交差异。远端分支更新结果以本次交付回执为准。
+
+## 2026-10-16 — 完整网页与桌面聊天嵌入分离
+
+- 产品边界：3006 完整毕昇网页保留平台导航和基础功能，Chat 页面沿用 DSH 风格。桌面仅嵌入聊天内容、输入框和文件预览；导航/历史由桌面提供，Work 继续由本地 Harness 负责。
+- 修复 MainLayout 以聊天路由隐藏平台导航的范围错误。平台导航及移动端系统菜单现在以桌面嵌入标识控制；普通网页的知识空间、订阅、应用、权限内管理入口恢复。移动端菜单回到平台功能菜单，聊天记录沿用对话列表入口。
+- 自动验证：变更文件 ESLint、生产构建、3 文件/4 项嵌入与导航测试通过；完整 Web 类型检查沿用已有存量诊断记录，本轮未重新执行。
+- 发布 chat-platform-nav-20261016-r1，以当前 model-config-parameters-20261016 为基础；先核对其 Chat 构建与 r5 一致，保留同期模型配置更新。420 文件哈希、前后端健康 200、其他容器身份保持；数据库迁移 none。
+- 网页实测：完整页平台菜单可见，知识空间及应用可进入；640px 窄窗口菜单能展开平台入口。桌面嵌入页继续只呈现聊天内容。当前验证涵盖入口与页面加载，其他基础功能的业务操作沿用既有实现与验收范围。
+- 证据：outputs/bisheng-chat-platform-nav-20261016；用户正在使用的桌面窗口保持当前操作。本轮更新网页显示范围，桌面程序保持上一轮构建。
+
+## 2026-10-16 — Chat 会话布局与页面保留
+
+- 基线实时核验：bisheng-work/V1.2.0@dde330fb7f2ab61ef5baab214a959f3fb437c66e，工作树 .worktrees/bisheng-work-chat-work，分支 codex/chat-work-integration；Harness 0.2.0-rc.2。
+- 主进程保留隐藏 Chat 页面的文档、尺寸与背景；模式切换只更新可见性。打开云端记录使用获授权路径映射与页面内路由，旧版网页继续走兼容加载；身份变化时丢弃旧导航完成结果。首屏 HTML 和原生视图直接采用宿主主题背景。
+- Chat 正文列补齐内边距占用的 32px，标题行、气泡、输入文字及工具栏按 Work 尺度对齐。隐藏上传控件的空容器原先产生额外 12px flex 间距，现按控件可见状态正确隐藏；工具栏使用 42px 高度。Chat 保留知识空间、工具、深度研究功能，Work 保留轨迹页签。
+- 自动验证：桌面定向 16 项、完整 219 文件/1865 项通过，1 项跳过；类型检查及构建通过。完整回归首次遇 Node socket setTypeOfService EINVAL，重跑干净通过。网页定向 4 项、变更文件 lint、生产构建及两仓 diff-check 通过；完整 Web 类型检查仍有存量诊断。
+- 实际验收：原生客户端打开云端记录使用同一页面，Work→Chat 返回保留未发送验收草稿。最终 r5 网页实测正文内宽 920px、输入框高 98px、输入文字距卡片顶部 12px、工具栏高 42px；Markdown 右侧预览显示 DSH-CHAT-20261015。浅色 640px 窗口文档宽 640px，输入框宽 616px，控件完整可见。
+- 3006 发布 chat-work-beta4-20261016-r5，425 个文件哈希校验、前后端健康 200；其余容器保持，数据库迁移为 none。最终网页样式已验证；用户正在使用的原生窗口保留当前操作，最后一轮样式在 Chat 文档刷新后加载，尚未完成该窗口 r5 最终截图验收。
+- 证据：主工作区 outputs/bisheng-chat-polish-20261016/delivery.md。当前运行企业版开发窗口；安装包、Windows、跨端即时推送与全文件格式重验各自保留既有验收边界。
+
+## 2026-10-16 — 项目与最近统一分组、输入框对齐
+
+- 基线实时核验：bisheng-work/V1.2.0@dde330fb7f2ab61ef5baab214a959f3fb437c66e；工作目录 .worktrees/bisheng-work-chat-work，分支 codex/chat-work-integration，Harness 0.2.0-rc.2。
+- WorkspaceBrowser 使用同一滚动区呈现项目与最近。项目会话归属由原 Harness sessionIds 决定；未分组 Work 与云端 Chat 按置顶和更新时间混排，电脑/对话图标标识来源，点击记录切换右侧模式。原生项目菜单、归档过滤和搜索保留。
+- 当前默认工作区是实际项目，已有会话继续在其中。云端搜索匹配已加载的标题；归档专用视图呈现具有归档状态的本地记录。最近采用更新时间排序，项目原生手动排序保持。
+- Chat 首页和会话输入框采用 Work 的响应宽度、114px 首页高度及边距尺度；知识空间、工具、深度研究保留。
+- 自动验证：全新 npm ci 重放、typecheck、桌面与网页构建通过；219 个测试文件、1862 项通过、1 项跳过。真实 projection 回归覆盖未分组过滤、项目成员变化、归档过滤、模式选中状态及原生 fallback。
+- 原生窗口验证：企业身份自动恢复、项目/最近显示、两种模式切换、云端标题搜索及单列表混排通过；点击历史记录自动进入 Chat 并读到原消息，Markdown 附件右侧预览显示原验收标记。项目成员迁移由自动回归验证，当前真人数据均属于默认工作区。
+- 3006 发布 chat-work-beta4-20261016-r3；以 model-config-dialog-20261016-r2 为基础保留同期后台更新。418 个文件哈希、前后端健康 200、其余容器 ID 保持。上次发布的前端版本变化触发保护中止，校验 client 完全相同后再继续发布。
+- 证据：主工作区 outputs/bisheng-recent-sidebar-20261016。当前为企业版开发窗口；安装包与跨平台验收另行执行。本轮变更集中于会话组织与布局，文件预览能力沿用上一轮验收记录。
+
+## 2026-10-16 — 共享原生侧栏，右侧切换 Chat / Work
+
+- 延续 bisheng-work/V1.2.0@dde330fb7f2ab61ef5baab214a959f3fb437c66e，codex/chat-work-integration，Harness 0.2.0-rc.2。远端 SHA 重查遇 GitHub TLS 连接失败；本地 origin 引用与昨日已验证基线一致。
+- 实现：原生侧栏持续挂载，云端 Chat 列表与本机 Work 工作区共存；顶部切换只改变右侧。新会话按当前模式创建，点击本地记录沿原导航打开 Work。设置弹窗打开时暂停 native view 展示，关闭后恢复。
+- Chat 历史由主进程固定接口读取，分页、选中、错误重试、定时刷新；账号 generation 隔离和过期响应丢弃。消息与附件继续复用毕昇页面和权限。独立网页保留聊天导航，嵌入网页直接呈现内容。
+- 3006 前端发布 chat-work-beta4-20261016-r1，417 个构建文件哈希核验，前端与后端健康 200，后端及其余容器保持。昨日 r5 保留回退。
+- 验证完成：重放安装、类型检查、生产构建通过；218 个测试文件、1856 项通过、1 项跳过。首次认证 connected 状态以已取得访问凭据为准，受控回归覆盖 token 提交前的刷新状态。
+- 最终构建重启自动进入 Chat；云端/本地记录切换、新会话、Work 草稿保留、侧栏折叠及设置弹窗通过。网页与桌面双向续聊通过刷新/重开验证。Markdown、PDF、DOCX、XLSX 基础预览通过；PPTX 提供下载，Excel 无缓存公式仍待支持。
+- 桌面为开发窗口验收；跨账号真实切换、跨端消息即时推送、Windows 和安装包验收待专项执行。
+- 证据：主工作区 outputs/bisheng-shared-sidebar-20261016。此条替代昨日整页切换的侧栏设计。
+
+## 2026-10-15 — Chat 侧栏收敛为 DSH 风格聊天历史
+
+- Chat / 深度研究路由仅呈现聊天历史；平台导航在布局层停止挂载。历史栏沿用 DSH 的 280px 宽度、38px 居中新会话按钮、紧凑圆角行、选中底色和顶部折叠入口。窄屏菜单直接展开聊天历史。企业账号继续使用客户端既有设置入口。
+- 3006 前端发布 chat-work-beta4-20261015-r5，上一版 r4 可回退。427 个源码/构建文件哈希验证通过，前后端健康 200，其他容器 ID 保持。
+- 定向 ESLint、生产构建和 diff-check 通过；ESLint 工具清理已消除的抑制项。完整 TypeScript 检查仍有项目存量问题；本次修改的导航/布局文件没有诊断，Convo 的五项类型诊断与此前基线一致。
+- 原生企业客户端复用原账号目录启动，自动进入新版 Chat；历史会话与 Markdown 预览实测通过。网页新会话、历史切换、侧栏收起/展开及 390px 窄屏菜单通过。现有聊天数据保留。
+- 证据：主工作区 outputs/bisheng-chat-sidebar-20261015/desktop-chat-sidebar.png、deployment.json、build.log。当前代码位于 codex/dsh-chat-3006，PR 尚未创建。
+
+## 2026-10-15 — 企业账号登录后真实验收
+
+- 用户完成现有企业账号授权后，Chat 直接加载同一账号的毕昇会话；服务重启后重连复用企业身份，持续使用超过 20 分钟保持认证。
+- 桌面发送、网页续聊、桌面重新打开会话均通过。网页上传五类附件后桌面可见；桌面上传 Markdown 后网页刷新可见附件与 NATIVE-UPLOAD-OK。同步通过刷新/重开验证，即时推送待验证。
+- Markdown、PDF、DOCX、XLSX 基础内容在两端可预览。Markdown 全屏、退出全屏及模式切换后预览保留通过。PPTX 提供下载；原生下载与 fixture SHA-256 一致。
+- Work 使用企业 qwen-max 完成计数验收：运行中切换 Chat，返回显示 WORK-SWITCH-OK；Chat 会话和预览保持。默认 DeepSeek 直连模型缺少密钥，验收会话已改用企业模型。
+- 根因修复：历史知识空间 auth_type=review 与 beta4 隐式枚举不兼容，导致知识空间接口 500。显式字符串存储兼容历史值并统一写入 review，保留审批权限语义；未知值继续拒绝。2 项存储回归和 8 项会话回归通过；模型 Ruff 存量诊断数量和类型保持一致。
+- 3006 当前发布 chat-work-beta4-20261015-r4，后端/前端健康 200，数据库仍为 beta4_merge_3006_history，r3 保留回退。客户端基线 bisheng-work/V1.2.0@dde330fb7f2ab61ef5baab214a959f3fb437c66e，Harness 0.2.0-rc.2。
+- 当前能力缺口：PPT 在线预览、qwen 应用图片上传、Excel 无缓存公式计算。PDF 工具栏和网页导航等视觉细节仍待对齐。普通用户/跨租户切换、真实退出撤销、主题切换、Windows、浏览器下载待专项验收。代码在工作分支，PR 尚未创建。
+- 证据：主工作区 outputs/bisheng-chat-work-enterprise-20261015/delivery.md、desktop-authenticated-acceptance.png、work-switch-completed.png、download-verification.json。本条更新此前等待企业认证的状态。
+
+## 2026-10-15 — Unified enterprise login entry
+
+- Login uses the existing Settings → Enterprise account section. Unauthenticated startup renders the Work shell; selecting Chat opens that same settings section. A restored enterprise session or successful sign-in selects Chat. Account refresh preserves the selected mode; sign-out returns to Work. The Work component remains mounted throughout.
+- Removed the separate Chat login landing and its central account button.
+- Verification: 10 targeted tests passed across desktop mode behavior, slot registration and native Chat view lifecycle. The existing native development window was reloaded: startup showed Work, and selecting Chat opened Enterprise account settings. Screenshot: root `outputs/bisheng-chat-work-enterprise-20261015/unified-enterprise-entry.png`.
+- Baseline remains V1.2.0 at `dde330fb7f2ab61ef5baab214a959f3fb437c66e`, Harness `0.2.0-rc.2`. Remote SHA refresh hit a GitHub TLS connection failure; the previously verified baseline and local origin reference match.
+- Authenticated conversation sync and file preview acceptance remain pending enterprise authentication.
+
+## 2026-10-15 — Enterprise Chat / Work integration
+
+- Baseline verified: `dataelement/bisheng-work`, `V1.2.0@dde330fb7f2ab61ef5baab214a959f3fb437c66e`; feature branch `codex/chat-work-integration`; installed Harness `0.2.0-rc.2`; package `1.0.1`.
+- Implemented: root Chat / Work tabs; Work stays mounted; Chat uses a separate in-memory WebContentsView with host-only enterprise cookie exchange, tenant/account cleanup, refresh, narrow validated IPC and remote renderer isolation. Enterprise account navigation now reaches the registered settings section, and successful first authentication selects Chat.
+- Automated: full `npm test` 217 files / 1849 passed / 1 skipped; typecheck and production build passed. Fresh temporary-directory `npm ci` applied all patches. Targeted host handoff includes one 401 refresh, credential exclusion from public state, logout and stale completion rejection.
+- Platform: BISHENG beta4 candidate `chat-work-beta4-20261015-r3` deployed to 3006; health and frontend 200, unauthenticated exchange 401 with no-store. Backend 29 session/middleware tests passed. Markdown dark preview and native appearance event are deployed.
+- Native observation: Work draft survives a Chat / Work round trip; top tabs and enterprise-account navigation work in an isolated developer profile. Initial enterprise authorization is awaiting the user's HTTP trust confirmation and credentials. Authenticated session sync, uploads, previews, account switching, and active Work task continuation remain pending real acceptance.
+- Details: [integration plan](chat-work-integration.zh.md); root output `outputs/bisheng-chat-work-enterprise-20261015/`. Existing production profiles remain separate.
+
 ## Enterprise account label — 2026-09-22
 
 - The identity label now reads “当前账号 / Current account”, matching the existing display-name, username, and ID fallback order.
@@ -55,3 +138,5 @@ Verification:
 - `npm run typecheck`: PASS.
 - `npm run build`: PASS.
 - Native Desktop login, real provider calls, and installed-app UI acceptance: `NOT_RUN`.
+
+- 3006 backend is now `feat/3.0.0-beta4@db2381113` with deployed migration head `beta4_merge_3006_history`; API healthy and r4 frontend retained. Beta4 renewed the JWT signing secret; web-session handoff from enterprise identity remains to be implemented.

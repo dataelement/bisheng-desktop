@@ -570,3 +570,39 @@ describe('enterprise market credential boundary', () => {
     expect(Date.parse(restarted.loginExpiresAt ?? '') - now).toBe(45_000)
   })
 })
+
+describe('enterprise browser session handoff', () => {
+  it('exchanges only host credentials, refreshes rejected access once, and rejects requests after logout', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    let exchanges = 0
+    const cookie = 'signed-browser-cookie-for-host-only'
+    let releaseToken!: () => void
+    const tokenGate = new Promise<void>((resolve) => { releaseToken = resolve })
+    const fetchImpl: EnterpriseFetch = async (input, init) => {
+      if (String(input).endsWith('/token') && String(init?.body).includes('identity_ticket')) await tokenGate
+      if (String(input).endsWith('/api/v1/dsh/web-session')) {
+        exchanges += 1
+        expect(new Headers(init?.headers).get('authorization')).toMatch(/^Bearer /u)
+        if (exchanges === 1) return Response.json({ error: { code: 'invalid_access_token', message: 'Expired access' } }, { status: 401 })
+        return Response.json({ cookie, expires_in: 300 })
+      }
+      return globalThis.fetch(input, init)
+    }
+    const { service } = await createService(createEnterpriseFetch(fetchImpl))
+    const login = await service.startLogin(origin)
+    await completeBrowserLogin(origin, login.authorizationUrl)
+    await waitFor(() => service.snapshot().phase === 'refreshing')
+    expect(service.snapshot().connected).toBe(false)
+    releaseToken()
+    await waitFor(() => service.snapshot().connected)
+    const key = service.snapshot().connectionKey!
+    expect(await service.webSession(key)).toMatchObject({ cookie, connectionKey: key, base: origin })
+    expect(exchanges).toBe(2)
+    expect(JSON.stringify(service.snapshot())).not.toContain(cookie)
+    await service.logout()
+    await expect(service.webSession(key)).rejects.toThrow('Enterprise account changed')
+    expect(exchanges).toBe(2)
+  })
+})

@@ -1,5 +1,5 @@
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-settings-general/lib/client.js b/node_modules/@deepseek-ai/dsh-client-ui-settings-general/lib/client.js
-index 8f5fe80..1857e2a 100644
+index a8ec1c7..cfb6388 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-settings-general/lib/client.js
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-settings-general/lib/client.js
 @@ -63,7 +63,7 @@ window.__ModuleLoader__.load({
@@ -11,7 +11,33 @@ index 8f5fe80..1857e2a 100644
  			document.head.appendChild(tag);
  		}
  		var SettingsRoot_module_css_default = {
-@@ -356,10 +356,7 @@ window.__ModuleLoader__.load({
+@@ -348,6 +348,9 @@ window.__ModuleLoader__.load({
+ 		function SettingsRoot(props) {
+ 			const { wide, reconnect, useConnectionState, useSections, useOnboardingSteps, useSessions, renderSlot, t, useDesktopUpdate, openDesktopUpdate, useStore, actions, useShortcuts } = props;
+ 			const { open, activeId } = useStore((state) => state);
++			(0, react.useEffect)(() => {
++				window.dispatchEvent(new CustomEvent("dsh-desktop:settings-visibility", { detail: { open } }));
++			}, [open]);
+ 			const shortcut = useShortcuts((rows) => rows.find((row) => row.id === "settings.open"));
+ 			const { close, openSection } = actions;
+ 			const [requestedOnboarding, setRequestedOnboarding] = (0, react.useState)();
+@@ -356,14 +359,23 @@ window.__ModuleLoader__.load({
+ 			const [holdConnecting, setHoldConnecting] = (0, react.useState)(false);
+ 			const connectingShownAt = (0, react.useRef)(void 0);
+ 			const rows = useSections((s) => s);
++			(0, react.useEffect)(() => {
++				const navigate = (event) => {
++					const id = event.detail?.id;
++					if (typeof id === "string" && rows.some((row) => row.id === id)) openSection(id);
++				};
++				window.addEventListener("dsh-desktop:open-settings-section", navigate);
++				window.addEventListener("dsh-desktop:close-settings", close);
++				return () => {
++					window.removeEventListener("dsh-desktop:open-settings-section", navigate);
++					window.removeEventListener("dsh-desktop:close-settings", close);
++				};
++			}, [rows, openSection, close]);
+ 			const desktopUpdate = useDesktopUpdate((state) => state);
  			const connectionState = useConnectionState((state) => state);
  			const previousConnectionState = (0, react.useRef)(connectionState);
  			const onboardingSteps = useOnboardingSteps((s) => s);

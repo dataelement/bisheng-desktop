@@ -1,3 +1,4 @@
+import { parseWebSession, type EnterpriseWebSession } from './web-session'
 import { parseMarketRequest } from './enterprise-market'
 import { createEnterpriseFetch } from './platform-fetch'
 import { resolveEnterpriseEndpoint } from './enterprise-request'
@@ -114,6 +115,7 @@ export interface EnterpriseServiceOptions {
   fetchImpl: EnterpriseFetch
   allowInsecureLoopback: boolean
   note?: (entry: EnterpriseServiceNote) => void
+  onStateChange?: (state: EnterprisePublicState) => void
   now?: () => number
   startCallback?: typeof startLoginCallbackServer
 }
@@ -170,7 +172,7 @@ export class EnterpriseService {
   }
 
   snapshot(): EnterprisePublicState {
-    const connected = this.phase === 'connected' || this.phase === 'degraded' || this.phase === 'refreshing'
+    const connected = Boolean(this.session?.access_token) && (this.phase === 'connected' || this.phase === 'degraded' || this.phase === 'refreshing')
     return {
       connected,
       secureStorageAvailable: this.options.vault.available,
@@ -788,6 +790,36 @@ export class EnterpriseService {
     throw Object.assign(new Error('Enterprise login required.'), { status: 401 })
   }
 
+  /** Host-only exchange. Credentials never cross the renderer or Harness Broker. */
+  async webSession(connectionKey: string): Promise<EnterpriseWebSession> {
+    const epoch = this.epoch
+    const assertCurrent = () => {
+      if (!this.snapshot().connected || this.connectionKey() !== connectionKey || this.epoch !== epoch) {
+        throw new Error('Enterprise account changed.')
+      }
+    }
+    assertCurrent()
+    let accessToken = await this.ensureAccess(epoch)
+    assertCurrent()
+    const base = this.session?.base
+    if (!base) throw new Error('Enterprise login required.')
+    const exchange = () => requestEnterpriseJson(this.options.fetchImpl, base, '/api/v1/dsh/web-session', {
+      ...this.platformRequestOptions(), method: 'POST', body: {}, accessToken
+    })
+    let result
+    try { result = await exchange() }
+    catch (error) {
+      if (!(error instanceof EnterprisePlatformError) || error.status !== 401) throw error
+      await this.refresh()
+      assertCurrent()
+      accessToken = await this.ensureAccess(epoch)
+      result = await exchange()
+    }
+    assertCurrent()
+    this.options.note?.({ event: 'web_session_created', status: result.status })
+    return parseWebSession(result.body, base, connectionKey, this.now())
+  }
+
   private async ensureAccess(epoch: number): Promise<string> {
     if (!this.session?.base || !this.session.access_token) {
       throw Object.assign(new Error('Enterprise models are unavailable.'), { status: 409 })
@@ -1064,6 +1096,7 @@ export class EnterpriseService {
     if (signature === this.lastPublicSignature) return
     this.revision += 1
     this.lastPublicSignature = publicStateSignature({ ...snapshot, revision: this.revision })
+    this.options.onStateChange?.(this.snapshot())
   }
 
   private clearError(): void {

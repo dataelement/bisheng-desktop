@@ -93,8 +93,11 @@ describe('BISHENG client slot occupants', () => {
       effect: (setup: () => (() => void) | undefined) => { disposeStyle = setup() }
     })
 
-    expect(plugin.inject).toEqual(['slots', 'locale', 'remote', 'remote.session', 'sessions', 'uiWorkspace'])
+    expect(plugin.inject).toEqual(['slots', 'locale', 'remote', 'remote.session', 'sessions', 'uiWorkspace', 'layout'])
     expect(registrations.map(({ config }) => config.name)).toEqual([
+      'desktop.mode.content',
+      'sidebar.workspaces.collection',
+      'sidebar.session.row.leading',
       'sidebar.brand.mark',
       'sidebar.brand.name',
       'conversation.hero.brand.mark',
@@ -104,8 +107,8 @@ describe('BISHENG client slot occupants', () => {
       'sidebar.workspaces.session.menu.item'
     ])
     // Desktop toolbar styles have an owned lifetime; branding stays in currentColor.
-    expect(appended).toHaveLength(1)
-    expect(appended[0]?.textContent).toContain("[data-dsh-preset-search]")
+    expect(appended).toHaveLength(2)
+    expect(appended[1]?.textContent).toContain("[data-dsh-preset-search]")
     disposeStyle?.()
     expect(removeStyle).toHaveBeenCalledOnce()
 

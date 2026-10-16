@@ -79,3 +79,28 @@ PR #357 展示了两种应区别处理的变化：
 - ContextMeter 原本直接渲染；把它挪到 dock 旁边并不自动让它成为 slot。若采用新的位置配置/独立贡献机制，需要先实现相应契约；同时验证原 dock 贡献项的空间和挂载条件。
 
 这些是设计选择示例，不表示所提新扩展 API 已存在。本文是开发与评审约束；当前尚无自动 slot 契约门禁。
+
+
+## Chat / Work 接缝（Harness 0.2.0-rc.2）
+
+`dsh-client-ui-layout` 声明 root/single 的 `desktop.mode.content`，owner 为 `work: ReactNode`、`columns: string`、`resizeHandle: ReactNode`。位置只覆盖第二、三列；贡献项占据这两列并保持 Work 挂载一次。默认 fallback 使用原内容和 frame 坐标的拖拽柄；桌面贡献项使用内容区域坐标的拖拽柄。左侧原生 SidebarRoot 始终挂载。
+
+`dsh-client-ui-workspace` 声明 root/single 的 `sidebar.workspaces.collection`，由 WorkspaceBrowser 内的 SessionTree、FlatList 和 SearchResults 呈现。owner 提供 `mode: projects | flat | search`、`query`、`archivedOnly`、`projects(active): ReactNode` 和只读 `items`。每项包含 id、updatedAt、pinned、blank、`render(active): ReactNode`。项目视图的 items 来自原生 deriveFlat 对未分组 sessionIds 的投影，项目成员与归档过滤继续由 Harness 拥有；原生 renderer 保持行菜单、状态及选择行为。默认 fallback 保持原项目树、单列表或搜索结果。
+
+桌面贡献项将云端历史与上述本地 items 按来源命名空间和更新时间组合，项目节点独立呈现在最近之前。Chat 模式通过 active=false 清除本地选中态；本地源图标使用既有 `sidebar.session.row.leading`。云端搜索匹配已加载的标题；归档专用视图仅呈现有归档元数据的本地记录。`sidebar.history` 已由这个集合接缝替代，SidebarRoot 持续呈现唯一 workspace browser。
+
+`uiWorkspace.registerNavigationHandler(handler)` 为多订阅者的导航接缝，handler 接收 `open | new` 和可选 workspaceId。`new` 返回 true 表示全局新建已由 Chat 接管；`open` 只通知呈现模式，原 Work 导航和工作台 starter/opener 继续处理。本地任务查询、持久化和执行由原 Harness 服务负责。解绑按 Cordis/React 生命周期执行。
+
+`dsh-client-ui-settings-general` 接收 `dsh-desktop:open-settings-section`（detail.id 对应已注册页）及 `dsh-desktop:close-settings`，绑定现有 store actions；发送 `dsh-desktop:settings-visibility`（detail.open 布尔值），设置打开时暂停原生 Chat view 展示，关闭后恢复。事件只控制本地呈现，认证由主进程执行。
+
+主进程仅向可信宿主主 frame 暴露 Chat history(page) 与 open(id)，固定 API 路径、校验页码和标识。使用内存隔离 cookie session；会话打开按本次身份查询到的路径映射执行。身份 generation 改变后丢弃异步响应并清理云端列表、路径和网页存储。远程网页维持无 preload 的隔离环境。
+
+毕昇 `/workspace/?embed=dsh` 在路由跳转前记录本浏览会话的嵌入布局标识，嵌入布局由 React 直接呈现内容。独立网页继续显示自己的聊天导航。该标识只影响布局与主题。
+
+上游提供等价内容/历史 slot、导航订阅和设置可见状态 API 后迁移并移除对应兼容扩展。每次变更执行全新 npm ci 重放、模式/导航/身份回归和原生布局检查。
+
+### Chat 文档生命周期与页面内导航（2026-10-16）
+
+企业身份拥有一个远程 Chat 文档；Work/设置切换只改变展示状态，隐藏时保留网页尺寸与背景。贡献项卸载时清理展示，身份代际变化时由主进程清理文档和凭据。首次加载的 dshTheme 查询参数仅携带 dark/light 呈现值。
+
+主进程 open(id) 先从该身份已读取的历史路由映射得到路径，再发送可取消的 dsh:navigate 事件；网页 Root 校验 c、linsight、chat 三种明确路由结构后确认并调用 React Router。宿主以 defaultPrevented 作为页面内导航确认，旧网页沿用完整加载。异步返回检查身份 epoch 和视图所有权。网页无 preload；事件携带路由，不携带身份凭据或本地执行能力。

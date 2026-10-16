@@ -1,3 +1,4 @@
+import type { EnterpriseChatPresentation, EnterpriseChatViewState } from '../shared/enterprise-chat-view'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdateStatus } from '../shared/contracts'
 import { setupDesktopStoragePersistence } from './desktop-storage'
@@ -571,6 +572,14 @@ window.addEventListener('pagehide', () => {
   rendererHealthHeartbeat = undefined
   pluginErrorToast.dispose()
 })
+
+contextBridge.exposeInMainWorld('dshEnterpriseChat', Object.freeze({
+  present: (value: EnterpriseChatPresentation): Promise<EnterpriseChatViewState> => ipcRenderer.invoke('enterprise-chat:present', value),
+  state: (): Promise<EnterpriseChatViewState> => ipcRenderer.invoke('enterprise-chat:state'),
+  retry: (): Promise<void> => ipcRenderer.invoke('enterprise-chat:retry'),
+  history: (page: number) => ipcRenderer.invoke('enterprise-chat:history', page),
+  open: (id: string): Promise<void> => ipcRenderer.invoke('enterprise-chat:open', id)
+}))
 
 contextBridge.exposeInMainWorld(
   'dshDesktopEnterprise',
