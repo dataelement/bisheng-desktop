@@ -356,6 +356,34 @@ window.__ModuleLoader__.load({
         }
       }
     }
+    /** Cloud rows use the same title reveal speed and geometry as Harness sessions. */
+    function CloudHistoryRow({ item, selected, navigation, t }) {
+      const title = React.useRef(null)
+      const frame = React.useRef(0)
+      const reset = () => {
+        cancelAnimationFrame(frame.current)
+        if (title.current) title.current.scrollLeft = 0
+      }
+      React.useEffect(() => reset, [item.title])
+      const reveal = () => {
+        reset()
+        const element = title.current
+        const distance = element.scrollWidth - element.clientWidth
+        if (distance <= 8) return
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { element.scrollLeft = distance; return }
+        let start
+        const tick = (now) => {
+          start ??= now
+          element.scrollLeft = Math.min(distance, (now - start) * .03)
+          if (element.scrollLeft < distance) frame.current = requestAnimationFrame(tick)
+        }
+        frame.current = requestAnimationFrame(tick)
+      }
+      return React.createElement('button', { type: 'button', 'data-history-kind': 'chat', className: 'dshHistoryRow', 'aria-current': selected ? 'page' : undefined,
+        title: item.title, onClick: () => navigation.open(item.id), onPointerEnter: reveal, onPointerLeave: reset, onFocus: reveal, onBlur: reset },
+        React.createElement('span', { ref: title }, item.title || t('newChat')),
+        React.createElement('time', { dateTime: new Date(item.updatedAt).toISOString() }, historyTime(item.updatedAt, t)))
+    }
     /** Cloud identities stay namespaced; project ownership is projected by Harness. */
     function SharedCollection({ projects, items, mode, query, archivedOnly, navigation, t }) {
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
@@ -371,9 +399,7 @@ window.__ModuleLoader__.load({
             React.createElement('span', null, t(mode === 'projects' ? 'recent' : mode === 'search' ? 'results' : 'all'))),
           ...rows.map(item => item.kind === 'work'
             ? React.createElement('div', { key: item.key, 'data-history-kind': 'work' }, item.render(state.mode === 'work'))
-            : React.createElement('button', { type: 'button', key: item.key, 'data-history-kind': 'chat', className: 'dshHistoryRow', 'aria-current': state.mode === 'chat' && state.conversationId === item.id ? 'page' : undefined, title: item.title, onClick: () => navigation.open(item.id) },
-                React.createElement('span', null, item.title || t('newChat')),
-                React.createElement('time', { dateTime: new Date(item.updatedAt).toISOString() }, historyTime(item.updatedAt, t)))),
+            : React.createElement(CloudHistoryRow, { key: item.key, item, selected: state.mode === 'chat' && state.conversationId === item.id, navigation, t })),
           state.historyPhase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => navigation.refreshHistory() }, t('historyError')),
           state.historyPhase === 'loading' && React.createElement('div', { className: 'dshHistoryNotice', role: 'status' }, t('historyLoading')),
           rows.length === 0 && state.historyPhase !== 'loading' && React.createElement('div', { className: 'dshHistoryNotice' }, t(search ? 'recentSearchEmpty' : 'recentEmpty')),
@@ -451,9 +477,10 @@ window.__ModuleLoader__.load({
           .dshSharedCollection{min-width:0}
           .dshRecentHistory{margin-top:12px;min-width:0}
           .dshHistoryHeading{display:flex;align-items:center;justify-content:space-between;padding:4px 8px 12px;color:var(--dsw-alias-label-secondary);font-size:13px}
-          .dshHistoryRow{box-sizing:border-box;display:flex;align-items:center;gap:6px;width:100%;height:32px;margin-bottom:2px;padding:0 8px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;text-align:left;cursor:pointer}
+          .dshHistoryRow{box-sizing:border-box;display:flex;align-items:center;gap:6px;width:100%;height:32px;margin-bottom:2px;padding:0 8px 0 28px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;text-align:left;cursor:pointer}
           .dshHistoryRow:hover,.dshHistoryRow[aria-current=page]{background:var(--dsw-alias-interactive-bg-hover)}
-          .dshHistoryRow span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dshHistoryRow time{color:var(--dsw-alias-label-tertiary);font-size:11px;white-space:nowrap}
+          .dshHistoryRow span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dshHistoryRow time{color:var(--dsw-alias-label-tertiary);font-size:10px;white-space:nowrap}
+          .dshHistoryRow:is(:hover,:focus-visible) span{text-overflow:clip}.dshHistoryRow:is(:hover,:focus-visible) time{display:none}
           .dshHistoryNotice{padding:8px;font:inherit;font-size:12px;color:var(--dsw-alias-label-secondary);background:transparent;border:0;text-align:left}.dshHistoryNotice:is(button){cursor:pointer}
           .dshSharedCollection button:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}
           .dshChatStatus{margin:auto;text-align:center;font-size:14px;color:var(--dsw-alias-label-secondary)}
