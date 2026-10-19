@@ -111,6 +111,6 @@ Work 从 sessions.binding(id).session 订阅当前主视图的 pendingSubmission
 
 ### 统一桌面导航（2026-10-19）
 
-基于 bisheng-work/V1.2.0 e9f2063 与 Harness 0.2.0-rc.2。新增 sidebar.primaryNavigation single/root 接缝，传递 wide、startSession、panels、selectPanel 与 renderPanelIcon；无贡献项时渲染原有新会话、quickSwitcher 与面板列表。桌面贡献项将企业入口和本地面板集中到一套导航中，原有面板在更多菜单保持单次挂载。sidebar.workspaces.title single/root 仅提供 flat 状态，默认仍使用 Harness 文案；桌面使用项目/所有会话标题。上游提供同等接缝后迁移。
+基于 bisheng-work/V1.2.0 e9f2063 与 Harness 0.2.0-rc.2。sidebar.primaryNavigation single/root 接缝位于原生新会话、quickSwitcher 之后，传递 wide、startSession、panels、selectPanel、renderPanelIcon、expandSidebar 与 renderAction。新会话及快捷键由 Harness 持续渲染一次；无贡献项时使用原生面板列表。renderAction 复用 PanelRow 的展示组件、Tooltip、主题、焦点及展开状态。桌面贡献项将全部企业入口和本地面板收进 Harness Menu，折叠状态打开菜单时展开原生侧栏。嵌入网页边界取内容区域与侧栏右边界的交集，并订阅两者尺寸变化，保留原生侧栏操作区域。sidebar.workspaces.title single/root 仅提供 flat 状态，默认仍使用 Harness 文案；桌面使用项目/所有会话标题。上游提供同等接缝后迁移。
 
 企业网页在 MainLayout 中上报实际可见菜单（权限、预览开关、名称、顺序和选中项均由网页决定）。远程 preload 仅上报展示数据；主进程校验视图、主 frame、企业来源、当前路径和身份代际，逐项校验菜单 ID 与固定路由。宿主 openPage 只接受当前账号已上报的菜单 ID。身份切换清空菜单及页面状态。网页的路由和主题桥接覆盖整个 MainLayout，功能页复用现有页面。Work 本地项目与会话继续由 Harness 管理。

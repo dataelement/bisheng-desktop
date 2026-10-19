@@ -433,10 +433,14 @@ window.__ModuleLoader__.load({
         const present = () => {
           const rect = panel.current?.getBoundingClientRect()
           if (!rect) return
-          void bridge.present({ visible: mode === 'chat' && !settingsOpen, bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light' }).catch(() => {})
+          const sidebarRight = document.querySelector('[data-dsh-sidebar-root]')?.getBoundingClientRect().right || 0
+          const x = Math.max(rect.x, sidebarRight)
+          void bridge.present({ visible: mode === 'chat' && !settingsOpen, bounds: { x, y: rect.y, width: Math.max(0, rect.right - x), height: rect.height }, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light' }).catch(() => {})
         }
         const resize = new ResizeObserver(present)
         if (panel.current) resize.observe(panel.current)
+        const sidebar = document.querySelector('[data-dsh-sidebar-root]')
+        if (sidebar) resize.observe(sidebar)
         const theme = new MutationObserver(present)
         theme.observe(document.body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] })
         window.addEventListener('resize', present)
@@ -481,32 +485,24 @@ window.__ModuleLoader__.load({
       return React.createElement('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: id === 'more' ? 3 : 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
         React.createElement('path', { d: NAV_ICON_PATHS[id] || NAV_ICON_PATHS.apps }))
     }
-    function PrimaryNavigation({ wide, startSession, panels, selectPanel, renderPanelIcon, navigation, t }) {
+    function PrimaryNavigation({ wide, renderAction, expandSidebar, panels, selectPanel, renderPanelIcon, navigation, t }) {
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
       const [menuOpen, setMenuOpen] = React.useState(false)
-      React.useEffect(() => { setMenuOpen(false) }, [wide, state.epoch])
+      React.useEffect(() => { setMenuOpen(false) }, [state.epoch])
+      React.useEffect(() => { if (!wide) setMenuOpen(false) }, [wide])
       const entries = state.connected ? state.navigation?.entries || [] : []
-      const primary = entries.filter(entry => entry.primary)
-      const more = entries.filter(entry => !entry.primary)
-      const row = (key, label, action, active, icon) => React.createElement('button', {
-        key, type: 'button', className: 'dshNavigationRow', 'data-navigation-id': key,
-        'aria-label': label, title: wide ? undefined : label, 'aria-current': active ? 'page' : undefined, onClick: action
-      }, icon || React.createElement(NavigationIcon, { id: key }), wide && React.createElement('span', null, label))
       const activeId = state.mode === 'chat' ? entries.find(entry => entry.active)?.id : undefined
       const items = [
-        ...more.map(entry => ({ id: `web:${entry.id}`, label: entry.label, icon: React.createElement(NavigationIcon, { id: entry.id }) })),
+        ...entries.map(entry => ({ id: `web:${entry.id}`, label: entry.label, icon: React.createElement(NavigationIcon, { id: entry.id }) })),
         ...panels.map(panel => ({ id: `local:${panel.id}`, label: panel.label, icon: renderPanelIcon(panel.id) }))
       ]
       return React.createElement('nav', { className: 'dshPrimaryNavigation', 'data-wide': wide, 'aria-label': t('navigation') },
-        wide && React.createElement('div', { className: 'dshNavigationBrand' }, React.createElement(DesktopBrandMark), React.createElement('span', null, state.navigation?.homeLabel || t('welcome'))),
-        row('new', t('newConversation'), () => startSession(), false),
-        ...primary.map(entry => row(entry.id, entry.label, () => { void navigation.openPage(entry.id) }, activeId === entry.id)),
         items.length > 0 && React.createElement(Menu, {
           open: menuOpen, onClose: () => setMenuOpen(false), items, autoFocus: true, dense: true,
           className: 'dshNavigationMenu', listClassName: 'dshNavigationMenuList',
           selectedId: activeId ? `web:${activeId}` : undefined,
           onSelect: id => { setMenuOpen(false); if (id.startsWith('web:')) void navigation.openPage(id.slice(4)); else { navigation.select('work'); selectPanel(id.slice(6)) } },
-          anchor: React.createElement('button', { type: 'button', className: 'dshNavigationRow', 'data-navigation-id': 'more', 'aria-label': t('moreNavigation'), 'aria-haspopup': 'menu', 'aria-expanded': menuOpen, 'aria-current': more.some(entry => entry.id === activeId) ? 'page' : undefined, onClick: () => setMenuOpen(open => !open) }, React.createElement(NavigationIcon, { id: 'more' }), wide && React.createElement('span', null, t('moreNavigation')))
+          anchor: renderAction({ id: 'more', label: t('moreNavigation'), icon: React.createElement(NavigationIcon, { id: 'more' }), active: Boolean(activeId) || (state.mode === 'work' && state.panelOpen), expanded: menuOpen, onClick: () => { if (!wide) expandSidebar(); setMenuOpen(open => !open) } })
         }))
     }
     function installDesktopModes(ctx) {
@@ -515,14 +511,8 @@ window.__ModuleLoader__.load({
       ctx.effect(() => {
         const style = document.createElement('style')
         style.textContent = `
-          .dshPrimaryNavigation{flex:none;display:flex;flex-direction:column;gap:4px;padding:8px 12px 20px;color:var(--dsw-alias-label-primary)}
-          .dshNavigationBrand{display:flex;align-items:center;gap:10px;min-height:36px;padding:0 8px;margin-bottom:8px;font-size:14px;font-weight:600}
-          .dshNavigationRow{display:flex;align-items:center;gap:10px;box-sizing:border-box;width:100%;height:34px;padding:0 8px;border:0;border-radius:8px;color:inherit;background:transparent;font:inherit;font-size:13px;text-align:left;cursor:pointer;-webkit-app-region:no-drag}
-          .dshNavigationRow span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dshNavigationRow svg{flex:none}
-          .dshNavigationRow:hover,.dshNavigationRow[aria-current=page]{background:var(--dsw-alias-interactive-bg-hover)}
-          .dshPrimaryNavigation[data-wide=false]{padding:8px}.dshPrimaryNavigation[data-wide=false] .dshNavigationRow{justify-content:center}
-          .dshNavigationRow:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}
-          .dshNavigationMenu{display:block;position:relative;width:100%}.dshNavigationMenuList{max-width:100%;box-sizing:border-box}
+          .dshPrimaryNavigation{flex:none;padding:0 12px 12px}
+          .dshNavigationMenu{display:flex;flex-direction:column;position:relative;width:100%}.dshNavigationMenuList{max-width:100%;box-sizing:border-box}
           .dshModes{grid-column:2 / -1;min-width:0;min-height:0;width:100%;height:100%;display:flex;flex-direction:column;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary)}
           .dshModesHeader{height:56px;flex:none;display:flex;align-items:center;justify-content:center;-webkit-app-region:drag}
           .dshModesTabs{display:flex;padding:3px;border-radius:24px;background:var(--dsw-alias-bg-layer-2);-webkit-app-region:no-drag}

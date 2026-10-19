@@ -62,7 +62,7 @@ async function mount(connected = false, collection = {}) {
   root = createRoot(container)
   const content = registrations.get('desktop.mode.content'), history = registrations.get('sidebar.workspaces.collection'), primary = registrations.get('sidebar.primaryNavigation')
   await act(async () => root.render(React.createElement(React.Fragment, null,
-    React.createElement('aside', null, React.createElement(primary.component, { ...primary.props, wide: true, panels: [{ id: 'plugins', label: 'Plugins' }], startSession: (...args) => { expect(args).toHaveLength(0); navigate('new') }, selectPanel: setPanel, renderPanelIcon: () => null }), React.createElement(history.component, { ...history.props, mode: 'projects', query: '', archivedOnly: false, projects: () => React.createElement('div', { 'data-project': true }, 'Project task'), items: [{ id: 'local-a', updatedAt: Date.parse('2026-10-17'), render: active => React.createElement('button', { 'data-local-row': true, 'aria-current': active ? 'page' : undefined, onClick: () => navigate('open') }, 'Local task') }], ...collection })),
+    React.createElement('aside', null, React.createElement('button', { 'data-navigation-id': 'new', onClick: () => navigate('new') }, 'New session'), React.createElement(primary.component, { ...primary.props, wide: true, renderAction: ({ id, label, onClick, expanded }) => React.createElement('button', { 'data-navigation-id': id, 'aria-expanded': expanded, onClick }, label), panels: [{ id: 'plugins', label: 'Plugins' }], startSession: (...args) => { expect(args).toHaveLength(0); navigate('new') }, selectPanel: setPanel, renderPanelIcon: () => null }), React.createElement(history.component, { ...history.props, mode: 'projects', query: '', archivedOnly: false, projects: () => React.createElement('div', { 'data-project': true }, 'Project task'), items: [{ id: 'local-a', updatedAt: Date.parse('2026-10-17'), render: active => React.createElement('button', { 'data-local-row': true, 'aria-current': active ? 'page' : undefined, onClick: () => navigate('open') }, 'Local task') }], ...collection })),
     React.createElement(content.component, { ...content.props, columns: '1fr 0px', work: React.createElement('textarea', { 'aria-label': 'work draft', defaultValue: 'retained draft' }) })
   )))
   return {
@@ -253,18 +253,25 @@ it('shares account navigation across Chat and Work and keeps local panels access
   ])
   expect(ui.picker()).toBeNull()
   const sidebar = container.querySelector('aside')
-  await act(async () => sidebar.querySelector('[data-navigation-id=knowledge]').click())
+  expect(sidebar.textContent).not.toContain('Welcome')
+  expect(sidebar.querySelector('[data-navigation-id=knowledge]')).toBeNull()
+  const openMore = () => act(async () => sidebar.querySelector('[data-navigation-id=more]').click())
+  const choose = label => act(async () => [...sidebar.querySelectorAll('[role=menuitem]')].find(node => node.textContent === label).click())
+  await openMore()
+  expect([...sidebar.querySelectorAll('[role=menuitem]')].map(node => node.textContent)).toEqual(['Knowledge', 'Skills', 'Plugins'])
+  await choose('Knowledge')
   expect(window.dshEnterpriseChat.openPage).toHaveBeenLastCalledWith('knowledge')
-  await act(async () => sidebar.querySelector('[data-navigation-id=more]').click())
-  expect([...sidebar.querySelectorAll('[role=menuitem]')].map(node => node.textContent)).toEqual(['Skills', 'Plugins'])
-  await act(async () => [...sidebar.querySelectorAll('[role=menuitem]')].find(node => node.textContent === 'Plugins').click())
+  await openMore()
+  await choose('Plugins')
   expect(ui.selected()).toBe('work')
   expect(ui.picker()).toBeNull()
-  expect(sidebar.querySelector('[data-navigation-id=knowledge]')).toBeTruthy()
-  await act(async () => sidebar.querySelector('[data-navigation-id=knowledge]').click())
+  await openMore()
+  await choose('Skills')
+  expect(window.dshEnterpriseChat.openPage).toHaveBeenLastCalledWith('skills')
   expect(ui.selected()).toBe('chat')
   await ui.account(false)
-  expect(sidebar.querySelector('[data-navigation-id=knowledge]')).toBeNull()
+  await openMore()
+  expect([...sidebar.querySelectorAll('[role=menuitem]')].map(node => node.textContent)).toEqual(['Plugins'])
 })
 
 it('starts a new conversation without forwarding the click event as a workspace identity', async () => {
@@ -272,4 +279,21 @@ it('starts a new conversation without forwarding the click event as a workspace 
   await ui.cloudSession('existing')
   await act(async () => container.querySelector('[data-navigation-id=new]').click())
   expect(ui.picker()).not.toBeNull()
+})
+
+
+it('keeps the native sidebar visible when the embedded pane spans the frame', async () => {
+  const sidebar = document.createElement('div')
+  sidebar.dataset.dshSidebarRoot = ''
+  sidebar.getBoundingClientRect = () => ({ right: 56 })
+  document.body.append(sidebar)
+  const original = HTMLElement.prototype.getBoundingClientRect
+  HTMLElement.prototype.getBoundingClientRect = function () { return { x: 0, y: 48, right: 960, width: 960, height: 700 } }
+  try {
+    await mount(true)
+    expect(window.dshEnterpriseChat.present).toHaveBeenCalledWith(expect.objectContaining({ bounds: { x: 56, y: 48, width: 904, height: 700 } }))
+  } finally {
+    HTMLElement.prototype.getBoundingClientRect = original
+    sidebar.remove()
+  }
 })

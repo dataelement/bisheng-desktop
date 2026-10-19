@@ -85,7 +85,10 @@ describe('rc.2 workbench patch slots', () => {
     }))
     expect(customized).toContain('A long third-party panel name')
     expect(customized.match(/>Plugins</g)).toHaveLength(1)
-    expect(customized).not.toContain('hHd-Xa_newSession')
+    expect(customized.match(/class="hHd-Xa_newSession"/g)).toHaveLength(1)
+    const action = renderToStaticMarkup(primary.renderAction({ id: 'more', label: 'More', icon: null, expanded: true, active: true, onClick: () => {} }))
+    expect(action).toContain('hHd-Xa_panelRow hHd-Xa_panelActive')
+    expect(action).toContain('aria-expanded="true"')
   })
 
   it('isolates a failed optional workbench without hiding a failed core entry', async () => {

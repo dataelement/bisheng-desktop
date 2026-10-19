@@ -1,3 +1,13 @@
+## 2026-10-19 — 恢复 DSH 原生侧栏与网页技能中心
+
+- 基线：远端 bisheng-work/V1.2.0 e434ed938b58e7dc3073ef26f566804c27407c50；工作目录 bisheng-work-chat-work，开发分支 codex/chat-work-integration，Harness 0.2.0-rc.2。
+- 原生 SidebarRoot 持续呈现新会话按钮、快捷键与 Tooltip。更多使用原生 PanelRow 展示组件和 Menu，包含知识空间、订阅、应用、技能中心、发现广场及本地插件；展示内容和权限继续来自账号实际菜单。Chat/Work 共享同一侧栏，去掉欢迎文字与自定义平铺导航。
+- 嵌入网页边界同步原生侧栏尺寸，折叠时保留原生操作区域；打开更多时展开侧栏。右侧沿用网页已有组件；网页技能中心以 usePrefersMobileLayout 统一结构判断，桌面嵌入使用原有标题和操作栏，H5 保持移动端标签。
+- 3006 知识空间本轮实机已显示部门空间与个人空间，mine/department 接口返回 200。历史错误来自数据库 review 与 ORM 权限枚举不匹配；本轮复核时已恢复，本次桌面改动未修改数据库或后台配置。
+- 自动验证：最终独立 npm ci/postinstall、typecheck/build 通过；完整 219 文件、1875 项通过、1 项跳过。回归覆盖新会话保留、企业入口收纳、账号切换、第三方面板及折叠内容边界。网页变更 lint、1450 strict 文件、构建和 3 项导航/布局测试通过。
+- 网页交付：bisheng/feat/bisheng-work-120@5f601e7fdb3a4a7b9feb360703ae58cb34b89664 已推送并部署 3006，461 个前端文件哈希核验通过；前端以外容器身份保持一致。
+- 实机验证与提交交付见主工作区 outputs/native-sidebar-20261019/；正式安装包及 Windows 实机另行验收。
+
 ## 2026-10-19 — 统一桌面企业导航
 
 - 基线：V1.2.0 e9f206331d9ff5a1e36ffdb29ab7403881dc6bb2；实际 Harness 0.2.0-rc.2。网页以 3006 已部署的 feat/bisheng-work-120 4269304db 为基线。
