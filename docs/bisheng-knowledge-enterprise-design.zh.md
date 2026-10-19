@@ -1,159 +1,109 @@
-# BISHENG Work 知识库与企业商业授权设计草案
+# BISHENG Work 企业知识库 Connect 方案
 
-日期：2026-10-09。状态：设计提案，未实现、未部署、未执行集成验收。
+修订：2026-10-15。状态：已明确产品方向，尚未实现、部署或安装包验收。
 
-版本基准修正：本文初稿读取的是 Gateway 当前 main。用户随后指定以 `v1.6.0@8f9390b0` 为基准；该标签保留基础 10 席位、管理员批量分配及到期超额席位收缩，当前 main 已移除这些机制。细化设计以 [Gateway 1.6.0 HTML 评审文档](design/bisheng-work-gateway-1.6.0.html) 为准，其中保留基础席位并独立授权知识 feature；新增 init/content/commit 上传合同避免沿用通用正文缓存路由。本文其余机制说明仍需按所列源码版本理解，不能把 main 行为套到 1.6.0。
+本文替代 2026-10-09 草案中按共享容量、解析包和调用包收费的设计。[HTML 评审文档](design/bisheng-work-gateway-1.6.0.html) 聚焦加密、签名与认证主线；本文保留详细技术背景。
 
-## 1. 决策与适用范围
+## 1. 已确认的三个原则
 
-推荐采用内置 Harness 插件承载知识库 UI 和 Agent tools，Electron main 承载凭据及文件传输，bisheng-gateway 承载企业商业授权，Bisheng 承载知识业务和资源权限。
+1. BISHENG Work 通过企业插件使用 Gateway 接口访问 Bisheng 知识库；业务不从桌面绕过 Gateway 直连。
+2. Gateway 维护企业购买的知识 API 权限 bit；企业有 API 权限且当前用户已分配有效 Work 席位，开通知识库连接能力。
+3. Work 以 Connect 方式管理企业知识库连接：企业登录、选择可见空间、在会话中启用检索并打开来源引用。
 
-首期按企业已有 Bisheng 私有部署、企业采购 Work 席位和知识能力设计。SaaS 可复用合同，但需要增加订单、支付事件、订阅生命周期；这些不作为首期接入前置条件。不重新实现 Agent runtime、向量库或整套 Bisheng 前端。
+Bisheng 的基础知识库和既有开源 API 继续保留。商业授权面向 Work 的企业 API 接入，不改变开源知识能力的性质。本期不设计知识专用席位、共享容量售卖、检索调用计费或商业结算账本。
 
-## 2. 当前源码依据与缺口
-
-- Work：`src/main/enterprise/enterprise-desktop.ts`、`credential-broker.ts`、`secure-credential-vault.ts` 已提供主进程凭据、loopback capability Broker 和登录/聊天/市场操作。
-- Work：`packages/dsh-desktop-enterprise/` 已提供企业身份和模型适配插件；知识库应独立成能力插件，复用身份服务。
-- Work：`packages/dsh-desktop-market-installer/enterprise-policy.mjs` 当前只发行企业版，关闭社区插件安装；不能假设本仓库已有免费/商业双版本产品矩阵。
-- 当前安装的 Harness 具有 `ctx.tools.register(defineTool(...))`，聊天客户端具有公开 slots；具体知识入口使用哪个 slot，在实施时核对目标版本 owner props、布局和生命周期。本文不声明尚未核实的侧栏或输入框 slot。
-- Gateway：`dsh/service/DshTokenService.java` 已提供 PKCE 兑换及 refresh 轮换；`DshIntrospectionService.java` 已校验 License、seat、session、grant_version。
-- Gateway：`DshJwtService.java` 当前严格校验 HS256、10 个 claims、`aud=bisheng-dsh-model`，有效期不超过 600 秒。扩展 audience/scope 需要版本化，不能只改客户端。
-- Gateway：`DshEntitlement.java` 当前是 License 有效期与席位容量，没有知识 feature/quota 合同。
-- Gateway：`DshRoutes.java` 当前没有知识接口。
-- Bisheng：`knowledge/api/endpoints/knowledge.py` 和 `knowledge_space.py` 已有上传、注册文件、处理和状态能力。上传返回 `file_path` 不等于已入库，更不等于可检索。
-- Bisheng：`knowledge/domain/services/knowledge_space_chat_service.py` 的 `_retrieve_and_filter` 已有文件权限预过滤、结果后过滤及主版本过滤，应提取复用的检索服务。
-- Bisheng：`user/domain/services/auth.py` 使用自己的 JWT issuer/key、tenant 和 token_version；不能直接接受现有 Gateway DSH token。
-- 在本次查看的 Bisheng checkout 中，未找到 Gateway 所声明的 `/api/v1/dsh/*` 与内部身份接口实现。可能属于另一个版本/企业扩展，实施前需确认真实部署归属。
-
-以上为本地源码观察，不证明线上版本或安装包已经具有这些能力。
-
-## 3. 进程与服务边界
+## 2. 架构与职责
 
 ```mermaid
 flowchart LR
-  UI[知识库插件 UI] --> HP[Harness 知识库插件 / Agent tools]
-  HP --> EB[Electron main 企业 Broker]
-  EB --> GW[bisheng-gateway]
-  GW --> BS[Bisheng Work 专用 API 适配层]
-  BS --> KS[现有知识服务 / 文件权限]
-  KS --> W[异步解析与索引 Worker]
-  KS --> ST[对象存储 / Milvus / Elasticsearch]
+  Connect[Work Connect / 企业插件] --> Broker[Electron main 凭据 Broker]
+  Broker --> Gateway[Gateway 企业 API bit + 用户席位 / session]
+  Gateway --> Adapter[Bisheng 可信员工身份适配]
+  Adapter --> Knowledge[现有知识服务 / 资源 ACL / 检索]
 ```
 
-插件建议命名 `bisheng-work-knowledge`，包含 backend 与 `dsh.client` 入口。第一版随安装包内置，按企业 capability 显示及启用；后续可沿用受控企业市场升级。插件安装成功、功能授权有效、知识资源可访问分别判断。
+- 企业插件：连接卡片、公开状态、空间选择、会话检索 tools 与引用展示。
+- Electron main：保管和刷新凭据；固定操作白名单；取消旧账户请求。不向 renderer/模型暴露企业凭据。
+- Gateway：每次业务调用验证企业 API bit、有效席位、session、API scope 与请求范围；传递可信员工身份并关联审计。
+- Bisheng：按真实员工校验空间、目录、文件权限；执行检索和原有上传处理。企业购买不等于管理员数据权限。
 
-Electron main：保存并刷新 access/refresh token；提供固定操作白名单；处理流式上传、原生文件选择、取消和账户 epoch。插件不取得 refresh token，不获得带凭据的任意 URL fetch。
+同进程插件不是对抗本机管理员的安全沙箱。安全与商业准入在服务端执行，不能只靠 UI 隐藏。
 
-Harness：注册 tools、本地受认证 API、会话知识空间选择和业务状态。renderer 仅取得公开状态、任务进度和结果。Broker capability 是进程级凭据，不是插件隔离沙箱；同进程插件及可执行工具属于企业信任边界，不能宣称能抵御本机管理员。
+## 3. 企业 API 权限 bit
 
-Gateway：判断是谁、企业是否授权 Work 知识能力、席位/会话是否有效、是否达到商业限额。Bisheng：判断该用户是否能列举空间、上传文件、检索片段、阅读来源。
+建议名称 `WORK_KNOWLEDGE_API`，表示在 Work 中使用企业知识库 API 的权利。范围不扩大到所有普通 API。
 
-## 4. 用户与 Agent 行为
+- 企业购买权来自厂商签名 License 或可信商业控制面；普通企业管理员不能自行开启已购 bit。
+- 管理员在已购范围内分配现有 Work 席位，不另建知识库席位池。
+- bit 编号由 Gateway 注册域确认。新 `work_api_permission_bits` 域暂定 bit 0（mask=1）仅为设计，实施前检查占用与兼容。
+- 旧 schema v2 没有 API bit：知识 API 默认关闭，原有基础席位与模型权限不自动改变。
+- 客户端读取命名布尔投影，例如 `enterprise_api_enabled`，不自己解释原始 mask；避免 JavaScript 32 位运算截断。
+- 新签名合同严格验证 issuer、audience、时间、部署/组织绑定和 revision；先升级 verifier，再发新 License。
 
-- UI：选择可访问空间、选择目标目录、上传、查看处理进度、失败原因与重试、选择当前会话检索范围。
-- Agent：注册 `knowledge_list_spaces`、`knowledge_search`、`knowledge_get_document`；上传工具必须受用户明确上传意图与文件授权约束，避免自动发布本地敏感文件。
-- `knowledge_search` 返回片段而非第二次模型生成的答案。Work 继续用现有 Agent 与模型接口回答，避免双 Agent、重复会话和双重模型收费。
-- 返回 space/document/version/chunk ID、页码、文本、来源标题和可授权打开的 citation ID。score 仅定义为当前检索管道相关性，不作为概率。
-- 会话保存选择范围；切换企业/用户立即取消旧请求，旧任务按原账户归属保留，旧响应不得写入新账户。
-- 知识文件可能包含指令，作为检索数据处理，不得提升为 system 指令或上传授权。
-- Safe Mode 默认不启用知识业务插件，保留诊断和恢复入口；需要支持时另做安装包闭包及客户端发现验证。
+```text
+knowledge_connect_enabled = enterprise_api_bit_active
+                         AND seat_assigned_to_current_user
+                         AND seat_active
+                         AND session_active
 
-## 5. API 合同提案
+can_search = knowledge_connect_enabled AND scope.read AND Bisheng.read_acl
+can_upload = knowledge_connect_enabled AND scope.upload AND Bisheng.write_acl
+```
 
-以下为待新增外部合同，不是现有可调用接口；统一归属 `/api/v1/dsh/knowledge`，由 Gateway 暴露、Bisheng 实现。
+Gateway v1.6.0 内置基础 10 席位。沿用该基线时，已分配且有效的基础席位同样满足席位条件；企业仍须购买 API 权限。不得擅自增加“必须是扩容购买席位”的第三个条件。
 
-| 方法与相对路径 | 功能 |
-| --- | --- |
-| GET /capabilities | 合同版本、features、limits、授权状态 |
-| GET /spaces?permission=read 或 upload | 服务端过滤后的空间列表 |
-| POST /spaces/{space_id}/uploads | multipart 流式上传，生成 upload_id |
-| POST /uploads/{upload_id}/commit | 校验上传归属、目标与摘要，注册文件并创建处理任务 |
-| GET /jobs/{job_id} | 查询解析/索引状态；按需退避轮询 |
-| POST /search | query、space_ids、目录/标签筛选、top_k |
-| GET /documents/{document_id} | 经权限校验的正文/元数据 |
-| GET /citations/{citation_id} | 经权限校验的来源定位与预览 |
+API bit 有效期与席位有效性分别判断；撤权、到期和切企业后立即阻止后续业务调用，不能只等 access token 到期。
 
-不得把现有空间文件名搜索当作语义检索 API。从现有权限感知的 RAG 管道提取检索服务，保留可见性和主版本限制。
+## 4. Connect 交互
 
-上传状态：receiving -> uploaded -> queued -> parsing -> indexing -> ready，另有 failed/cancelled。API 返回 202 表示接受任务；只有 ready 表示该版本可参与检索。适配层映射 Bisheng 现有状态，不要求强改其所有内部枚举。
+路径：Connect → Bisheng 企业知识库 → 企业登录 → 校验 API bit 和席位 → 选择可访问空间 → 当前会话启用检索。
 
-首期采用经过 Broker/Gateway 的受限流式 multipart；不使用 JSON/base64，也不把任意机器路径传给 renderer。原生选取或已授权工作区文件转换为短期 file grant，绑定账户、文件与有效期。服务器向客户端提供 opaque upload_id，避免暴露现有存储 file_path。
+- 保持插件安装与入口可见；连接不可用时展示具体原因。
+- 卡片展示企业、连接状态和已选空间；操作包括连接、管理连接与断开。
+- 管理员统一配置企业 Gateway，用户不填写共享管理员 API key。
+- 不同会话可以选择不同空间。已授权但未选空间时提示选择，不默认搜索全企业。
+- `knowledge_search` 获取片段，Work 当前 Agent 生成答案；来源引用经 Gateway 重新鉴权。
+- 可访问范围为：真实员工 ACL ∩ 当前会话启用空间 ∩ 本次请求空间。会话范围必须在服务端受约束，不能只写进 prompt。
+- 断开、撤权、退出或切换企业后，取消在途请求、清理旧连接/范围并阻止旧响应。历史回答保留，来源访问重新检查。
+- 不可用时不向 Agent 注册可执行的企业知识工具；已发出的调用仍由服务端最终拒绝。
 
-`commit` 使用 Idempotency-Key，绑定 tenant/user/space/请求摘要；不确定网络错误时查询原任务，不盲目重传或重复扣额度。未提交暂存文件按 TTL 回收。大文件直传和断点续传留作后续，届时上传授权只绑定对象和尺寸，commit 仍需重新鉴权。
+本期先交付连接、检索和引用闭环。此前要求的上传保留为后续操作，使用同一 API bit + 席位授权，再额外判断目标写权限。
 
-现有 Broker 的 JSON 请求、2 MiB JSON 响应和服务签名 canonical 的 64 KiB body 上限不能用于文件正文。文件链路单独定义流式大小、超时、限流、背压和取消；服务身份验证绑定元数据与内容摘要，不能把整个文件缓存进既有 HMAC helper。
+## 5. 状态与界面
 
-## 6. 端到端 API 鉴权
-
-### 6.1 桌面身份
-
-复用系统浏览器企业 SSO -> 一次性授权票据 + PKCE -> Gateway 兑换 -> 主进程安全存储的流程，不在桌面打包 client_secret 或企业管理员 API key。
-
-建议新增版本化 access token：`aud=bisheng-work-api`，绑定 `sub`、tenant、seat、session、grant_version；声明 scope 如 knowledge:read、knowledge:upload、model:invoke。scope 是可调用的 API 上限，不能代替具体空间/文件 ACL。
-
-旧模型 token 仅用于旧模型路由；迁移期间两个 verifier 分别验证各自合同，旧 token 不得因升级自动获得知识权限。已有 refresh 会话能否升级需重新校验 feature 与用户状态。后端服务断连时商业鉴权失败关闭，不回退为管理员。
-
-### 6.2 Gateway -> Bisheng 身份桥
-
-推荐保持桌面 token 只由 Gateway 验证。Gateway 在校验后生成短期、面向 Bisheng 的用户委托凭证，使用独立非对称签名与可轮换 kid；包含可信 subject、当前租户、session、允许操作及 request_id。Bisheng 适配层校验签名、issuer、audience、有效期与服务来源，再加载真实用户状态、租户成员关系和 token_version/撤销状态。
-
-现有方向性 HMAC/nonce 机制可复用到小型控制请求。首期也可据此实现内部身份查询；不能把客户端提交的 X-User-Id/X-Tenant-Id 当可信身份。Gateway 删除外部伪造的身份头；内部端口仅在受控服务网络开放。
-
-Bisheng 使用专用 dependency 生成符合现有服务需要的 UserPayload/tenant context，不放宽全站 JWT verifier，不持有管理员通用凭据代替用户。明确授权组织与叶子租户映射，不能按用户请求体任意切换租户。
-
-### 6.3 每次操作的检查
-
-有效身份 + 有效 Work 席位/会话 + 企业知识 feature + API scope + 真实资源 ACL + 配额，全部满足才允许。
-
-检索：空间/目录权限 -> 索引预过滤 -> 混合召回/精排 -> 文件结果后过滤 -> 返回片段；不可见内容不得进入 LLM、响应、日志或可共享缓存。引用打开重新鉴权，过期 URL 不成为永久授权。新增 API 的列表、上传 commit、job 查询、下载同样校验归属。
-
-Introspection 当前能检查 License/seat/session，但其 Result 不返回完整用户身份，且不能单独视为已验证实时用户禁用/组织变更；需要扩展可信主体合同并执行 Bisheng 身份检查。缓存身份允许短 TTL，撤销传播目标必须明确；资源权限依旧由 Bisheng 实时判定。
-
-## 7. 企业付费与配额
-
-| 维度 | 建议 | 权威来源 |
+| 状态 | 展示 | 行为 |
 | --- | --- | --- |
-| 基础 Work | 企业授权 + 按成员分配的命名席位 | Gateway License/seat |
-| 知识能力 | 可独立开关或套餐包含的 feature | 签名 License/订阅 |
-| 数据范围 | 空间/目录/文件访问与上传权限 | Bisheng 现有权限体系 |
-| 存储 | 企业共享容量；按在用对象与明确的版本保留规则计量 | Bisheng 对象/文件账本 |
-| 解析 | 按成功页数或约定解析单位计量 | Worker 完成事件 |
-| 检索 | 企业共享调用包 + 请求速率/并发限制 | 检索任务/用量账本 |
-| LLM | 独立模型额度或套餐额度 | 现有模型用量链路 |
+| 未登录 | 未连接 | 登录企业，不判断是否购买 |
+| 企业无 API bit | 企业未开通知识库 API | 联系管理员，不请求企业知识数据 |
+| 企业有 API bit，员工无席位 | 尚未分配企业席位 | 申请席位或联系管理员 |
+| 有 API bit 和席位，无资源权限 | 已连接，暂无可访问知识库 | 申请数据权限，不提示付费 |
+| 已授权但未选空间 | 待选择知识库 | 选择本会话范围 |
+| 已授权且选择空间 | 已连接，已选 N 个空间 | 检索与引用 |
+| 只读权限 | 检索可用、上传不可用 | 说明缺少目标写权限 |
+| API 权限到期或席位撤销 | 连接已停用 | 展示确切原因，不删除知识数据 |
+| 网络或依赖异常 | 连接失败 | 重试，不误报未购买 |
 
-第一版推荐合同售卖“Work 席位 + 知识功能 + 共享容量/解析额度”，不按插件下载次数计费。普通成员只看可用状态和自己的用量；管理员管理采购、席位、额度和企业审计。
+## 6. 复用接口与鉴权缺口
 
-Gateway 扩展 entitlement 为版本化 features/limits，并返回 `/capabilities`。客户端仅用于展示，最终判断每个服务端请求。签名 License 为私有化授权依据，采购/订阅记录为商业事实；capabilities 为当前有效投影，不维护第四套独立真相。
+本轮源码依据为 2026-10-15 本地 Bisheng main@3f2764198；正式部署版本另查。
 
-已有 Bisheng QuotaService 应复用。企业购买限额由商业合同同步到唯一的 quota 服务；不要 Gateway/Bisheng 各扣一遍。需要为 Work 来源定义额度池，明确与 Bisheng Web 是否共享，不能默认把既有客户额度悄悄消费到新产品。
+- `GET /api/v2/filelib/`：知识资源列表。
+- `GET /api/v2/filelib/file/list`：文件列表与状态筛选。
+- `POST /api/v2/filelib/retrieve`：跨库纯检索，返回片段，不调用 LLM。
+- `POST /api/v2/filelib/file/{knowledge_id}`：上传并提交处理。
 
-额度以原子预占 -> 成功结算/失败释放完成，避免并发超卖。成功作业通过事务 outbox 上报不可变用量事件，Gateway 商业报表按唯一事件 ID 去重；检索重试、文件重复 commit 不重复计量。速率限制不等于计费账本。
+列表、文件列表和检索支持 user_id 代用户过滤；该参数不是身份凭证。上传及引用详情仍以配置的默认操作员执行。企业接入必须补齐统一可信用户适配，不向所有员工共享管理员/default_operator。
 
-解析失败不收成功解析费用；上游实际已耗成本另入成本账。取消及重试的费用规则应写入产品合同。删除释放在用存储，不退历史解析费用。版本、备份和向量索引是否计入容量必须有明确口径。
+Gateway 暴露受控 Work 知识接口，内部优先复用 Bisheng 服务层。旧 token audience 为模型接口，不能不改 verifier 就直接授予知识权限。保留 v1 与版本化 Work API 合同，按各自 audience/scope 校验。
 
-License 到期或撤销：拒绝新上传/检索/模型调用，停止新增费用；保留文件、任务和审计，不删除客户数据。导出/续费/恢复由独立权限和服务端策略控制，不意外放开检索。已启动任务默认完成已有承诺并只结算一次，紧急安全撤销按明确规则取消。
+上传的专属流式 route 必须排除 v1.6.0 的 CacheRequestBody 和统一正文缓存事件；保留实际字节限制、背压、幂等与异步 ready 状态。现有配额仅作为运行保护，不作为本期商业收费条件。
 
-私有化可使用签名 License 离线运行服务，不意味着桌面可离线检索服务器知识库；桌面离线知识同步属于另一项产品与安全设计。
+## 7. 首期实施与验收
 
-## 8. 错误、审计和维护
+1. 固定 Gateway v1.6.0 基准，确认权限位注册域和签名合同迁移。
+2. 实现 API bit + seat/session 的统一准入与 capabilities 拒绝原因。
+3. 补齐 Bisheng 可信员工身份适配，复用资源列表、纯检索和来源权限服务。
+4. 接入 Connect 插件、空间选择、会话范围与 knowledge_search。
+5. 验证真实企业登录 → Connect → 检索 → 来源预览；上传随后接入同一权限体系。
 
-区分 invalid_access_token/session_revoked、license_expired/feature_not_enabled/seat_revoked、resource_forbidden、quota_exceeded、rate_limited、document_not_ready、job_failed。UI 对应重新登录、联系管理员、申请权限、等待处理或重试；403 不执行无意义 token 刷新。
-
-审计包含 request/job ID、主体、租户、动作、对象和结果，不记录 token、完整文档正文或默认完整检索 query。企业切换清理临时结果；缓存按主体、租户、权限修订和版本隔离。
-
-## 9. 实施顺序与验收
-
-1. 对齐三个仓库及真实部署版本，确认 DSH 企业后端扩展位置；冻结外部合同和 token v2 迁移。
-2. Gateway 增加 knowledge feature、路由、委托身份和商业限制；Bisheng 增加身份适配并复用权限感知检索服务。
-3. 先打通只读闭环：空间列表 -> 检索 -> Agent 引用 -> 授权预览。
-4. 增加文件授权、流式上传、commit、job 状态、幂等与额度预占/结算。
-5. 增加管理员额度/用量及可选企业市场升级，再进行安装包和真实企业验收。
-
-核心回归：跨租户伪造、仅空间可见而文件不可见、不可上传空间、旧模型 token 被知识路由拒绝、refresh 重用、席位撤销、用户禁用、权限变更、License 过期、并发额度竞争、重复 commit、Worker 重复事件、退出/切租户途中上传、解析失败恢复、不可见 citation、空检索结果。
-
-客户端验证包括真实 Harness 子进程、普通 Profile 的安装包插件闭包、客户端发现/引导/实际挂载、插件重载不重复注册，以及目标 Windows/macOS 原生文件和安装流程。单元测试、HTTP 200、插件已安装、正式发布分别报告，不互相代替。
-
-## 10. 需要产品确认的两项选择
-
-- 首期企业已有 Bisheng 私有部署还是托管 SaaS；本草案默认前者。
-- Work 与 Bisheng Web 是否共享知识额度；本草案建议合同显式声明额度池，避免无意重复授权或扣费。
+验收组合：API bit 0/1 × 席位 未分配/有效/撤销 × ACL 无/只读/可写。分别检查 UI、工具可用性、Gateway 实际拒绝与 Bisheng 数据过滤。增加伪造 user_id、跨企业空间、未选空间、注销/切企业、撤权/到期、多副本和旧模型 token 用例。安装包、真实企业和目标平台验收另行报告。
