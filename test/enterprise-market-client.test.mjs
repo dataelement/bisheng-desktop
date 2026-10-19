@@ -7,7 +7,7 @@ const disposers = []
 afterEach(() => { for (const dispose of disposers.splice(0).reverse()) dispose(); vi.useRealTimers() })
 
 async function client(initial, language = 'zh') {
-  let account = initial, definition, resolveState
+  let account = initial, definition, resolveState, seat = true
   const events = new Map(), registrations = new Map()
   const node = () => ({ textContent: '' })
   const window = {
@@ -19,7 +19,9 @@ async function client(initial, language = 'zh') {
   vm.runInNewContext(source, {
     window, navigator: { language: 'zh-CN' }, Date, AbortController,
     document: { documentElement: { lang: 'zh-CN' }, getElementById: () => null, createElement: node, head: { appendChild() {} }, visibilityState: 'visible', addEventListener() {}, removeEventListener() {} },
-    fetch: async () => ({ ok: true, json: async () => resolveState ? new Promise(resolve => { resolveState(resolve) }) : structuredClone(account) })
+    fetch: async path => ({ ok: true, json: async () => path === '/api/enterprise.market.state'
+      ? { ...structuredClone(account), online: seat }
+      : resolveState ? new Promise(resolve => { resolveState(resolve) }) : structuredClone(account) })
   })
   const plugin = definition.factory(id => {
     if (id === 'react') return { createElement: (type, props) => ({ type, props }) }
@@ -39,12 +41,21 @@ async function client(initial, language = 'zh') {
   })
   const sync = () => events.get('dsh-desktop:enterprise-account-changed')()
   await new Promise(resolve => setImmediate(resolve))
-  return { registrations, events, sync, set: value => { account = value }, defer: capture => { resolveState = capture } }
+  return { registrations, events, sync, set: value => { account = value }, setSeat: value => { seat = value }, defer: capture => { resolveState = capture } }
 }
 
 const account = { connected: true, base: 'https://bisheng.example', tenant: { id: '1', name: '企业一' }, user: { id: '20' }, sessionExpiresAt: new Date(Date.now() + 60000).toISOString() }
 
 describe('enterprise plugins entry', () => {
+  it('hides the enterprise plugin entry when a logged-in employee has no active seat', async () => {
+    const app = await client(account)
+    expect(app.registrations.has('enterprise-market')).toBe(true)
+    app.setSeat(false); await app.sync()
+    expect(app.registrations.has('enterprise-market')).toBe(false)
+    expect(app.registrations.has('enterprise-account')).toBe(true)
+    app.setSeat(true); await app.sync()
+    expect(app.registrations.has('enterprise-market')).toBe(true)
+  })
   it('adds 来自企业 after login, replaces account context on tenant switch, and removes it on logout', async () => {
     const app = await client({ connected: false })
     expect(app.registrations.has('enterprise-market')).toBe(false)

@@ -1,3 +1,12 @@
+## 2026-10-19 — 企业插件统一采用在线席位校验
+
+- 基线实时核对：`dataelement/bisheng-work:V1.2.0@e9f206331d9ff5a1e36ffdb29ab7403881dc6bb2`，独立工作目录 `bisheng-work-market-online-120`，分支 `codex/plugin-market-online-access`，已安装 Harness `0.2.0-rc.2`。
+- 企业插件采用市场协议 2，复用既有企业登录与在线席位确认。设置的“来自企业”按当前账号在线状态显示；席位回收、断线、会话到期、企业身份刷新失败均停用运行实例。重连后按用户启用状态恢复。
+- 已删除市场验签、公钥固定与签名租约。升级清理旧公钥/租约缓存，保留已安装插件和配置。ZIP/文件 SHA-256、路径/平台/peer 校验、generation 隔离、真实 Loader 加载和更新失败回退继续生效。
+- 验证：干净 `npm ci` 与全部 postinstall 重放通过；类型检查、生产构建、4 文件/47 项市场专项及完整 220 文件/1876 项回归通过，1 项条件跳过。真实 BISHENG ASGI/SQLite/Cordis 联调完成导入、目录、安装、加载、重启及卸载，身份和对象存储使用显式测试适配器。
+- 配套后端与管理端：[BISHENG PR #2499](https://github.com/dataelement/bisheng/pull/2499)，目标 `feat/bisheng-work-120`。两端按市场协议 2 协同合并发布；旧协议客户端需升级配套版本。
+- 当前交付为源码 PR。真实企业 Gateway、发布后原生 Desktop 插件安装/席位回收、Windows 及正式安装包分别验收。
+
 ## 2026-10-16 — macOS 浅色侧栏与窗口主题同步
 
 - 基线实时核验：bisheng-work/V1.2.0@7edfd09170c23b005c81a78b65a42360377fc87d；工作目录 bisheng-work-chat-work，分支 codex/chat-work-integration，Harness 0.2.0-rc.2。

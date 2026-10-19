@@ -13,7 +13,7 @@ export interface MarketController {
   synchronize(): Promise<void>
   catalog(query?: string, page?: number): Promise<MarketState & { data: unknown[]; total: number; installReady?: boolean }>
   act(input: { action: string; plugin_id: string; version_id?: string; config?: Record<string, unknown> }): Promise<MarketState>
-  stop(clearLease?: boolean): Promise<void>
+  stop(): Promise<void>
   tick(): Promise<void>
 }
 export declare function hostDshEntryPath(): string
@@ -21,7 +21,7 @@ export declare function hostDshEntryPath(): string
 export declare function createMarketController(ctx: Context, account: {
   state(): MarketAccount
   marketRequest(path: string, body?: unknown, binary?: boolean): Promise<unknown>
-}, options?: { home?: string; target?: string; publicKey?: string; desktopVersion?: string; dshEntryPath?: string;
+}, options?: { home?: string; target?: string; desktopVersion?: string; dshEntryPath?: string;
   load?: (record: InstalledMarketPlugin) => Promise<MarketRuntimeFiber> }): MarketController
 
 export declare function applyEnterpriseMarket(ctx: Context, account: {

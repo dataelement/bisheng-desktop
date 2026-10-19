@@ -26,7 +26,7 @@
 
 ## 3. 非目标
 
-- 不改变企业插件的目录、离线包、签名、租约和「来自企业」安装流程。
+- 不改变企业插件的目录、离线包、在线席位校验和「来自企业」安装流程。
 - 不把企业插件市场里的管理员导入、员工安装算进「第三方插件」开关。
 - 不要求在开关变为关闭时卸载、停用或删除已经安装的插件、工作台和用户数据。
 - 不禁止用户卸载已安装内容。
@@ -37,7 +37,7 @@
 
 | 名词 | 含义 |
 | --- | --- |
-| 企业插件 | 当前企业租户经现有市场发布和签名校验下发的插件，入口是「来自企业」 |
+| 企业插件 | 当前企业租户经现有市场发布和在线席位校验下发的插件，入口是「来自企业」 |
 | 网络插件 / 第三方插件 | 企业插件市场以外的来源，包括社区插件市场、URL、本地压缩包和其他本机安装入口 |
 | 网络工作台 / 第三方工作台 | 从公开工作台市场、npm、GitHub Release 或远程地址新安装的工作台 |
 | 本地工作台 | 用户在本机开发并安装到本机的工作台，以及本机已经安装的工作台。不含本次从网络市场新拉取的包 |
@@ -76,12 +76,10 @@ Authorization: Bearer <DSH access token>
   "status_code": 200,
   "status_message": "SUCCESS",
   "data": {
-    "enabled": false,
-    "public_key": null,
-    "contract_version": 1,
+    "enabled": true,
+    "contract_version": 2,
     "tenant_id": "2",
     "max_upload_bytes": 536870912,
-    "lease_seconds": 3600,
     "sync_seconds": 60,
     "allow_third_party_plugins": true,
     "allow_third_party_workbenches": false
@@ -89,7 +87,7 @@ Authorization: Bearer <DSH access token>
 }
 ```
 
-示例里 `enabled`、`public_key`、`lease_seconds` 等是企业插件市场原有字段，描述「来自企业」通道，与本次两个开关无关，不要用它们推断第三方开关。`allow_third_party_plugins` 与 `allow_third_party_workbenches` 由管理员分别配置，二者没有默认联动。
+示例里 `enabled`、`contract_version`、`sync_seconds` 等是企业插件市场原有字段，描述「来自企业」通道，与本次两个开关无关，不要用它们推断第三方开关。`allow_third_party_plugins` 与 `allow_third_party_workbenches` 由管理员分别配置，二者没有默认联动。
 
 客户端解析：
 
@@ -161,7 +159,7 @@ Authorization: Bearer <DSH access token>
 - 「添加插件」只接受本机绝对路径目录和本机压缩包。包名、Git 地址、远程压缩包和自定义 npm 源在查询注册表之前拒绝。
 - 已经从网络安装的第三方插件留在「已安装」里，可以继续使用、停用、卸载，也可以再次启用。再次启用只改本机开关，不从网络拉取。`dshmarket` 是插件市场入口本身，这个开关关闭时不能启用，避免市场页重新出现。不自动隔离、停用或删除，不删除用户数据。
 - 用户在本机开发、通过本机目录或本机压缩包安装的插件可以安装、启用、停用和卸载。
-- 「来自企业」的安装、更新、启用、停用和卸载保持现有企业签名流程。
+- 「来自企业」的安装、更新、启用、停用和卸载保持现有企业在线席位流程。
 
 ### 8.3 页面
 
@@ -325,6 +323,6 @@ Safe Mode：
 
 回归：
 
-- 「来自企业」的安装、更新、启用、停用、卸载和签名校验保持原样。
+- 「来自企业」的安装、更新、启用、停用、卸载和在线席位校验遵循企业市场协议。
 - 宿主预置插件仍可按原规则启用和停用。
 - 关闭工作台不删除 `desktop-workbenches` 下的会话绑定、笔记、收藏和已安装记录。

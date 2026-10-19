@@ -469,7 +469,7 @@ window.__ModuleLoader__.load({
       failed: '暂时无法读取企业插件，请重试或联系管理员。', install: '安装', update: '更新',
       installed: '已安装', uninstall: '卸载', enable: '启用', disable: '停用', disabled: '已停用',
       version: '版本', incompatible: '当前系统或版本暂不支持',
-      installing: '安装中…', updating: '更新中…', enabling: '启用中…', disabling: '停用中…', uninstalling: '卸载中…', unsupported: '暂不支持', setup: '企业市场暂未就绪，可联系管理员完成配置。'
+      installing: '安装中…', updating: '更新中…', enabling: '启用中…', disabling: '停用中…', uninstalling: '卸载中…', unsupported: '暂不支持', setup: '请连接企业服务并确认席位有效。'
     }
     const marketEn = {
       tab: 'From enterprise', intro: 'Install plugins provided for your current enterprise account.', refresh: 'Refresh',
@@ -477,7 +477,7 @@ window.__ModuleLoader__.load({
       failed: 'Enterprise plugins are unavailable. Try again or contact your administrator.', install: 'Install', update: 'Update',
       installed: 'Installed', uninstall: 'Uninstall', enable: 'Enable', disable: 'Disable', disabled: 'Disabled',
       version: 'Version', incompatible: 'Unsupported system or Desktop version',
-      installing: 'Installing…', updating: 'Updating…', enabling: 'Enabling…', disabling: 'Disabling…', uninstalling: 'Uninstalling…', unsupported: 'Unavailable', setup: 'The enterprise market is not ready. Contact your administrator.'
+      installing: 'Installing…', updating: 'Updating…', enabling: 'Enabling…', disabling: 'Disabling…', uninstalling: 'Uninstalling…', unsupported: 'Unavailable', setup: 'Connect to your enterprise service with an active seat.'
     }
 
     let marketTranslate
@@ -601,8 +601,15 @@ window.__ModuleLoader__.load({
           const response = await fetch('/api/enterprise.state', { credentials: 'same-origin', cache: 'no-store' })
           if (!response.ok) throw new Error('Enterprise state unavailable')
           const account = await response.json()
+          let market
+          if (account.connected && Date.parse(account.sessionExpiresAt) > Date.now()) {
+            const access = await fetch('/api/enterprise.market.state', { credentials: 'same-origin', cache: 'no-store' })
+            if (!access.ok) throw new Error('Enterprise market access unavailable')
+            market = await access.json()
+          }
           if (disposed || currentRevision !== revision) return
-          const next = account.connected && Date.parse(account.sessionExpiresAt) > Date.now() ? `${account.base}|${account.tenant.id}|${account.user.id}` : null
+          const available = market?.online && market.base === account.base && market.tenant?.id === account.tenant?.id && market.user?.id === account.user?.id
+          const next = available ? `${account.base}|${account.tenant.id}|${account.user.id}` : null
           currentAccount = account
           if (identity === next) return
           disposeTab?.(); disposeTab = undefined; identity = next

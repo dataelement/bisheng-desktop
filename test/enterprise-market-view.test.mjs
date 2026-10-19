@@ -24,7 +24,7 @@ async function mountMarket({ action, update = false, holdRefresh = false, plugin
   let catalogReads = 0
   if (installed) installedById.set(plugin.id, { plugin_id: plugin.id, version_id: update ? 'd'.repeat(32) : plugin.current_version_id, version: update ? '0.9.0' : '1.0.0', enabled })
   const catalogPlugins = plugins ?? [plugin, other]
-  const snapshot = () => ({ ...account, tenant: { id: '1', name: company }, target: 'darwin-arm64', desktopVersion: '0.1.1', installReady, data: catalogPlugins, total: catalogPlugins.length, installed: structuredClone([...installedById.values()]) })
+  const snapshot = () => ({ ...account, online: installReady, tenant: { id: '1', name: company }, target: 'darwin-arm64', desktopVersion: '0.1.1', installReady, data: catalogPlugins, total: catalogPlugins.length, installed: structuredClone([...installedById.values()]) })
   const requests = []
   const fetch = async (path, options) => {
     requests.push({ path, body: options?.body && JSON.parse(options.body) })
@@ -39,7 +39,7 @@ async function mountMarket({ action, update = false, holdRefresh = false, plugin
       return { ok: true, json: async () => result }
     }
     const result = snapshot()
-    if (holdRefresh && ++catalogReads > 1) await new Promise(resolve => pendingCatalogs.push(resolve))
+    if (holdRefresh && path.startsWith('/api/enterprise.market.catalog') && ++catalogReads > 1) await new Promise(resolve => pendingCatalogs.push(resolve))
     return { ok: true, json: async () => result }
   }
   dom.window.__ModuleLoader__ = { load: value => { definition = value } }
@@ -73,7 +73,7 @@ it('shows current catalog identity and refreshes renamed companies while keeping
   const { text, click, requests, plugin, rename } = await mountMarket()
   expect(text()).toContain('Current company')
   expect(text()).toContain('安装企业提供的插件，供当前企业账号使用。')
-  expect(text()).not.toContain('企业市场暂未就绪，可联系管理员完成配置。')
+  expect(text()).not.toContain('请连接企业服务并确认席位有效。')
   expect(text()).not.toContain('企业暂未提供插件，请联系管理员导入。')
   expect(text()).not.toContain('Old company')
   rename('Renamed company')
@@ -89,20 +89,19 @@ it('shows current catalog identity and refreshes renamed companies while keeping
 
 
 it('shows only the empty notice when the enterprise has no plugins', async () => {
-  const { text } = await mountMarket({ plugins: [], installReady: false })
+  const { text } = await mountMarket({ plugins: [] })
   expect(text()).toContain('Current company')
   expect(text()).toContain('刷新')
   expect(text()).toContain('企业暂未提供插件，请联系管理员导入。')
   expect(text()).not.toContain('安装企业提供的插件，供当前企业账号使用。')
-  expect(text()).not.toContain('企业市场暂未就绪，可联系管理员完成配置。')
+  expect(text()).not.toContain('请连接企业服务并确认席位有效。')
 })
 
-it('keeps the intro and setup notice when plugins exist but the market is not ready', async () => {
-  const { text } = await mountMarket({ installReady: false })
-  expect(text()).toContain('安装企业提供的插件，供当前企业账号使用。')
-  expect(text()).toContain('企业市场暂未就绪，可联系管理员完成配置。')
-  expect(text()).not.toContain('企业暂未提供插件，请联系管理员导入。')
-  expect(text()).toContain('JSON 格式化')
+it('keeps enterprise plugins hidden while online access is unavailable', async () => {
+  const { text, requests } = await mountMarket({ installReady: false })
+  expect(text()).toBe('')
+  expect(requests.some(request => request.path === '/api/enterprise.market.state')).toBe(true)
+  expect(requests.some(request => request.path.startsWith('/api/enterprise.market.catalog'))).toBe(false)
 })
 
 it.each([
