@@ -1,3 +1,10 @@
+## 2026-10-19 — 插件与更多固定入口
+
+- 基线：bisheng-work/V1.2.0@eb9e07368ec0882193cab1ea55e85bebf5595470；工作目录 bisheng-work-chat-work，开发分支 codex/chat-work-integration，Harness 0.2.0-rc.2。
+- 侧栏通过 DSH 原生 NavigationRow 固定展示插件与更多；插件直接打开原生管理页，更多收纳账号授权的企业页面及其他本地面板。选中态根据当前面板身份同步，新会话保持原生按钮。
+- 实机：运行中的企业测试桌面端已加载改动，直接点击插件进入管理页；更多显示知识空间、订阅、应用、技能中心、发现广场。正式安装包另行构建。
+- 自动验证：类型检查与生产构建通过；完整 219 个文件、1875 项测试通过，1 项跳过。首次全量执行遇到 Node socket setTypeOfService EINVAL，重跑完整回归通过。
+
 ## 2026-10-19 — 恢复 DSH 原生侧栏与网页技能中心
 
 - 基线：远端 bisheng-work/V1.2.0 e434ed938b58e7dc3073ef26f566804c27407c50；工作目录 bisheng-work-chat-work，开发分支 codex/chat-work-integration，Harness 0.2.0-rc.2。

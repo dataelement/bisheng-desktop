@@ -245,7 +245,7 @@ window.__ModuleLoader__.load({
     }
     /** One renderer-owned mode/history controller shared by the content and sidebar slots. */
     function createChatNavigation(ctx) {
-      let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, pageId: undefined, navigation: undefined, workLanding: false, panelOpen: false }
+      let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, pageId: undefined, navigation: undefined, workLanding: false, panelOpen: false, activePanelId: null }
       const listeners = new Set()
       let active = false, revision = 0, historyRequest = 0, timer, lastHistory = 0
       const publish = (patch) => { value = { ...value, ...patch }; listeners.forEach(fn => fn()) }
@@ -340,8 +340,9 @@ window.__ModuleLoader__.load({
             publish({ workLanding: current ? blank === true : list.phase === 'ready' })
           }
           const panel = () => {
-            const panelOpen = ctx.layout.panelInfo.getSnapshot().activePanelId !== null
-            publish({ panelOpen, ...(panelOpen ? { mode: 'work' } : {}) })
+            const { activePanelId } = ctx.layout.panelInfo.getSnapshot()
+            const panelOpen = activePanelId !== null
+            publish({ panelOpen, activePanelId, ...(panelOpen ? { mode: 'work' } : {}) })
           }
           const unsubscribe = ctx.layout.panelInfo.subscribe(panel)
           const unsubscribeSessions = ctx.sessions.list.subscribe(workState)
@@ -492,17 +493,20 @@ window.__ModuleLoader__.load({
       React.useEffect(() => { if (!wide) setMenuOpen(false) }, [wide])
       const entries = state.connected ? state.navigation?.entries || [] : []
       const activeId = state.mode === 'chat' ? entries.find(entry => entry.active)?.id : undefined
+      const plugins = panels.find(panel => panel.id === 'plugins')
+      const morePanels = panels.filter(panel => panel.id !== 'plugins')
       const items = [
         ...entries.map(entry => ({ id: `web:${entry.id}`, label: entry.label, icon: React.createElement(NavigationIcon, { id: entry.id }) })),
-        ...panels.map(panel => ({ id: `local:${panel.id}`, label: panel.label, icon: renderPanelIcon(panel.id) }))
+        ...morePanels.map(panel => ({ id: `local:${panel.id}`, label: panel.label, icon: renderPanelIcon(panel.id) }))
       ]
       return React.createElement('nav', { className: 'dshPrimaryNavigation', 'data-wide': wide, 'aria-label': t('navigation') },
+        plugins && renderAction({ id: plugins.id, label: plugins.label, icon: renderPanelIcon(plugins.id), active: state.mode === 'work' && state.activePanelId === plugins.id, onClick: () => { setMenuOpen(false); navigation.select('work'); selectPanel(plugins.id) } }),
         items.length > 0 && React.createElement(Menu, {
           open: menuOpen, onClose: () => setMenuOpen(false), items, autoFocus: true, dense: true,
           className: 'dshNavigationMenu', listClassName: 'dshNavigationMenuList',
           selectedId: activeId ? `web:${activeId}` : undefined,
           onSelect: id => { setMenuOpen(false); if (id.startsWith('web:')) void navigation.openPage(id.slice(4)); else { navigation.select('work'); selectPanel(id.slice(6)) } },
-          anchor: renderAction({ id: 'more', label: t('moreNavigation'), icon: React.createElement(NavigationIcon, { id: 'more' }), active: Boolean(activeId) || (state.mode === 'work' && state.panelOpen), expanded: menuOpen, onClick: () => { if (!wide) expandSidebar(); setMenuOpen(open => !open) } })
+          anchor: renderAction({ id: 'more', label: t('moreNavigation'), icon: React.createElement(NavigationIcon, { id: 'more' }), active: Boolean(activeId) || (state.mode === 'work' && morePanels.some(panel => panel.id === state.activePanelId)), expanded: menuOpen, onClick: () => { if (!wide) expandSidebar(); setMenuOpen(open => !open) } })
         }))
     }
     function installDesktopModes(ctx) {
@@ -511,7 +515,7 @@ window.__ModuleLoader__.load({
       ctx.effect(() => {
         const style = document.createElement('style')
         style.textContent = `
-          .dshPrimaryNavigation{flex:none;padding:0 12px 12px}
+          .dshPrimaryNavigation{display:flex;flex-direction:column;flex:none;padding:0 12px 12px}
           .dshNavigationMenu{display:flex;flex-direction:column;position:relative;width:100%}.dshNavigationMenuList{max-width:100%;box-sizing:border-box}
           .dshModes{grid-column:2 / -1;min-width:0;min-height:0;width:100%;height:100%;display:flex;flex-direction:column;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary)}
           .dshModesHeader{height:56px;flex:none;display:flex;align-items:center;justify-content:center;-webkit-app-region:drag}
