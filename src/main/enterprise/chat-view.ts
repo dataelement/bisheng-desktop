@@ -3,8 +3,20 @@ import { randomUUID } from 'node:crypto'
 import { session, shell, WebContentsView, type BrowserWindow, type Session } from 'electron'
 import { parseEnterpriseNavigation, parseChatPage, parseChatId, parseChatPresentation, type EnterpriseChatHistory, type EnterpriseChatPresentation, type EnterpriseChatViewState } from '../../shared/enterprise-chat-view'
 import type { EnterpriseDesktopRuntime } from './enterprise-desktop'
+import { MODULE_THEME_CSS, moduleThemeScript } from './chat-module-theme'
+import { chatLocaleScript } from './chat-locale'
 
 /** Remote Chat gets its own in-memory browser session and a presentation-only preload. */
+const DOCUMENT_LOAD_TIMEOUT_MS = 45_000
+
+/** A document load that never settles (platform stalls mid-deploy) must not pin the exchange forever. */
+async function loadWithin<T>(operation: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([operation, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(Object.assign(new Error('Chat document load timed out.'), { status: 'timeout' })), ms) })])
+  } finally { clearTimeout(timer) }
+}
+
 export class EnterpriseChatView {
   private landing?: boolean
   private navigation?: ReturnType<typeof parseEnterpriseNavigation>
@@ -101,6 +113,7 @@ export class EnterpriseChatView {
     const current = new URL(view.webContents.getURL())
     current.searchParams.delete('embed')
     current.searchParams.delete('dshTheme')
+    current.searchParams.delete('dshLocale')
     if (current.pathname + current.search === route) return
     const request = ++this.navigationRequest
     const accepted = await view.webContents.executeJavaScript(`(() => {
@@ -112,13 +125,15 @@ export class EnterpriseChatView {
     if (accepted === true) return
     this.state = { phase: 'loading' }
     this.layout()
-    await view.webContents.loadURL(this.entryURL(route, origin))
+    await loadWithin(view.webContents.loadURL(this.entryURL(route, origin)), DOCUMENT_LOAD_TIMEOUT_MS)
   }
 
   private layout(): void {
     if (!this.view || !this.owner || this.owner.isDestroyed() || !this.presentation) return
     const { bounds, visible, theme } = this.presentation
     this.view.setVisible(visible && this.state.phase === 'ready')
+    // Settings hides the view while changing locale; its navigation labels still need updates.
+    if (this.state.phase === 'ready') this.applyLocale()
     if (!visible) return
     const zoom = this.owner.webContents.getZoomFactor()
     const [width = 0, height = 0] = this.owner.getContentSize()
@@ -126,16 +141,28 @@ export class EnterpriseChatView {
     const y = Math.max(0, Math.round(bounds.y * zoom))
     this.view.setBounds({ x, y, width: Math.max(0, Math.min(width - x, Math.round(bounds.width * zoom))), height: Math.max(0, Math.min(height - y, Math.round(bounds.height * zoom))) })
     this.view.setBackgroundColor(theme === 'dark' ? '#141416' : '#ffffff')
-    if (this.state.phase === 'ready') {
-      void this.view.webContents.executeJavaScript(`document.documentElement.dataset.dshHostTheme = '${theme}'; window.dispatchEvent(new CustomEvent('dsh:appearance', { detail: { theme: '${theme}' } }))`).catch(() => this.note('[enterprise-chat] appearance_delivery_failed'))
-    }
+    if (this.state.phase === 'ready') this.applyTheme()
+  }
+
+  /** Theme reaches the document on every presentation, load and in-page route change. */
+  private applyTheme(): void {
+    const theme = this.presentation?.theme
+    if (!this.view || !theme) return
+    void this.view.webContents.executeJavaScript(moduleThemeScript(theme)).catch(() => this.note('[enterprise-chat] appearance_delivery_failed'))
   }
 
   private entryURL(path: string, base: string): string {
     const url = new URL(path, base)
     url.searchParams.set('embed', 'dsh')
     url.searchParams.set('dshTheme', this.presentation?.theme ?? 'light')
+    if (this.presentation?.locale) url.searchParams.set('dshLocale', this.presentation.locale)
     return url.href
+  }
+
+  private applyLocale(): void {
+    const locale = this.presentation?.locale
+    if (!this.view || !locale) return
+    void this.view.webContents.executeJavaScript(chatLocaleScript(locale)).catch(() => this.note('[enterprise-chat] locale_delivery_failed'))
   }
 
   private connect(): Promise<void> {
@@ -194,6 +221,8 @@ export class EnterpriseChatView {
         view.webContents.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
           if (isMainFrame && generation === this.generation && this.view === view) {
             this.landing = undefined
+            if (this.state.phase === 'ready') this.applyTheme()
+            if (this.state.phase === 'ready') this.applyLocale()
             this.notify()
           }
         })
@@ -204,6 +233,8 @@ export class EnterpriseChatView {
         view.webContents.on('did-finish-load', () => {
           if (generation !== this.generation) return
           if (new URL(view.webContents.getURL()).pathname.startsWith('/workspace')) {
+            // Host-owned module styles live in this document until the next full load replaces it.
+            void view.webContents.insertCSS(MODULE_THEME_CSS).catch(() => this.note('[enterprise-chat] module_style_failed'))
             this.state = { phase: 'ready' }; this.layout(); this.notify()
           } else {
             this.state = { phase: 'error' }; this.layout(); this.note('[enterprise-chat] unexpected_login_redirect')
@@ -216,7 +247,7 @@ export class EnterpriseChatView {
       const view = this.view
       await view.webContents.session.cookies.set({ url: credential.base, name: 'access_token_cookie', value: credential.cookie, path: '/', httpOnly: true, secure: new URL(credential.base).protocol === 'https:', sameSite: 'lax', expirationDate: credential.expiresAt / 1000 })
       if (generation !== this.generation) return
-      if (!view.webContents.getURL()) await view.webContents.loadURL(this.entryURL('/workspace/', credential.base))
+      if (!view.webContents.getURL()) await loadWithin(view.webContents.loadURL(this.entryURL('/workspace/', credential.base)), DOCUMENT_LOAD_TIMEOUT_MS)
       else { this.state = { phase: 'ready' }; this.layout() }
       clearTimeout(this.timer)
       this.timer = setTimeout(() => { void this.connect() }, Math.max(1000, credential.expiresAt - Date.now() - 30_000))
@@ -225,7 +256,7 @@ export class EnterpriseChatView {
       if (generation !== this.generation) return
       this.clear()
       this.state = { phase: 'error' }
-      const status = error && typeof error === 'object' && 'status' in error && typeof error.status === 'number' ? error.status : 'transport'
+      const status = error && typeof error === 'object' && 'status' in error && (typeof error.status === 'number' || typeof error.status === 'string') ? error.status : 'transport'
       this.note(`[enterprise-chat] session_failed status=${status}`)
     }
   }

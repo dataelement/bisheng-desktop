@@ -422,7 +422,7 @@ window.__ModuleLoader__.load({
       if (elapsed >= 0 && elapsed < 60000) return t('justNow')
       return new Date(time).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })
     }
-    function DesktopModes({ work, columns, resizeHandle, navigation, t }) {
+    function DesktopModes({ work, columns, resizeHandle, navigation, t, locale }) {
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
       const { mode, settingsOpen } = state
       React.useEffect(() => navigation.start(), [navigation])
@@ -436,7 +436,7 @@ window.__ModuleLoader__.load({
           if (!rect) return
           const sidebarRight = document.querySelector('[data-dsh-sidebar-root]')?.getBoundingClientRect().right || 0
           const x = Math.max(rect.x, sidebarRight)
-          void bridge.present({ visible: mode === 'chat' && !settingsOpen, bounds: { x, y: rect.y, width: Math.max(0, rect.right - x), height: rect.height }, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light' }).catch(() => {})
+          void bridge.present({ visible: mode === 'chat' && !settingsOpen, bounds: { x, y: rect.y, width: Math.max(0, rect.right - x), height: rect.height }, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light', locale: locale.getSnapshot().active === 'zh' ? 'zh' : 'en' }).catch(() => {})
         }
         const resize = new ResizeObserver(present)
         if (panel.current) resize.observe(panel.current)
@@ -444,12 +444,13 @@ window.__ModuleLoader__.load({
         if (sidebar) resize.observe(sidebar)
         const theme = new MutationObserver(present)
         theme.observe(document.body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] })
+        const unsubscribeLocale = locale.subscribe(present)
         window.addEventListener('resize', present)
         present()
         return () => {
-          resize.disconnect(); theme.disconnect(); window.removeEventListener('resize', present)
+          resize.disconnect(); theme.disconnect(); unsubscribeLocale(); window.removeEventListener('resize', present)
         }
-      }, [mode, settingsOpen])
+      }, [mode, settingsOpen, locale])
       React.useEffect(() => () => {
         void window.dshEnterpriseChat?.present({ visible: false, bounds: { x: 0, y: 48, width: 0, height: 0 }, theme: 'light' }).catch(() => {})
       }, [])
@@ -542,7 +543,7 @@ window.__ModuleLoader__.load({
       })
       ctx.slots.inject('sidebar.primaryNavigation', () => ctx.slots.register({ name: 'sidebar.primaryNavigation', id: 'desktop-primary-navigation', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS) }) }, PrimaryNavigation))
       ctx.slots.inject('sidebar.workspaces.title', () => ctx.slots.register({ name: 'sidebar.workspaces.title', inject: () => ({ t: ctx.locale.bind(MODES_NS) }) }, ({ flat, t }) => t(flat ? 'all' : 'projects')))
-      ctx.slots.inject('desktop.mode.content', () => ctx.slots.register({ name: 'desktop.mode.content', id: 'desktop-chat-work', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS) }) }, DesktopModes))
+      ctx.slots.inject('desktop.mode.content', () => ctx.slots.register({ name: 'desktop.mode.content', id: 'desktop-chat-work', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS), locale: ctx.locale }) }, DesktopModes))
       ctx.slots.inject('sidebar.workspaces.collection', () => ctx.slots.register({ name: 'sidebar.workspaces.collection', id: 'desktop-shared-collection', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS) }) }, SharedCollection))
     }
 

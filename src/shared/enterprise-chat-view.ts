@@ -2,6 +2,7 @@ export interface EnterpriseChatPresentation {
   visible: boolean
   bounds: { x: number; y: number; width: number; height: number }
   theme: 'light' | 'dark'
+  locale?: 'zh' | 'en'
 }
 
 export interface EnterpriseChatViewState {
@@ -21,6 +22,9 @@ export function parseChatPresentation(value: unknown): EnterpriseChatPresentatio
   if (typeof input.visible !== 'boolean' || !['light', 'dark'].includes(String(input.theme))) {
     throw new Error('Invalid Chat presentation.')
   }
+  if (input.locale !== undefined && input.locale !== 'zh' && input.locale !== 'en') {
+    throw new Error('Invalid Chat locale.')
+  }
   const bounds = input.bounds as Record<string, unknown> | undefined
   if (!bounds || ['x', 'y', 'width', 'height'].some((key) =>
     typeof bounds[key] !== 'number' || !Number.isFinite(bounds[key]) || Number(bounds[key]) < 0 || Number(bounds[key]) > 20000
@@ -28,6 +32,7 @@ export function parseChatPresentation(value: unknown): EnterpriseChatPresentatio
   return {
     visible: input.visible,
     theme: input.theme as 'light' | 'dark',
+    locale: input.locale,
     bounds: { x: Number(bounds.x), y: Number(bounds.y), width: Number(bounds.width), height: Number(bounds.height) }
   }
 }

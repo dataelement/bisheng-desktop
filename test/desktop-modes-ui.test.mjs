@@ -35,6 +35,8 @@ async function mount(connected = false, collection = {}) {
   const liveSession = { getSnapshot: () => liveState, subscribe: fn => { liveListeners.add(fn); return () => liveListeners.delete(fn) } }
   let panelState = { activePanelId: null }
   const sessionListeners = new Set(), panelListeners = new Set()
+  const localeListeners = new Set()
+  let activeLocale = 'en'
   const setSessions = value => { sessionList = value; sessionListeners.forEach(fn => fn()) }
   const setPanel = id => { panelState = { activePanelId: id }; panelListeners.forEach(fn => fn()) }
   const registrations = new Map()
@@ -50,7 +52,7 @@ async function mount(connected = false, collection = {}) {
     uiWorkspace: { registerNavigationHandler: (fn) => { navigate = fn; return () => {} }, startSession: () => { navigate('new'); setSessions({ phase: 'ready', byId: { draft: { id: 'draft', blank: true, retainedBy: { mainView: 1 } } } }); setPanel(null) } },
     sessions: { binding: id => id === 'draft' ? { session: liveSession } : undefined, list: { getSnapshot: () => sessionList, subscribe: fn => { sessionListeners.add(fn); return () => sessionListeners.delete(fn) } } },
     layout: { selectPanel: setPanel, panelInfo: { getSnapshot: () => panelState, subscribe: fn => { panelListeners.add(fn); return () => panelListeners.delete(fn) } } },
-    remote: {}, locale: { register() {}, bind: () => key => key },
+    remote: {}, locale: { register() {}, bind: () => key => key, getSnapshot: () => ({ active: activeLocale }), subscribe: fn => { localeListeners.add(fn); return () => localeListeners.delete(fn) } },
     effect(fn) { const dispose = fn(); if (typeof dispose === 'function') disposers.push(dispose) },
     slots: {
       inject(name, fn) { if (['desktop.mode.content', 'sidebar.workspaces.collection', 'sidebar.primaryNavigation'].includes(name)) fn() },
@@ -66,6 +68,8 @@ async function mount(connected = false, collection = {}) {
     React.createElement(content.component, { ...content.props, columns: '1fr 0px', work: React.createElement('textarea', { 'aria-label': 'work draft', defaultValue: 'retained draft' }) })
   )))
   return {
+    async locale(value) { await act(async () => { activeLocale = value; localeListeners.forEach(fn => fn()) }) },
+    localeListenerCount: () => localeListeners.size,
     async navigation(entries, path = '/skills') { snapshot = { ...snapshot, navigation: { entries, homeLabel: 'Welcome' }, path, conversationId: undefined }; await act(async () => chatListener(snapshot)) },
     navigate: (...args) => navigate(...args),
     async click(mode) { await act(async () => container.querySelector(`#dsh-mode-${mode}`).click()) },
@@ -116,6 +120,23 @@ it('restores the existing enterprise login directly into Chat', async () => {
   const ui = await mount(true)
   expect(ui.selected()).toBe('chat')
   expect(window.dshEnterpriseChat.present).toHaveBeenCalledWith(expect.objectContaining({ visible: true }))
+})
+
+it('delivers the active Harness language while settings hides Chat and cleans up its subscription', async () => {
+  const ui = await mount(true)
+  expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ locale: 'en' }))
+  await act(async () => window.dispatchEvent(new CustomEvent('dsh-desktop:settings-visibility', { detail: { open: true } })))
+  await ui.locale('zh')
+  expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false, locale: 'zh' }))
+  await act(async () => window.dispatchEvent(new CustomEvent('dsh-desktop:settings-visibility', { detail: { open: false } })))
+  expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true, locale: 'zh' }))
+  expect(ui.localeListenerCount()).toBe(1)
+  await act(async () => root.unmount())
+  root = undefined
+  expect(ui.localeListenerCount()).toBe(0)
+  const calls = window.dshEnterpriseChat.present.mock.calls.length
+  await ui.locale('en')
+  expect(window.dshEnterpriseChat.present).toHaveBeenCalledTimes(calls)
 })
 
 it('keeps one shared history across modes and routes records to their owner', async () => {

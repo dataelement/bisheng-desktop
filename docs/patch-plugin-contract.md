@@ -95,7 +95,7 @@ PR #357 展示了两种应区别处理的变化：
 
 主进程仅向可信宿主主 frame 暴露 Chat history(page) 与 open(id)，固定 API 路径、校验页码和标识。使用内存隔离 cookie session；会话打开按本次身份查询到的路径映射执行。身份 generation 改变后丢弃异步响应并清理云端列表、路径和网页存储。远程网页使用独立的展示状态 preload，仅暴露 reportLanding(boolean)，由主进程校验当前视图、主 frame、企业来源、路径和身份代际。
 
-毕昇 `/workspace/?embed=dsh` 在路由跳转前记录本浏览会话的嵌入布局标识，嵌入布局由 React 直接呈现内容。独立网页继续显示自己的聊天导航。该标识只影响布局与主题。
+毕昇 `/workspace/?embed=dsh` 在路由跳转前记录本浏览会话的嵌入布局标识，嵌入布局由 React 直接呈现内容。独立网页继续显示自己的聊天导航。该标识参与布局与主题呈现；语言覆盖另要求原生展示桥，见下文“桌面与独立网页的语言隔离”。
 
 上游提供等价内容/历史 slot、导航订阅和设置可见状态 API 后迁移并移除对应兼容扩展。每次变更执行全新 npm ci 重放、模式/导航/身份回归和原生布局检查。
 
@@ -114,3 +114,17 @@ Work 从 sessions.binding(id).session 订阅当前主视图的 pendingSubmission
 基于 bisheng-work/V1.2.0 e9f2063 与 Harness 0.2.0-rc.2。sidebar.primaryNavigation single/root 接缝位于原生新会话、quickSwitcher 之后，传递 wide、startSession、panels、selectPanel、renderPanelIcon、expandSidebar 与 renderAction。新会话及快捷键由 Harness 持续渲染一次；无贡献项时使用原生面板列表。renderAction 复用 PanelRow 的展示组件、Tooltip、主题、焦点及展开状态。桌面贡献项将全部企业入口和本地面板收进 Harness Menu，折叠状态打开菜单时展开原生侧栏。嵌入网页边界取内容区域与侧栏右边界的交集，并订阅两者尺寸变化，保留原生侧栏操作区域。sidebar.workspaces.title single/root 仅提供 flat 状态，默认仍使用 Harness 文案；桌面使用项目/所有会话标题。上游提供同等接缝后迁移。
 
 企业网页在 MainLayout 中上报实际可见菜单（权限、预览开关、名称、顺序和选中项均由网页决定）。远程 preload 仅上报展示数据；主进程校验视图、主 frame、企业来源、当前路径和身份代际，逐项校验菜单 ID 与固定路由。宿主 openPage 只接受当前账号已上报的菜单 ID。身份切换清空菜单及页面状态。网页的路由和主题桥接覆盖整个 MainLayout，功能页复用现有页面。Work 本地项目与会话继续由 Harness 管理。
+
+### 模块页深浅色与加载超时（2026-10-19）
+
+毕昇客户端的 ThemeProvider 把 `<html>` 固定为 `light`，而 `@bisheng/ui` 的 tokens.css 已定义完整 `.dark` 变量块。宿主因此接管模块页的深色：`src/main/enterprise/chat-module-theme.ts` 的 `moduleThemeScript` 在每次呈现、完整加载和页面内路由变化后向嵌入文档执行，写 `dshHostTheme` 与 `data-dsh-page`、派发 `dsh:appearance`，并且仅当路径匹配 `MODULE_ROUTE_PATTERN`（knowledge / channel / apps / skills / square，与宿主导航可达的模块一致）且宿主为深色时给 `<html>` 加 `dark` 与 `dsh-module-dark`。脚本在页内安装一次性 MutationObserver 守卫，在 ThemeProvider 挂载后重写 `light` 时重新断言；守卫只撤销宿主自己加过的 `dark`（`owned` 标记），不碰网页在聊天路由上自行维护的 `html.dark`，否则两边互相覆盖会把网页主线程卡死。聊天路由不加 `dark`，继续使用网页的 `data-dsh-chat-theme`。
+
+`MODULE_THEME_CSS` 在每次完整加载后由 `insertCSS` 注入，规则全部以 `html.dsh-module-dark` 为前缀，只覆盖硬编码的浅色工具类。类名清单取自 3006 bundle 与毕昇源码的并集，hex 同时生成大小写两种写法；替换值不手工指定，而是按颜色明度与色度由 `darkDeclaration` 推导到 token 变量（深字→text-1/2、中灰→text-3/4、浅底→bg-page/arco-gray-1..3、浅边→border-base），有彩度的品牌与状态色、本来就深的底色保持不变，带透明度修饰的工具类保留原透明度。表头的浅色底来自组件样式而非工具类，按 `thead` / `th` / `[role=columnheader]` 统一给深色底。网页为模块页补齐自身深色样式后，应删除本层而不是继续扩充。
+
+嵌入文档的首次加载与页面内导航都经 `loadWithin` 限时 45 秒。平台重新部署期间 `loadURL` 可能永不返回，超时前会把会话钉在 connecting 且不出现重连入口；超时后抛出 `status: 'timeout'`，进入错误态并记 `session_failed status=timeout`，重连可用。
+
+### 桌面与独立网页的语言隔离（2026-10-19）
+
+宿主插件从 Harness locale 服务读取并订阅当前语言，通过 presentation 的可选 `locale: zh | en` 字段交给主进程；缺省时兼容旧调用方。主进程严格校验，在首次/完整加载的 URL 携带 `dshLocale`，并在文档就绪、呈现和页面内路由变化后设置 `data-dsh-host-locale`、派发 `dsh:locale`。设置页隐藏嵌入文档期间仍投递语言，避免导航保留旧文案；投递失败记录 `locale_delivery_failed`。该接缝只影响当前身份的隔离文档，不改变插件/依赖加载链路，也不写用户语言配置。
+
+配套网页只在嵌入状态且存在原生 `dshChatPresentation` 时采用覆盖，映射到既有 `zh-Hans` / `en` 词典。初始化时禁用嵌入实例的 i18next 偏好缓存；运行中更新文档语言和当前实例，保留网页 lang cookie、持久化 lang atom 与独立网页偏好。宿主覆盖可在当前 sessionStorage 保留以支持硬刷新，身份 session 清理时一并释放。网页默认菜单文案切换后沿用现有导航上报；管理员自定义名称保留原文。两端必须配套更新，旧网页不会消费新增语言事件。

@@ -21,7 +21,7 @@ vi.mock('electron', async () => {
       setBackgroundColor = vi.fn()
       constructor(public options: any) {
         let url = ''
-        this.webContents = Object.assign(new EventEmitter(), { session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), mainFrame: {}, getURL: () => url, close: vi.fn(), executeJavaScript: vi.fn(async () => {}), loadURL: vi.fn(async (next) => { url = next; this.webContents.emit('did-finish-load') }) })
+        this.webContents = Object.assign(new EventEmitter(), { session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), mainFrame: {}, getURL: () => url, close: vi.fn(), executeJavaScript: vi.fn(async () => {}), insertCSS: vi.fn(async () => 'key'), loadURL: vi.fn(async (next) => { url = next; this.webContents.emit('did-finish-load') }) })
         fake.views.push(this)
       }
     }
@@ -80,7 +80,33 @@ describe('enterprise Chat host boundary', () => {
   it('rejects malformed geometry and long-lived server credentials', () => {
     expect(() => parseChatPresentation({ ...presentation, bounds: { ...presentation.bounds, width: NaN } })).toThrow()
     expect(() => parseWebSession({ cookie: 'a'.repeat(40), expires_in: 3600 }, 'https://enterprise.example', 'a')).toThrow()
+    for (const locale of ['ja', 'zh-Hans', '', 0, null, { value: 'zh' }]) {
+      expect(() => parseChatPresentation({ ...presentation, locale })).toThrow('locale')
+    }
   })
+})
+
+it('carries host language on first load and updates a hidden document without reloading it', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, { ...presentation, locale: 'zh' })
+    await flush()
+    const view = fake.views[0]
+    expect(view.webContents.loadURL).toHaveBeenLastCalledWith('https://enterprise.example/workspace/?embed=dsh&dshTheme=dark&dshLocale=zh')
+    view.setBounds.mockClear()
+    f.host.present(f.owner, { ...presentation, visible: false, locale: 'en' })
+    expect(view.webContents.executeJavaScript).toHaveBeenLastCalledWith(expect.stringContaining('dshHostLocale = "en"'))
+    expect(view.setBounds).not.toHaveBeenCalled()
+    expect(view.webContents.loadURL).toHaveBeenCalledTimes(1)
+    await f.host.open('new')
+    expect(view.webContents.loadURL).toHaveBeenLastCalledWith('https://enterprise.example/workspace/c/new?embed=dsh&dshTheme=dark&dshLocale=en')
+    const loads = view.webContents.loadURL.mock.calls.length
+    await f.host.open('new')
+    expect(view.webContents.loadURL).toHaveBeenCalledTimes(loads)
+    view.webContents.executeJavaScript.mockClear()
+    view.webContents.emit('did-navigate-in-page', {}, 'https://enterprise.example/workspace/c/new', true)
+    expect(view.webContents.executeJavaScript).toHaveBeenLastCalledWith(expect.stringContaining('dshHostLocale = "en"'))
+  } finally { f.host.dispose() }
 })
 
 it('reads cloud history through a fixed host endpoint and validates selection against that identity', async () => {
@@ -206,4 +232,54 @@ it('opens only account-published module entries and clears them with the identit
     expect(f.host.snapshot().navigation).toBeUndefined()
     await expect(f.host.openPage('knowledge')).rejects.toThrow('unavailable')
   } finally { f.host.dispose() }
+})
+
+it('installs the host module stylesheet and theme script once the document is ready', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0]
+    expect(view.webContents.insertCSS).toHaveBeenCalledWith(expect.stringContaining('html.dsh-module-dark'))
+    const script = view.webContents.executeJavaScript.mock.calls.at(-1)?.[0] as string
+    expect(script).toContain("root.dataset.dshHostTheme = 'dark'")
+    expect(script).toContain('new MutationObserver(apply)')
+  } finally { f.host.dispose() }
+})
+
+it('turns a stalled module navigation into a rejected open instead of a document pinned in loading', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0]
+    expect(f.host.snapshot().phase).toBe('ready')
+    view.webContents.loadURL.mockImplementation(() => new Promise<void>(() => {}))
+    const pending = f.host.open('new')
+    const outcome = expect(pending).rejects.toThrow('timed out')
+    await flush()
+    expect(f.host.snapshot().phase).toBe('loading')
+    await vi.advanceTimersByTimeAsync(45_000)
+    await outcome
+  } finally { f.host.dispose(); vi.useRealTimers() }
+})
+
+it('fails the session exchange when the first document load stalls, so Reconnect becomes available', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  const note = vi.fn()
+  const host = new EnterpriseChatView(f.enterprise as any, note)
+  try {
+    host.present(f.owner, presentation)
+    // The view exists after the web-session exchange resolves; its first document load then hangs.
+    await Promise.resolve()
+    const view = fake.views[0]
+    view.webContents.loadURL.mockImplementation(() => new Promise<void>(() => {}))
+    await flush()
+    await vi.advanceTimersByTimeAsync(45_000)
+    await flush()
+    expect(host.snapshot().phase).toBe('error')
+    expect(note).toHaveBeenCalledWith('[enterprise-chat] session_failed status=timeout')
+  } finally { host.dispose(); vi.useRealTimers() }
 })
