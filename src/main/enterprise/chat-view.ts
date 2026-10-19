@@ -1,12 +1,14 @@
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { session, shell, WebContentsView, type BrowserWindow, type Session } from 'electron'
-import { parseChatPage, parseChatId, parseChatPresentation, type EnterpriseChatHistory, type EnterpriseChatPresentation, type EnterpriseChatViewState } from '../../shared/enterprise-chat-view'
+import { parseEnterpriseNavigation, parseChatPage, parseChatId, parseChatPresentation, type EnterpriseChatHistory, type EnterpriseChatPresentation, type EnterpriseChatViewState } from '../../shared/enterprise-chat-view'
 import type { EnterpriseDesktopRuntime } from './enterprise-desktop'
 
 /** Remote Chat gets its own in-memory browser session and a presentation-only preload. */
 export class EnterpriseChatView {
   private landing?: boolean
+  private navigation?: ReturnType<typeof parseEnterpriseNavigation>
+  private navigationRequest = 0
   private origin?: string
   private routes = new Map<string, string>()
   private view?: WebContentsView
@@ -30,7 +32,7 @@ export class EnterpriseChatView {
   }
 
   snapshot(): EnterpriseChatViewState {
-    return { ...this.state, landing: this.landing, epoch: this.generation, conversationId: this.view?.webContents.getURL().match(/\/workspace\/(?:c|chat|linsight)\/([a-zA-Z0-9_-]+)/u)?.[1], connected: this.enterprise.snapshot().connected }
+    return { ...this.state, navigation: this.navigation, path: this.view ? new URL(this.view.webContents.getURL() || 'about:blank').pathname.replace(/^\/workspace/u, '') : undefined, landing: this.landing, epoch: this.generation, conversationId: this.view?.webContents.getURL().match(/\/workspace\/(?:c|chat|linsight)\/([a-zA-Z0-9_-]+)/u)?.[1], connected: this.enterprise.snapshot().connected }
   }
 
   private notify(): void {
@@ -82,20 +84,35 @@ export class EnterpriseChatView {
     if (epoch !== this.generation || !this.view || !this.origin) throw new Error('Chat unavailable.')
     const route = id === 'new' ? '/workspace/c/new' : this.routes.get(id)
     if (!route) throw new Error('Select a conversation from current Chat history.')
-    if (this.snapshot().conversationId === id) return
-    // The web router owns conversation state. Keep its document, caches and theme alive.
-    const view = this.view
+    await this.navigate(route)
+  }
+
+  /** Only current, account-published module identities can be opened by the host. */
+  async openPage(input: unknown): Promise<void> {
+    const id = parseChatId(input)
+    const entry = this.navigation?.entries.find(item => item.id === id)
+    if (!entry || !this.enterprise.snapshot().connected) throw new Error('Enterprise page unavailable.')
+    await this.navigate(`/workspace${entry.path}`)
+  }
+
+  private async navigate(route: string): Promise<void> {
+    const view = this.view, origin = this.origin, epoch = this.generation
+    if (!view || !origin) throw new Error('Enterprise page unavailable.')
+    const current = new URL(view.webContents.getURL())
+    current.searchParams.delete('embed')
+    current.searchParams.delete('dshTheme')
+    if (current.pathname + current.search === route) return
+    const request = ++this.navigationRequest
     const accepted = await view.webContents.executeJavaScript(`(() => {
       const event = new CustomEvent('dsh:navigate', { detail: { path: ${JSON.stringify(route.slice('/workspace'.length))} }, cancelable: true });
       window.dispatchEvent(event);
       return event.defaultPrevented;
     })()`)
-    if (epoch !== this.generation || this.view !== view) return
+    if (request !== this.navigationRequest || epoch !== this.generation || this.view !== view) return
     if (accepted === true) return
-    // Older deployed clients retain full navigation until their router bridge is available.
     this.state = { phase: 'loading' }
     this.layout()
-    await view.webContents.loadURL(this.entryURL(route, this.origin))
+    await view.webContents.loadURL(this.entryURL(route, origin))
   }
 
   private layout(): void {
@@ -159,12 +176,18 @@ export class EnterpriseChatView {
           if (new URL(url).origin !== origin) event.preventDefault()
         }
         view.webContents.on('ipc-message', (event, channel, input: unknown) => {
-          if (channel !== 'enterprise-chat:landing' || generation !== this.generation || this.view !== view || event.senderFrame !== view.webContents.mainFrame) return
+          if (generation !== this.generation || this.view !== view || event.senderFrame !== view.webContents.mainFrame) return
           const url = new URL(view.webContents.getURL())
-          if (url.origin !== origin || !/^\/workspace\/c\/[a-zA-Z0-9_-]+$/u.test(url.pathname)) return
+          if (url.origin !== origin || !url.pathname.startsWith('/workspace/')) return
           if (!input || typeof input !== 'object') return
           const report = input as Record<string, unknown>
-          if (typeof report.landing !== 'boolean' || report.path !== url.pathname) return
+          if (report.path !== url.pathname) return
+          if (channel === 'enterprise-chat:navigation') {
+            try { this.navigation = parseEnterpriseNavigation(report.navigation); this.notify() }
+            catch { this.note('[enterprise-chat] invalid_navigation_report') }
+            return
+          }
+          if (channel !== 'enterprise-chat:landing' || !/^\/workspace\/c\/[a-zA-Z0-9_-]+$/u.test(url.pathname) || typeof report.landing !== 'boolean') return
           this.landing = url.pathname === '/workspace/c/new' && report.landing
           this.notify()
         })
@@ -209,6 +232,8 @@ export class EnterpriseChatView {
 
   private clear(): void {
     this.landing = undefined
+    this.navigation = undefined
+    this.navigationRequest++
     this.generation += 1
     clearTimeout(this.timer)
     this.timer = undefined

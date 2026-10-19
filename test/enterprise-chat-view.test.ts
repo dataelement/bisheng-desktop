@@ -184,3 +184,26 @@ it('pushes landing state from the current remote main frame and rejects stale or
     expect(f.host.snapshot().landing).toBeUndefined()
   } finally { f.host.dispose() }
 })
+
+it('opens only account-published module entries and clears them with the identity', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0].webContents
+    const report = { path: '/workspace/', navigation: { entries: [{ id: 'knowledge', label: 'Knowledge', path: '/knowledge', primary: true, active: false }] } }
+    view.emit('ipc-message', { senderFrame: {} }, 'enterprise-chat:navigation', report)
+    await expect(f.host.openPage('knowledge')).rejects.toThrow('unavailable')
+    view.emit('ipc-message', { senderFrame: view.mainFrame }, 'enterprise-chat:navigation', report)
+    await f.host.openPage('knowledge')
+    expect(view.loadURL).toHaveBeenLastCalledWith('https://enterprise.example/workspace/knowledge?embed=dsh&dshTheme=dark')
+    await expect(f.host.openPage('skills')).rejects.toThrow('unavailable')
+    await expect(f.host.openPage('../admin')).rejects.toThrow()
+    const count = view.loadURL.mock.calls.length
+    await f.host.openPage('knowledge')
+    expect(view.loadURL).toHaveBeenCalledTimes(count)
+    f.change({ connected: false, connectionKey: 'tenant-a' })
+    expect(f.host.snapshot().navigation).toBeUndefined()
+    await expect(f.host.openPage('knowledge')).rejects.toThrow('unavailable')
+  } finally { f.host.dispose() }
+})

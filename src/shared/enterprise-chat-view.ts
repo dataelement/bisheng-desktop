@@ -5,6 +5,8 @@ export interface EnterpriseChatPresentation {
 }
 
 export interface EnterpriseChatViewState {
+  navigation?: EnterpriseNavigation
+  path?: string
   epoch?: number
   landing?: boolean
   conversationId?: string
@@ -47,4 +49,43 @@ export function parseChatPage(value: unknown): number {
 export function parseChatId(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/u.test(value)) throw new Error('Invalid Chat identity.')
   return value
+}
+
+export interface EnterpriseNavigationEntry {
+  id: string
+  label: string
+  path: string
+  active: boolean
+  primary: boolean
+}
+export interface EnterpriseNavigation {
+  entries: EnterpriseNavigationEntry[]
+  homeLabel: string
+}
+const modulePaths: Record<string, RegExp> = {
+  knowledge: /^\/knowledge$/u,
+  channel: /^\/channel$/u,
+  apps: /^\/apps(?:\/[a-zA-Z0-9_-]+)*$/u,
+  skills: /^\/skills$/u,
+  square: /^\/square$/u
+}
+const moduleGrants: Record<string, string> = { knowledge: 'knowledge_space', channel: 'subscription', apps: 'apps', skills: 'home' }
+/** Validate presentation metadata from the isolated enterprise document. */
+export function parseEnterpriseNavigation(value: unknown): EnterpriseNavigation {
+  if (!value || typeof value !== 'object') throw new Error('Invalid enterprise navigation.')
+  const input = value as Record<string, unknown>
+  if (!Array.isArray(input.entries) || input.entries.length > 5) throw new Error('Invalid enterprise entries.')
+  const seen = new Set<string>()
+  const entries = input.entries.map((entry: unknown): EnterpriseNavigationEntry => {
+    if (!entry || typeof entry !== 'object') throw new Error('Invalid enterprise entry.')
+    const row = entry as Record<string, unknown>
+    if (typeof row.id !== 'string' || !Object.hasOwn(modulePaths, row.id) || seen.has(row.id) ||
+        typeof row.path !== 'string' || row.path.length > 256 ||
+        !(modulePaths[row.id]?.test(row.path) || (moduleGrants[row.id] && row.path === `/menu-unavailable?plugin=${moduleGrants[row.id]}`)) ||
+        typeof row.label !== 'string' || !row.label.trim() || row.label.length > 80 ||
+        typeof row.active !== 'boolean' || typeof row.primary !== 'boolean') throw new Error('Invalid enterprise entry.')
+    seen.add(row.id)
+    return { id: row.id, path: row.path, label: row.label, active: row.active, primary: row.primary }
+  })
+  return { entries, homeLabel: typeof input.homeLabel === 'string' ? input.homeLabel.slice(0, 80) : '' }
 }

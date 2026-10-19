@@ -108,3 +108,9 @@ PR #357 展示了两种应区别处理的变化：
 ### 首次发送的即时模式收起（2026-10-16）
 
 Work 从 sessions.binding(id).session 订阅当前主视图的 pendingSubmissions、blank、running、awaitingFirstTurn，发送回显到达后立即收起模式选择；会话切换和卸载释放旧订阅。ChatView 使用自己的乐观消息状态在 layout effect 上报欢迎页状态，KeepAlive 页面只在路由匹配时上报。主进程经受限 preload 接收布尔值，向可信宿主推送快照，旧轮询响应按 revision 丢弃。轮询继续刷新历史及连接兜底，首次发送的模式收起由实时状态驱动。新会话恢复选择；发送拒绝后的可见状态与实际消息列表一致。
+
+### 统一桌面导航（2026-10-19）
+
+基于 bisheng-work/V1.2.0 e9f2063 与 Harness 0.2.0-rc.2。新增 sidebar.primaryNavigation single/root 接缝，传递 wide、startSession、panels、selectPanel 与 renderPanelIcon；无贡献项时渲染原有新会话、quickSwitcher 与面板列表。桌面贡献项将企业入口和本地面板集中到一套导航中，原有面板在更多菜单保持单次挂载。sidebar.workspaces.title single/root 仅提供 flat 状态，默认仍使用 Harness 文案；桌面使用项目/所有会话标题。上游提供同等接缝后迁移。
+
+企业网页在 MainLayout 中上报实际可见菜单（权限、预览开关、名称、顺序和选中项均由网页决定）。远程 preload 仅上报展示数据；主进程校验视图、主 frame、企业来源、当前路径和身份代际，逐项校验菜单 ID 与固定路由。宿主 openPage 只接受当前账号已上报的菜单 ID。身份切换清空菜单及页面状态。网页的路由和主题桥接覆盖整个 MainLayout，功能页复用现有页面。Work 本地项目与会话继续由 Harness 管理。

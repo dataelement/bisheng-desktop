@@ -24,6 +24,7 @@ async function mount(connected = false, collection = {}) {
     present: vi.fn(async () => ({ ...snapshot })),
     retry: vi.fn(async () => {}),
     history: vi.fn(async () => ({ epoch: 1, items: [{ id: 'cloud-a', title: 'Cloud chat', updatedAt: '2026-10-16' }], hasMore: false })),
+    openPage: vi.fn(async () => {}),
     open: vi.fn(async () => {})
   }
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
@@ -40,7 +41,7 @@ async function mount(connected = false, collection = {}) {
   window.__ModuleLoader__ = { load({ factory }) {
     plugin = factory(name => {
       if (name === 'react') return React
-      if (name === '@deepseek-ai/dsh-client-ui-primitives') return {}
+      if (name === '@deepseek-ai/dsh-client-ui-primitives') return { Menu: ({ anchor, open, items, onSelect }) => React.createElement('div', null, anchor, open && items.map(item => React.createElement('button', { key: item.id, role: 'menuitem', onClick: () => onSelect(item.id) }, item.label))) }
       throw new Error(name)
     })
   } }
@@ -48,23 +49,24 @@ async function mount(connected = false, collection = {}) {
   plugin.apply({
     uiWorkspace: { registerNavigationHandler: (fn) => { navigate = fn; return () => {} }, startSession: () => { navigate('new'); setSessions({ phase: 'ready', byId: { draft: { id: 'draft', blank: true, retainedBy: { mainView: 1 } } } }); setPanel(null) } },
     sessions: { binding: id => id === 'draft' ? { session: liveSession } : undefined, list: { getSnapshot: () => sessionList, subscribe: fn => { sessionListeners.add(fn); return () => sessionListeners.delete(fn) } } },
-    layout: { panelInfo: { getSnapshot: () => panelState, subscribe: fn => { panelListeners.add(fn); return () => panelListeners.delete(fn) } } },
+    layout: { selectPanel: setPanel, panelInfo: { getSnapshot: () => panelState, subscribe: fn => { panelListeners.add(fn); return () => panelListeners.delete(fn) } } },
     remote: {}, locale: { register() {}, bind: () => key => key },
     effect(fn) { const dispose = fn(); if (typeof dispose === 'function') disposers.push(dispose) },
     slots: {
-      inject(name, fn) { if (['desktop.mode.content', 'sidebar.workspaces.collection'].includes(name)) fn() },
+      inject(name, fn) { if (['desktop.mode.content', 'sidebar.workspaces.collection', 'sidebar.primaryNavigation'].includes(name)) fn() },
       register(options, component) { registrations.set(options.name, { component, props: options.inject() }) }
     }
   })
   container = document.createElement('div')
   document.body.append(container)
   root = createRoot(container)
-  const content = registrations.get('desktop.mode.content'), history = registrations.get('sidebar.workspaces.collection')
+  const content = registrations.get('desktop.mode.content'), history = registrations.get('sidebar.workspaces.collection'), primary = registrations.get('sidebar.primaryNavigation')
   await act(async () => root.render(React.createElement(React.Fragment, null,
-    React.createElement('aside', null, React.createElement(history.component, { ...history.props, mode: 'projects', query: '', archivedOnly: false, projects: () => React.createElement('div', { 'data-project': true }, 'Project task'), items: [{ id: 'local-a', updatedAt: Date.parse('2026-10-17'), render: active => React.createElement('button', { 'data-local-row': true, 'aria-current': active ? 'page' : undefined, onClick: () => navigate('open') }, 'Local task') }], ...collection })),
+    React.createElement('aside', null, React.createElement(primary.component, { ...primary.props, wide: true, panels: [{ id: 'plugins', label: 'Plugins' }], startSession: (...args) => { expect(args).toHaveLength(0); navigate('new') }, selectPanel: setPanel, renderPanelIcon: () => null }), React.createElement(history.component, { ...history.props, mode: 'projects', query: '', archivedOnly: false, projects: () => React.createElement('div', { 'data-project': true }, 'Project task'), items: [{ id: 'local-a', updatedAt: Date.parse('2026-10-17'), render: active => React.createElement('button', { 'data-local-row': true, 'aria-current': active ? 'page' : undefined, onClick: () => navigate('open') }, 'Local task') }], ...collection })),
     React.createElement(content.component, { ...content.props, columns: '1fr 0px', work: React.createElement('textarea', { 'aria-label': 'work draft', defaultValue: 'retained draft' }) })
   )))
   return {
+    async navigation(entries, path = '/skills') { snapshot = { ...snapshot, navigation: { entries, homeLabel: 'Welcome' }, path, conversationId: undefined }; await act(async () => chatListener(snapshot)) },
     navigate: (...args) => navigate(...args),
     async click(mode) { await act(async () => container.querySelector(`#dsh-mode-${mode}`).click()) },
     async account(next) {
@@ -240,5 +242,34 @@ it('hides Chat mode selection on pushed local state while the URL is still new',
   await ui.cloudLanding(false)
   expect(ui.picker()).toBeNull()
   await ui.cloudLanding(true)
+  expect(ui.picker()).not.toBeNull()
+})
+
+it('shares account navigation across Chat and Work and keeps local panels accessible through More', async () => {
+  const ui = await mount(true)
+  await ui.navigation([
+    { id: 'knowledge', label: 'Knowledge', path: '/knowledge', primary: true, active: false },
+    { id: 'skills', label: 'Skills', path: '/skills', primary: false, active: true }
+  ])
+  expect(ui.picker()).toBeNull()
+  const sidebar = container.querySelector('aside')
+  await act(async () => sidebar.querySelector('[data-navigation-id=knowledge]').click())
+  expect(window.dshEnterpriseChat.openPage).toHaveBeenLastCalledWith('knowledge')
+  await act(async () => sidebar.querySelector('[data-navigation-id=more]').click())
+  expect([...sidebar.querySelectorAll('[role=menuitem]')].map(node => node.textContent)).toEqual(['Skills', 'Plugins'])
+  await act(async () => [...sidebar.querySelectorAll('[role=menuitem]')].find(node => node.textContent === 'Plugins').click())
+  expect(ui.selected()).toBe('work')
+  expect(ui.picker()).toBeNull()
+  expect(sidebar.querySelector('[data-navigation-id=knowledge]')).toBeTruthy()
+  await act(async () => sidebar.querySelector('[data-navigation-id=knowledge]').click())
+  expect(ui.selected()).toBe('chat')
+  await ui.account(false)
+  expect(sidebar.querySelector('[data-navigation-id=knowledge]')).toBeNull()
+})
+
+it('starts a new conversation without forwarding the click event as a workspace identity', async () => {
+  const ui = await mount(true)
+  await ui.cloudSession('existing')
+  await act(async () => container.querySelector('[data-navigation-id=new]').click())
   expect(ui.picker()).not.toBeNull()
 })

@@ -95,6 +95,8 @@ describe('BISHENG client slot occupants', () => {
 
     expect(plugin.inject).toEqual(['slots', 'locale', 'remote', 'remote.session', 'sessions', 'uiWorkspace', 'layout'])
     expect(registrations.map(({ config }) => config.name)).toEqual([
+      'sidebar.primaryNavigation',
+      'sidebar.workspaces.title',
       'desktop.mode.content',
       'sidebar.workspaces.collection',
       'sidebar.brand.mark',

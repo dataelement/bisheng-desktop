@@ -1,3 +1,12 @@
+## 2026-10-19 — 统一桌面企业导航
+
+- 基线：V1.2.0 e9f206331d9ff5a1e36ffdb29ab7403881dc6bb2；实际 Harness 0.2.0-rc.2。网页以 3006 已部署的 feat/bisheng-work-120 4269304db 为基线。
+- Chat/Work 共用新建对话、企业功能入口、更多、项目与对话列表；本地插件移入更多，保留桌面设置和项目能力。远程页面按企业实际可见入口接入，使用已有网页内容与设计。
+- 验证：桌面 219 文件、1874 项通过、1 项跳过；typecheck/build 通过；两项 Harness 扩展从原始 npm 包重放通过。网页构建、1450 strict 文件、变更 lint 与导航回归通过。
+- 实机：保留企业测试配置重启后，Chat/Work 共用导航，新建对话、云端历史、本地任务、订阅、应用、技能中心、本地插件及功能页隐藏模式选择均已观察。新建动作显式调用无参数 startSession，避免将点击事件误作工作区标识。
+- 3006 已部署 bisheng/feat/bisheng-work-120@bc05600f147c2127095aed80c939d19d4125b0b2，461 个前端文件哈希校验通过；后台、后端与其他容器保持原状。嵌入功能页明确采用桌面布局，浏览器保留原有响应式规则。
+- 独立问题：知识空间 mine/department 返回 500，后端日志显示历史 auth_type=review 与当前枚举不匹配；列表数据验收受阻。深色/系统主题与 Windows 实机、正式安装包本轮未验收。截图及部署记录见主工作区 outputs/desktop-navigation-20261019-r2/。
+
 ## 2026-10-16 — macOS 浅色侧栏与窗口主题同步
 
 - 基线实时核验：bisheng-work/V1.2.0@7edfd09170c23b005c81a78b65a42360377fc87d；工作目录 bisheng-work-chat-work，分支 codex/chat-work-integration，Harness 0.2.0-rc.2。

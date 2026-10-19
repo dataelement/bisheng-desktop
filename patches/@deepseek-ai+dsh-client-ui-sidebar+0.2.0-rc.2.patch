@@ -1,5 +1,5 @@
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js b/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js
-index de89863..a8f2ee8 100644
+index de89863..4420779 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js
 @@ -286,8 +286,16 @@ window.__ModuleLoader__.load({
@@ -27,7 +27,18 @@ index de89863..a8f2ee8 100644
  								"aria-hidden": "true",
  								children: [(0, react_jsx_runtime.jsx)("span", {
  									className: SidebarRoot_module_css_default.brandMark,
-@@ -375,6 +384,7 @@ window.__ModuleLoader__.load({
+@@ -345,6 +354,10 @@ window.__ModuleLoader__.load({
+ 							});
+ 						})(), !darwinDesktop && toggle]
+ 					}),
++					renderSlot("sidebar.primaryNavigation", {
++                        wide, startSession, panels, selectPanel,
++                        renderPanelIcon: (id) => renderSlot("sidebar.panellist", { size: 16, active: false }, { only: id })
++                    }, { fallback: (0, react_jsx_runtime.jsxs)(react.Fragment, { children: [
+ 					(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
+ 						label: t("session.new.label"),
+ 						shortcutKeys: newShortcut?.keys,
+@@ -375,6 +388,7 @@ window.__ModuleLoader__.load({
  							})]
  						})
  					}),
@@ -35,8 +46,13 @@ index de89863..a8f2ee8 100644
  					panels.length > 0 && (0, react_jsx_runtime.jsx)("nav", {
  						className: SidebarRoot_module_css_default.panelList,
  						"aria-label": t("panels.label"),
-@@ -389,12 +399,7 @@ window.__ModuleLoader__.load({
- 					}),
+@@ -386,15 +400,11 @@ window.__ModuleLoader__.load({
+ 							selectPanel,
+ 							renderSlot
+ 						}, id))
+-					}),
++					})
++                    ] }) }),
  					(0, react_jsx_runtime.jsx)("div", {
  						className: SidebarRoot_module_css_default.regionArea,
 -						children: renderSlot("sidebar.workspaces", {
@@ -49,7 +65,7 @@ index de89863..a8f2ee8 100644
  					}),
  					(0, react_jsx_runtime.jsxs)("div", {
  						className: SidebarRoot_module_css_default.footArea,
-@@ -402,6 +407,7 @@ window.__ModuleLoader__.load({
+@@ -402,6 +412,7 @@ window.__ModuleLoader__.load({
  							className: SidebarRoot_module_css_default.footerActions,
  							children: renderSlot("sidebar.footer.action", { wide })
  						}), (0, react_jsx_runtime.jsx)("div", {
@@ -57,10 +73,11 @@ index de89863..a8f2ee8 100644
  							className: SidebarRoot_module_css_default.settingsArea,
  							children: renderSlot("sidebar.settings", { wide })
  						})]
-@@ -500,6 +506,10 @@ window.__ModuleLoader__.load({
+@@ -500,6 +511,11 @@ window.__ModuleLoader__.load({
  						kind: "single",
  						scope: "root"
  					},
++					"sidebar.primaryNavigation": { kind: "single", scope: "root" },
 +					"sidebar.quickSwitcher": {
 +						kind: "single",
 +						scope: "root"
@@ -69,10 +86,29 @@ index de89863..a8f2ee8 100644
  						kind: "list",
  						scope: "root"
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/types/client/contract/slots.d.ts b/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/types/client/contract/slots.d.ts
-index 6c346de..62dd1ac 100644
+index 6c346de..e61ea22 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/types/client/contract/slots.d.ts
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/types/client/contract/slots.d.ts
-@@ -39,6 +39,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+@@ -14,6 +14,18 @@ import type { ShortcutCatalogEntry } from '@deepseek-ai/dsh-client-shortcuts/cli
+ import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client';
+ declare module '@deepseek-ai/dsh-client-ui-slots' {
+     interface SlotMap {
++        /** Optional owner of New Session and panel navigation; default shell renders when absent. */
++        'sidebar.primaryNavigation': {
++            kind: 'single';
++            scope: 'root';
++            owner: {
++                wide: boolean;
++                startSession: (workspaceId?: WorkspaceId) => void;
++                panels: readonly SidebarPanelMetadata[];
++                selectPanel: (id: MainPanelId) => void;
++                renderPanelIcon: (id: MainPanelId) => import('react').ReactNode;
++            };
++        };
+         /** Non-interactive notification inside the collapsed sidebar expand button. */
+         'sidebar.toggle.badge': {
+             kind: 'single';
+@@ -39,6 +51,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
              scope: 'root';
              owner: SidebarBrandNameOwnerProps;
          };
@@ -85,7 +121,7 @@ index 6c346de..62dd1ac 100644
          /**
           * Global panel icons. Each list id addresses the matching main panel;
           * the sidebar owns the button and resolves its label from list metadata.
-@@ -106,6 +112,11 @@ export interface SidebarPanelMetadata {
+@@ -106,6 +124,11 @@ export interface SidebarPanelMetadata {
      /** Row title and accessible name: resolved label, or the id when omitted. */
      label: string;
  }
@@ -97,12 +133,12 @@ index 6c346de..62dd1ac 100644
  /**
   * Owner share of the browser hole — the only facts crossing the shell/region
   * boundary. Business data and actions arrive through the region's own inject.
-@@ -155,5 +166,5 @@ export type SidebarRootInjected = {
+@@ -155,5 +178,5 @@ export type SidebarRootInjected = {
   * render shares, this package's injected callbacks, and the standard locale
   * seat. Panel metadata arrives through an injected observable.
   */
 -export type SidebarRootComponentProps = PropsRuntime<'sidebar'> & PropsRenderSlots<'sidebar.brand.mark' | 'sidebar.brand.name' | 'sidebar.toggle.badge' | 'sidebar.panellist' | 'sidebar.workspaces' | 'sidebar.settings' | 'sidebar.footer.action'> & InjectFace<SidebarRootInjected> & PropsLocale<'sidebar'>;
-+export type SidebarRootComponentProps = PropsRuntime<'sidebar'> & PropsRenderSlots<'sidebar.brand.mark' | 'sidebar.brand.name' | 'sidebar.toggle.badge' | 'sidebar.quickSwitcher' | 'sidebar.panellist' | 'sidebar.workspaces' | 'sidebar.settings' | 'sidebar.footer.action'> & InjectFace<SidebarRootInjected> & PropsLocale<'sidebar'>;
++export type SidebarRootComponentProps = PropsRuntime<'sidebar'> & PropsRenderSlots<'sidebar.primaryNavigation' | 'sidebar.brand.mark' | 'sidebar.brand.name' | 'sidebar.toggle.badge' | 'sidebar.quickSwitcher' | 'sidebar.panellist' | 'sidebar.workspaces' | 'sidebar.settings' | 'sidebar.footer.action'> & InjectFace<SidebarRootInjected> & PropsLocale<'sidebar'>;
  //# sourceMappingURL=slots.d.ts.map
 \ No newline at end of file
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/types/client/index.d.ts b/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/types/client/index.d.ts

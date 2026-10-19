@@ -583,6 +583,7 @@ contextBridge.exposeInMainWorld('dshEnterpriseChat', Object.freeze({
   state: (): Promise<EnterpriseChatViewState> => ipcRenderer.invoke('enterprise-chat:state'),
   retry: (): Promise<void> => ipcRenderer.invoke('enterprise-chat:retry'),
   history: (page: number) => ipcRenderer.invoke('enterprise-chat:history', page),
+  openPage: (id: string): Promise<void> => ipcRenderer.invoke('enterprise-chat:open-page', id),
   open: (id: string): Promise<void> => ipcRenderer.invoke('enterprise-chat:open', id),
   subscribe: (listener: (state: EnterpriseChatViewState) => void): (() => void) => {
     const receive = (_event: Electron.IpcRendererEvent, state: EnterpriseChatViewState): void => listener(state)

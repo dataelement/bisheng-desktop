@@ -1677,7 +1677,7 @@ function registerHarnessHandlers(): void {
     }
   })
 
-  for (const channel of ['enterprise-chat:present', 'enterprise-chat:state', 'enterprise-chat:retry', 'enterprise-chat:history', 'enterprise-chat:open']) ipcMain.removeHandler(channel)
+  for (const channel of ['enterprise-chat:present', 'enterprise-chat:state', 'enterprise-chat:retry', 'enterprise-chat:history', 'enterprise-chat:open', 'enterprise-chat:open-page']) ipcMain.removeHandler(channel)
   ipcMain.handle('enterprise-chat:present', (event, presentation: unknown) => {
     assertTrustedMainWindowEvent(event)
     return enterpriseChat?.present(mainWindow!, presentation) ?? { phase: 'idle', connected: false }
@@ -1693,6 +1693,10 @@ function registerHarnessHandlers(): void {
   ipcMain.handle('enterprise-chat:history', (event, page: unknown) => {
     assertTrustedMainWindowEvent(event)
     return enterpriseChat?.history(page)
+  })
+  ipcMain.handle('enterprise-chat:open-page', (event, id: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    return enterpriseChat?.openPage(id)
   })
   ipcMain.handle('enterprise-chat:open', (event, id: unknown) => {
     assertTrustedMainWindowEvent(event)
