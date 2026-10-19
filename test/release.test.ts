@@ -359,6 +359,7 @@ describe('GitHub release contract', () => {
       'package:mac:arm64',
       'package:mac:x64',
       'package:win',
+      'package:win:unpacked',
       'package:dev:mac:arm64',
       'package:dev:mac:x64',
       'package:dev:win'
@@ -407,7 +408,7 @@ describe('GitHub release contract', () => {
       'utf8'
     )
 
-    expect(workflow.match(/runs-on: \[self-hosted, macOS, ARM64\]/g)).toHaveLength(2)
+    expect(workflow.match(/runs-on: \[self-hosted, macOS, ARM64\]/g)).toHaveLength(7)
     expect(workflow).not.toContain('runs-on: macos-15-intel')
     expect(workflow).toContain('runs-on: [self-hosted, macOS, bisheng-intel]')
     expect(workflow).toContain('architecture: arm64')

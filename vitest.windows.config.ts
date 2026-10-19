@@ -40,11 +40,7 @@ export default defineConfig({
       'test/gpu-fallback.test.ts',
       'test/window-raise.test.ts',
       'test/close-to-tray.test.ts',
-      'test/ppt-fonts.test.mjs',
-      'test/sign-windows-unpacked.test.ts',
-      'test/finalize-windows-release.test.ts',
-      'test/release.test.ts',
-      'test/formal-release-handoff.test.mjs'
+      'test/ppt-fonts.test.mjs'
     ]
   }
 })
