@@ -6,6 +6,16 @@
 
 当前应用产品名称为 BISHENG。应用 ID 为 `io.bisheng`，数据目录、登录协议和发布资产文件名使用 `bisheng`（开发通道为 `bisheng-dev`）。更新地址、ModelScope 仓库 `alexyaojin/bisheng-work` 和 GitHub 仓库仍使用 `bisheng-work`。**以下下载、发布及产品介绍均属于上游 DSH Desktop，不代表 BISHENG 已发布。** 上游及第三方代码保留各自许可；新增非开源功能应明确其授权范围，不应默认沿用下方 MIT 标识。
 
+## 企业版功能与边界
+
+BISHENG 企业扩展复用同一套 Harness runtime 和 Web UI，当前源码提供以下能力；这不是已发布或生产验收声明：
+
+- **企业账号与模型**：在浏览器中完成企业登录，支持手动登录码接续、凭据安全存储、刷新与退出；同步企业可用模型、能力和用量，通过企业模型适配器调用服务。思考档位和 Responses 协议取决于后端明确声明与模型配置，见 [企业登录联调](docs/enterprise-login-mock.zh.md) 和 [模型协议说明](docs/enterprise-model-reasoning.zh.md)。
+- **企业插件市场**：按当前企业展示目录，支持离线包安装、更新、启用、停用和卸载；校验签名授权、包完整性、平台和宿主依赖，更新失败恢复旧版本。能力取决于企业后台实际提供的目录、包和授权，见 [企业插件市场](docs/enterprise-plugin-market.zh.md)。
+- **统一企业插件客户端**：企业宿主包 `packages/dsh-desktop-enterprise` 提供 `ctx.enterpriseAuth`。`getState()`、原始 `request(path, init)` 和通用 `invokeTool(toolName, args, options)` 共用执行实例授权；统一客户端负责工具调用路径、信封、JSON 与错误处理，主进程负责凭据和通用传输。业务插件仍负责工具标识、模型选择、命令注册和业务结果转换，见 [企业认证通道](docs/enterprise-auth-channel.zh.md)。
+
+这些能力不等于逐业务 API 权限或恶意插件隔离：获准实例可通过通用通道访问当前用户有权访问的企业 API，细粒度权限需要企业后端执行；共享 Node 进程中的插件不是强安全沙箱。默认签名公钥采用首次使用信任（TOFU），独立信任根需管理员预置。源码与隔离 Mock 测试不能代替真实企业服务、完整 Electron UI、实际安装包及 Windows 原生验收；目前不宣称生产验证完成。
+
 ---
 
 <h1 align="center">

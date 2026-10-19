@@ -9,6 +9,7 @@ import {
 } from './deep-link.js'
 import { EnterpriseLlmAdapter, pickAttributionHeaders } from './openai.js'
 
+export { EnterpriseToolError } from './enterprise-tools.js'
 export { EnterpriseAuthError } from './enterprise-auth.js'
 
 export const name = 'dsh-desktop-enterprise'

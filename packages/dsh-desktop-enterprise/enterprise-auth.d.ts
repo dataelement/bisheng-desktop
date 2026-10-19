@@ -1,3 +1,4 @@
+import type { EnterpriseToolOptions, JsonValue } from './enterprise-tools.js'
 import type { Context } from '@deepseek-ai/cordis'
 
 export interface EnterpriseAuthState {
@@ -13,6 +14,8 @@ export interface EnterpriseAuthRequestInit {
   signal?: AbortSignal
 }
 export interface EnterpriseAuth {
+  /** Invoke once through this caller's authorized channel; returns the generic JSON result. */
+  invokeTool(toolName: string, arguments: JsonValue, options?: EnterpriseToolOptions): Promise<JsonValue>
   /** Synchronous cached public state; refreshed in the background while the instance lives. */
   getState(): EnterpriseAuthState
   /** Business HTTP failures remain Responses; infrastructure failures throw EnterpriseAuthError. */

@@ -23,17 +23,23 @@ node scripts/pack-enterprise-plugin.mjs release.json plugin.zip
 
 ## 通用企业认证通道
 
-市场插件通过 `ctx.enterpriseAuth.getState()` 和 `ctx.enterpriseAuth.request(path, init)` 使用企业认证，不获取企业 token。服务在未登录时仍注册，调用请求时明确返回 `not_connected`。宿主不理解业务 API，不维护业务路径白名单；新增相对 API 路径不需要更新 Desktop。完整接口、安全边界和限制见 [通用企业认证通道](enterprise-auth-channel.zh.md)。
+企业宿主包 `packages/dsh-desktop-enterprise` 统一提供 `ctx.enterpriseAuth`，市场插件不获取企业 token。`getState()`、`request(path, init)` 和 `invokeTool(toolName, args, options)` 共用已授权执行实例身份。服务在未登录时仍注册，调用请求时明确返回 `not_connected`。原始 `request()` 保持任意合法同源相对 API 的通用传输，主进程 Broker 不解析或改写业务 payload，也不维护业务路径白名单；新增相对 API 路径不需要更新 Desktop。完整接口、安全边界和限制见 [通用企业认证通道](enterprise-auth-channel.zh.md)。
+
+工具调用优先使用统一 `invokeTool()`：SDK 构造 `/api/v1/dsh/tools/{toolName}/invoke` 和仅含 `arguments` 的信封，返回解析后的通用 `envelope.result`。默认总超时为 60,000 ms，输入上限 65,536 字节，响应上限 4,194,304 字节，可传 `signal` 取消。SDK 集中维护大小限制、JSON/信封解析、有界安全错误诊断和会话安全；不自动重试，也不把后端任意错误文本透传给插件。此辅助方法不是新增的工具权限授权，后端仍须检查用户与插件的实际访问权限。
 
 当前授权单位是通过企业市场校验、启用的插件执行实例；实例由宿主 Loader 创建，随机独立凭证由主进程签发，停用、卸载、激活失败和运行时关闭时撤销。**后端若只校验用户 token，则获准使用此通道的插件可以调用该用户有权访问的企业 API。**这不是逐业务接口授权；细粒度控制由企业后端结合宿主覆盖的插件身份头实施。
 
-搜索插件负责注册 provider、选择或替换以及清理恢复。宿主不再提供搜索专属服务或本地搜索 Broker。旧版搜索 ZIP 必须迁移至通用 SDK 后重新发布，不能只依赖安装成功来判断兼容性。宿主企业插件仍显式依赖 `loader`，企业 generation 通过当前安装目录校验缺失的 `@deepseek-ai/*` peer，不从宿主补普通第三方依赖。
+搜索插件使用统一 `invokeTool()`，保留搜索业务 UUID、模型/参数选择、provider 与命令注册、结果转换、选择或替换以及清理恢复；不再复制通用工具路径、信封、JSON 和错误处理。宿主不提供搜索专属服务或本地搜索 Broker，也不替搜索插件改写参数。旧版搜索 ZIP 必须迁移至统一客户端后重新发布，并核对实际所需宿主最低版本，不能只依赖安装成功来判断兼容性。宿主企业插件仍显式依赖 `loader`，企业 generation 通过当前安装目录校验缺失的 `@deepseek-ai/*` peer，不从宿主补普通第三方依赖。
 
-源码行为回归：
+签名、实例凭证和 SDK 生命周期校验不构成恶意 Node 插件的强隔离。当前插件共享 Harness 的 Node 进程；逐业务 API/工具权限仍由可信企业后端执行。签名的 TOFU 和管理员预置公钥边界见下文，不能把“来自企业”或签名有效等同于独立沙箱或生产安全验收。
+
+源码行为回归入口（命令不代表本次已运行或通过）：
 
 ```sh
-npm test -- test/enterprise-auth-transport.test.ts test/enterprise-auth-sdk.test.mjs test/enterprise-search-bridge.test.ts test/enterprise-search-market.test.ts test/enterprise-market.test.ts
+npm test -- test/enterprise-tools.test.mjs test/enterprise-auth-transport.test.ts test/enterprise-auth-sdk.test.mjs test/enterprise-search-bridge.test.ts test/enterprise-search-market.test.ts test/enterprise-market.test.ts
 ```
+
+统一工具 SDK 的验证应包括通用 JSON 结果、工具名/路径与请求信封、输入和响应限额、取消/超时、HTTP 与无效 JSON/信封的安全诊断、不重试，以及退出/切换企业/实例撤销后的晚到结果拒绝。搜索插件的业务 UUID、模型、命令与结果转换需要另行验证，不能由 SDK 用例替代。当前文档更新不声明这些回归、真实企业服务或生产验收已完成。
 
 打包后用实际市场 ZIP 验证（macOS 路径示例，先设置 APP 和 PLUGIN_ZIP）：
 

@@ -1,4 +1,5 @@
 import { Service } from '@deepseek-ai/cordis'
+import { invokeEnterpriseTool } from './enterprise-tools.js'
 
 const bindings = new WeakMap()
 
@@ -43,6 +44,12 @@ export function applyEnterpriseAuth(ctx) {
   ctx.provide('enterpriseAuth', {
     [Service.tracker]: { property: 'ctx' },
     getState() { return { ...bindingFor(this.ctx).state } },
+    invokeTool(toolName, args, options) {
+      return invokeEnterpriseTool({
+        getState: () => this.getState(),
+        request: (path, init) => this.request(path, init)
+      }, toolName, args, options)
+    },
     async request(path, init = {}) { return bindingFor(this.ctx).request(path, init) }
   })
 }
