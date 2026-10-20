@@ -79,8 +79,23 @@ export const FRAME_DARK_CSS = [
 ].join('\n')
 
 function escapeUtility(name: string): string {
-  return name.replace(/[[\]#/.%]/gu, (char) => `\\${char}`)
+  return name.replace(/[[\]#/.%:=]/gu, (char) => `\\${char}`)
 }
+
+/**
+ * Tailwind variants the client combines with the hardcoded colors (`hover:bg-[#f7f7f7]`,
+ * `has-[[data-state=open]]:bg-[#f7f7f7]`): each is a distinct class, so the override is
+ * emitted once per variant with the variant's own selector shape.
+ */
+const VARIANTS: ReadonlyArray<{ prefix: string; wrap: (list: string) => string }> = [
+  { prefix: 'hover:', wrap: (list) => `:is(${list}):hover` },
+  { prefix: 'focus:', wrap: (list) => `:is(${list}):focus` },
+  { prefix: 'active:', wrap: (list) => `:is(${list}):active` },
+  { prefix: 'fine-pointer:hover:', wrap: (list) => `:is(${list}):hover` },
+  { prefix: 'group-hover:', wrap: (list) => `.group:hover :is(${list})` },
+  { prefix: 'data-[state=open]:', wrap: (list) => `:is(${list})[data-state=open]` },
+  { prefix: 'has-[[data-state=open]]:', wrap: (list) => `:is(${list}):has([data-state=open])` }
+]
 
 /**
  * Hardcoded color utilities seen in the BISHENG client (deployed 3006 bundle plus the
@@ -238,20 +253,53 @@ export function darkDeclaration(kind: Utility['kind'], hex: string, alpha?: stri
   return undefined
 }
 
+const SURFACE_LIFT: Readonly<Record<string, string>> = { 'bg-page': 'arco-gray-1', 'arco-gray-1': 'arco-gray-2', 'arco-gray-2': 'arco-gray-3', 'arco-gray-3': 'arco-gray-4' }
+
+/** The next surface token up the ramp for hover / active / open states; the top step stays. */
+function liftSurface(declaration: string): string {
+  return declaration.replace(/--(bg-page|arco-gray-[1-3])\b/u, (_match, name: string) => `--${SURFACE_LIFT[name] ?? name}`)
+}
+
 function buildModuleThemeCss(): string {
-  const groups = new Map<string, string[]>()
+  // declaration → variant prefix ('' for the plain utility) → escaped class names
+  const groups = new Map<string, Map<string, string[]>>()
   for (const name of HARDCODED_UTILITIES) {
     const utility = parseUtility(name)
     if (!utility) throw new Error(`Unrecognised module theme utility: ${name}`)
     const declaration = darkDeclaration(utility.kind, utility.hex, utility.alpha)
     if (!declaration) continue
-    const selectors = groups.get(declaration) ?? []
-    for (const alias of utility.names) {
-      const selector = `html.dsh-host-dark .${escapeUtility(alias)}${utility.kind === 'placeholder' ? '::placeholder' : ''}`
-      if (!selectors.includes(selector)) selectors.push(selector)
+    // Placeholder utilities share text declarations but need the pseudo-element on every selector.
+    const key = utility.kind === 'placeholder' ? `${declaration}::placeholder` : declaration
+    const variants = groups.get(key) ?? new Map<string, string[]>()
+    groups.set(key, variants)
+    const push = (group: Map<string, string[]>, prefix: string, alias: string) => {
+      const list = group.get(prefix) ?? []
+      const escaped = `.${escapeUtility(prefix + alias)}`
+      if (!list.includes(escaped)) list.push(escaped)
+      group.set(prefix, list)
     }
-    groups.set(declaration, selectors)
+    // Interactive surfaces sit one step above their resting replacement: in the dark ramp the
+    // page and arco-gray-1 are only a few values apart, so a hover mapped 1:1 would not read.
+    const lifted = utility.kind === 'bg' ? liftSurface(declaration) : declaration
+    const liftedGroup = groups.get(lifted) ?? new Map<string, string[]>()
+    if (lifted !== declaration) groups.set(lifted, liftedGroup)
+    for (const alias of utility.names) {
+      push(variants, '', alias)
+      if (utility.kind !== 'placeholder') for (const variant of VARIANTS) push(lifted === declaration ? variants : liftedGroup, variant.prefix, alias)
+    }
   }
+  // One rule per declaration: the plain utilities in an :is() list, then each variant wrapped
+  // in that variant's own selector shape (`:is()` keeps the class specificity, so the rule
+  // still outranks Tailwind's `.hover\:x:hover`).
+  const rules = [...groups].map(([key, variants]) => {
+    const placeholder = key.endsWith('::placeholder')
+    const declaration = placeholder ? key.slice(0, -'::placeholder'.length) : key
+    const selectors = [...variants].map(([prefix, list]) => {
+      const variant = VARIANTS.find((candidate) => candidate.prefix === prefix)
+      return `html.dsh-host-dark ${variant ? variant.wrap(list.join(',')) : `:is(${list.join(',')})${placeholder ? '::placeholder' : ''}`}`
+    })
+    return `${selectors.join(',')}{${declaration}}`
+  })
   // Inline styles serialize as `prop: rgb(r, g, b)`; the two forms cover the first and any
   // later declaration without letting `color:` match `background-color:`.
   const inline: string[] = []
@@ -275,7 +323,7 @@ function buildModuleThemeCss(): string {
     // name; inverting the art keeps the white name legible without touching the text tokens.
     'html.dsh-module-dark[data-dsh-page="knowledge"] .aspect-\\[4\\/3\\] > svg[viewBox="0 0 120 90"]{filter:invert(1) hue-rotate(180deg)}',
     `${whiteGradient}{background-image:linear-gradient(135deg,rgb(var(--brand-500) / 0.08),rgb(var(--arco-gray-1)) 50%,rgb(var(--brand-500) / 0.08))}`,
-    ...[...groups].map(([declaration, selectors]) => `${selectors.join(',')}{${declaration}}`),
+    ...rules,
     ...inline
   ].join('\n')
 }
