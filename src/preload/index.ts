@@ -15,6 +15,8 @@ import { markWindowsTitlebar, mountWindowsTitlebarLayout } from './windows-title
 import { mountMacosWindowTheme } from './macos-window-theme'
 import { mountMacosWindowChrome } from './macos-window-chrome'
 import { createHostPathsBridge, HOST_PATHS_BRIDGE } from './host-paths'
+import { createNativeLocaleBridge } from './native-locale'
+import { NATIVE_LOCALE_BRIDGE, NATIVE_LOCALE_CHANGE, NATIVE_LOCALE_READ } from '../shared/native-locale'
 
 if (process.platform === 'darwin') {
   const dispose = mountMacosWindowChrome(document, listener => {
@@ -35,7 +37,7 @@ setupDesktopStoragePersistence()
 const ROOT_ID = 'dsh-desktop-update-root'
 const MOBILE_BUTTON_ID = 'dsh-desktop-mobile-button'
 const SAFE_MODE_BANNER_ID = 'dsh-desktop-safe-mode-banner'
-const locale: UpdateLocale = navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en'
+let locale: UpdateLocale = navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en'
 
 let host: HTMLDivElement | undefined
 let content: HTMLDivElement | undefined
@@ -179,6 +181,17 @@ contextBridge.exposeInMainWorld(
   HOST_PATHS_BRIDGE,
   createHostPathsBridge(file => webUtils.getPathForFile(file))
 )
+
+contextBridge.exposeInMainWorld(NATIVE_LOCALE_BRIDGE, createNativeLocaleBridge({
+  read: () => ipcRenderer.invoke(NATIVE_LOCALE_READ),
+  publish: active => ipcRenderer.invoke(NATIVE_LOCALE_CHANGE, active),
+  changed: active => {
+    locale = active
+    renderMobileButton()
+    render()
+  },
+  failed: error => console.error('[desktop-locale] unable to synchronize language', error)
+}))
 
 /**
  * `[data-dsh-*]` lookups are attribute selectors with no index behind them, so

@@ -2,6 +2,12 @@
 
 适用于 DSH Desktop 对 Harness 的宿主定制，以及为这些定制维护的第三方补丁。本文是跨目录规则的唯一维护位置；包加载和补丁重放的具体要求分别见 `packages/AGENTS.md`、`patches/AGENTS.md`。preload 能否直接改页面 DOM 的判定见 `src/preload/AGENTS.md`，不在本文重复。
 
+### 原生语言同步（Harness 0.2.0-rc.2，2026-10-20）
+
+直接消费上游 `dsh-client-locale` 的 `__DSH_LOCALE__.read()/onChange(active)` 接口，不新增补丁、插件或语言偏好副本。preload 只暴露读取系统语言与上报活动语言两项能力；main 复用可信主窗口与主 frame 校验，并仅接受 `zh` / `en`。初始化返回系统语言顺序与 `preference: null`，持久偏好由 Harness 已有 configForms 从当前 Profile 提供；Client 初始化后立即上报解析值，后续通过上游 locale/change 上报。main 在内存保留该值供手机桥及原生文案使用，尚未激活 Client 的启动/恢复页面保留现有回退。此改动不参与 Profile 组合、包解析或客户端加载图。
+
+手机桌面配对页的已认证 `/desktop/status` 响应携带当前语言，页面沿用现有轮询检测变化并重新请求 HTML；连接模式切换期间延后刷新，不重建手机桥、隧道、配对 token 或 PIN。旧客户端忽略新增响应字段。原账号菜单继续由官方 slot 和 Harness locale 控制；preload 仅同步未加载账号插件时的既有手机按钮，不新增 DOM 入口。网页自身语言机制不受影响。
+
 ## 1. 按能力选扩展方式
 
 产品能力和长期维护的桌面表现优先放在宿主代码或插件中；patch 用于修复上游缺陷或补足必要的扩展接缝。插件不能通过隐藏的 DOM 改写、内部方法替换，把实际的上游耦合伪装成无补丁扩展。

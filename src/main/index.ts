@@ -168,6 +168,8 @@ import {
 } from './update/update-manager'
 import type { RuntimeSnapshot } from '../shared/contracts'
 import { resolveHarnessLocale } from './application-locale'
+import { registerNativeLocaleHandlers } from './native-locale'
+import type { HarnessLocale } from '../shared/native-locale'
 import { installContextMenu } from './context-menu'
 import {
   WINDOWS_TITLEBAR_HEIGHT,
@@ -671,7 +673,11 @@ function dshBrandLogoPath(variant: 'light' | 'dark'): string {
   )
 }
 
+let activeHarnessLocale: HarnessLocale | undefined
+
 function harnessLocale(): 'en' | 'zh' {
+  // The live Client owns the resolved Profile preference, including automatic mode.
+  if (activeHarnessLocale) return activeHarnessLocale
   try {
     const settings = parse(
       readFileSync(join(app.getPath('userData'), 'harness', 'settings.yaml'), 'utf8')
@@ -3238,12 +3244,13 @@ function broadcastMobileStatus(connected: boolean): void {
 }
 
 async function showMobilePairing(): Promise<void> {
+  const zh = harnessLocale() === 'zh'
   if (runtime.snapshot().phase !== 'ready') {
     const options: MessageBoxOptions = {
       type: 'info',
-      message: 'Harness is still starting.',
-      detail: 'Wait until BISHENG is ready, then connect your phone again.',
-      buttons: ['OK']
+      message: zh ? 'Harness 仍在启动。' : 'Harness is still starting.',
+      detail: zh ? '请等待 BISHENG 就绪后再连接手机。' : 'Wait until BISHENG is ready, then connect your phone again.',
+      buttons: [zh ? '确定' : 'OK']
     }
     await (mainWindow ? dialog.showMessageBox(mainWindow, options) : dialog.showMessageBox(options))
     return
@@ -3254,9 +3261,9 @@ async function showMobilePairing(): Promise<void> {
     await mobileBridge.stop()
     const options: MessageBoxOptions = {
       type: 'warning',
-      message: 'Failed to start mobile bridge.',
-      detail: 'Please try again.',
-      buttons: ['OK']
+      message: zh ? '手机连接服务启动失败。' : 'Failed to start mobile bridge.',
+      detail: zh ? '请重试。' : 'Please try again.',
+      buttons: [zh ? '确定' : 'OK']
     }
     await (mainWindow ? dialog.showMessageBox(mainWindow, options) : dialog.showMessageBox(options))
     return
@@ -3458,6 +3465,15 @@ async function bootstrap(): Promise<void> {
       properties: ['openDirectory', 'createDirectory']
     })
     return result.canceled ? null : result.filePaths[0] ?? null
+  })
+  registerNativeLocaleHandlers(ipcMain, {
+    assertTrusted: assertTrustedMainWindowEvent,
+    systemLanguages: () => app.getPreferredSystemLanguages(),
+    changed: locale => {
+      if (activeHarnessLocale === locale) return
+      activeHarnessLocale = locale
+      installMenu()
+    }
   })
   ipcMain.handle('mobile:open-pairing', (event) => {
     assertTrustedMainWindowEvent(event)
