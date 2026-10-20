@@ -6,7 +6,6 @@ export interface EnterpriseChatPresentation {
   settings?: EnterpriseSettingsSection
   /** Host surfaces and ink resolved from the active Harness theme; absent when they cannot be sampled. */
   palette?: EnterprisePalette
-  welcomeMotion?: boolean
 }
 
 /** Roles the host samples from its own tokens; the embedded document never reads host CSS. */
@@ -62,7 +61,6 @@ export function parseChatPresentation(value: unknown): EnterpriseChatPresentatio
   if (input.locale !== undefined && input.locale !== 'zh' && input.locale !== 'en') {
     throw new Error('Invalid Chat locale.')
   }
-  if (input.welcomeMotion !== undefined && typeof input.welcomeMotion !== 'boolean') throw new Error('Invalid welcome motion.')
   const settings = input.settings === undefined ? undefined : parseEnterpriseSettingsSection(input.settings)
   const palette = parseEnterprisePalette(input.palette)
   const bounds = input.bounds as Record<string, unknown> | undefined
@@ -75,7 +73,6 @@ export function parseChatPresentation(value: unknown): EnterpriseChatPresentatio
     locale: input.locale,
     settings,
     ...(palette ? { palette } : {}),
-    ...(input.welcomeMotion === undefined ? {} : { welcomeMotion: input.welcomeMotion }),
     bounds: { x: Number(bounds.x), y: Number(bounds.y), width: Number(bounds.width), height: Number(bounds.height) }
   }
 }
