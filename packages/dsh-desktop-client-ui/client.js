@@ -516,7 +516,7 @@ window.__ModuleLoader__.load({
       ctx.effect(() => {
         const style = document.createElement('style')
         style.textContent = `
-          .dshPrimaryNavigation{display:flex;flex-direction:column;flex:none;padding:0 12px 12px}
+          .dshPrimaryNavigation{display:flex;flex-direction:column;flex:none;padding:0 0 12px}
           .dshNavigationMenu{display:flex;flex-direction:column;position:relative;width:100%}.dshNavigationMenuList{max-width:100%;box-sizing:border-box}
           .dshModes{grid-column:2 / -1;min-width:0;min-height:0;width:100%;height:100%;display:flex;flex-direction:column;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary)}
           .dshModesHeader{height:56px;flex:none;display:flex;align-items:center;justify-content:center;-webkit-app-region:drag}
