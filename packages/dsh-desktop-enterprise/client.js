@@ -161,7 +161,6 @@ window.__ModuleLoader__.load({
           line-height: normal;
         }
         .dshEnterpriseManagedModels { margin: 16px 0; }
-        .dshEnterpriseManagedModels > summary { cursor: pointer; padding: 10px 0; font-size: 13px; color: var(--dsw-alias-label-secondary); }
         .dshEnterprise h3 {
           margin: 0 0 8px;
           font-size: 14px;
@@ -985,7 +984,7 @@ window.__ModuleLoader__.load({
       const accountContent = connected
         ? h(React.Fragment, null,
           h('div', { className: 'dshEnterpriseSectionHeader' },
-            h('h3', null, t('models')),
+            h('h3', null, t('managedModels')),
             h('button', {
               className: 'dshEnterpriseIconButton',
               type: 'button',
@@ -1104,7 +1103,7 @@ window.__ModuleLoader__.load({
           h('h2', null, t('title')),
           renderLearnMoreButton(t)),
         status,
-        connected ? h('details', { className: 'dshEnterpriseManagedModels' }, h('summary', null, t('managedModels')), accountContent) : accountContent,
+        connected ? h('section', { className: 'dshEnterpriseManagedModels' }, accountContent) : accountContent,
         connected && renderSlot?.('desktop.settings.account', {}, { fallback: null }),
         manualFallback,
         errorPanel,

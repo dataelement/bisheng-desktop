@@ -191,15 +191,22 @@ function liveElement<T extends Element>(cached: T | undefined, selector: string)
 }
 
 function mountMobileButton(): void {
+  sidebarSettingsArea = liveElement(sidebarSettingsArea, '[data-dsh-sidebar-settings]')
+  const settingsArea = sidebarSettingsArea
+  if (!settingsArea) return
+  // The optional account launcher owns this action in normal mode. Keep the
+  // legacy button only for Safe Mode or compositions without that launcher.
+  if (settingsArea.querySelector('[data-dsh-account-launcher]')) {
+    mobileButton?.remove()
+    document.getElementById(`${MOBILE_BUTTON_ID}-style`)?.remove()
+    return
+  }
   if (!document.getElementById(`${MOBILE_BUTTON_ID}-style`)) {
     const style = document.createElement('style')
     style.id = `${MOBILE_BUTTON_ID}-style`
     style.textContent = mobileButtonStyles
     document.head.appendChild(style)
   }
-  sidebarSettingsArea = liveElement(sidebarSettingsArea, '[data-dsh-sidebar-settings]')
-  const settingsArea = sidebarSettingsArea
-  if (!settingsArea) return
   if (!mobileButton?.isConnected) {
     mobileButton =
       (document.getElementById(MOBILE_BUTTON_ID) as HTMLButtonElement | null) ?? undefined
@@ -625,6 +632,7 @@ contextBridge.exposeInMainWorld(
   'dshDesktop',
   Object.freeze({
     restartHarness: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('harness:restart'),
+    openPhonePairing: (): Promise<void> => ipcRenderer.invoke('mobile:open-pairing'),
     settingsInfo: (): Promise<AboutInfo> => ipcRenderer.invoke('desktop:about-info'),
     settingsAction: (action: 'check-for-updates' | 'show-harness-log' | 'safe-mode'): Promise<void> => ipcRenderer.invoke('desktop:settings-action', action),
     getBuiltInImageGenerationStatus: (): Promise<{ enabled: boolean; marketActive: boolean }> =>

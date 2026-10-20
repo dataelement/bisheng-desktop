@@ -137,6 +137,7 @@ export class EnterpriseChatView {
     }
     const route = section ? `/workspace/settings/${section}?dshSettings=1` : this.settingsReturnRoute ?? '/workspace/c/new'
     this.settingsSection = section
+    this.note(`[enterprise-settings] navigate section=${section ?? 'return'}`)
     this.settingsReady = false
     this.settingsFailure = undefined
     clearTimeout(this.settingsTimer)
@@ -268,6 +269,9 @@ export class EnterpriseChatView {
           if (url.origin !== origin || !url.pathname.startsWith('/workspace/')) return
           if (!input || typeof input !== 'object') return
           const report = input as Record<string, unknown>
+          if (channel === 'enterprise-chat:settings-ready') {
+            this.note(`[enterprise-settings] ready_report path_match=${report.path === url.pathname} section_match=${report.section === this.settingsSection} content_mode=${url.searchParams.get('dshSettings') === '1'}`)
+          }
           if (report.path !== url.pathname) return
           if (channel === 'enterprise-chat:settings-ready') {
             try {
@@ -312,6 +316,10 @@ export class EnterpriseChatView {
         view.webContents.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
           if (isMainFrame && generation === this.generation && this.view === view) {
             this.landing = undefined
+            if (this.settingsSection) {
+              const url = new URL(view.webContents.getURL())
+              this.note(`[enterprise-settings] navigated section_match=${url.pathname === `/workspace/settings/${this.settingsSection}`} content_mode=${url.searchParams.get('dshSettings') === '1'}`)
+            }
             if (!this.isSettingsReady()) this.settingsReady = false
             this.layout()
             if (this.state.phase === 'ready') this.applyTheme()

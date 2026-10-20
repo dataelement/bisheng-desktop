@@ -3459,7 +3459,10 @@ async function bootstrap(): Promise<void> {
     })
     return result.canceled ? null : result.filePaths[0] ?? null
   })
-  ipcMain.handle('mobile:open-pairing', () => showMobilePairing())
+  ipcMain.handle('mobile:open-pairing', (event) => {
+    assertTrustedMainWindowEvent(event)
+    return showMobilePairing()
+  })
   ipcMain.handle('mobile:status', () => ({ connected: mobileBridge.snapshot().connected }))
   ipcMain.handle('harness:show-log', () => {
     shell.showItemInFolder(join(app.getPath('logs'), 'harness.log'))
