@@ -22,12 +22,14 @@ concurrency:
 
 jobs:
   backfill:
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, macOS, ARM64]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
+        timeout-minutes: 5
         with:
           node-version: 22
+          architecture: arm64
       - name: Download the release assets
         env:
           GH_TOKEN: ${{ github.token }}
