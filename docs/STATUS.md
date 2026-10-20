@@ -1,3 +1,17 @@
+## 2026-10-21 — 原生输入菜单保持悬停前的滚动位置
+
+- 基线：bisheng-work-chat-work / codex/chat-work-integration，源码与核验时远端 V1.2.0 均为 887bc825a91c72ec506139784f7f4df8b9db65db；Harness 与 input-trigger 0.2.0-rc.2，Electron 43 / macOS arm64。dsh-desktop/v0.9.0 远端查询无匹配引用，v090 integration 工作目录干净；本轮延续现有企业集成环境。
+- 根因：输入菜单对每次高亮变化执行 scrollIntoView，鼠标经过半露出的底部行时触发自动滚动，顶部标题随之被裁切。reducer 现在记录鼠标与键盘来源；鼠标高亮保持滚动位置，键盘导航仅调整当前列表 viewport.scrollTop。菜单原有高度、锚点与渐隐样式继续使用原生实现。
+- 验证：npm ci 完整重放依赖修正成功，typecheck、build、完整测试与 diff-check 通过；228 个测试文件、1954 项通过、1 项跳过。新增 4 项行为回归覆盖悬停底部行、手动滚动后的悬停与异步刷新、键盘循环导航和鼠标切回键盘，检查祖先滚动位置保持。
+- 原 Profile 本地开发版已重新启动；实机鼠标经过底部知识空间行后，高亮更新，顶部“添加”、菜单边界与输入框位置保持。证据：主工作区 outputs/menu-hover-scroll-20261021 的 open.png、pointer-bottom.png、verified-menu.png 与验证日志。当前交付为开发实例；安装包保持原产物。
+
+## 2026-10-20 — 恢复正确的桌面开发实例
+
+- 本轮发现当前进程来自用户 Applications/BISHENG Dev.app，该安装版对应 10-19 的交付；其 app.asar 缺少 dsh-desktop-enterprise/work-resources.js，企业客户端 SHA256 为 3c49a877438ac0c0a2c113762bda0f0d4276867872a6262bb76d14a0a6be7caa。今天的开发源码已包含 Work 资源菜单与新版账号入口。远程 Chat 页面继续更新时，旧宿主会形成新网页与旧原生界面的组合。
+- 已正常退出旧安装版，并从 bisheng-work-chat-work 启动 npm run dev，沿用 bisheng-dev Profile。选定源码与远端 V1.2.0 均为 887bc825a91c72ec506139784f7f4df8b9db65db，Harness 0.2.0-rc.2；远端 dsh-desktop/v0.9.0 查询无匹配引用，既有 v090 integration 工作目录干净。
+- 实机确认 Chat 加载 3006；Work 加号恢复技能与知识空间，技能二级列表可加载，原生菜单底部轻量渐隐可见，账号入口恢复。仅恢复运行实例；安装包仍为原产物，模型执行与新安装包验收独立进行。
+- 证据：主工作区 outputs/desktop-package-recovery-20261020/work-menu.png 与 dev.log。后续本轮界面迭代继续使用该开发实例。
+
 ## 2026-10-20 — 账号入口运行态恢复与 Chat 会话内技能验收
 
 - 已核对远端 V1.2.0@232d860、本工作目录与 Harness 0.2.0-rc.2；共享分支已是最新版本。运行页面的账号按钮存在，但账号样式表数量为 0，computed display 为 block，呈现为原始按钮。完整退出开发实例并以原 Profile 启动后，头像、账号文字与展开图标恢复原生布局。样式丢失的具体触发条件仍待独立复现；本轮沿用同事的设置与字号实现。

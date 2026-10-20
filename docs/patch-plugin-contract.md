@@ -2,6 +2,12 @@
 
 适用于 DSH Desktop 对 Harness 的宿主定制，以及为这些定制维护的第三方补丁。本文是跨目录规则的唯一维护位置；包加载和补丁重放的具体要求分别见 `packages/AGENTS.md`、`patches/AGENTS.md`。preload 能否直接改页面 DOM 的判定见 `src/preload/AGENTS.md`，不在本文重复。
 
+### 输入候选菜单的滚动归属（2026-10-21）
+
+Harness 0.2.0-rc.2 的 `dsh-client-ui-input-trigger` 将 pointer hover 与 keyboard move 归入同一个 highlight，原视图对每次变化调用 `scrollIntoView`。鼠标悬停底部部分可见的候选时会推动列表，调用还可能滚动外层会话容器。修复直接在 reducer 的 highlight 上记录可选的 `origin`，悬停更新高亮，键盘导航按候选与列表的可见边界调整该列表的 `scrollTop`。初始候选仍按边界检查，菜单的原有高度计算、主题、溢出渐隐和滚轮行为保持。
+
+变更在依赖安装时由 patch-package 重放，类型声明同步；行为回归见 `test/input-trigger-scroll.test.mjs`，覆盖部分可见行悬停、手动滚动后的结果刷新、键盘循环及鼠标转键盘操作。上游提供同等输入来源区分与列表内滚动后删除本地兼容变更，并保留行为回归。此修复只影响原生 Work 候选菜单，网页 Chat 使用自己的菜单实现。
+
 ### 原生语言同步（Harness 0.2.0-rc.2，2026-10-20）
 
 直接消费上游 `dsh-client-locale` 的 `__DSH_LOCALE__.read()/onChange(active)` 接口，不新增补丁、插件或语言偏好副本。preload 只暴露读取系统语言与上报活动语言两项能力；main 复用可信主窗口与主 frame 校验，并仅接受 `zh` / `en`。初始化返回系统语言顺序与 `preference: null`，持久偏好由 Harness 已有 configForms 从当前 Profile 提供；Client 初始化后立即上报解析值，后续通过上游 locale/change 上报。main 在内存保留该值供手机桥及原生文案使用，尚未激活 Client 的启动/恢复页面保留现有回退。此改动不参与 Profile 组合、包解析或客户端加载图。
