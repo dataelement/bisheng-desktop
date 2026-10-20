@@ -279,27 +279,15 @@ jobs:
       - name: Preserve ${{ matrix.label }} update metadata
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         run: mv dist/latest-mac.yml dist/latest-mac-${{ matrix.arch }}.yml
-      - name: Sign, notarize, and staple ${{ matrix.label }} DMG
+      - name: Sign ${{ matrix.label }} DMG
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         env:
           CSC_KEYCHAIN: ${{ steps.signing_keychain.outputs.keychain }}
         run: |
           dmg_path="dist/bisheng-mac-${{ matrix.arch }}.dmg"
-          app_path="dist/${{ matrix.app-directory }}/BISHENG.app"
           identity="$(security find-identity -v -p codesigning "$CSC_KEYCHAIN" | awk '/Developer ID Application/ { print $2; exit }')"
           test -n "$identity" || { echo "::error::Developer ID Application identity not found"; exit 1; }
           codesign --keychain "$CSC_KEYCHAIN" --sign "$identity" --timestamp --force "$dmg_path"
-          arch -arm64 /usr/bin/xcrun notarytool submit "$dmg_path" \
-            --key "$APPLE_API_KEY" \
-            --key-id "$APPLE_API_KEY_ID" \
-            --issuer "$APPLE_API_ISSUER" \
-            --wait
-          for attempt in 1 2 3 4 5; do
-            if arch -arm64 /usr/bin/xcrun stapler staple "$app_path" && arch -arm64 /usr/bin/xcrun stapler staple "$dmg_path"; then break; fi
-            if [ "$attempt" -eq 5 ]; then exit 1; fi
-            echo "stapler staple failed, waiting for Apple ticket propagation in 10s (attempt $attempt/5)..."
-            sleep 10
-          done
       - name: Remove temporary signing keychain
         if: always() && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease')))
         env:
@@ -317,12 +305,30 @@ jobs:
           fi
           test -z "$SIGNING_KEYCHAIN" || security delete-keychain "$SIGNING_KEYCHAIN" || rm -f "$SIGNING_KEYCHAIN"
           test -z "$SIGNING_CERTIFICATE" || rm -f "$SIGNING_CERTIFICATE"
-          test -z "$APPLE_API_KEY" || rm -f "$APPLE_API_KEY"
       - name: Unlock shared macOS signing state
         if: always()
         env:
           SIGNING_LOCK_LEASE: ${{ steps.signing_lock.outputs.lease }}
         run: node scripts/macos-signing-lock.mjs release
+      - name: Notarize and staple ${{ matrix.label }} DMG
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
+        run: |
+          dmg_path="dist/bisheng-mac-${{ matrix.arch }}.dmg"
+          app_path="dist/${{ matrix.app-directory }}/BISHENG.app"
+          arch -arm64 /usr/bin/xcrun notarytool submit "$dmg_path" \
+            --key "$APPLE_API_KEY" \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+          for attempt in 1 2 3 4 5; do
+            if arch -arm64 /usr/bin/xcrun stapler staple "$app_path" && arch -arm64 /usr/bin/xcrun stapler staple "$dmg_path"; then break; fi
+            if [ "$attempt" -eq 5 ]; then exit 1; fi
+            echo "stapler staple failed, waiting for Apple ticket propagation in 10s (attempt $attempt/5)..."
+            sleep 10
+          done
+      - name: Clean up Apple notarization key
+        if: always()
+        run: test -z "$APPLE_API_KEY" || rm -f "$APPLE_API_KEY"
       - name: Verify signed and notarized ${{ matrix.label }} app
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         run: |
