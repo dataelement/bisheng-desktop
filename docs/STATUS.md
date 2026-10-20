@@ -3,6 +3,7 @@
 - 聊天里的灵思任务模式用组件内联 `style`（`execTokens.ts` 的 INK `#1D2129` / BODY `#5C5C5C` / MUTED `#8A8A8A` / FAINT `#BFBFBF`、NarrationTicker `#999999`，结果卡片与澄清卡片的白底加 `%23EAEEFF` 点阵纹理），类规则覆盖不到：深色下结果卡白底白字、步骤图标与“任务已完成”条几乎不可见。
 - `chat-module-theme.ts` 新增 `INLINE_STYLE_COLORS`：按序列化后的 `style` 属性匹配（`[style^="color: rgb(…)"]` 与 `[style*="; color: rgb(…)"]` 两种形式，避免 `color:` 误配 `background-color:`），用同一套明度推导换成 token 并加 `!important`；点阵纹理换成深色点。近白色（`#fafbfc`）的 HSL 饱和度失真，中性判定补充色度阈值，`≥0.98` 明度归入 bg-page。
 - 变体类：`hover:bg-[#f7f7f7]`、`has-[[data-state=open]]:…`、`fine-pointer:hover:`、`group-hover:`、`data-[state=open]:`、`focus:`、`active:` 是独立类名，之前只覆盖了基础类，结果卡文件行 hover 仍是白底。生成器改为每条声明一条规则：基础类放进 `:is()` 列表，每个变体按自身选择器形状包裹（`:is(…):hover`、`.group:hover :is(…)`、`:is(…)[data-state=open]`、`:is(…):has([data-state=open])`），`:is()` 保持类选择器特异性，仍压过 Tailwind 的 `.hover\:x:hover`；样式体积约 67KB。深色阶梯里页面底与 arco-gray-1 只差几个值，交互态按 1:1 映射看不出来，所以 hover/active/open 变体的底色比静态替换再抬一级（`liftSurface`：bg-page→gray-1→gray-2→gray-3→gray-4）。
+- 聊天代码块：容器 `bg-[#F6F8FA]` 已转深，但网页只带 highlight.js 的 GitHub light 调色（`style.css` `.hljs-*`），token 在深底上几乎不可见；宿主补一组 GitHub Dark 配色（`HLJS_DARK`，分组与浅色调色一一对应）。
 - 验证：定向测试 23 项、typecheck 通过；Chrome 注入复验两条灵思会话（交付物卡片、待办/执行步骤、任务完成条）均可读；另补 `bg-white/40|80|95`（回到底部按钮）。重启开发应用实机确认两条会话的结果卡片、步骤图标与任务完成条均为深色可读。全量 `npx vitest run` 与 `git diff --check` 结果见提交说明；Windows 与安装包未验证。
 
 ## 2026-10-20 — 深色模式全页走查与补齐

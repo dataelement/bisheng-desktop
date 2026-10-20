@@ -159,6 +159,20 @@ const INLINE_STYLE_COLORS: ReadonlyArray<{ kind: 'text' | 'bg'; hex: string }> =
 const DOT_TEXTURE_LIGHT = '%23EAEEFF'
 const DOT_TEXTURE_DARK = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='5'%3E%3Ccircle cx='0.5' cy='0.5' r='0.5' fill='%232C2F36'/%3E%3C/svg%3E")`
 
+/**
+ * The client ships only highlight.js's GitHub light palette (style.css `.hljs-*`), so code
+ * blocks keep light-theme ink once their surface turns dark. GitHub Dark colours, scoped to
+ * the host-dark root; the token groups mirror the light palette's grouping exactly.
+ */
+const HLJS_DARK: ReadonlyArray<[string, string]> = [
+  ['code.hljs,code[class*="language-"],pre[class*="language-"]', 'rgb(var(--text-1))'],
+  ['.hljs-comment,.hljs-meta', '#8b949e'],
+  ['.hljs-built_in,.hljs-class .hljs-title,.hljs-bullet,.hljs-link,.hljs-selector-id,.hljs-symbol,.hljs-title', '#d2a8ff'],
+  ['.hljs-doctag,.hljs-formula,.hljs-keyword,.hljs-literal', '#ff7b72'],
+  ['.hljs-addition,.hljs-attribute,.hljs-meta-string,.hljs-regexp,.hljs-string', '#a5d6ff'],
+  ['.hljs-attr,.hljs-number,.hljs-selector-attr,.hljs-selector-class,.hljs-selector-pseudo,.hljs-template-variable,.hljs-type,.hljs-variable', '#79c0ff']
+]
+
 /** Tailwind's default gray ramp; slate / zinc / neutral / stone share its lightness steps. */
 const GRAY_RAMP: Readonly<Record<string, string>> = {
   20: '#ececf1', 50: '#f9fafb', 70: '#f3f4f6', 100: '#f3f4f6', 200: '#e5e7eb', 300: '#d1d5db', 400: '#9ca3af',
@@ -324,7 +338,8 @@ function buildModuleThemeCss(): string {
     'html.dsh-module-dark[data-dsh-page="knowledge"] .aspect-\\[4\\/3\\] > svg[viewBox="0 0 120 90"]{filter:invert(1) hue-rotate(180deg)}',
     `${whiteGradient}{background-image:linear-gradient(135deg,rgb(var(--brand-500) / 0.08),rgb(var(--arco-gray-1)) 50%,rgb(var(--brand-500) / 0.08))}`,
     ...rules,
-    ...inline
+    ...inline,
+    ...HLJS_DARK.map(([selectors, color]) => `${selectors.split(',').map((selector) => `html.dsh-host-dark ${selector}`).join(',')}{color:${color}}`)
   ].join('\n')
 }
 

@@ -158,5 +158,11 @@ describe('enterprise module page theme', () => {
     expect(MODULE_THEME_CSS).toContain('html.dsh-host-dark [style^="background-color: rgb(255, 255, 255)"],html.dsh-host-dark [style*="; background-color: rgb(255, 255, 255)"]{background-color:rgb(var(--bg-page)) !important}')
     expect(MODULE_THEME_CSS).toContain(`html.dsh-host-dark [style*="%23EAEEFF"]{background-image:url("data:image/svg+xml,`)
     expect(MODULE_THEME_CSS).toMatch(/fill='%232C2F36'[^\n]*!important\}/u)
+    // highlight.js keeps its light palette; the host supplies the dark ink for every token group.
+    expect(MODULE_THEME_CSS).toContain('html.dsh-host-dark code.hljs,html.dsh-host-dark code[class*="language-"],html.dsh-host-dark pre[class*="language-"]{color:rgb(var(--text-1))}')
+    expect(MODULE_THEME_CSS).toContain('html.dsh-host-dark .hljs-comment,html.dsh-host-dark .hljs-meta{color:#8b949e}')
+    expect(MODULE_THEME_CSS).toContain('html.dsh-host-dark .hljs-keyword,')
+    expect(MODULE_THEME_CSS).toContain('html.dsh-host-dark .hljs-string{color:#a5d6ff}')
+    expect(MODULE_THEME_CSS).toContain('html.dsh-host-dark .hljs-attr,')
   })
 })
