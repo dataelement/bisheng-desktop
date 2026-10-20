@@ -6,7 +6,7 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
 
     const React = require('react')
-    const { Menu, MenuItemButton } = require('@deepseek-ai/dsh-client-ui-primitives')
+    const { Menu, MenuItemButton, Modal, Button } = require('@deepseek-ai/dsh-client-ui-primitives')
 
     // Paths are copied from build/bisheng-logo-mark.svg. Keeping the browser
     // occupant self-contained makes it replayable when Harness loads plugins
@@ -547,9 +547,119 @@ window.__ModuleLoader__.load({
       ctx.slots.inject('sidebar.workspaces.collection', () => ctx.slots.register({ name: 'sidebar.workspaces.collection', id: 'desktop-shared-collection', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS) }) }, SharedCollection))
     }
 
+    const RESOURCE_NS = 'desktop-work-resources'
+    const RESOURCE_COPY = {
+      zh: { skills: '技能', skillsHint: '选择本次任务使用的技能', knowledge: '知识空间', knowledgeHint: '选择本次任务检索的知识空间', search: '搜索知识空间', empty: '暂无可用知识空间', noMatch: '没有匹配的知识空间', loading: '正在加载知识空间…', retry: '重试', cancel: '取消', confirm: '确认添加', close: '关闭', remove: '移除', department: '部门知识空间', mine: '我创建的', joined: '我加入的', selected: '已选', limit: '最多选择 50 个空间' },
+      en: { skills: 'Skills', skillsHint: 'Choose a skill for this task', knowledge: 'Knowledge spaces', knowledgeHint: 'Choose knowledge spaces to search in this task', search: 'Search knowledge spaces', empty: 'No knowledge spaces available', noMatch: 'No matching knowledge spaces', loading: 'Loading knowledge spaces…', retry: 'Retry', cancel: 'Cancel', confirm: 'Add selected', close: 'Close', remove: 'Remove', department: 'Department spaces', mine: 'Created by me', joined: 'Joined spaces', selected: 'Selected', limit: 'Select up to 50 spaces' }
+    }
+    async function workResourceRequest(operation, sessionId, spaceIds, signal) {
+      const response = await fetch('/api/enterprise.work-resources', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, signal,
+        body: JSON.stringify({ operation, sessionId, ...(spaceIds === undefined ? {} : { spaceIds }) })
+      })
+      const result = await response.json().catch(() => ({ error: `Knowledge service unavailable (${response.status})` }))
+      if (!response.ok) throw new Error(result.error || `Knowledge request failed (${response.status})`)
+      return result
+    }
+    function WorkResourceAccessory({ sessionId, controls, t, inputActions, ensureSession }) {
+      const [open, setOpen] = React.useState(false)
+      const [spaces, setSpaces] = React.useState([])
+      const [selected, setSelected] = React.useState([])
+      const [draft, setDraft] = React.useState([])
+      const [keyword, setKeyword] = React.useState('')
+      const [loading, setLoading] = React.useState(false)
+      const [saving, setSaving] = React.useState(false)
+      const [error, setError] = React.useState('')
+      const [revision, retry] = React.useReducer(value => value + 1, 0)
+      React.useEffect(() => {
+        const control = { open: () => { setKeyword(''); setOpen(true) }, captureInsertion: () => inputActions.captureInsertion() }
+        controls.set(sessionId, control)
+        const abort = new AbortController()
+        ensureSession(sessionId, abort.signal).then(() => workResourceRequest('get', sessionId, undefined, abort.signal)).then(result => setSelected(result.spaces)).catch(reason => { if (!abort.signal.aborted) setError(reason.message) })
+        return () => { abort.abort(); if (controls.get(sessionId) === control) controls.delete(sessionId) }
+      }, [sessionId, controls, inputActions])
+      React.useEffect(() => {
+        if (!open) return
+        const abort = new AbortController()
+        setLoading(true); setError('')
+        Promise.all([workResourceRequest('catalog', sessionId, undefined, abort.signal), workResourceRequest('get', sessionId, undefined, abort.signal)])
+          .then(([catalog, selection]) => { if (!abort.signal.aborted) { setSpaces(catalog.spaces); setSelected(selection.spaces); setDraft(selection.spaces.map(space => space.id)) } })
+          .catch(reason => { if (!abort.signal.aborted) setError(reason.message) })
+          .finally(() => { if (!abort.signal.aborted) setLoading(false) })
+        return () => abort.abort()
+      }, [open, revision, sessionId])
+      const close = () => { if (!saving) setOpen(false) }
+      const commit = async ids => {
+        setSaving(true); setError('')
+        try { const result = await workResourceRequest('select', sessionId, ids); setSelected(result.spaces); setOpen(false) }
+        catch (reason) { setError(reason.message) }
+        finally { setSaving(false) }
+      }
+      const visible = spaces.filter(space => `${space.name} ${space.description}`.toLowerCase().includes(keyword.trim().toLowerCase()))
+      return React.createElement(React.Fragment, null,
+        selected.length > 0 && React.createElement('div', { className: 'dshWorkResources' }, selected.map(space => React.createElement('div', { key: space.id, className: 'dshWorkResourceChip' },
+          React.createElement(NavigationIcon, { id: 'knowledge' }),
+          React.createElement('button', { type: 'button', title: space.name, onClick: () => setOpen(true) }, space.name),
+          React.createElement('button', { type: 'button', disabled: saving, 'aria-label': `${t('remove')} ${space.name}`, onClick: () => commit(selected.filter(item => item.id !== space.id).map(item => item.id)) }, '×')))),
+        error && !open && React.createElement('div', { role: 'alert', className: 'dshWorkResourceError' }, error),
+        React.createElement(Modal, { open, onClose: close, title: t('knowledge'), closeLabel: t('close'), backdropBlur: false, className: 'dshWorkKnowledgeDialog',
+          footer: React.createElement(React.Fragment, null, React.createElement('span', { className: 'dshWorkSelectionCount', 'aria-live': 'polite' }, `${t('selected')} ${draft.length}`),
+            React.createElement(Button, { variant: 'outline', disabled: saving, onClick: close }, t('cancel')),
+            React.createElement(Button, { variant: 'primary', disabled: loading || saving || Boolean(error), onClick: () => commit(draft) }, t('confirm'))) },
+          React.createElement('input', { className: 'dshWorkKnowledgeSearch', 'data-modal-autofocus': true, type: 'search', placeholder: t('search'), 'aria-label': t('search'), value: keyword, onChange: event => setKeyword(event.target.value) }),
+          React.createElement('div', { className: 'dshWorkKnowledgeList', 'aria-busy': loading },
+            loading ? React.createElement('p', { role: 'status' }, t('loading')) : error ? React.createElement('div', { role: 'alert' }, error, React.createElement(Button, { onClick: retry }, t('retry'))) : visible.length === 0 ? React.createElement('p', { role: 'status' }, t(keyword ? 'noMatch' : 'empty')) :
+            ['department', 'mine', 'joined'].map(group => {
+              const rows = visible.filter(space => space.group === group)
+              return rows.length > 0 && React.createElement('section', { key: group }, React.createElement('h3', null, t(group)), rows.map(space =>
+                React.createElement('label', { key: space.id, className: 'dshWorkKnowledgeRow' },
+                  React.createElement('input', { type: 'checkbox', checked: draft.includes(space.id), disabled: saving || (!draft.includes(space.id) && draft.length >= 50), onChange: event => setDraft(ids => event.target.checked ? [...ids, space.id] : ids.filter(id => id !== space.id)) }),
+                  React.createElement(NavigationIcon, { id: 'knowledge' }),
+                  React.createElement('span', { className: 'dshWorkResourceName' }, space.name),
+                  React.createElement('span', { className: 'dshWorkResourceDescription', title: space.description }, space.description))))
+            })),
+          draft.length >= 50 && React.createElement('p', { role: 'status' }, t('limit'))))
+    }
+    function installWorkResources(ctx) {
+      const controls = new Map()
+      const ensureSession = (sessionId, signal) => ctx.sessions.using(sessionId, { source: 'workResources', signal }, async () => undefined)
+      ctx.effect(() => ctx.locale.register(RESOURCE_NS, RESOURCE_COPY), 'desktop Work resources locale')
+      const t = ctx.locale.bind(RESOURCE_NS)
+      const available = session => ctx.sessions.subagentAddress(session.sessionId) === undefined
+      ctx.commandUi.register({ name: 'skills', label: () => t('skills'), description: () => t('skillsHint'), icon: props => React.createElement(NavigationIcon, { ...props, id: 'skills' }), available,
+        ui: { kind: 'popupSelect', searchMode: 'fuzzy-label',
+          options: ({ sessionId }, signal) => ctx.sessions.using(sessionId, { source: 'workSkillPicker', signal }, async () => {
+            const result = await ctx.remote.skills.list({ sessionId }, signal)
+            if (!result.ok) throw new Error(result.error.message)
+            return result.value.skills.map(skill => ({ id: skill.name, label: skill.name, detail: skill.description }))
+          }),
+          onSelect: (option, { sessionId }) => {
+            const scope = ctx.sessions.scope(sessionId)
+            if (!scope) throw new Error('Work task changed.')
+            const input = ctx.conversation.input.for(scope)
+            scope.bail(scope, 'slash/input-consume-token', { guard: { kind: 'bare-token', token: '/skills' } })
+            const state = input.state.getSnapshot()
+            const applied = scope.bail(scope, 'slash/input-insert-text', { text: `/${option.id} `, span: { start: 0, end: 0, draftRev: state.draftRev } })
+            if (!applied) throw new Error('Finish editing the current command, then choose a skill.')
+          }
+        } })
+      ctx.commandUi.register({ name: 'knowledge', label: () => t('knowledge'), description: () => t('knowledgeHint'), icon: props => React.createElement(NavigationIcon, { ...props, id: 'knowledge' }), available,
+        ui: { kind: 'action', run: ({ sessionId }) => controls.get(sessionId)?.open() } })
+      ctx.slots.inject('conversation.input.accessory', () => ctx.slots.register({ name: 'conversation.input.accessory', id: 'desktop-work-resources', order: 20, inject: sessionId => ({ sessionId, controls, t, ensureSession }) }, WorkResourceAccessory))
+      ctx.effect(() => {
+        if (document.getElementById('desktop-work-resources-style')) return
+        const style = document.createElement('style')
+        style.id = 'desktop-work-resources-style'
+        style.textContent = `.dshWorkResources{display:flex;flex-wrap:wrap;gap:8px;padding:10px 12px 0}.dshWorkResourceChip{display:flex;align-items:center;gap:6px;max-width:260px;padding:6px 8px;background:var(--dsw-alias-bg-layer-2);border-radius:8px;color:var(--dsw-alias-label-primary)}.dshWorkResourceChip svg,.dshWorkKnowledgeRow svg{width:16px;height:16px;flex:none}.dshWorkResourceChip button{font:inherit;border:0;background:transparent;color:inherit;cursor:pointer;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.dshWorkKnowledgeDialog{width:min(680px,90vw)}.dshWorkKnowledgeSearch{box-sizing:border-box;width:100%;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit}.dshWorkKnowledgeList{min-height:180px;max-height:50vh;overflow:auto;margin-top:12px}.dshWorkKnowledgeList h3{font-size:12px;font-weight:400;color:var(--dsw-alias-label-secondary);padding:8px}.dshWorkKnowledgeRow{display:flex;align-items:center;gap:8px;padding:12px 8px;border-radius:8px;cursor:pointer;min-width:0}.dshWorkKnowledgeRow:hover{background:var(--dsw-alias-interactive-bg-hover)}.dshWorkResourceName{flex:0 1 auto;overflow-wrap:anywhere;color:var(--dsw-alias-label-primary)}.dshWorkResourceDescription{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary)}.dshWorkSelectionCount{margin-right:auto;color:var(--dsw-alias-label-secondary)}.dshWorkResourceError{padding:8px 12px;color:var(--dsw-alias-state-error-primary);font-size:12px}`
+        document.head.appendChild(style)
+        return () => style.remove()
+      })
+    }
+
     const inject = ['slots', 'locale', 'remote', 'remote.session', 'sessions', 'uiWorkspace', 'layout']
     function apply(ctx) {
       installDesktopModes(ctx)
+      if (typeof ctx.inject === 'function') ctx.inject(['commandUi', 'inputTriggers', 'conversation', 'remote.skills'], installWorkResources)
       // `remote` and `remote.session` are separate inject names. Reading
       // `ctx.remote` without declaring `remote` throws and unmounts this slot.
       const remote = ctx.remote

@@ -1,3 +1,27 @@
+## 2026-10-20 — Work 技能选择与知识空间检索
+
+- 基线：bisheng-work/V1.2.0@a73f871725bc62eb0ff533ec99ad45d22db53749，工作目录 bisheng-work-chat-work；Harness 0.2.0-rc.2。延续已有 BISHENG 集成分支；远端 v0.9.0 查询无匹配引用。
+- Work 加号复用 Harness commandUi：技能进入原生可搜索二级菜单，名称优先、描述单行省略，选择后通过原生输入事件插入技能调用。候选来自当前 Work 运行时已加载的技能；企业技能安装与授权继续使用企业市场流程。
+- 知识空间使用原生 Modal，按当前企业身份列出可访问空间，确认后显示为当前任务资源；检索范围保存在主任务会话中。宿主持有凭据，经固定路径代理调用平台登录态检索接口，平台继续执行空间与文件权限过滤；子任务独立隔离，身份变化清理选择。
+- 修正真实运行发现的 Cordis inject 回调返回值与工具输出 schema 契约；将插件激活纳入回归。
+- 自动验证：222 文件、1893 项通过、1 项跳过；typecheck、build、diff-check 通过。
+- 本机开发版已运行：真实窗口验证技能搜索/选择、知识空间加载/勾选/确认和资源显示。真实 Work 请求调用 bisheng_knowledge_search，一次检索返回 hdc-BISHENG.pdf 与摘要；平台接口与本地模型执行链路通过。安装包与 Windows 本轮单独验收。
+- 3006 已发布知识空间接口；API 健康 200，匿名检索 401，原前端与其它容器保持。同事 desktop-settings-20261019-r1 为部署基础。证据见主工作区 outputs/work-resources-20261020。
+
+## 2026-10-19 — a73f871 本机更新
+
+- 源码与远端 V1.2.0 对齐至 a73f871725bc62eb0ff533ec99ad45d22db53749；Harness 0.2.0-rc.2，Electron 43.0.0，macOS arm64。目标仓库 v0.9.0 远端分支查询无匹配引用，延续用户指定的 BISHENG V1.2.0 集成分支。
+- typecheck 与 4 套件 / 37 项桌面定向回归通过。打包首次因 Electron 下载等待 600 秒超时，使用本机同版本 electronDist 后完成；Apple Development 签名深度严格检查与 DMG 完整性验证通过。
+- 已更新用户 Applications/BISHENG Dev.app 并实际启动，使用既有 bisheng-dev Profile，企业 Chat 连接正常。旧应用保留为 BISHENG Dev-feee3b5-backup.app。当前安装包为本地开发签名版本。
+- 菜单最新前端 15f319c06 已推送 feat/bisheng-work-120 并发布 3006；桌面 Chat 加载该环境。证据见主工作区 outputs/composer-release-20261019。后续界面迭代优先直接本地运行。
+
+## 2026-10-19 — V1.2.0 本机安装包
+
+- 打包源码为共享分支 V1.2.0@feee3b5b14ced1cead6bcd09ca69b7d777e888c9，Harness 0.2.0-rc.2、Electron 43.0.0、macOS arm64。
+- BISHENG Dev 已使用本机 Apple Development 证书签名并通过 codesign 深度严格校验，保持 Hardened Runtime；安装到用户 Applications，原企业测试 Profile 复制到持久 bisheng-dev 目录，原始数据保留。
+- 包内侧栏与源码 SHA256 一致；Office 包内生成与转换检查、DMG 完整性、ZIP CRC 与签名清单一致性通过。安装版实际启动，Harness 就绪、企业连接恢复，原生插件/更多和会话列表可见。
+- 安装文件与校验和见主工作区 artifacts/bisheng-feee3b5-mac-arm64；证据见 outputs/bisheng-feee3b5-package。本轮交付为本机开发签名包，Apple 公证、正式分发及 Windows 验收另行执行。
+
 ## 2026-10-19 — 本地拉取最新代码并保留语言同步
 
 - `V1.2.0` 从 `e434ed9` 快进到远端 `feee3b5`，合入恢复 Harness 原生导航及插件/更多固定入口两条提交。保留本地语言、模块主题与加载超时 WIP；四个重叠文件先在临时目录三方合并，再更新分支，未使用 stash、提交或覆盖无关改动。

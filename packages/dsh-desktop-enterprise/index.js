@@ -1,3 +1,4 @@
+import { applyWorkResources } from './work-resources.js'
 import { requestImageDimensions } from '@deepseek-ai/dsh-attachment'
 import { applyEnterpriseMarket } from './market.js'
 import { parseThirdPartyPolicy } from './contract.js'
@@ -142,13 +143,14 @@ async function brokerChat(body, signal, attribution) {
   return response
 }
 
-async function brokerJson(path, body) {
+async function brokerJson(path, body, signal) {
   const broker = brokerConfig()
   if (!broker) unavailable()
   let response
   try {
     response = await fetch(new URL(path, `${broker.origin}/`), {
       method: body === undefined ? 'GET' : 'POST',
+      signal,
       redirect: 'error',
       headers: {
         authorization: `Bearer ${broker.capability}`,
@@ -156,7 +158,8 @@ async function brokerJson(path, body) {
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) })
     })
-  } catch {
+  } catch (error) {
+    if (signal?.aborted) throw error
     unavailable()
   }
   const payload = await response.json().catch(() => ({}))
@@ -174,6 +177,7 @@ export function apply(ctx) {
   let market
   let capabilityPolicy
   let account = disabledState()
+  let workResources
   let ingestEnterpriseState = () => undefined
   const thirdPartyFlags = () => {
     const snap = capabilityPolicy?.snapshot()
@@ -189,6 +193,7 @@ export function apply(ctx) {
       await market?.stop()
       capabilityPolicy?.reset()
     }
+    if (!state.connected || account.connectionKey !== state.connectionKey) workResources?.clear()
     account = state
     if (!state.connected) capabilityPolicy?.reset()
     else void capabilityPolicy?.refresh(state.connectionKey).catch(() => undefined)
@@ -209,6 +214,10 @@ export function apply(ctx) {
     }
     return binary ? Buffer.from(await response.arrayBuffer()) : response.json()
   }
+  if (typeof ctx.inject === 'function') ctx.inject(['tools', 'sessions', 'systemPrompt'], scoped => { workResources = applyWorkResources(scoped, {
+    state: () => account, refreshState: readBrokerState,
+    request: (body, signal) => brokerJson('/v1/work-resources', body, signal)
+  }) })
   market = applyEnterpriseMarket(ctx, {
     state: () => account,
     refreshState: readBrokerState,
@@ -255,6 +264,7 @@ export function apply(ctx) {
   registerJsonRoute(connection, LOCAL_PATHS.manual, ['POST'], async (request) => {
     const body = await readJson(request)
     const state = await brokerJson('/v1/login/manual', { identityTicket: String(body?.identityTicket ?? '') })
+    if (!state.connected || account.connectionKey !== state.connectionKey) workResources?.clear()
     account = state
     ingestEnterpriseState(state)
     if (state.connected) await capabilityPolicy?.refresh(state.connectionKey).catch(() => undefined)
@@ -285,6 +295,7 @@ export function apply(ctx) {
     const state = await brokerJson('/v1/logout', {})
     await market.stop()
     capabilityPolicy?.reset()
+    if (!state.connected || account.connectionKey !== state.connectionKey) workResources?.clear()
     account = state
     ingestEnterpriseState(state)
     return { ...state, allowThirdPartyPlugins: false, allowThirdPartyWorkbenches: false }

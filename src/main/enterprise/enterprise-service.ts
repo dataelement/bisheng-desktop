@@ -1,3 +1,4 @@
+import { parseWorkResourceRequest, readResourceJson } from './work-resources'
 import { parseWebSession, type EnterpriseWebSession } from './web-session'
 import { parseMarketRequest } from './enterprise-market'
 import { createEnterpriseFetch } from './platform-fetch'
@@ -788,6 +789,53 @@ export class EnterpriseService {
       return { bytes: Buffer.concat(chunks), binary: request.binary }
     }
     throw Object.assign(new Error('Enterprise login required.'), { status: 401 })
+  }
+
+  async workResources(input: unknown, signal?: AbortSignal): Promise<unknown> {
+    const request = parseWorkResourceRequest(input)
+    const epoch = this.epoch
+    const assertCurrent = () => {
+      signal?.throwIfAborted()
+      if (!this.snapshot().connected || this.connectionKey() !== request.connectionKey || this.epoch !== epoch) {
+        throw Object.assign(new Error('Enterprise account changed. Select knowledge spaces again.'), { status: 409 })
+      }
+    }
+    assertCurrent()
+    const credential = await this.webSession(request.connectionKey)
+    assertCurrent()
+    const call = async (path: string, body?: unknown) => {
+      const { endpoint } = await resolveEnterpriseEndpoint(credential.base, path,
+        this.options.allowInsecureLoopback, this.platformRequestOptions().allowInsecurePrivateHttp)
+      assertCurrent()
+      const timeout = AbortSignal.timeout(60_000)
+      const response = await createEnterpriseFetch(this.options.fetchImpl)(endpoint.toString(), {
+        method: body === undefined ? 'GET' : 'POST',
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+        headers: { cookie: `access_token_cookie=${credential.cookie}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) })
+      })
+      const data = await readResourceJson(response)
+      assertCurrent()
+      return data
+    }
+    if (request.operation === 'retrieve') {
+      const data = await call('/api/v1/knowledge/space/retrieve', { query: request.query, space_ids: request.spaceIds })
+      this.options.note?.({ event: 'work_knowledge_retrieved', status: 200 })
+      return data
+    }
+    const spaces: { id: number, name: string, description: string, group: string }[] = []
+    const seen = new Set<number>()
+    for (const group of ['department', 'mine', 'joined']) {
+      const data = await call(`/api/v1/knowledge/space/${group}`)
+      if (!Array.isArray(data)) throw new Error('Knowledge space list is invalid.')
+      for (const row of data) {
+        if (!Number.isSafeInteger(row.id) || row.id <= 0 || typeof row.name !== 'string') continue
+        if (seen.has(row.id)) continue
+        seen.add(row.id)
+        spaces.push({ id: row.id, name: row.name, description: typeof row.description === 'string' ? row.description : '', group })
+      }
+    }
+    return { spaces }
   }
 
   /** Host-only exchange. Credentials never cross the renderer or Harness Broker. */

@@ -29,6 +29,15 @@ function createPluginContext(
 ) {
   const routes: RegisteredRoute[] = []
   applyEnterprise({
+    inject(dependencies: string[], install: (ctx: unknown) => unknown) {
+      if (!dependencies.includes('tools')) return
+      const value = install({
+        sessions: { get: () => undefined }, on() {}, effect() {},
+        connection: { fetch: { register: (route: RegisteredRoute) => { routes.push(route) } } },
+        tools: { register() {} }, systemPrompt: { context() {} }
+      })
+      expect(value === undefined || typeof value === 'function').toBe(true)
+    },
     effect(callback: () => (() => unknown) | undefined) {
       const dispose = callback()
       if (dispose) adapterCleanups.push(async () => { await dispose() })
