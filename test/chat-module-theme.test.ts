@@ -106,6 +106,7 @@ describe('enterprise module page theme', () => {
     expect(darkDeclaration('text', 'f53f3f')).toBeUndefined()
     expect(darkDeclaration('bg', 'ffffff')).toBe('background-color:rgb(var(--bg-page))')
     expect(darkDeclaration('bg', 'f7f8fa')).toBe('background-color:rgb(var(--arco-gray-1))')
+    expect(darkDeclaration('bg', 'fafbfc')).toBe('background-color:rgb(var(--bg-page))')
     expect(darkDeclaration('bg', 'e5e6eb')).toBe('background-color:rgb(var(--arco-gray-2))')
     expect(darkDeclaration('bg', '212121')).toBeUndefined()
     expect(darkDeclaration('bg', 'e8f3ff')).toBeUndefined()
@@ -115,7 +116,8 @@ describe('enterprise module page theme', () => {
     expect(darkDeclaration('from', 'ffffff')).toBe('--tw-gradient-from:rgb(var(--bg-page)) var(--tw-gradient-from-position);--tw-gradient-to:rgb(var(--bg-page) / 0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)')
     expect(darkDeclaration('from', 'ffffff', '0')).toBe('--tw-gradient-from:rgb(var(--bg-page) / 0) var(--tw-gradient-from-position);--tw-gradient-to:rgb(var(--bg-page) / 0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)')
     expect(darkDeclaration('via', 'ffffff', '0.85')).toBe('--tw-gradient-to:rgb(var(--bg-page) / 0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),rgb(var(--bg-page) / 0.85) var(--tw-gradient-via-position),var(--tw-gradient-to)')
-    expect(darkDeclaration('to', 'f9fafb')).toBe('--tw-gradient-to:rgb(var(--arco-gray-1)) var(--tw-gradient-to-position)')
+    expect(darkDeclaration('to', 'f9fafb')).toBe('--tw-gradient-to:rgb(var(--bg-page)) var(--tw-gradient-to-position)')
+    expect(darkDeclaration('to', 'f7f8fa')).toBe('--tw-gradient-to:rgb(var(--arco-gray-1)) var(--tw-gradient-to-position)')
     expect(darkDeclaration('from', '1f2937')).toBeUndefined()
   })
 
@@ -126,13 +128,20 @@ describe('enterprise module page theme', () => {
     expect(rules[3]).toBe('html.dsh-module-dark[data-dsh-page="knowledge"] .aspect-\\[4\\/3\\] > svg[viewBox="0 0 120 90"]{filter:invert(1) hue-rotate(180deg)}')
     expect(rules[4]).toBe('html.dsh-host-dark [class*="bg-[linear-gradient("][class*="#FFF"],html.dsh-host-dark [class*="bg-[linear-gradient("][class*="#fff"]{background-image:linear-gradient(135deg,rgb(var(--brand-500) / 0.08),rgb(var(--arco-gray-1)) 50%,rgb(var(--brand-500) / 0.08))}')
     for (const rule of rules.slice(0, 4)) for (const selector of rule.slice(0, rule.indexOf('{')).replace(/:is\([^)]*\)/gu, '').split(',')) expect(selector.startsWith('html.dsh-module-dark')).toBe(true)
-    for (const rule of rules.slice(4)) for (const selector of rule.slice(0, rule.indexOf('{')).split(',')) expect(selector.startsWith('html.dsh-host-dark ')).toBe(true)
-    for (const selector of ['.bg-white{', '.bg-\\[\\#fbfbfb\\]', '.bg-\\[\\#FBFBFB\\]', '.bg-\\[\\#f7f7f7\\]', '.text-\\[\\#1d2129\\]', '.text-\\[\\#1D2129\\]', '.text-black', '.text-gray-900', '.border-gray-200', '.bg-gray-50', '.border-white', '.from-white{', '.to-white{', '.from-white\\/0{', '.to-white\\/0{', '.via-white\\/85{']) {
+    // Selector lists are split on the scope prefix: inline-style selectors carry commas of their own.
+    for (const rule of rules.slice(4)) for (const selector of rule.slice(0, rule.indexOf('{')).split(',html.')) expect(selector.startsWith('html.dsh-host-dark ') || selector.startsWith('dsh-host-dark ')).toBe(true)
+    for (const selector of ['.bg-white{', '.bg-\\[\\#fbfbfb\\]', '.bg-\\[\\#FBFBFB\\]', '.bg-\\[\\#f7f7f7\\]', '.text-\\[\\#1d2129\\]', '.text-\\[\\#1D2129\\]', '.text-black', '.text-gray-900', '.border-gray-200', '.bg-gray-50', '.border-white', '.from-white,', '.to-white{', '.from-white\\/0{', '.to-white\\/0{', '.via-white\\/85{']) {
       expect(MODULE_THEME_CSS).toContain(`html.dsh-host-dark ${selector}`)
     }
     for (const kept of [/\.text-\\\[\\#f53f3f\\\][,{]/u, /\.bg-\\\[\\#212121\\\][,{]/u, /\.text-white[,{]/u, /\.bg-black[,{]/u, /\.text-gray-50[,{]/u]) expect(MODULE_THEME_CSS).not.toMatch(kept)
     expect(MODULE_THEME_CSS).not.toMatch(/\.dark\b[^-]/u)
     expect(MODULE_THEME_CSS).not.toMatch(/\.from-gray-800[,{]/u)
+    // Linsight inline palette: matched on the serialized style attribute, overridden with !important.
+    expect(MODULE_THEME_CSS).toContain('html.dsh-host-dark [style^="color: rgb(29, 33, 41)"],html.dsh-host-dark [style*="; color: rgb(29, 33, 41)"]{color:rgb(var(--text-1)) !important}')
+    expect(MODULE_THEME_CSS).toContain('[style^="color: rgb(92, 92, 92)"]')
+    expect(MODULE_THEME_CSS).toContain('html.dsh-host-dark [style^="background-color: rgb(255, 255, 255)"],html.dsh-host-dark [style*="; background-color: rgb(255, 255, 255)"]{background-color:rgb(var(--bg-page)) !important}')
+    expect(MODULE_THEME_CSS).toContain(`html.dsh-host-dark [style*="%23EAEEFF"]{background-image:url("data:image/svg+xml,`)
+    expect(MODULE_THEME_CSS).toMatch(/fill='%232C2F36'[^\n]*!important\}/u)
     expect(MODULE_THEME_CSS.match(/html\.dsh-host-dark \.text-\\\[\\#111\\\]/gu)).toHaveLength(1)
   })
 })

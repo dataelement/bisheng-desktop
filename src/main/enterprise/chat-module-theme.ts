@@ -120,7 +120,7 @@ const HARDCODED_UTILITIES: readonly string[] = [
   'text-gray-500', 'text-gray-600', 'text-gray-70', 'text-gray-700', 'text-gray-800', 'text-gray-900',
   'text-gray-950', 'text-neutral-800', 'text-slate-300', 'text-slate-400', 'text-slate-50', 'text-slate-500',
   'text-slate-600', 'text-slate-700', 'text-slate-800',
-  'bg-white/10', 'bg-white/20', 'bg-white/30', 'bg-white/50', 'bg-white/60', 'bg-white/70', 'bg-white/85', 'bg-white/90',
+  'bg-white/10', 'bg-white/20', 'bg-white/30', 'bg-white/40', 'bg-white/50', 'bg-white/60', 'bg-white/70', 'bg-white/80', 'bg-white/85', 'bg-white/90', 'bg-white/95',
   'bg-gray-50/80', 'bg-gray-50/90', 'bg-gray-100/50', 'bg-gray-100/80', 'border-gray-100/40', 'text-black/40',
   'border-white',
   // Gradient stops: the masks behind ask bars and docks fade list content into a white page.
@@ -128,6 +128,21 @@ const HARDCODED_UTILITIES: readonly string[] = [
   'from-gray-50', 'from-gray-200', 'from-gray-500', 'from-gray-700', 'from-gray-800', 'from-gray-850', 'from-gray-900',
   'to-gray-500', 'to-gray-900'
 ]
+
+/**
+ * Colors the client writes as inline `style` (the Linsight execution palette in
+ * `execTokens.ts` and its result cards). Inline declarations outrank any class rule, so
+ * these are matched on the serialized attribute and overridden with `!important`.
+ */
+const INLINE_STYLE_COLORS: ReadonlyArray<{ kind: 'text' | 'bg'; hex: string }> = [
+  { kind: 'text', hex: '1d2129' }, { kind: 'text', hex: '5c5c5c' }, { kind: 'text', hex: '8a8a8a' },
+  { kind: 'text', hex: '999999' }, { kind: 'text', hex: 'bfbfbf' },
+  { kind: 'bg', hex: 'ffffff' }, { kind: 'bg', hex: 'fafbfc' }, { kind: 'bg', hex: 'e8eaed' }
+]
+
+/** Dot texture behind Linsight result / clarify cards: light-blue dots meant for a white card. */
+const DOT_TEXTURE_LIGHT = '%23EAEEFF'
+const DOT_TEXTURE_DARK = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='5'%3E%3Ccircle cx='0.5' cy='0.5' r='0.5' fill='%232C2F36'/%3E%3C/svg%3E")`
 
 /** Tailwind's default gray ramp; slate / zinc / neutral / stone share its lightness steps. */
 const GRAY_RAMP: Readonly<Record<string, string>> = {
@@ -185,11 +200,13 @@ function tone(hex: string): { lightness: number; saturation: number; chroma: num
  */
 export function darkDeclaration(kind: Utility['kind'], hex: string, alpha?: string): string | undefined {
   const { lightness, saturation, chroma } = tone(hex)
-  const neutral = saturation <= 0.25 || (lightness < 0.5 && chroma < 0.12)
+  // HSL saturation explodes next to white (#fafbfc reads as 25% saturated), so near-whites
+  // and near-blacks are judged by chroma instead.
+  const neutral = saturation <= 0.25 || chroma < 0.03 || (lightness < 0.5 && chroma < 0.12)
   if (!neutral) return undefined
   const token = (name: string, opacity = alpha): string => `rgb(var(--${name})${opacity === undefined ? '' : ` / ${opacity}`})`
   const surface = (): string | undefined => {
-    if (lightness >= 0.985) return 'bg-page'
+    if (lightness >= 0.98) return 'bg-page'
     if (lightness >= 0.95) return 'arco-gray-1'
     if (lightness >= 0.9) return 'arco-gray-2'
     if (lightness >= 0.78) return 'arco-gray-3'
@@ -235,6 +252,17 @@ function buildModuleThemeCss(): string {
     }
     groups.set(declaration, selectors)
   }
+  // Inline styles serialize as `prop: rgb(r, g, b)`; the two forms cover the first and any
+  // later declaration without letting `color:` match `background-color:`.
+  const inline: string[] = []
+  for (const { kind, hex } of INLINE_STYLE_COLORS) {
+    const declaration = darkDeclaration(kind, hex)
+    if (!declaration) throw new Error(`Inline style color has no dark replacement: ${hex}`)
+    const property = kind === 'text' ? 'color' : 'background-color'
+    const serial = `rgb(${[0, 2, 4].map((offset) => parseInt(hex.slice(offset, offset + 2), 16)).join(', ')})`
+    inline.push(`html.dsh-host-dark [style^="${property}: ${serial}"],html.dsh-host-dark [style*="; ${property}: ${serial}"]{${declaration} !important}`)
+  }
+  inline.push(`html.dsh-host-dark [style*="${DOT_TEXTURE_LIGHT}"]{background-image:${DOT_TEXTURE_DARK} !important}`)
   // Arbitrary gradient utilities (`bg-[linear-gradient(...,#FFF_50%,...)]`) are matched by
   // substring: the class attribute names the white stop, whatever the surrounding stops are.
   const whiteGradient = ['#FFF', '#fff'].map((stop) => `html.dsh-host-dark [class*="bg-[linear-gradient("][class*="${stop}"]`).join(',')
@@ -247,7 +275,8 @@ function buildModuleThemeCss(): string {
     // name; inverting the art keeps the white name legible without touching the text tokens.
     'html.dsh-module-dark[data-dsh-page="knowledge"] .aspect-\\[4\\/3\\] > svg[viewBox="0 0 120 90"]{filter:invert(1) hue-rotate(180deg)}',
     `${whiteGradient}{background-image:linear-gradient(135deg,rgb(var(--brand-500) / 0.08),rgb(var(--arco-gray-1)) 50%,rgb(var(--brand-500) / 0.08))}`,
-    ...[...groups].map(([declaration, selectors]) => `${selectors.join(',')}{${declaration}}`)
+    ...[...groups].map(([declaration, selectors]) => `${selectors.join(',')}{${declaration}}`),
+    ...inline
   ].join('\n')
 }
 

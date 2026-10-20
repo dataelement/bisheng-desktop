@@ -1,3 +1,9 @@
+## 2026-10-20 — 深度研究（灵思）面板的内联样式深色覆盖
+
+- 聊天里的灵思任务模式用组件内联 `style`（`execTokens.ts` 的 INK `#1D2129` / BODY `#5C5C5C` / MUTED `#8A8A8A` / FAINT `#BFBFBF`、NarrationTicker `#999999`，结果卡片与澄清卡片的白底加 `%23EAEEFF` 点阵纹理），类规则覆盖不到：深色下结果卡白底白字、步骤图标与“任务已完成”条几乎不可见。
+- `chat-module-theme.ts` 新增 `INLINE_STYLE_COLORS`：按序列化后的 `style` 属性匹配（`[style^="color: rgb(…)"]` 与 `[style*="; color: rgb(…)"]` 两种形式，避免 `color:` 误配 `background-color:`），用同一套明度推导换成 token 并加 `!important`；点阵纹理换成深色点。近白色（`#fafbfc`）的 HSL 饱和度失真，中性判定补充色度阈值，`≥0.98` 明度归入 bg-page。
+- 验证：定向测试 23 项、typecheck 通过；Chrome 注入复验两条灵思会话（交付物卡片、待办/执行步骤、任务完成条）均可读；另补 `bg-white/40|80|95`（回到底部按钮）。重启开发应用实机确认两条会话的结果卡片、步骤图标与任务完成条均为深色可读。全量 `npx vitest run` 与 `git diff --check` 结果见提交说明；Windows 与安装包未验证。
+
 ## 2026-10-20 — 深色模式全页走查与补齐
 
 - 走查方式：桌面窗口在后台时 Chromium 不重绘且侧栏菜单的 AXPress 不触发，改在 Chrome 打开 3006 的 `?embed=dsh&dshTheme=dark` 页面并注入与宿主相同的 `MODULE_THEME_CSS` / `moduleThemeScript`，用脚本扫描视口内浅色底、浅色边框与低对比文字，再回到桌面应用复验。
