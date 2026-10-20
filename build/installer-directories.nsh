@@ -62,9 +62,12 @@ Function dshCleanupDirectories
   ${EndIf}
 FunctionEnd
 
-; Rollback touches only this installer's unique staging and backup paths.
 Function dshRollbackDirectories
   SetOutPath $PLUGINSDIR
+  StrCpy $0 $dshFinalDirectory 2
+  StrCpy $0 "$0\"
+  System::Call 'kernel32::SetCurrentDirectory(t r0)'
+
   ${If} $dshNewMoved == "1"
     RMDir /r "\\?\$dshFinalDirectory"
     StrCpy $dshNewMoved ""
@@ -87,30 +90,67 @@ FunctionEnd
 Function dshPromoteDirectories
   ; SetOutPath keeps a directory handle open. Release it before either rename.
   SetOutPath $PLUGINSDIR
+
+  ; Release any per-drive current directory handle on the target volume.
+  StrCpy $0 $dshFinalDirectory 2
+  StrCpy $0 "$0\"
+  System::Call 'kernel32::SetCurrentDirectory(t r0)'
+
+  ; If final directory exists and is empty (e.g. pre-created by directory page), remove it.
   ClearErrors
-  ${If} ${FileExists} "$dshFinalDirectory\*.*"
-    Rename $dshFinalDirectory $dshOldDirectory
-    ${If} ${Errors}
-      MessageBox MB_ICONSTOP "安装目录替换失败：无法备份旧版本目录。$\r$\n$\r$\n源目录: $dshFinalDirectory$\r$\n备份目标: $dshOldDirectory$\r$\n$\r$\n可能原因：原安装目录中有文件被其他进程（如后台残留的程序、杀毒软件等）占用，或没有重命名权限。"
+  ${If} ${FileExists} "$dshFinalDirectory"
+    RMDir $dshFinalDirectory
+  ${EndIf}
+
+  ; If final directory still exists (contains old files, or couldn't be deleted directly),
+  ; move it to backup directory with retry.
+  ${If} ${FileExists} "$dshFinalDirectory"
+    StrCpy $R3 0
+    backup_retry:
+      ClearErrors
+      Rename $dshFinalDirectory $dshOldDirectory
+      ${IfNot} ${Errors}
+        StrCpy $dshOldMoved "1"
+        Goto backup_done
+      ${EndIf}
+      IntOp $R3 $R3 + 1
+      ${If} $R3 < 10
+        Sleep 500
+        Goto backup_retry
+      ${EndIf}
+
+      System::Call "kernel32::GetLastError() i .R2"
+      MessageBox MB_ICONSTOP "安装目录替换失败：无法备份旧版本目录。$\r$\n$\r$\n源目录: $dshFinalDirectory$\r$\n备份目标: $dshOldDirectory$\r$\n$\r$\nWindows 错误代码: $R2$\r$\n可能原因：原安装目录中有文件被其他进程占用，或没有重命名权限。"
       Call dshRollbackDirectories
       SetErrors
       Return
-    ${EndIf}
-    StrCpy $dshOldMoved "1"
-  ${Else}
-    RMDir $dshFinalDirectory
+    backup_done:
   ${EndIf}
-  ClearErrors
-  Rename $dshNewDirectory $dshFinalDirectory
-  ${If} ${Errors}
-    MessageBox MB_ICONSTOP "安装目录替换失败：无法将新版本目录变更为正式安装目录。$\r$\n$\r$\n源目录: $dshNewDirectory$\r$\n正式目录: $dshFinalDirectory$\r$\n$\r$\n可能原因：目标目录权限不足或被杀毒软件拦截。"
+
+  ; Promote new staged directory to final installation directory with retry.
+  StrCpy $R3 0
+  promote_retry:
+    ClearErrors
+    Rename $dshNewDirectory $dshFinalDirectory
+    ${IfNot} ${Errors}
+      StrCpy $dshNewMoved "1"
+      Goto promote_done
+    ${EndIf}
+    IntOp $R3 $R3 + 1
+    ${If} $R3 < 10
+      Sleep 500
+      Goto promote_retry
+    ${EndIf}
+
+    System::Call "kernel32::GetLastError() i .R2"
+    MessageBox MB_ICONSTOP "安装目录替换失败：无法将新版本目录变更为正式安装目录。$\r$\n$\r$\n源目录: $dshNewDirectory$\r$\n正式目录: $dshFinalDirectory$\r$\n$\r$\nWindows 错误代码: $R2$\r$\n可能原因：目标目录被占用、权限不足或被杀毒软件拦截。"
     Call dshRollbackDirectories
     SetErrors
     Return
-  ${EndIf}
-  StrCpy $dshNewMoved "1"
-  SetOutPath $dshFinalDirectory
-  ClearErrors
+
+  promote_done:
+    SetOutPath $dshFinalDirectory
+    ClearErrors
 FunctionEnd
 
 !macro dshFinishDirectories
