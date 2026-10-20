@@ -35,7 +35,7 @@ function fixture() {
   let state = { connected: true, connectionKey: 'tenant-a' }
   let change: (state: any) => void = () => {}
   const enterprise = { snapshot: () => state, subscribe: (listener: typeof change) => { change = listener; return vi.fn() }, webSession: vi.fn(async () => ({ base: 'https://enterprise.example', cookie: 'test-cookie', connectionKey: 'tenant-a', expiresAt: Date.now() + 300_000 })) }
-  const owner: any = Object.assign(new EventEmitter(), { isDestroyed: () => false, getContentSize: () => [1100, 800], contentView: { addChildView: vi.fn(), removeChildView: vi.fn() }, webContents: Object.assign(new EventEmitter(), { send: vi.fn(), getZoomFactor: () => 1 }) })
+  const owner: any = Object.assign(new EventEmitter(), { isDestroyed: () => false, getContentSize: () => [1100, 800], contentView: { addChildView: vi.fn(), removeChildView: vi.fn() }, webContents: Object.assign(new EventEmitter(), { send: vi.fn(), focus: vi.fn(), getZoomFactor: () => 1 }) })
   const host = new EnterpriseChatView(enterprise as any, vi.fn())
   return { host, owner, enterprise, change: (next: typeof state) => { state = next; change(next) } }
 }
@@ -282,4 +282,114 @@ it('fails the session exchange when the first document load stalls, so Reconnect
     expect(host.snapshot().phase).toBe('error')
     expect(note).toHaveBeenCalledWith('[enterprise-chat] session_failed status=timeout')
   } finally { host.dispose(); vi.useRealTimers() }
+})
+
+it('opens content-only settings, waits for the current main frame and restores the previous page', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    await f.host.open('new')
+    const view = fake.views[0], wc = view.webContents
+    f.host.present(f.owner, { ...presentation, settings: 'account' })
+    await flush()
+    expect(wc.loadURL).toHaveBeenLastCalledWith('https://enterprise.example/workspace/settings/account?dshSettings=1&embed=dsh&dshTheme=dark')
+    expect(view.setVisible).toHaveBeenLastCalledWith(false)
+    const report = (frame: unknown, section: string, path = '/workspace/settings/account') => wc.emit('ipc-message', { senderFrame: frame }, 'enterprise-chat:settings-ready', { section, path })
+    report({}, 'account')
+    report(wc.mainFrame, 'notifications')
+    report(wc.mainFrame, 'account', '/workspace/settings/notifications')
+    expect(f.host.snapshot().settingsReady).toBe(false)
+    report(wc.mainFrame, 'account')
+    expect(f.host.snapshot()).toMatchObject({ settingsSection: 'account', settingsReady: true })
+    expect(view.setVisible).toHaveBeenLastCalledWith(true)
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:settings-close', { path: '/workspace/settings/account' })
+    expect(f.owner.webContents.send).toHaveBeenLastCalledWith('enterprise-chat:close-settings')
+    f.host.present(f.owner, { ...presentation, visible: false })
+    await flush()
+    expect(wc.loadURL).toHaveBeenLastCalledWith('https://enterprise.example/workspace/c/new?embed=dsh&dshTheme=dark')
+    f.host.present(f.owner, presentation)
+    expect(view.setVisible).toHaveBeenLastCalledWith(true)
+    expect(fake.views).toHaveLength(1)
+    expect(f.host.snapshot().settingsSection).toBeUndefined()
+  } finally { f.host.dispose() }
+})
+
+it('restricts settings navigation and rejects stale readiness after an identity change', async () => {
+  for (const settings of ['general', '../admin', 'https://other.example/', '', 4, null]) {
+    expect(() => parseChatPresentation({ ...presentation, settings })).toThrow('settings')
+  }
+  const f = fixture()
+  try {
+    f.host.present(f.owner, { ...presentation, settings: 'desktop-usage' })
+    await flush()
+    const wc = fake.views[0].webContents
+    expect(wc.loadURL).toHaveBeenLastCalledWith(expect.stringContaining('/workspace/settings/desktop-usage?dshSettings=1'))
+    f.change({ connected: false, connectionKey: 'tenant-a' })
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:settings-ready', { section: 'desktop-usage', path: '/workspace/settings/desktop-usage' })
+    expect(f.host.snapshot()).toMatchObject({ connected: false, settingsReady: false })
+    expect(f.host.snapshot().settingsSection).toBeUndefined()
+  } finally { f.host.dispose() }
+})
+
+it('hides settings when the ready document navigates away and requires a new report after reload', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, { ...presentation, settings: 'account' })
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    wc.focus = vi.fn()
+    const ready = () => wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:settings-ready', { section: 'account', path: '/workspace/settings/account' })
+    expect(f.host.snapshot().settingsProtocolVersion).toBe(1)
+    ready()
+    expect(view.setVisible).toHaveBeenLastCalledWith(true)
+    await wc.loadURL('https://enterprise.example/workspace/knowledge/space/example')
+    wc.emit('did-navigate-in-page', {}, wc.getURL(), true)
+    expect(view.setVisible).toHaveBeenLastCalledWith(false)
+    expect(f.host.snapshot().settingsReady).toBe(false)
+    f.host.focusSettings()
+    expect(wc.focus).not.toHaveBeenCalled()
+    await wc.loadURL('https://enterprise.example/workspace/settings/account?dshSettings=1')
+    expect(view.setVisible).toHaveBeenLastCalledWith(false)
+    ready()
+    expect(view.setVisible).toHaveBeenLastCalledWith(true)
+    wc.emit('did-start-navigation', {}, wc.getURL(), false, true)
+    expect(view.setVisible).toHaveBeenLastCalledWith(false)
+    expect(f.host.snapshot().settingsReady).toBe(false)
+  } finally { f.host.dispose() }
+})
+
+it('leaves failed remote settings without blocking the original conversation', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    await f.host.open('new')
+    const view = fake.views[0]
+    view.webContents.loadURL.mockRejectedValueOnce(Object.assign(new Error('Settings unavailable'), { code: 'ERR_CONNECTION_RESET' }))
+    f.host.present(f.owner, { ...presentation, settings: 'account' })
+    await flush()
+    expect(f.host.snapshot().settingsFailure).toBe('load')
+    expect(view.setVisible).toHaveBeenLastCalledWith(false)
+    f.host.present(f.owner, presentation)
+    await flush()
+    expect(f.host.snapshot().phase).toBe('ready')
+    expect(f.host.snapshot().settingsSection).toBeUndefined()
+    expect(view.setVisible).toHaveBeenLastCalledWith(true)
+  } finally { f.host.dispose() }
+})
+
+it('pushes connection failures and logout to mounted settings without waiting for a poll', async () => {
+  const f = fixture()
+  try {
+    f.enterprise.webSession.mockRejectedValueOnce(new Error('Temporary connection failure'))
+    f.host.present(f.owner, { ...presentation, settings: 'account' })
+    await flush()
+    expect(f.owner.webContents.send).toHaveBeenLastCalledWith('enterprise-chat:changed', expect.objectContaining({ phase: 'error' }))
+    f.host.retry()
+    await flush()
+    expect(f.host.snapshot().phase).toBe('ready')
+    f.change({ connected: false, connectionKey: 'tenant-a' })
+    expect(f.owner.webContents.send).toHaveBeenLastCalledWith('enterprise-chat:changed', expect.objectContaining({ connected: false, settingsReady: false }))
+  } finally { f.host.dispose() }
 })

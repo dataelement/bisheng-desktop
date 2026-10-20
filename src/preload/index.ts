@@ -578,7 +578,15 @@ window.addEventListener('pagehide', () => {
   pluginErrorToast.dispose()
 })
 
+ipcRenderer.on('enterprise-chat:close-settings', () => {
+  window.dispatchEvent(new CustomEvent('dsh-desktop:close-settings'))
+})
+ipcRenderer.on('enterprise-chat:settings-focus', (_event, detail) => {
+  window.dispatchEvent(new CustomEvent('dsh-desktop:settings-focus', { detail }))
+})
+
 contextBridge.exposeInMainWorld('dshEnterpriseChat', Object.freeze({
+  focusSettings: (): Promise<void> => ipcRenderer.invoke('enterprise-chat:focus-settings'),
   present: (value: EnterpriseChatPresentation): Promise<EnterpriseChatViewState> => ipcRenderer.invoke('enterprise-chat:present', value),
   state: (): Promise<EnterpriseChatViewState> => ipcRenderer.invoke('enterprise-chat:state'),
   retry: (): Promise<void> => ipcRenderer.invoke('enterprise-chat:retry'),
@@ -617,6 +625,8 @@ contextBridge.exposeInMainWorld(
   'dshDesktop',
   Object.freeze({
     restartHarness: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('harness:restart'),
+    settingsInfo: (): Promise<AboutInfo> => ipcRenderer.invoke('desktop:about-info'),
+    settingsAction: (action: 'check-for-updates' | 'show-harness-log' | 'safe-mode'): Promise<void> => ipcRenderer.invoke('desktop:settings-action', action),
     getBuiltInImageGenerationStatus: (): Promise<{ enabled: boolean; marketActive: boolean }> =>
       ipcRenderer.invoke('desktop-host-plugin:status'),
     setBuiltInImageGenerationEnabled: (enabled: boolean): Promise<{ ok: boolean; enabled?: boolean; restartRequired?: boolean; reason?: string }> =>

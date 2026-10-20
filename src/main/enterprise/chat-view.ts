@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { session, shell, WebContentsView, type BrowserWindow, type Session } from 'electron'
-import { parseEnterpriseNavigation, parseChatPage, parseChatId, parseChatPresentation, type EnterpriseChatHistory, type EnterpriseChatPresentation, type EnterpriseChatViewState } from '../../shared/enterprise-chat-view'
+import { parseEnterpriseNavigation, parseEnterpriseSettingsSection, parseChatPage, parseChatId, parseChatPresentation, type EnterpriseSettingsSection, type EnterpriseChatHistory, type EnterpriseChatPresentation, type EnterpriseChatViewState } from '../../shared/enterprise-chat-view'
 import type { EnterpriseDesktopRuntime } from './enterprise-desktop'
 import { MODULE_THEME_CSS, moduleThemeScript } from './chat-module-theme'
 import { chatLocaleScript } from './chat-locale'
@@ -33,10 +33,15 @@ export class EnterpriseChatView {
   private unsubscribe: () => void
   private state: EnterpriseChatViewState = { phase: 'idle' }
   private presentation?: EnterpriseChatPresentation
+  private settingsSection?: EnterpriseSettingsSection
+  private settingsReturnRoute?: string
+  private settingsReady = false
+  private settingsFailure?: 'load' | 'unsupported'
+  private settingsTimer?: NodeJS.Timeout
 
   constructor(private enterprise: EnterpriseDesktopRuntime, private note: (line: string) => void) {
     this.unsubscribe = enterprise.subscribe((state) => {
-      if (!state.connected || state.connectionKey !== this.key) this.clear()
+      if (!state.connected || state.connectionKey !== this.key) { this.clear(); this.notify() }
       if (state.connected && this.presentation?.visible && this.owner && !this.owner.isDestroyed()) {
         void this.connect()
       }
@@ -44,7 +49,7 @@ export class EnterpriseChatView {
   }
 
   snapshot(): EnterpriseChatViewState {
-    return { ...this.state, navigation: this.navigation, path: this.view ? new URL(this.view.webContents.getURL() || 'about:blank').pathname.replace(/^\/workspace/u, '') : undefined, landing: this.landing, epoch: this.generation, conversationId: this.view?.webContents.getURL().match(/\/workspace\/(?:c|chat|linsight)\/([a-zA-Z0-9_-]+)/u)?.[1], connected: this.enterprise.snapshot().connected }
+    return { ...this.state, settingsProtocolVersion: 1, settingsSection: this.settingsSection, settingsReady: this.isSettingsReady(), settingsFailure: this.settingsFailure, navigation: this.navigation, path: this.view ? new URL(this.view.webContents.getURL() || 'about:blank').pathname.replace(/^\/workspace/u, '') : undefined, landing: this.landing, epoch: this.generation, conversationId: this.view?.webContents.getURL().match(/\/workspace\/(?:c|chat|linsight)\/([a-zA-Z0-9_-]+)/u)?.[1], connected: this.enterprise.snapshot().connected }
   }
 
   private notify(): void {
@@ -63,10 +68,21 @@ export class EnterpriseChatView {
     }
     this.layout()
     if (this.presentation.visible && this.enterprise.snapshot().connected && !this.view) void this.connect()
+    if (this.view) void this.syncSettings()
     return this.snapshot()
   }
 
   retry(): void { this.clear(); void this.connect() }
+
+  private isSettingsReady(): boolean {
+    if (!this.view || !this.settingsSection || !this.settingsReady) return false
+    const url = new URL(this.view.webContents.getURL() || 'about:blank')
+    return url.origin === this.origin && url.pathname === `/workspace/settings/${this.settingsSection}` && url.searchParams.get('dshSettings') === '1'
+  }
+
+  focusSettings(): void {
+    if (this.presentation?.visible && this.presentation.settings === this.settingsSection && this.isSettingsReady()) this.view?.webContents.focus()
+  }
 
   /** Fixed read-only endpoint. The isolated cookie stays in the host session. */
   async history(input: unknown): Promise<EnterpriseChatHistory> {
@@ -107,6 +123,47 @@ export class EnterpriseChatView {
     await this.navigate(`/workspace${entry.path}`)
   }
 
+  /** Only enumerated settings pages share the existing identity-owned document. */
+  private async syncSettings(): Promise<void> {
+    const section = this.presentation?.settings
+    if (!this.view || !this.origin || !this.enterprise.snapshot().connected || section === this.settingsSection) return
+    const view = this.view, epoch = this.generation
+    if (!view.webContents.getURL()) return
+    const current = new URL(view.webContents.getURL())
+    if (current.origin !== this.origin || !current.pathname.startsWith('/workspace')) return
+    if (section && !this.settingsReturnRoute) {
+      for (const key of ['embed', 'dshTheme', 'dshLocale', 'dshSettings']) current.searchParams.delete(key)
+      this.settingsReturnRoute = current.pathname + current.search
+    }
+    const route = section ? `/workspace/settings/${section}?dshSettings=1` : this.settingsReturnRoute ?? '/workspace/c/new'
+    this.settingsSection = section
+    this.settingsReady = false
+    this.settingsFailure = undefined
+    clearTimeout(this.settingsTimer)
+    if (section) {
+      this.settingsTimer = setTimeout(() => {
+        if (epoch !== this.generation || section !== this.settingsSection || this.settingsReady) return
+        this.settingsFailure = 'unsupported'
+        this.note('[enterprise-settings] content_ready_timeout')
+        this.layout(); this.notify()
+      }, DOCUMENT_LOAD_TIMEOUT_MS)
+    }
+    this.layout(); this.notify()
+    try {
+      await this.navigate(route)
+      if (epoch !== this.generation || view !== this.view || section !== this.settingsSection) return
+      if (!section) { this.settingsReturnRoute = undefined; this.state = { phase: 'ready' } }
+      this.layout(); this.notify()
+    } catch (error) {
+      if (epoch !== this.generation || view !== this.view || section !== this.settingsSection) return
+      clearTimeout(this.settingsTimer)
+      this.settingsFailure = 'load'
+      const code = error && typeof error === 'object' && 'code' in error ? String(error.code).slice(0, 80) : 'transport'
+      this.note(`[enterprise-settings] navigation_failed code=${code}`)
+      this.layout(); this.notify()
+    }
+  }
+
   private async navigate(route: string): Promise<void> {
     const view = this.view, origin = this.origin, epoch = this.generation
     if (!view || !origin) throw new Error('Enterprise page unavailable.')
@@ -131,7 +188,9 @@ export class EnterpriseChatView {
   private layout(): void {
     if (!this.view || !this.owner || this.owner.isDestroyed() || !this.presentation) return
     const { bounds, visible, theme } = this.presentation
-    this.view.setVisible(visible && this.state.phase === 'ready')
+    const onSettingsPath = /\/workspace\/settings\//u.test(this.view.webContents.getURL())
+    const surfaceReady = this.presentation.settings ? this.settingsSection === this.presentation.settings && this.isSettingsReady() : !onSettingsPath
+    this.view.setVisible(visible && this.state.phase === 'ready' && surfaceReady)
     // Settings hides the view while changing locale; its navigation labels still need updates.
     if (this.state.phase === 'ready') this.applyLocale()
     if (!visible) return
@@ -174,6 +233,7 @@ export class EnterpriseChatView {
     this.key = key
     if (!this.view) this.state = { phase: 'loading' }
     this.layout()
+    this.notify()
     const operation = this.exchange(key, generation)
     this.pending = operation
     void operation.finally(() => { if (this.pending === operation) this.pending = undefined })
@@ -209,6 +269,31 @@ export class EnterpriseChatView {
           if (!input || typeof input !== 'object') return
           const report = input as Record<string, unknown>
           if (report.path !== url.pathname) return
+          if (channel === 'enterprise-chat:settings-ready') {
+            try {
+              const section = parseEnterpriseSettingsSection(report.section)
+              if (section !== this.settingsSection || url.pathname !== `/workspace/settings/${section}`) return
+              this.settingsReady = true
+              this.settingsFailure = undefined
+              clearTimeout(this.settingsTimer)
+              this.layout(); this.notify()
+            } catch { this.note('[enterprise-settings] invalid_ready_report') }
+            return
+          }
+          if (channel === 'enterprise-chat:settings-close') {
+            if (this.settingsSection && url.pathname === `/workspace/settings/${this.settingsSection}`) {
+              this.owner?.webContents.focus()
+              this.owner?.webContents.send('enterprise-chat:close-settings')
+            }
+            return
+          }
+          if (channel === 'enterprise-chat:settings-focus') {
+            if (this.settingsSection && url.pathname === `/workspace/settings/${this.settingsSection}` && (report.direction === 'previous' || report.direction === 'next')) {
+              this.owner?.webContents.focus()
+              this.owner?.webContents.send('enterprise-chat:settings-focus', { section: this.settingsSection, direction: report.direction })
+            }
+            return
+          }
           if (channel === 'enterprise-chat:navigation') {
             try { this.navigation = parseEnterpriseNavigation(report.navigation); this.notify() }
             catch { this.note('[enterprise-chat] invalid_navigation_report') }
@@ -218,9 +303,17 @@ export class EnterpriseChatView {
           this.landing = url.pathname === '/workspace/c/new' && report.landing
           this.notify()
         })
+        view.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+          if (isMainFrame && !isInPlace && generation === this.generation && this.view === view && this.settingsSection) {
+            this.settingsReady = false
+            this.layout(); this.notify()
+          }
+        })
         view.webContents.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
           if (isMainFrame && generation === this.generation && this.view === view) {
             this.landing = undefined
+            if (!this.isSettingsReady()) this.settingsReady = false
+            this.layout()
             if (this.state.phase === 'ready') this.applyTheme()
             if (this.state.phase === 'ready') this.applyLocale()
             this.notify()
@@ -229,13 +322,13 @@ export class EnterpriseChatView {
         view.webContents.on('will-navigate', allowNavigation)
         view.webContents.on('will-redirect', allowNavigation)
         view.webContents.on('will-attach-webview', (event) => event.preventDefault())
-        view.webContents.on('render-process-gone', () => { this.clear(); this.state = { phase: 'error' }; this.note('[enterprise-chat] renderer_gone') })
+        view.webContents.on('render-process-gone', () => { this.clear(); this.state = { phase: 'error' }; this.note('[enterprise-chat] renderer_gone'); this.notify() })
         view.webContents.on('did-finish-load', () => {
           if (generation !== this.generation) return
           if (new URL(view.webContents.getURL()).pathname.startsWith('/workspace')) {
             // Host-owned module styles live in this document until the next full load replaces it.
             void view.webContents.insertCSS(MODULE_THEME_CSS).catch(() => this.note('[enterprise-chat] module_style_failed'))
-            this.state = { phase: 'ready' }; this.layout(); this.notify()
+            this.state = { phase: 'ready' }; void this.syncSettings(); this.layout(); this.notify()
           } else {
             this.state = { phase: 'error' }; this.layout(); this.note('[enterprise-chat] unexpected_login_redirect')
           }
@@ -249,6 +342,7 @@ export class EnterpriseChatView {
       if (generation !== this.generation) return
       if (!view.webContents.getURL()) await loadWithin(view.webContents.loadURL(this.entryURL('/workspace/', credential.base)), DOCUMENT_LOAD_TIMEOUT_MS)
       else { this.state = { phase: 'ready' }; this.layout() }
+      await this.syncSettings()
       clearTimeout(this.timer)
       this.timer = setTimeout(() => { void this.connect() }, Math.max(1000, credential.expiresAt - Date.now() - 30_000))
       this.note('[enterprise-chat] session_ready')
@@ -258,10 +352,16 @@ export class EnterpriseChatView {
       this.state = { phase: 'error' }
       const status = error && typeof error === 'object' && 'status' in error && (typeof error.status === 'number' || typeof error.status === 'string') ? error.status : 'transport'
       this.note(`[enterprise-chat] session_failed status=${status}`)
+      this.notify()
     }
   }
 
   private clear(): void {
+    clearTimeout(this.settingsTimer)
+    this.settingsSection = undefined
+    this.settingsReturnRoute = undefined
+    this.settingsReady = false
+    this.settingsFailure = undefined
     this.landing = undefined
     this.navigation = undefined
     this.navigationRequest++

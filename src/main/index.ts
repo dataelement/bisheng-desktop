@@ -1677,7 +1677,11 @@ function registerHarnessHandlers(): void {
     }
   })
 
-  for (const channel of ['enterprise-chat:present', 'enterprise-chat:state', 'enterprise-chat:retry', 'enterprise-chat:history', 'enterprise-chat:open', 'enterprise-chat:open-page']) ipcMain.removeHandler(channel)
+  for (const channel of ['enterprise-chat:present', 'enterprise-chat:state', 'enterprise-chat:retry', 'enterprise-chat:history', 'enterprise-chat:open', 'enterprise-chat:open-page', 'enterprise-chat:focus-settings']) ipcMain.removeHandler(channel)
+  ipcMain.handle('enterprise-chat:focus-settings', (event) => {
+    assertTrustedMainWindowEvent(event)
+    enterpriseChat?.focusSettings()
+  })
   ipcMain.handle('enterprise-chat:present', (event, presentation: unknown) => {
     assertTrustedMainWindowEvent(event)
     return enterpriseChat?.present(mainWindow!, presentation) ?? { phase: 'idle', connected: false }
@@ -1793,6 +1797,14 @@ function registerHarnessHandlers(): void {
         bundledHarnessVersion(bundledRuntimeRoot()) ?? (locale === 'zh' ? '未知' : 'Unknown'),
       locale
     }
+  })
+  ipcMain.removeHandler('desktop:settings-action')
+  ipcMain.handle('desktop:settings-action', async (event, action: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    if (action !== 'check-for-updates' && action !== 'show-harness-log' && action !== 'safe-mode') {
+      throw new Error('Invalid settings action.')
+    }
+    await executeDesktopMenuCommand(action)
   })
 }
 

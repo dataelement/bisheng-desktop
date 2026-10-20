@@ -15,8 +15,9 @@ window.__ModuleLoader__.load({
     const NS = 'settings.desktopEnterprise'
 
     const zh = {
-      nav: '企业账号',
-      title: '企业账号',
+      nav: '账号与安全',
+      title: '账号与安全',
+      managedModels: '企业提供的模型',
       accountLabel: '当前账号',
       platform: '企业服务地址',
       login: '在浏览器中登录',
@@ -73,8 +74,9 @@ window.__ModuleLoader__.load({
     }
 
     const en = {
-      nav: 'Enterprise',
-      title: 'Enterprise account',
+      nav: 'Account and security',
+      title: 'Account and security',
+      managedModels: 'Models provided by your enterprise',
       accountLabel: 'Current account',
       platform: 'Enterprise service URL',
       login: 'Sign in in browser',
@@ -158,6 +160,8 @@ window.__ModuleLoader__.load({
           font-weight: 600;
           line-height: normal;
         }
+        .dshEnterpriseManagedModels { margin: 16px 0; }
+        .dshEnterpriseManagedModels > summary { cursor: pointer; padding: 10px 0; font-size: 13px; color: var(--dsw-alias-label-secondary); }
         .dshEnterprise h3 {
           margin: 0 0 8px;
           font-size: 14px;
@@ -849,7 +853,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'dshEnterpriseModelUsagePercent', 'aria-hidden': 'true' }, percentage)))
     }
 
-    function EnterpriseSection({ t }) {
+    function EnterpriseSection({ t, renderSlot }) {
       const [state, setState] = useState(null)
       const [base, setBase] = useState(readLastBase)
       const [ticket, setTicket] = useState('')
@@ -1100,7 +1104,8 @@ window.__ModuleLoader__.load({
           h('h2', null, t('title')),
           renderLearnMoreButton(t)),
         status,
-        accountContent,
+        connected ? h('details', { className: 'dshEnterpriseManagedModels' }, h('summary', null, t('managedModels')), accountContent) : accountContent,
+        connected && renderSlot?.('desktop.settings.account', {}, { fallback: null }),
         manualFallback,
         errorPanel,
         confirmationPanel)
@@ -1129,6 +1134,7 @@ window.__ModuleLoader__.load({
         id: ENTERPRISE_SECTION_ID,
         order: 15,
         label: () => t('nav'),
+        children: { 'desktop.settings.account': { kind: 'single', scope: 'root' } },
         inject: () => ({ t })
       }, EnterpriseSection))
     }

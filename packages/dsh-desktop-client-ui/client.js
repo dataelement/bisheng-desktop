@@ -245,7 +245,7 @@ window.__ModuleLoader__.load({
     }
     /** One renderer-owned mode/history controller shared by the content and sidebar slots. */
     function createChatNavigation(ctx) {
-      let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, pageId: undefined, navigation: undefined, workLanding: false, panelOpen: false, activePanelId: null }
+      let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, settingsOverlay: false, settingsSurface: undefined, pageId: undefined, navigation: undefined, workLanding: false, panelOpen: false, activePanelId: null }
       const listeners = new Set()
       let active = false, revision = 0, historyRequest = 0, timer, lastHistory = 0
       const publish = (patch) => { value = { ...value, ...patch }; listeners.forEach(fn => fn()) }
@@ -324,7 +324,13 @@ window.__ModuleLoader__.load({
             if (intent === 'new' && workspaceId === undefined && value.mode === 'chat') { void open('new'); return true }
             select('work')
           })
-          const settings = (event) => publish({ settingsOpen: event.detail?.open === true })
+          const settingsOverlay = (event) => publish({ settingsOverlay: event.detail?.open === true })
+          const settings = (event) => publish({ settingsOpen: event.detail?.open === true, ...(event.detail?.open ? {} : { settingsSurface: undefined }) })
+          const settingsSurface = (event) => {
+            const detail = event.detail
+            if (detail?.close) { if (value.settingsSurface?.token === detail.token) publish({ settingsSurface: undefined }); return }
+            if (detail?.bounds && typeof detail.section === 'string') publish({ settingsSurface: detail })
+          }
           let workSession, unsubscribeWork = () => {}
           const workState = () => {
             const list = ctx.sessions.list.getSnapshot()
@@ -353,6 +359,8 @@ window.__ModuleLoader__.load({
           workState(); panel()
           window.addEventListener('dsh-desktop:enterprise-account-changed', account)
           window.addEventListener('dsh-desktop:settings-visibility', settings)
+          window.addEventListener('dsh-desktop:settings-surface', settingsSurface)
+          window.addEventListener('dsh-desktop:settings-overlay', settingsOverlay)
           window.addEventListener('focus', sync)
           void poll()
           return () => {
@@ -360,6 +368,8 @@ window.__ModuleLoader__.load({
             window.removeEventListener('dsh-desktop:enterprise-account-changed', account)
             disposeNavigation()
             window.removeEventListener('dsh-desktop:settings-visibility', settings)
+            window.removeEventListener('dsh-desktop:settings-surface', settingsSurface)
+            window.removeEventListener('dsh-desktop:settings-overlay', settingsOverlay)
             window.removeEventListener('focus', sync)
           }
         }
@@ -424,7 +434,7 @@ window.__ModuleLoader__.load({
     }
     function DesktopModes({ work, columns, resizeHandle, navigation, t, locale }) {
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
-      const { mode, settingsOpen } = state
+      const { mode, settingsOpen, settingsSurface } = state
       React.useEffect(() => navigation.start(), [navigation])
       const panel = React.useRef(null)
       const tabs = React.useRef({})
@@ -436,7 +446,8 @@ window.__ModuleLoader__.load({
           if (!rect) return
           const sidebarRight = document.querySelector('[data-dsh-sidebar-root]')?.getBoundingClientRect().right || 0
           const x = Math.max(rect.x, sidebarRight)
-          void bridge.present({ visible: mode === 'chat' && !settingsOpen, bounds: { x, y: rect.y, width: Math.max(0, rect.right - x), height: rect.height }, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light', locale: locale.getSnapshot().active === 'zh' ? 'zh' : 'en' }).catch(() => {})
+          const remote = settingsOpen && state.settingsProtocolVersion === 1 && settingsSurface
+          void bridge.present({ visible: remote ? !state.settingsOverlay && state.connected && remote.bounds.width > 0 && remote.bounds.height > 0 : mode === 'chat' && !settingsOpen, ...(remote ? { settings: remote.section } : {}), bounds: remote ? remote.bounds : { x, y: rect.y, width: Math.max(0, rect.right - x), height: rect.height }, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light', locale: locale.getSnapshot().active === 'zh' ? 'zh' : 'en' }).catch(() => {})
         }
         const resize = new ResizeObserver(present)
         if (panel.current) resize.observe(panel.current)
@@ -450,7 +461,7 @@ window.__ModuleLoader__.load({
         return () => {
           resize.disconnect(); theme.disconnect(); unsubscribeLocale(); window.removeEventListener('resize', present)
         }
-      }, [mode, settingsOpen, locale])
+      }, [mode, settingsOpen, settingsSurface, state.settingsOverlay, state.connected, state.settingsProtocolVersion, locale])
       React.useEffect(() => () => {
         void window.dshEnterpriseChat?.present({ visible: false, bounds: { x: 0, y: 48, width: 0, height: 0 }, theme: 'light' }).catch(() => {})
       }, [])

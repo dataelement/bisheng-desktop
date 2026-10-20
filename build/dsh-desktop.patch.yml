@@ -26,6 +26,9 @@
     - id: dsh-desktop-client-ui
       name: dsh-desktop-client-ui
 
+    - id: dsh-desktop-settings
+      name: dsh-desktop-settings
+
     - id: dsh-desktop-enterprise
       name: dsh-desktop-enterprise
 

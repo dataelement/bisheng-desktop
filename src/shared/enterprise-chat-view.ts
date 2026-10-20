@@ -3,9 +3,20 @@ export interface EnterpriseChatPresentation {
   bounds: { x: number; y: number; width: number; height: number }
   theme: 'light' | 'dark'
   locale?: 'zh' | 'en'
+  settings?: EnterpriseSettingsSection
+}
+
+export const ENTERPRISE_SETTINGS_SECTIONS = ['account', 'desktop-usage', 'ai-access', 'my-tasks', 'my-requests', 'notifications'] as const
+export type EnterpriseSettingsSection = (typeof ENTERPRISE_SETTINGS_SECTIONS)[number]
+
+export function parseEnterpriseSettingsSection(value: unknown): EnterpriseSettingsSection {
+  const section = ENTERPRISE_SETTINGS_SECTIONS.find(item => item === value)
+  if (!section) throw new Error('Invalid enterprise settings section.')
+  return section
 }
 
 export interface EnterpriseChatViewState {
+  settingsProtocolVersion?: 1
   navigation?: EnterpriseNavigation
   path?: string
   epoch?: number
@@ -14,6 +25,9 @@ export interface EnterpriseChatViewState {
   connected?: boolean
   phase: 'idle' | 'loading' | 'ready' | 'error'
   error?: string
+  settingsSection?: EnterpriseSettingsSection
+  settingsReady?: boolean
+  settingsFailure?: 'load' | 'unsupported'
 }
 
 export function parseChatPresentation(value: unknown): EnterpriseChatPresentation {
@@ -25,6 +39,7 @@ export function parseChatPresentation(value: unknown): EnterpriseChatPresentatio
   if (input.locale !== undefined && input.locale !== 'zh' && input.locale !== 'en') {
     throw new Error('Invalid Chat locale.')
   }
+  const settings = input.settings === undefined ? undefined : parseEnterpriseSettingsSection(input.settings)
   const bounds = input.bounds as Record<string, unknown> | undefined
   if (!bounds || ['x', 'y', 'width', 'height'].some((key) =>
     typeof bounds[key] !== 'number' || !Number.isFinite(bounds[key]) || Number(bounds[key]) < 0 || Number(bounds[key]) > 20000
@@ -33,6 +48,7 @@ export function parseChatPresentation(value: unknown): EnterpriseChatPresentatio
     visible: input.visible,
     theme: input.theme as 'light' | 'dark',
     locale: input.locale,
+    settings,
     bounds: { x: Number(bounds.x), y: Number(bounds.y), width: Number(bounds.width), height: Number(bounds.height) }
   }
 }
@@ -66,6 +82,7 @@ export interface EnterpriseNavigationEntry {
 export interface EnterpriseNavigation {
   entries: EnterpriseNavigationEntry[]
   homeLabel: string
+  settings?: { aiAccess: boolean }
 }
 const modulePaths: Record<string, RegExp> = {
   knowledge: /^\/knowledge$/u,
@@ -92,5 +109,9 @@ export function parseEnterpriseNavigation(value: unknown): EnterpriseNavigation 
     seen.add(row.id)
     return { id: row.id, path: row.path, label: row.label, active: row.active, primary: row.primary }
   })
-  return { entries, homeLabel: typeof input.homeLabel === 'string' ? input.homeLabel.slice(0, 80) : '' }
+  const settings = input.settings
+  if (settings !== undefined && (!settings || typeof settings !== 'object' || !('aiAccess' in settings) || typeof settings.aiAccess !== 'boolean')) {
+    throw new Error('Invalid enterprise settings capabilities.')
+  }
+  return { entries, homeLabel: typeof input.homeLabel === 'string' ? input.homeLabel.slice(0, 80) : '', ...(settings && typeof settings === 'object' && 'aiAccess' in settings ? { settings: { aiAccess: settings.aiAccess === true } } : {}) }
 }
