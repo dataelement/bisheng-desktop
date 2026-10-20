@@ -6,14 +6,16 @@ import type { EnterpriseChatPresentation } from '../../shared/enterprise-chat-vi
  * complete `.dark` ramp. The host therefore owns the class on module routes only, so the
  * Chat routes keep their deployed `data-dsh-chat-theme` handling untouched.
  */
-export const MODULE_ROUTE_PATTERN = '^/workspace/(knowledge|channel|apps|skills|square)(?:[/?#]|$)'
+export const MODULE_ROUTE_PATTERN = '^/workspace/(knowledge|channel|apps|skills|square|settings)(?:[/?#]|$)'
 
 /**
  * The BISHENG ThemeProvider rewrites the html class to `light` when React mounts, which
  * happens after the document's load event. The guard therefore stays installed in the page
  * and re-asserts the host decision whenever the class attribute changes; the host re-runs
  * this script on theme changes and in-page route changes, where `apply` reads the latest
- * host theme from the dataset.
+ * host theme from the dataset. `dsh-host-dark` marks every route whose host theme is dark
+ * (utility overrides apply there too, Chat included); `dsh-module-dark` is the module-only
+ * scope where the host owns `html.dark`.
  */
 export function moduleThemeScript(theme: EnterpriseChatPresentation['theme']): string {
   return `(() => {
@@ -21,25 +23,60 @@ export function moduleThemeScript(theme: EnterpriseChatPresentation['theme']): s
     root.dataset.dshHostTheme = '${theme}';
     if (!window.__dshModuleTheme) {
       const pattern = new RegExp(${JSON.stringify(MODULE_ROUTE_PATTERN)}, 'u');
+      const frameCss = ${JSON.stringify(FRAME_DARK_CSS)};
       // The page may manage html.dark itself on chat routes; the host only ever removes the
       // class it added, so the two never fight over the attribute (a tug of war hangs the page).
       let owned = false;
+      // Article readers render fetched HTML in same-origin srcdoc frames that pin a white page;
+      // the host styles each reachable frame document, and again whenever the frame reloads.
+      const themeFrame = (frame) => {
+        let doc = null;
+        try { doc = frame.contentDocument; } catch (error) { doc = null; }
+        if (!doc) return;
+        const dark = root.classList.contains('dsh-module-dark');
+        let style = doc.getElementById('dsh-host-frame-dark');
+        if (dark && !style) { style = doc.createElement('style'); style.id = 'dsh-host-frame-dark'; style.textContent = frameCss; (doc.head || doc.documentElement).appendChild(style); }
+        else if (!dark && style) style.remove();
+      };
+      const watched = new WeakSet();
+      const themeFrames = () => {
+        for (const frame of document.querySelectorAll('iframe[srcdoc]')) {
+          if (!watched.has(frame)) { watched.add(frame); frame.addEventListener('load', () => themeFrame(frame)); }
+          themeFrame(frame);
+        }
+      };
       const apply = () => {
         const page = (location.pathname.match(pattern) || [])[1] || '';
         if ((root.dataset.dshPage || '') !== page) { if (page) root.dataset.dshPage = page; else delete root.dataset.dshPage; }
-        const dark = root.dataset.dshHostTheme === 'dark' && page !== '';
+        const hostDark = root.dataset.dshHostTheme === 'dark';
+        const dark = hostDark && page !== '';
+        if (root.classList.contains('dsh-host-dark') !== hostDark) root.classList.toggle('dsh-host-dark', hostDark);
         if (root.classList.contains('dsh-module-dark') !== dark) root.classList.toggle('dsh-module-dark', dark);
         // Flip the ownership flag before touching the class: the observer re-enters apply on the mutation.
         if (dark) { if (!root.classList.contains('dark')) { owned = true; root.classList.add('dark'); } }
         else if (owned) { owned = false; root.classList.remove('dark'); }
+        themeFrames();
       };
       new MutationObserver(apply).observe(root, { attributes: true, attributeFilter: ['class'] });
+      new MutationObserver((records) => { if (records.some((record) => [...record.addedNodes].some((node) => node.nodeType === 1))) themeFrames(); }).observe(root, { childList: true, subtree: true });
       window.__dshModuleTheme = { apply };
     }
     window.__dshModuleTheme.apply();
     window.dispatchEvent(new CustomEvent('dsh:appearance', { detail: { theme: '${theme}' } }));
   })()`
 }
+
+/**
+ * Fetched article HTML carries its own colors (inline WeChat styles, `background:#fff
+ * !important` from the reader shell), so token overrides cannot reach it. Inverting the frame
+ * and re-inverting its media is the only treatment that keeps arbitrary content legible; the
+ * html background is chosen so the inversion lands on the dark page color.
+ */
+export const FRAME_DARK_CSS = [
+  'html{filter:invert(1) hue-rotate(180deg);background:#ebebe9 !important;color-scheme:dark}',
+  'body{background:transparent !important}',
+  'img,video,canvas,picture,svg,iframe,[style*="background-image"],[style*="background:url"],[style*="background: url"]{filter:invert(1) hue-rotate(180deg)}'
+].join('\n')
 
 function escapeUtility(name: string): string {
   return name.replace(/[[\]#/.%]/gu, (char) => `\\${char}`)
@@ -84,7 +121,8 @@ const HARDCODED_UTILITIES: readonly string[] = [
   'text-gray-950', 'text-neutral-800', 'text-slate-300', 'text-slate-400', 'text-slate-50', 'text-slate-500',
   'text-slate-600', 'text-slate-700', 'text-slate-800',
   'bg-white/10', 'bg-white/20', 'bg-white/30', 'bg-white/50', 'bg-white/60', 'bg-white/70', 'bg-white/85', 'bg-white/90',
-  'bg-gray-50/80', 'bg-gray-50/90', 'bg-gray-100/50', 'bg-gray-100/80', 'border-gray-100/40', 'text-black/40'
+  'bg-gray-50/80', 'bg-gray-50/90', 'bg-gray-100/50', 'bg-gray-100/80', 'border-gray-100/40', 'text-black/40',
+  'border-white'
 ]
 
 /** Tailwind's default gray ramp; slate / zinc / neutral / stone share its lightness steps. */
@@ -117,6 +155,7 @@ function parseUtility(name: string): Utility | undefined {
     return step ? { kind: named[1] as Utility['kind'], hex: step.slice(1), names: [name] } : undefined
   }
   if (name === 'text-black') return { kind: 'text', hex: '000000', names: [name] }
+  if (name === 'border-white') return { kind: 'border', hex: 'ffffff', names: [name] }
   if (name === 'bg-white' || name === 'bg-[#fff]') return { kind: 'bg', hex: 'ffffff', names: name === 'bg-white' ? [name] : [name, 'bg-[#FFF]', 'bg-[#ffffff]', 'bg-[#FFFFFF]'] }
   return undefined
 }
@@ -172,16 +211,23 @@ function buildModuleThemeCss(): string {
     const declaration = utility.alpha ? base.replace(/\)\)$/u, `) / ${utility.alpha})`) : base
     const selectors = groups.get(declaration) ?? []
     for (const alias of utility.names) {
-      const selector = `html.dsh-module-dark .${escapeUtility(alias)}${utility.kind === 'placeholder' ? '::placeholder' : ''}`
+      const selector = `html.dsh-host-dark .${escapeUtility(alias)}${utility.kind === 'placeholder' ? '::placeholder' : ''}`
       if (!selectors.includes(selector)) selectors.push(selector)
     }
     groups.set(declaration, selectors)
   }
+  // Arbitrary gradient utilities (`bg-[linear-gradient(...,#FFF_50%,...)]`) are matched by
+  // substring: the class attribute names the white stop, whatever the surrounding stops are.
+  const whiteGradient = ['#FFF', '#fff'].map((stop) => `html.dsh-host-dark [class*="bg-[linear-gradient("][class*="${stop}"]`).join(',')
   return [
     'html.dsh-module-dark{color-scheme:dark}',
     'html.dsh-module-dark body,html.dsh-module-dark #root{background-color:rgb(var(--bg-page));color:rgb(var(--text-1))}',
     // Table headers carry their light surface through component styles rather than utilities.
     'html.dsh-module-dark :is(thead,th,[role=columnheader]){background-color:rgb(var(--arco-gray-1))}',
+    // Knowledge home folder tiles are inline SVG art with fixed pastel fills under a token-colored
+    // name; inverting the art keeps the white name legible without touching the text tokens.
+    'html.dsh-module-dark[data-dsh-page="knowledge"] .aspect-\\[4\\/3\\] > svg[viewBox="0 0 120 90"]{filter:invert(1) hue-rotate(180deg)}',
+    `${whiteGradient}{background-image:linear-gradient(135deg,rgb(var(--brand-500) / 0.08),rgb(var(--arco-gray-1)) 50%,rgb(var(--brand-500) / 0.08))}`,
     ...[...groups].map(([declaration, selectors]) => `${selectors.join(',')}{${declaration}}`)
   ].join('\n')
 }

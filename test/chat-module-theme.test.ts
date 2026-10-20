@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MODULE_ROUTE_PATTERN, MODULE_THEME_CSS, darkDeclaration, moduleThemeScript } from '../src/main/enterprise/chat-module-theme'
+import { FRAME_DARK_CSS, MODULE_ROUTE_PATTERN, MODULE_THEME_CSS, darkDeclaration, moduleThemeScript } from '../src/main/enterprise/chat-module-theme'
 
 describe('enterprise module page theme', () => {
   it('matches module routes but never conversation routes', () => {
@@ -19,25 +19,30 @@ describe('enterprise module page theme', () => {
     }
     const root = { dataset: vm.dataset, classList }
     const window = { dispatchEvent: (event: { type: string }) => vm.events.push(event.type) } as Record<string, unknown>
-    const sandbox = { document: { documentElement: root }, location: vm.location, window, CustomEvent: class { type: string; constructor(type: string) { this.type = type } }, RegExp, MutationObserver: class { constructor(private fn: () => void) {} observe() { vm.observers.push(this.fn) } } }
+    const sandbox = { document: { documentElement: root, querySelectorAll: () => [] }, location: vm.location, window, CustomEvent: class { type: string; constructor(type: string) { this.type = type } }, RegExp, WeakSet, MutationObserver: class { constructor(private fn: () => void) {} observe(_target: unknown, options: { attributes?: boolean }) { if (options.attributes) vm.observers.push(this.fn) } } }
     const run = (theme: 'dark' | 'light') => new Function(...Object.keys(sandbox), `return ${moduleThemeScript(theme)}`)(...Object.values(sandbox))
     run('dark')
-    expect([...vm.className].sort()).toEqual(['dark', 'dsh-module-dark'])
+    expect([...vm.className].sort()).toEqual(['dark', 'dsh-host-dark', 'dsh-module-dark'])
     expect(vm.dataset.dshPage).toBe('knowledge')
     expect(vm.observers).toHaveLength(1)
     // React mounts the ThemeProvider later and pins `light`; the guard restores the host decision.
     classList.reset()
     expect(vm.className.has('dark')).toBe(true)
     expect(vm.className.has('dsh-module-dark')).toBe(true)
+    expect(vm.className.has('dsh-host-dark')).toBe(true)
     expect(vm.className.has('light')).toBe(true)
+    // Chat routes keep the page's own html.dark handling but still get the host-wide utility scope.
     vm.location.pathname = '/workspace/c/abc'
     run('dark')
     expect(vm.className.has('dark')).toBe(false)
+    expect(vm.className.has('dsh-module-dark')).toBe(false)
+    expect(vm.className.has('dsh-host-dark')).toBe(true)
     expect(vm.dataset.dshPage).toBeUndefined()
     expect(vm.observers).toHaveLength(1)
     vm.location.pathname = '/workspace/channel'
     run('light')
     expect(vm.className.has('dark')).toBe(false)
+    expect(vm.className.has('dsh-host-dark')).toBe(false)
     expect(vm.dataset.dshHostTheme).toBe('light')
     run('dark')
     expect(vm.className.has('dark')).toBe(true)
@@ -51,6 +56,43 @@ describe('enterprise module page theme', () => {
     expect(vm.className.has('dark')).toBe(true)
     expect(vm.className.has('dsh-module-dark')).toBe(false)
     expect(vm.observers).toHaveLength(before)
+  })
+
+  it('styles reachable srcdoc frames on dark module routes and clears them again', () => {
+    const makeDoc = () => {
+      const head = { children: [] as Array<{ id: string; textContent: string }> }
+      const doc = {
+        head,
+        documentElement: head,
+        getElementById: (id: string) => head.children.find(child => child.id === id) ?? null,
+        createElement: () => { const style = { id: '', textContent: '', remove: () => { head.children.splice(head.children.indexOf(style), 1) } }; return style }
+      }
+      head.children = []
+      ;(head as { appendChild?: (child: { id: string; textContent: string }) => void }).appendChild = (child) => { head.children.push(child) }
+      return doc
+    }
+    const article = { contentDocument: makeDoc(), listeners: [] as Array<() => void>, addEventListener(_type: string, fn: () => void) { this.listeners.push(fn) } }
+    const sandboxed = { contentDocument: null, listeners: [] as Array<() => void>, addEventListener(_type: string, fn: () => void) { this.listeners.push(fn) } }
+    const className = new Set<string>()
+    const classList = { contains: (name: string) => className.has(name), toggle: (name: string, force: boolean) => { force ? className.add(name) : className.delete(name) }, add: (name: string) => className.add(name), remove: (name: string) => className.delete(name) }
+    const sandbox = { document: { documentElement: { dataset: {} as Record<string, string>, classList }, querySelectorAll: () => [article, sandboxed] }, location: { pathname: '/workspace/channel/abc' }, window: { dispatchEvent: () => true }, CustomEvent: class {}, RegExp, WeakSet, MutationObserver: class { observe() {} } }
+    const run = (theme: 'dark' | 'light') => new Function(...Object.keys(sandbox), `return ${moduleThemeScript(theme)}`)(...Object.values(sandbox))
+    run('dark')
+    expect(article.contentDocument.head.children.map(child => child.id)).toEqual(['dsh-host-frame-dark'])
+    expect(article.contentDocument.head.children[0]?.textContent).toBe(FRAME_DARK_CSS)
+    expect(article.listeners).toHaveLength(1)
+    expect(sandboxed.listeners).toHaveLength(1)
+    // A reload replaces the frame document; the load listener styles the new one once.
+    article.contentDocument = makeDoc()
+    article.listeners[0]?.()
+    article.listeners[0]?.()
+    expect(article.contentDocument.head.children).toHaveLength(1)
+    run('dark')
+    expect(article.listeners).toHaveLength(1)
+    run('light')
+    expect(article.contentDocument.head.children).toHaveLength(0)
+    expect(FRAME_DARK_CSS).toContain('img,video,canvas')
+    expect(FRAME_DARK_CSS.startsWith('html{filter:invert(1) hue-rotate(180deg)')).toBe(true)
   })
 
   it('derives dark replacements from lightness and leaves chromatic or already-dark colors alone', () => {
@@ -71,16 +113,19 @@ describe('enterprise module page theme', () => {
     expect(darkDeclaration('border', '8d93a0')).toBe('border-color:rgb(var(--border-deep))')
   })
 
-  it('scopes every utility override to the host module class and covers both hex spellings', () => {
+  it('scopes fixed rules to module routes, utilities to every dark host route, and covers both hex spellings', () => {
     const rules = MODULE_THEME_CSS.split('\n')
     expect(rules[0]).toBe('html.dsh-module-dark{color-scheme:dark}')
     expect(rules[2]).toBe('html.dsh-module-dark :is(thead,th,[role=columnheader]){background-color:rgb(var(--arco-gray-1))}')
-    for (const rule of rules) for (const selector of rule.slice(0, rule.indexOf('{')).replace(/:is\([^)]*\)/gu, '').split(',')) expect(selector.startsWith('html.dsh-module-dark')).toBe(true)
-    for (const selector of ['.bg-white{', '.bg-\\[\\#fbfbfb\\]', '.bg-\\[\\#FBFBFB\\]', '.text-\\[\\#1d2129\\]', '.text-\\[\\#1D2129\\]', '.text-black', '.text-gray-900', '.border-gray-200', '.bg-gray-50']) {
-      expect(MODULE_THEME_CSS).toContain(`html.dsh-module-dark ${selector}`)
+    expect(rules[3]).toBe('html.dsh-module-dark[data-dsh-page="knowledge"] .aspect-\\[4\\/3\\] > svg[viewBox="0 0 120 90"]{filter:invert(1) hue-rotate(180deg)}')
+    expect(rules[4]).toBe('html.dsh-host-dark [class*="bg-[linear-gradient("][class*="#FFF"],html.dsh-host-dark [class*="bg-[linear-gradient("][class*="#fff"]{background-image:linear-gradient(135deg,rgb(var(--brand-500) / 0.08),rgb(var(--arco-gray-1)) 50%,rgb(var(--brand-500) / 0.08))}')
+    for (const rule of rules.slice(0, 4)) for (const selector of rule.slice(0, rule.indexOf('{')).replace(/:is\([^)]*\)/gu, '').split(',')) expect(selector.startsWith('html.dsh-module-dark')).toBe(true)
+    for (const rule of rules.slice(4)) for (const selector of rule.slice(0, rule.indexOf('{')).split(',')) expect(selector.startsWith('html.dsh-host-dark ')).toBe(true)
+    for (const selector of ['.bg-white{', '.bg-\\[\\#fbfbfb\\]', '.bg-\\[\\#FBFBFB\\]', '.bg-\\[\\#f7f7f7\\]', '.text-\\[\\#1d2129\\]', '.text-\\[\\#1D2129\\]', '.text-black', '.text-gray-900', '.border-gray-200', '.bg-gray-50', '.border-white']) {
+      expect(MODULE_THEME_CSS).toContain(`html.dsh-host-dark ${selector}`)
     }
     for (const kept of [/\.text-\\\[\\#f53f3f\\\][,{]/u, /\.bg-\\\[\\#212121\\\][,{]/u, /\.text-white[,{]/u, /\.bg-black[,{]/u, /\.text-gray-50[,{]/u]) expect(MODULE_THEME_CSS).not.toMatch(kept)
     expect(MODULE_THEME_CSS).not.toMatch(/\.dark\b[^-]/u)
-    expect(MODULE_THEME_CSS.match(/html\.dsh-module-dark \.text-\\\[\\#111\\\]/gu)).toHaveLength(1)
+    expect(MODULE_THEME_CSS.match(/html\.dsh-host-dark \.text-\\\[\\#111\\\]/gu)).toHaveLength(1)
   })
 })
