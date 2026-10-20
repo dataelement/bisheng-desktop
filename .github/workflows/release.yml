@@ -183,13 +183,18 @@ jobs:
             app-directory: mac-arm64
           - arch: x64
             label: Intel
-            runner: macos-15-intel
+            runner: [self-hosted, macOS, bisheng-intel]
             app-directory: mac
     runs-on: ${{ matrix.runner }}
+    env:
+      npm_config_arch: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Require Rosetta for Intel packaging
+        if: matrix.arch == 'x64'
+        run: arch -x86_64 /usr/bin/true
       - uses: actions/setup-node@v4
         if: matrix.arch == 'arm64'
         timeout-minutes: 5
@@ -197,9 +202,13 @@ jobs:
           node-version: 22
       - uses: actions/setup-node@v4
         if: matrix.arch == 'x64'
+        timeout-minutes: 5
         with:
           node-version: 22
-          cache: npm
+          architecture: x64
+      - name: Verify Intel Node runtime
+        if: matrix.arch == 'x64'
+        run: test "$(node -p 'process.arch')" = x64
       - name: Set app version from release tag
         if: startsWith(github.ref, 'refs/tags/v')
         run: npm version --no-git-tag-version --allow-same-version "${{ github.ref_name }}"
@@ -246,6 +255,10 @@ jobs:
           echo "APPLE_API_KEY_ID=$APPLE_API_KEY_ID" >> "$GITHUB_ENV"
           echo "APPLE_API_ISSUER=$APPLE_API_ISSUER" >> "$GITHUB_ENV"
           echo "APPLE_TEAM_ID=$APPLE_TEAM_ID" >> "$GITHUB_ENV"
+      - name: Lock shared macOS signing state
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
+        id: signing_lock
+        run: node scripts/macos-signing-lock.mjs acquire
       - name: Prepare macOS signing keychain
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         id: signing_keychain
@@ -272,16 +285,17 @@ jobs:
           CSC_KEYCHAIN: ${{ steps.signing_keychain.outputs.keychain }}
         run: |
           dmg_path="dist/bisheng-mac-${{ matrix.arch }}.dmg"
+          app_path="dist/${{ matrix.app-directory }}/BISHENG.app"
           identity="$(security find-identity -v -p codesigning "$CSC_KEYCHAIN" | awk '/Developer ID Application/ { print $2; exit }')"
           test -n "$identity" || { echo "::error::Developer ID Application identity not found"; exit 1; }
           codesign --keychain "$CSC_KEYCHAIN" --sign "$identity" --timestamp --force "$dmg_path"
-          xcrun notarytool submit "$dmg_path" \
+          arch -arm64 /usr/bin/xcrun notarytool submit "$dmg_path" \
             --key "$APPLE_API_KEY" \
             --key-id "$APPLE_API_KEY_ID" \
             --issuer "$APPLE_API_ISSUER" \
             --wait
           for attempt in 1 2 3 4 5; do
-            if xcrun stapler staple "$dmg_path"; then break; fi
+            if arch -arm64 /usr/bin/xcrun stapler staple "$app_path" && arch -arm64 /usr/bin/xcrun stapler staple "$dmg_path"; then break; fi
             if [ "$attempt" -eq 5 ]; then exit 1; fi
             echo "stapler staple failed, waiting for Apple ticket propagation in 10s (attempt $attempt/5)..."
             sleep 10
@@ -304,6 +318,11 @@ jobs:
           test -z "$SIGNING_KEYCHAIN" || security delete-keychain "$SIGNING_KEYCHAIN" || rm -f "$SIGNING_KEYCHAIN"
           test -z "$SIGNING_CERTIFICATE" || rm -f "$SIGNING_CERTIFICATE"
           test -z "$APPLE_API_KEY" || rm -f "$APPLE_API_KEY"
+      - name: Unlock shared macOS signing state
+        if: always()
+        env:
+          SIGNING_LOCK_LEASE: ${{ steps.signing_lock.outputs.lease }}
+        run: node scripts/macos-signing-lock.mjs release
       - name: Verify signed and notarized ${{ matrix.label }} app
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         run: |
@@ -311,7 +330,7 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app_path"
           spctl --assess --type execute --verbose=4 "$app_path"
           for attempt in 1 2 3 4 5; do
-            if xcrun stapler validate "$app_path"; then break; fi
+            if arch -arm64 /usr/bin/xcrun stapler validate "$app_path"; then break; fi
             if [ "$attempt" -eq 5 ]; then exit 1; fi
             echo "stapler validate failed on app_path, retrying in $((attempt * 5))s (attempt $attempt/5)..."
             sleep $((attempt * 5))
@@ -319,7 +338,7 @@ jobs:
           codesign --verify --verbose=2 dist/bisheng-mac-${{ matrix.arch }}.dmg
           spctl --assess --type open --context context:primary-signature --verbose=4 dist/bisheng-mac-${{ matrix.arch }}.dmg
           for attempt in 1 2 3 4 5; do
-            if xcrun stapler validate dist/bisheng-mac-${{ matrix.arch }}.dmg; then break; fi
+            if arch -arm64 /usr/bin/xcrun stapler validate dist/bisheng-mac-${{ matrix.arch }}.dmg; then break; fi
             if [ "$attempt" -eq 5 ]; then exit 1; fi
             echo "stapler validate failed on dmg, retrying in $((attempt * 5))s (attempt $attempt/5)..."
             sleep $((attempt * 5))

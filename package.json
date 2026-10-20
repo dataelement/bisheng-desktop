@@ -471,6 +471,7 @@
       "icon": "build/icon.icns",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
+      "notarize": false,
       "target": [
         "dmg",
         "zip"
