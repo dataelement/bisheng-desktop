@@ -8,12 +8,13 @@ Var dshOldMoved
 Var dshNewMoved
 
 !macro dshExtractPayload FILE
+  extract_user_retry_${__LINE__}:
   nsExec::ExecToStack '"$PLUGINSDIR\dsh-7za.exe" x -y -bd -bb0 "-o$INSTDIR" "${FILE}"'
   Pop $R0
   Pop $R1
   ${If} $R0 != 0
     DetailPrint $R1
-    MessageBox MB_ICONSTOP "安装解压失败 (7za 退出码: $R0)$\r$\n$\r$\n目标目录: $INSTDIR$\r$\n详细信息:$\r$\n$R1"
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "安装解压失败 (7za 退出码: $R0)$\r$\n$\r$\n目标目录: $INSTDIR$\r$\n详细信息:$\r$\n$R1$\r$\n$\r$\n可能原因：解压文件被杀毒软件（如腾讯电脑管家、360 等）拦截或磁盘空间不足。$\r$\n$\r$\n请临时退出安全软件后点击【重试】；点击【取消】将中止安装。" IDRETRY extract_user_retry_${__LINE__}
     Call dshRollbackDirectories
     SetErrorLevel 2
     Quit
@@ -32,10 +33,11 @@ Var dshNewMoved
   StrCpy $dshOldDirectory "$INSTDIR.old-$0"
   StrCpy $dshOldMoved ""
   StrCpy $dshNewMoved ""
+  stage_mkdir_retry:
   ClearErrors
   CreateDirectory $dshNewDirectory
   ${If} ${Errors}
-    MessageBox MB_ICONSTOP "安装暂存失败：无法创建暂存目录$\r$\n$\r$\n路径: $dshNewDirectory$\r$\n$\r$\n请检查是否具有写入权限或磁盘空间是否充足。"
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "安装暂存失败：无法创建暂存目录$\r$\n$\r$\n路径: $dshNewDirectory$\r$\n$\r$\n请检查是否具有写入权限或磁盘空间是否充足，或临时退出安全软件后点击【重试】；点击【取消】将中止安装。" IDRETRY stage_mkdir_retry
     SetErrorLevel 2
     Quit
   ${EndIf}
@@ -96,15 +98,27 @@ Function dshPromoteDirectories
   StrCpy $0 "$0\"
   System::Call 'kernel32::SetCurrentDirectory(t r0)'
 
-  ; If final directory exists and is empty (e.g. pre-created by directory page), remove it.
+  ; If final directory exists and is empty (e.g. pre-created by directory page), remove it with retry.
+  StrCpy $R3 0
+  rmdir_empty_retry:
   ClearErrors
   ${If} ${FileExists} "$dshFinalDirectory"
     RMDir $dshFinalDirectory
+    ${If} ${Errors}
+      ${IfNot} ${FileExists} "$dshFinalDirectory\*.*"
+        IntOp $R3 $R3 + 1
+        ${If} $R3 < 5
+          Sleep 200
+          Goto rmdir_empty_retry
+        ${EndIf}
+      ${EndIf}
+    ${EndIf}
   ${EndIf}
 
   ; If final directory still exists (contains old files, or couldn't be deleted directly),
   ; move it to backup directory with retry.
   ${If} ${FileExists} "$dshFinalDirectory"
+    backup_user_retry:
     StrCpy $R3 0
     backup_retry:
       ClearErrors
@@ -120,7 +134,7 @@ Function dshPromoteDirectories
       ${EndIf}
 
       System::Call "kernel32::GetLastError() i .R2"
-      MessageBox MB_ICONSTOP "安装目录替换失败：无法备份旧版本目录。$\r$\n$\r$\n源目录: $dshFinalDirectory$\r$\n备份目标: $dshOldDirectory$\r$\n$\r$\nWindows 错误代码: $R2$\r$\n可能原因：原安装目录中有文件被其他进程占用，或没有重命名权限。"
+      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "安装目录替换失败：无法备份旧版本目录。$\r$\n$\r$\n源目录: $dshFinalDirectory$\r$\n备份目标: $dshOldDirectory$\r$\n$\r$\nWindows 错误代码: $R2$\r$\n可能原因：原安装目录中有文件被其他进程（如后台残留的程序、资源管理器、杀毒软件等）占用。$\r$\n$\r$\n建议：请确保旧版本程序已完全关闭，或临时退出安全软件后点击【重试】；点击【取消】将中止安装。" IDRETRY backup_user_retry
       Call dshRollbackDirectories
       SetErrors
       Return
@@ -128,6 +142,7 @@ Function dshPromoteDirectories
   ${EndIf}
 
   ; Promote new staged directory to final installation directory with retry.
+  promote_user_retry:
   StrCpy $R3 0
   promote_retry:
     ClearErrors
@@ -143,7 +158,7 @@ Function dshPromoteDirectories
     ${EndIf}
 
     System::Call "kernel32::GetLastError() i .R2"
-    MessageBox MB_ICONSTOP "安装目录替换失败：无法将新版本目录变更为正式安装目录。$\r$\n$\r$\n源目录: $dshNewDirectory$\r$\n正式目录: $dshFinalDirectory$\r$\n$\r$\nWindows 错误代码: $R2$\r$\n可能原因：目标目录被占用、权限不足或被杀毒软件拦截。"
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "安装目录替换失败：无法将新版本目录变更为正式安装目录。$\r$\n$\r$\n源目录: $dshNewDirectory$\r$\n正式目录: $dshFinalDirectory$\r$\n$\r$\nWindows 错误代码: $R2$\r$\n可能原因：目标目录被其他进程占用、权限不足或被杀毒软件（如腾讯电脑管家、360 等）拦截扫描。$\r$\n$\r$\n建议：请临时退出杀毒软件或关闭占用该目录的程序，然后点击【重试】；点击【取消】将中止安装。" IDRETRY promote_user_retry
     Call dshRollbackDirectories
     SetErrors
     Return

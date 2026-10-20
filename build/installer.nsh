@@ -67,10 +67,11 @@
     !define MUI_PAGE_CUSTOMFUNCTION_LEAVE DshEnsureInstDirExists
 
     Function DshEnsureInstDirExists
+      ensure_mkdir_retry:
       ClearErrors
       CreateDirectory "$INSTDIR"
       ${If} ${Errors}
-        MessageBox MB_ICONSTOP "无法创建目标安装目录：$\r$\n$INSTDIR$\r$\n$\r$\n请确认您有权限写入该路径（或尝试以管理员身份运行安装程序），或选择其他目录。"
+        MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "无法创建目标安装目录：$\r$\n$INSTDIR$\r$\n$\r$\n请确认您有权限写入该路径（或尝试以管理员身份运行安装程序），或选择其他目录。$\r$\n$\r$\n点击【重试】再次尝试创建，或点击【取消】返回重新选择目录。" IDRETRY ensure_mkdir_retry
         Abort
       ${EndIf}
     FunctionEnd
