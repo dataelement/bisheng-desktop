@@ -79,10 +79,15 @@ export interface EnterpriseNavigationEntry {
   active: boolean
   primary: boolean
 }
+export interface WorkbenchBranding {
+  welcomeMessage: string
+  assistantIcon: { enabled: boolean; image: string }
+}
 export interface EnterpriseNavigation {
   entries: EnterpriseNavigationEntry[]
   homeLabel: string
   settings?: { aiAccess: boolean }
+  branding?: WorkbenchBranding
 }
 const modulePaths: Record<string, RegExp> = {
   knowledge: /^\/knowledge$/u,
@@ -92,6 +97,19 @@ const modulePaths: Record<string, RegExp> = {
   square: /^\/square$/u
 }
 const moduleGrants: Record<string, string> = { knowledge: 'knowledge_space', channel: 'subscription', apps: 'apps', skills: 'home' }
+/** Only public welcome text and an HTTP image cross the presentation boundary. */
+export function parseWorkbenchBranding(value: unknown): WorkbenchBranding {
+  if (!value || typeof value !== 'object') throw new Error('Invalid workbench branding.')
+  const input = value as Record<string, unknown>
+  const icon = input.assistantIcon as Record<string, unknown> | undefined
+  if (typeof input.welcomeMessage !== 'string' || !input.welcomeMessage.trim() || input.welcomeMessage.length > 1000 ||
+      !icon || typeof icon.enabled !== 'boolean' || typeof icon.image !== 'string' || icon.image.length > 8192) {
+    throw new Error('Invalid workbench branding.')
+  }
+  const image = new URL(icon.image)
+  if (!['http:', 'https:'].includes(image.protocol) || image.username || image.password) throw new Error('Invalid workbench image.')
+  return { welcomeMessage: input.welcomeMessage.trim(), assistantIcon: { enabled: icon.enabled, image: image.href } }
+}
 /** Validate presentation metadata from the isolated enterprise document. */
 export function parseEnterpriseNavigation(value: unknown): EnterpriseNavigation {
   if (!value || typeof value !== 'object') throw new Error('Invalid enterprise navigation.')
@@ -113,5 +131,5 @@ export function parseEnterpriseNavigation(value: unknown): EnterpriseNavigation 
   if (settings !== undefined && (!settings || typeof settings !== 'object' || !('aiAccess' in settings) || typeof settings.aiAccess !== 'boolean')) {
     throw new Error('Invalid enterprise settings capabilities.')
   }
-  return { entries, homeLabel: typeof input.homeLabel === 'string' ? input.homeLabel.slice(0, 80) : '', ...(settings && typeof settings === 'object' && 'aiAccess' in settings ? { settings: { aiAccess: settings.aiAccess === true } } : {}) }
+  return { entries, homeLabel: typeof input.homeLabel === 'string' ? input.homeLabel.slice(0, 80) : '', ...(input.branding === undefined ? {} : { branding: parseWorkbenchBranding(input.branding) }), ...(settings && typeof settings === 'object' && 'aiAccess' in settings ? { settings: { aiAccess: settings.aiAccess === true } } : {}) }
 }
