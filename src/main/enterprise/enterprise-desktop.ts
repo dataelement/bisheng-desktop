@@ -15,6 +15,12 @@ import {
 
 export interface EnterpriseDesktopRuntime {
   snapshot(): EnterprisePublicState
+  readMobileAccessAccount(): {
+    base?: string
+    accessToken?: string
+    userId?: string
+    tenantId?: string
+  }
   readThirdPartyPolicy(): Promise<{ allowThirdPartyPlugins: boolean, allowThirdPartyWorkbenches: boolean }>
   harnessEnvironment(): NodeJS.ProcessEnv
   rotateCapability(): void
@@ -65,6 +71,7 @@ export async function startEnterpriseDesktop(options: {
 
   return {
     snapshot: () => service.snapshot(),
+    readMobileAccessAccount: () => service.readMobileAccessAccount(),
     async readThirdPartyPolicy() {
       const closed = { allowThirdPartyPlugins: false, allowThirdPartyWorkbenches: false }
       const state = service.snapshot()

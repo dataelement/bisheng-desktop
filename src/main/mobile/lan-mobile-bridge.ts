@@ -23,6 +23,13 @@ import {
   renderPairingPinPage
 } from './lan-mobile-pages'
 import type { PairingPinState, PairingPinStore } from './pairing-pin-store'
+import {
+  REMOTE_CHANNEL_HEADER,
+  REMOTE_CHANNEL_TOKEN_HEADER,
+  REMOTE_TENANT_HEADER,
+  REMOTE_USER_HEADER,
+  accountsMatch
+} from './mobile-access-protocol'
 
 const MAX_BODY_BYTES = 64 * 1024
 const PAIRING_TTL_MS = 5 * 60 * 1000
@@ -108,6 +115,7 @@ export interface LanMobileBridgeOptions {
   onReconnectRequested?: () => void
   onConnectedChange?: (connected: boolean) => void
   pairingPinStore?: PairingPinStore
+  currentAccount?: () => { userId?: string, tenantId?: string }
 }
 
 export interface LanMobileBridgeSnapshot {
@@ -205,6 +213,7 @@ export class LanMobileBridge {
   private readonly sessionStreamAborts = new Set<AbortController>()
   private lastConnected = false
   private readonly desktopSessionToken = randomBytes(32).toString('base64url')
+  private readonly accessChannelToken = randomBytes(32).toString('base64url')
   private desktopBootstrapToken?: string
 
   constructor(private readonly options: LanMobileBridgeOptions) {
@@ -293,6 +302,12 @@ export class LanMobileBridge {
     if (targetState && this.sessions.size > 0 && !this.tunnelActive) {
       throw new Error('Disconnect the phone before switching connection modes.')
     }
+    if (targetState) {
+      this.tunnelActive = false
+      this.tunnelLoading = false
+      this.tunnelError = 'Remote access uses the signed-in BiSheng account.'
+      return this.snapshot()
+    }
     if (!targetState) {
       // Wait for an in-flight launch, then stop the tunnel it spawned:
       // otherwise the just-launched process is orphaned (or silently revives
@@ -341,31 +356,7 @@ export class LanMobileBridge {
   }
 
   async fallbackToPinggy(): Promise<LanMobileBridgeSnapshot> {
-    if (this.sessions.size > 0) {
-      throw new Error('Disconnect the phone before switching connection modes.')
-    }
-    if (!this.tunnelActive || this.tunnelInstance?.provider !== 'cloudflare') {
-      throw new Error('Fallback is only available for an active Cloudflare tunnel.')
-    }
-    if (this.tunnelLaunch) {
-      throw new Error('A tunnel switch is already in progress.')
-    }
-
-    this.tunnelLoading = true
-    this.tunnelError = undefined
-    const launch = this.swapToPinggy()
-    this.tunnelLaunch = launch
-    try {
-      await launch
-      this.clearTunnelDeathFlags()
-      this.armTunnelProcess(this.tunnelInstance)
-    } catch (error) {
-      this.tunnelError = error instanceof Error ? error.message : String(error)
-    } finally {
-      this.tunnelLoading = false
-      if (this.tunnelLaunch === launch) this.tunnelLaunch = undefined
-    }
-    return this.snapshot()
+    throw new Error('Third-party remote tunnels are disabled.')
   }
 
   private async launchTunnel(): Promise<void> {
@@ -680,6 +671,10 @@ export class LanMobileBridge {
         : transportAddress
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`)
 
+    if (firstHeaderValue(request.headers[REMOTE_CHANNEL_HEADER]) === 'remote') {
+      return this.handleRemoteChannel(request, response, url, transportAddress)
+    }
+
     if (request.method === 'GET' && url.pathname.startsWith('/brand-logo/')) {
       const variant = url.pathname === '/brand-logo/dark' ? 'dark' : 'light'
       const path = this.options.brandLogoPaths?.[variant]
@@ -770,33 +765,7 @@ export class LanMobileBridge {
 
     if (request.method === 'POST' && url.pathname === '/desktop/tunnel/fallback') {
       if (this.rejectUnlessDesktop(request, transportAddress, response)) return
-      this.verifySameOrigin(request)
-      if (this.sessions.size > 0) {
-        return this.json(response, 409, {
-          ok: false,
-          error: 'Disconnect the phone before switching connection modes.'
-        })
-      }
-      if (this.tunnelLoading || this.tunnelLaunch) {
-        return this.json(response, 409, {
-          ok: false,
-          error: 'A tunnel switch is already in progress.'
-        })
-      }
-      if (!this.tunnelActive || this.tunnelInstance?.provider !== 'cloudflare') {
-        return this.json(response, 400, {
-          ok: false,
-          error: 'Fallback is only available for an active Cloudflare tunnel.'
-        })
-      }
-      const snapshot = await this.fallbackToPinggy()
-      const qrSvg = snapshot.pairingUrl
-        ? await QRCode.toString(snapshot.pairingUrl, { type: 'svg', margin: 1, width: 260 })
-        : undefined
-      return this.json(response, 200, {
-        ok: !snapshot.tunnelError,
-        ...this.desktopTunnelPayload(snapshot, qrSvg)
-      })
+      return this.json(response, 410, { ok: false, error: 'Third-party remote tunnels are disabled.' })
     }
 
     if (request.method === 'POST' && url.pathname === '/desktop/pin/consent') {
@@ -1054,12 +1023,71 @@ export class LanMobileBridge {
     if (request.method === 'POST' && url.pathname === '/api/rpc') {
       this.verifySameOrigin(request)
       const input = JSON.parse(await readBody(request)) as { method?: unknown; payload?: unknown }
+      const result = await this.dispatchMobileRpc(input)
+      return this.json(response, result.status, result.body)
+    }
+    this.text(response, 404, 'Not found.')
+  }
+
+  listeningPort(): number | undefined {
+    return this.port
+  }
+
+  remoteChannelToken(): string {
+    return this.accessChannelToken
+  }
+
+  private async handleRemoteChannel(
+    request: IncomingMessage,
+    response: ServerResponse,
+    url: URL,
+    transportAddress: string
+  ): Promise<void> {
+    const token = firstHeaderValue(request.headers[REMOTE_CHANNEL_TOKEN_HEADER]) ?? ''
+    if (!isLoopbackAddress(transportAddress) || !this.pinsEqual(token, this.accessChannelToken)) {
+      return this.json(response, 401, { ok: false, error: 'account_switched' })
+    }
+    const account = this.options.currentAccount?.() ?? {}
+    const presented = {
+      userId: firstHeaderValue(request.headers[REMOTE_USER_HEADER]),
+      tenantId: firstHeaderValue(request.headers[REMOTE_TENANT_HEADER])
+    }
+    if (!accountsMatch(account, presented)) {
+      return this.json(response, 401, { ok: false, error: 'account_switched' })
+    }
+    if (request.method === 'GET' && url.pathname === '/api/v1/status') {
+      return this.json(response, 200, { ok: true, accepted: true })
+    }
+    if (request.method === 'POST' && url.pathname === '/api/v1/rpc') {
+      let input: { method?: unknown, payload?: unknown }
+      try {
+        input = JSON.parse(await readBody(request)) as { method?: unknown, payload?: unknown }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (message.includes('too large')) return this.json(response, 413, { ok: false, error: message })
+        return this.json(response, 400, { ok: false, error: 'Invalid JSON.' })
+      }
+      const result = await this.dispatchMobileRpc(input)
+      return this.json(response, result.status, result.body)
+    }
+    if (request.method === 'GET' && url.pathname === '/api/v1/session/stream') {
+      const sessionId = url.searchParams.get('sessionId')
+      if (!sessionId) return this.text(response, 400, 'Session id is required.')
+      return this.streamSession(request, response, sessionId)
+    }
+    return this.json(response, 404, { ok: false, error: 'Not found.' })
+  }
+
+  private async dispatchMobileRpc(input: { method?: unknown, payload?: unknown }): Promise<{
+    status: number
+    body: Record<string, unknown>
+  }> {
       if (input.method === 'interaction.pending') {
         const sessionId = requiredStringField(input.payload, 'sessionId')
         const pending = [...this.pendingQuestions.values()].find(
           (item) => item.sessionId === sessionId
         )
-        return this.json(response, 200, { ok: true, value: pending ?? null })
+        return { status: 200, body: { ok: true, value: pending ?? null } }
       }
       if (input.method === 'interaction.answer') {
         const answer = parseQuestionResponse(input.payload)
@@ -1069,7 +1097,7 @@ export class LanMobileBridge {
           kind: 'result',
           value: { answers: answer.answers }
         })
-        return this.json(response, result.ok ? 200 : 400, result)
+        return { status: result.ok ? 200 : 400, body: result }
       }
       if (input.method === 'interaction.cancel') {
         const rpcId = requiredStringField(input.payload, 'rpcId')
@@ -1083,15 +1111,13 @@ export class LanMobileBridge {
             code: 'cancelled'
           }
         })
-        return this.json(response, result.ok ? 200 : 400, result)
+        return { status: result.ok ? 200 : 400, body: result }
       }
       if (typeof input.method !== 'string' || !RPC_ALLOWLIST.has(input.method)) {
-        return this.json(response, 403, { ok: false, error: 'RPC method is not available on mobile.' })
+        return { status: 403, body: { ok: false, error: 'RPC method is not available on mobile.' } }
       }
       const result = await this.forwardRpc(input.method, input.payload ?? {})
-      return this.json(response, result.ok ? 200 : 400, result)
-    }
-    this.text(response, 404, 'Not found.')
+      return { status: result.ok ? 200 : 400, body: result }
   }
 
   private pageProduct(url: URL): string | undefined {

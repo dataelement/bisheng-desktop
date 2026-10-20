@@ -69,7 +69,10 @@ import {
   type ProfileCompatibilityIssue
 } from './state/profile-compatibility'
 import { ensureStoreDirPinned, inspectStoreConsistency } from './state/profile-store'
+import { hostname } from 'node:os'
 import { cookiePair, LanMobileBridge } from './mobile/lan-mobile-bridge'
+import { startMobileAccessClient, type MobileAccessClient } from './mobile/mobile-access-client'
+import { createFileMobileAccessStore, mobileAccessStorePath } from './mobile/mobile-access-store'
 import { createFilePairingPinStore, pairingPinStorePath } from './mobile/pairing-pin-store'
 import {
   detectPluginRecovery,
@@ -241,6 +244,7 @@ async function liveThirdPartyPluginsAllowed(): Promise<boolean> {
 let desktopStorageManager: DesktopStorageManager | undefined
 let windowStateManager: WindowStateManager | undefined
 let mobileBridge: LanMobileBridge
+let mobileAccess: MobileAccessClient | undefined
 let repairAgentService: RepairAgentService | undefined
 /** A repair prompt from the Recovery page, started by the Safe Mode page load. */
 let pendingRepairPrompt: string | undefined
@@ -3344,17 +3348,28 @@ async function bootstrap(): Promise<void> {
       dark: dshBrandLogoPath('dark')
     },
     appIconPath: desktopIconPath(),
-    cloudflaredCacheDir: join(app.getPath('userData'), 'bin'),
-    forceCloudflareFailure: process.env.DSH_TUNNEL_FORCE_PINGGY === '1',
-    tunnelLog: (message) => console.warn(message),
     port: mobileBridgePort(developmentBuild),
     onReconnectRequested: () => {
       void showMobilePairing().catch(showUnexpectedError)
     },
     onConnectedChange: (connected) => broadcastMobileStatus(connected),
-    pairingPinStore: createFilePairingPinStore(pairingPinStorePath(app.getPath('userData')))
+    pairingPinStore: createFilePairingPinStore(pairingPinStorePath(app.getPath('userData'))),
+    currentAccount: () => {
+      const account = enterpriseDesktop?.readMobileAccessAccount()
+      return { userId: account?.userId, tenantId: account?.tenantId }
+    }
   })
   if (!startInSafeMode) void mobileBridge.start().catch(showUnexpectedError)
+  mobileAccess = startMobileAccessClient({
+    account: () => enterpriseDesktop?.readMobileAccessAccount() ?? {},
+    bridge: {
+      port: () => mobileBridge.listeningPort(),
+      channelToken: () => mobileBridge.remoteChannelToken()
+    },
+    store: createFileMobileAccessStore(mobileAccessStorePath(app.getPath('userData'))),
+    displayName: () => hostname(),
+    note: (message) => runtime.note(message)
+  })
   repairAgentService = new RepairAgentService({
     harnessUrl: () => runtime.snapshot().url,
     harnessAuthToken: () => runtime.snapshot().authToken,
@@ -3629,7 +3644,7 @@ async function bootstrap(): Promise<void> {
   if (!developmentBuild) {
     startUpdateManager({
       prepareToInstall: async () => {
-        await Promise.all([runtime.stop(), enterpriseDesktop?.stop()])
+        await Promise.all([runtime.stop(), mobileAccess?.stop(), enterpriseDesktop?.stop()])
         const dshHome = join(app.getPath('userData'), 'harness')
         await quarantineInstalledLaunchAgentsForUpdate(dshHome)
         quitting = true
@@ -3727,7 +3742,7 @@ if (isDaemonLaunch(process.env, process.platform)) {
       tray = undefined
       repairAgentService?.dispose()
       repairAgentService = undefined
-      void Promise.all([runtime.stop(), mobileBridge?.stop(), enterpriseDesktop?.stop()]).finally(() => app.quit())
+      void Promise.all([runtime.stop(), mobileAccess?.stop(), mobileBridge?.stop(), enterpriseDesktop?.stop()]).finally(() => app.quit())
     })
   }
 }

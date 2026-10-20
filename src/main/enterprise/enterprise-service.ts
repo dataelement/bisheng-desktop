@@ -186,6 +186,22 @@ export class EnterpriseService {
     }
   }
 
+  readMobileAccessAccount(): {
+    base?: string
+    accessToken?: string
+    userId?: string
+    tenantId?: string
+  } {
+    const connected = this.phase === 'connected' || this.phase === 'degraded' || this.phase === 'refreshing'
+    if (!connected) return {}
+    return {
+      ...(this.session?.base ? { base: this.session.base } : {}),
+      ...(this.session?.access_token ? { accessToken: this.session.access_token } : {}),
+      ...(this.session?.user?.id ? { userId: this.session.user.id } : {}),
+      ...(this.session?.tenant?.id ? { tenantId: this.session.tenant.id } : {})
+    }
+  }
+
   async readState(): Promise<EnterprisePublicState> {
     await this.expirePendingLoginIfDue()
     return this.snapshot()
