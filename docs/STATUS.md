@@ -1,3 +1,12 @@
+## 2026-10-20 — Official DeepSeek model catalog follows credential availability
+
+- Baseline: live `dataelement/bisheng-work:V1.2.0@a77dd761228533da883538a6d8559fc4269a0d6f`; branch `codex/enterprise-model-credentials`, worktree `.worktrees/bisheng-work-model-credentials`; installed Harness `0.2.0-rc.2`.
+- Product behavior: advertise official DeepSeek models when their configured credential resolves to a usable API key. Enterprise-authorized Alibaba/Volcengine models retain their own provider identity and visibility.
+- Root cause: `dsh-llm-deepseek-api-key` returned its static catalog before resolving the credential. Discovery now uses the same reference, credential service, launch-environment precedence, and validation as request authentication. Missing/invalid credentials produce an empty catalog; storage failures retain their diagnostics. The configuration entry remains available for adding a key.
+- Delivery: the pinned dependency's discovery implementation is corrected through the repository's dependency replay mechanism. The shared Messages adapter and client selector keep their existing contracts. Remove this dependency correction when the upstream API-key provider implements credential-aware discovery.
+- Regression covers absent/blank/invalid keys, stored-key add/remove, custom references, configuration updates, launch-environment fallback, credential-service authority, storage failures, and same-name enterprise models. A separate test exercises authenticated catalog and credential APIs in a real Harness child process with an isolated Profile.
+- Validation: clean `npm ci` with root postinstall and dependency replay PASS; typecheck and production build PASS; full Vitest regression PASS (224 files, 1,905 tests passed, 1 skipped), including authenticated catalog/credential APIs in a real Harness child process; diff-check PASS. npm reported eight dependency lifecycle scripts awaiting its existing allowScripts policy; root postinstall completed. Packaged native UI, real enterprise credentials/model requests, Windows acceptance and release: `NOT_RUN`.
+
 ## 2026-10-20 — 深度研究（灵思）面板的内联样式深色覆盖
 
 - 聊天里的灵思任务模式用组件内联 `style`（`execTokens.ts` 的 INK `#1D2129` / BODY `#5C5C5C` / MUTED `#8A8A8A` / FAINT `#BFBFBF`、NarrationTicker `#999999`，结果卡片与澄清卡片的白底加 `%23EAEEFF` 点阵纹理），类规则覆盖不到：深色下结果卡白底白字、步骤图标与“任务已完成”条几乎不可见。
