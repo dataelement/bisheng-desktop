@@ -280,7 +280,7 @@ it('delivers the host palette to module pages, backs the view with it, and rejec
       expect(wc.loadURL).toHaveBeenLastCalledWith(`https://enterprise.example/workspace/settings/${section}?dshSettings=1&embed=dsh&dshTheme=dark`)
       expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#2c2c2e')
     }
-    for (const invalid of [{ ...palette, surface: [44, 44] }, { ...palette, surface: [44, 44, 256] }, { ...palette, raised: ['53', 54, 56] }, { ...palette, strong: undefined }, 'dark']) {
+    for (const invalid of [{ ...palette, surface: [44, 44] }, { ...palette, surface: [44, 44, 256] }, { ...palette, raised: ['53', 54, 56] }, { ...palette, strong: undefined }, { ...palette, composer: [1, 2] }, { ...palette, composer: [0, 0, 256] }, { ...palette, composer: ['40', 41, 45] }, 'dark']) {
       expect(() => f.host.present(f.owner, { ...presentation, palette: invalid })).toThrow('Invalid Chat palette.')
     }
   } finally { f.host.dispose() }

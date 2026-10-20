@@ -81,11 +81,13 @@ describe('enterprise module page theme', () => {
     const palette: EnterprisePalette = {
       surface: [44, 44, 46], raised: [53, 54, 56], strong: [97, 102, 107],
       labelPrimary: [249, 250, 251], labelSecondary: [207, 211, 214], labelTertiary: [173, 178, 184],
-      borderBase: [71, 71, 73], borderDeep: [85, 85, 87]
+      borderBase: [71, 71, 73], borderDeep: [85, 85, 87], composer: [40, 41, 45]
     }
     const css = moduleThemePaletteCss(palette)
     // The page reads `rgb(var(--token))`, so the host writes channels and never a color function.
     expect(css.startsWith('html.dsh-module-dark:root{')).toBe(true)
+    expect(css).toContain('html[data-dsh-host-theme=dark] body[data-dsh-chat-theme=dark] .dsh-web-chat{--dsh-composer-bg:40 41 45}')
+    expect(moduleThemePaletteCss({ ...palette, composer: undefined })).not.toContain('--dsh-composer-bg')
     expect(css).toContain('--bg-page:44 44 46')
     expect(css).toContain('--arco-gray-1:53 54 56')
     expect(css).toContain('--arco-gray-4:97 102 107')
@@ -109,7 +111,7 @@ describe('enterprise module page theme', () => {
     // The shell re-declares the ramp on its layout root under the chat-theme attribute it derives
     // from the host; the override lands there too, or the embedded settings page keeps its own dark.
     const rules = css.split('\n')
-    expect(rules).toHaveLength(2)
+    expect(rules).toHaveLength(3)
     expect(rules[1]).toMatch(/^html\.dsh-module-dark body\[data-dsh-chat-theme\] :is\(\.dsh-web-chat,/u)
     expect(rules[1]?.slice(rules[1].indexOf('{'))).toBe(rules[0]?.slice(rules[0].indexOf('{')))
 

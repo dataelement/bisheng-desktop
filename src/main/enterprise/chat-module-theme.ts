@@ -153,7 +153,8 @@ export function moduleThemePaletteCss(palette: EnterprisePalette): string {
   const body = [...declarations, ...hsl].map(([name, value]) => `${name}:${value}`).join(';')
   return [
     `html.dsh-module-dark:root{${body}}`,
-    `html.dsh-module-dark body[data-dsh-chat-theme] :is(${CHAT_LAYOUT_SCOPES}){${body}}`
+    `html.dsh-module-dark body[data-dsh-chat-theme] :is(${CHAT_LAYOUT_SCOPES}){${body}}`,
+    ...(palette.composer ? [`html[data-dsh-host-theme=dark] body[data-dsh-chat-theme=dark] .dsh-web-chat{--dsh-composer-bg:${palette.composer.join(' ')}}`] : [])
   ].join('\n')
 }
 

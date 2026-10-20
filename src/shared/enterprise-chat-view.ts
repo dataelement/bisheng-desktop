@@ -12,7 +12,10 @@ export interface EnterpriseChatPresentation {
 export const ENTERPRISE_PALETTE_ROLES = ['surface', 'raised', 'strong', 'labelPrimary', 'labelSecondary', 'labelTertiary', 'borderBase', 'borderDeep'] as const
 export type EnterprisePaletteRole = (typeof ENTERPRISE_PALETTE_ROLES)[number]
 /** Opaque sRGB channels; translucent host tokens are flattened over the surface before they are sent. */
-export type EnterprisePalette = Record<EnterprisePaletteRole, readonly [number, number, number]>
+export type EnterprisePalette = Record<EnterprisePaletteRole, readonly [number, number, number]> & {
+  /** Composer fill, sampled independently from page and card surfaces. */
+  composer?: readonly [number, number, number]
+}
 
 function parseEnterprisePalette(value: unknown): EnterprisePalette | undefined {
   if (value === undefined) return undefined
@@ -25,7 +28,15 @@ function parseEnterprisePalette(value: unknown): EnterprisePalette | undefined {
     )) throw new Error('Invalid Chat palette.')
     return [role, [channels[0] as number, channels[1] as number, channels[2] as number]]
   })
-  return Object.fromEntries(entries) as EnterprisePalette
+  const palette = Object.fromEntries(entries) as EnterprisePalette
+  if (input.composer !== undefined) {
+    const channels = input.composer
+    if (!Array.isArray(channels) || channels.length !== 3 || channels.some(channel =>
+      typeof channel !== 'number' || !Number.isInteger(channel) || channel < 0 || channel > 255
+    )) throw new Error('Invalid Chat palette.')
+    palette.composer = [channels[0], channels[1], channels[2]]
+  }
+  return palette
 }
 
 export const ENTERPRISE_SETTINGS_SECTIONS = ['desktop-usage', 'ai-access', 'my-tasks', 'my-requests', 'notifications'] as const

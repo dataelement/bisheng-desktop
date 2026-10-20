@@ -264,7 +264,7 @@ window.__ModuleLoader__.load({
     const PALETTE_TOKENS = {
       surface: '--dsw-alias-bg-layer-2', raised: '--dsw-alias-bg-layer-3', strong: '--dsw-alias-bg-overlay',
       labelPrimary: '--dsw-alias-label-primary', labelSecondary: '--dsw-alias-label-secondary', labelTertiary: '--dsw-alias-label-tertiary',
-      borderBase: '--dsw-alias-border-l2', borderDeep: '--dsw-alias-border-l3'
+      borderBase: '--dsw-alias-border-l2', borderDeep: '--dsw-alias-border-l3', composer: '--dsw-specific-input-major'
     }
     // A token that does not resolve leaves the fallback behind, which is how a missing one is told
     // apart from a real color; the probe never renders, so the sentinel is never seen.
