@@ -6,6 +6,7 @@ export interface EnterpriseChatPresentation {
   settings?: EnterpriseSettingsSection
   /** Host surfaces and ink resolved from the active Harness theme; absent when they cannot be sampled. */
   palette?: EnterprisePalette
+  welcomeMotion?: boolean
 }
 
 /** Roles the host samples from its own tokens; the embedded document never reads host CSS. */
@@ -61,6 +62,7 @@ export function parseChatPresentation(value: unknown): EnterpriseChatPresentatio
   if (input.locale !== undefined && input.locale !== 'zh' && input.locale !== 'en') {
     throw new Error('Invalid Chat locale.')
   }
+  if (input.welcomeMotion !== undefined && typeof input.welcomeMotion !== 'boolean') throw new Error('Invalid welcome motion.')
   const settings = input.settings === undefined ? undefined : parseEnterpriseSettingsSection(input.settings)
   const palette = parseEnterprisePalette(input.palette)
   const bounds = input.bounds as Record<string, unknown> | undefined
@@ -73,6 +75,7 @@ export function parseChatPresentation(value: unknown): EnterpriseChatPresentatio
     locale: input.locale,
     settings,
     ...(palette ? { palette } : {}),
+    ...(input.welcomeMotion === undefined ? {} : { welcomeMotion: input.welcomeMotion }),
     bounds: { x: Number(bounds.x), y: Number(bounds.y), width: Number(bounds.width), height: Number(bounds.height) }
   }
 }
@@ -103,12 +106,17 @@ export interface EnterpriseNavigationEntry {
   active: boolean
   primary: boolean
 }
+export interface WorkbenchBranding {
+  welcomeMessage: string
+  assistantIcon: { enabled: boolean; image: string }
+}
 export interface EnterpriseNavigation {
   entries: EnterpriseNavigationEntry[]
   homeLabel: string
   settings?: { aiAccess: boolean }
   /** Outstanding approvals reported by the enterprise document; absent when it does not report them. */
   approvals?: { pending: number }
+  branding?: WorkbenchBranding
 }
 const MAX_PENDING_APPROVALS = 9999
 const modulePaths: Record<string, RegExp> = {
@@ -130,6 +138,19 @@ function parseEnterpriseApprovals(value: unknown): { pending: number } | undefin
   return { pending }
 }
 
+/** Only public welcome text and an HTTP image cross the presentation boundary. */
+export function parseWorkbenchBranding(value: unknown): WorkbenchBranding {
+  if (!value || typeof value !== 'object') throw new Error('Invalid workbench branding.')
+  const input = value as Record<string, unknown>
+  const icon = input.assistantIcon as Record<string, unknown> | undefined
+  if (typeof input.welcomeMessage !== 'string' || !input.welcomeMessage.trim() || input.welcomeMessage.length > 1000 ||
+      !icon || typeof icon.enabled !== 'boolean' || typeof icon.image !== 'string' || icon.image.length > 8192) {
+    throw new Error('Invalid workbench branding.')
+  }
+  const image = new URL(icon.image)
+  if (!['http:', 'https:'].includes(image.protocol) || image.username || image.password) throw new Error('Invalid workbench image.')
+  return { welcomeMessage: input.welcomeMessage.trim(), assistantIcon: { enabled: icon.enabled, image: image.href } }
+}
 /** Validate presentation metadata from the isolated enterprise document. */
 export function parseEnterpriseNavigation(value: unknown): EnterpriseNavigation {
   if (!value || typeof value !== 'object') throw new Error('Invalid enterprise navigation.')
@@ -152,5 +173,5 @@ export function parseEnterpriseNavigation(value: unknown): EnterpriseNavigation 
     throw new Error('Invalid enterprise settings capabilities.')
   }
   const approvals = parseEnterpriseApprovals(input.approvals)
-  return { ...(approvals ? { approvals } : {}), entries, homeLabel: typeof input.homeLabel === 'string' ? input.homeLabel.slice(0, 80) : '', ...(settings && typeof settings === 'object' && 'aiAccess' in settings ? { settings: { aiAccess: settings.aiAccess === true } } : {}) }
+  return { ...(approvals ? { approvals } : {}), entries, homeLabel: typeof input.homeLabel === 'string' ? input.homeLabel.slice(0, 80) : '', ...(input.branding === undefined ? {} : { branding: parseWorkbenchBranding(input.branding) }), ...(settings && typeof settings === 'object' && 'aiAccess' in settings ? { settings: { aiAccess: settings.aiAccess === true } } : {}) }
 }

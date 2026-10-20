@@ -58,7 +58,9 @@ export class EnterpriseChatView {
   }
 
   present(window: BrowserWindow, input: unknown): EnterpriseChatViewState {
-    this.presentation = parseChatPresentation(input)
+    const next = parseChatPresentation(input)
+    const revealWelcome = this.presentation?.visible === false && next.visible && next.welcomeMotion === true
+    this.presentation = next
     if (this.owner !== window) {
       this.clear()
       this.owner = window
@@ -68,6 +70,11 @@ export class EnterpriseChatView {
       })
     }
     this.layout()
+    // Only a mode-entry edge plays the welcome motion; resize/theme updates stay still.
+    if (revealWelcome && this.view && this.state.phase === 'ready' && !next.settings) {
+      void this.view.webContents.executeJavaScript("requestAnimationFrame(() => window.dispatchEvent(new Event('dsh:welcome-enter')))")
+        .catch(() => this.note('[enterprise-chat] welcome_motion_delivery_failed'))
+    }
     if (this.presentation.visible && this.enterprise.snapshot().connected && !this.view) void this.connect()
     if (this.view) void this.syncSettings()
     return this.snapshot()

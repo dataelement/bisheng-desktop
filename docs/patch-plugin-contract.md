@@ -136,3 +136,9 @@ Work 从 sessions.binding(id).session 订阅当前主视图的 pendingSubmission
 宿主插件从 Harness locale 服务读取并订阅当前语言，通过 presentation 的可选 `locale: zh | en` 字段交给主进程；缺省时兼容旧调用方。主进程严格校验，在首次/完整加载的 URL 携带 `dshLocale`，并在文档就绪、呈现和页面内路由变化后设置 `data-dsh-host-locale`、派发 `dsh:locale`。设置页隐藏嵌入文档期间仍投递语言，避免导航保留旧文案；投递失败记录 `locale_delivery_failed`。该接缝只影响当前身份的隔离文档，不改变插件/依赖加载链路，也不写用户语言配置。
 
 配套网页只在嵌入状态且存在原生 `dshChatPresentation` 时采用覆盖，映射到既有 `zh-Hans` / `en` 词典。初始化时禁用嵌入实例的 i18next 偏好缓存；运行中更新文档语言和当前实例，保留网页 lang cookie、持久化 lang atom 与独立网页偏好。宿主覆盖可在当前 sessionStorage 保留以支持硬刷新，身份 session 清理时一并释放。网页默认菜单文案切换后沿用现有导航上报；管理员自定义名称保留原文。两端必须配套更新，旧网页不会消费新增语言事件。
+
+### 工作台欢迎区配置与模式过渡（2026-10-20）
+
+`conversation.hero.brand.title` 为 root/single、空 owner 的标题接缝，位于原生 titleGroup 内；无贡献项沿用原生标题和徽标。桌面贡献项读取当前企业文档上报的公开 branding，与现有 mark 接缝共同呈现工作台欢迎语和图标；本地无企业配置时使用毕昇默认欢迎区。branding 只携带欢迎语及图标 enabled/HTTP URL，由导航报告的同源、主 frame、路径、身份代际校验保护，参数有长度和协议边界；身份变化沿用 navigation 清空流程。后台管理仍为构建→工作台既有配置。
+
+`data-dsh-hero-controls` 标记原生 Work 首页控件行，样式由桌面插件拥有。鼠标切入 Work 采用 180ms 从左向右揭示，结束后清除裁切；键盘切换与 reduced-motion 即时呈现。标记不改变控件 slot、布局或挂载次数。上游提供等价标题 slot 和控件标记后迁移并移除本地接缝。

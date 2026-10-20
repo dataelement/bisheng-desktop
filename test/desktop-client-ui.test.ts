@@ -57,7 +57,8 @@ describe('BISHENG client slot occupants', () => {
         return {
           createElement,
           useEffect: (effect: () => void | (() => void)) => effect(),
-          useState: (initial: unknown) => [initial, vi.fn()]
+          useState: (initial: unknown) => [initial, vi.fn()],
+          useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) => snapshot()
         }
       }
       if (id === '@deepseek-ai/dsh-client-ui-primitives') {
@@ -102,6 +103,7 @@ describe('BISHENG client slot occupants', () => {
       'sidebar.brand.mark',
       'sidebar.brand.name',
       'conversation.hero.brand.mark',
+      'conversation.hero.brand.title',
       'sidebar.right.tab.document.unpreviewable',
       'sidebar.workspaces.session.menu.item',
       'sidebar.workspaces.session.menu.item',
@@ -135,7 +137,7 @@ describe('BISHENG client slot occupants', () => {
 
     const heroMark = registrations.find(
       ({ config }) => config.name === 'conversation.hero.brand.mark'
-    )!.component({ size: 48, className: 'hero-mark' }) as {
+    )!.component({ size: 48, className: 'hero-mark', navigation: { subscribe: vi.fn(), snapshot: () => ({}) } }) as {
       type: unknown
       props: Record<string, unknown>
     }
@@ -155,6 +157,16 @@ describe('BISHENG client slot occupants', () => {
     expect(heroField?.props.fill).toBe('#000000')
     expect(heroPaths).toHaveLength(8)
     expect(heroPaths.every(({ type, props }) => type === 'path' && props.fill === 'white')).toBe(true)
+    const branding = { welcomeMessage: 'Team workspace', assistantIcon: { enabled: true, image: 'https://enterprise.example/custom.svg' } }
+    const navigation = { subscribe: vi.fn(), snapshot: () => ({ navigation: { branding } }) }
+    const configuredMark = registrations.find(({ config }) => config.name === 'conversation.hero.brand.mark')!.component({ size: 34, navigation }) as { type: unknown; props: Record<string, unknown> }
+    expect(configuredMark.type).toBe('img')
+    expect(configuredMark.props.src).toBe(branding.assistantIcon.image)
+    const configuredTitle = registrations.find(({ config }) => config.name === 'conversation.hero.brand.title')!.component({ navigation, t: (key: string) => key }) as { props: Record<string, unknown> }
+    expect(configuredTitle.props.children).toEqual(['Team workspace'])
+    branding.assistantIcon.enabled = false
+    expect(registrations.find(({ config }) => config.name === 'conversation.hero.brand.mark')!.component({ size: 34, navigation })).toBeNull()
+
   })
 
   it('reuses the upstream preview-badge styling for the enterprise label', async () => {
@@ -170,7 +182,7 @@ describe('BISHENG client slot occupants', () => {
       'utf8'
     )
 
-    expect(source).toContain('children: [(0, react_jsx_runtime.jsx)("span", { children: t("hero.headline") })')
+    expect(source).toContain('children: renderSlot("conversation.hero.brand.title", {}, { fallback: [(0, react_jsx_runtime.jsx)("span", { children: t("hero.headline") })')
     expect(source).toContain('className: HeroShell_module_css_default.previewBadge')
     expect(source).toContain('children: t("hero.preview")')
     expect(source).toContain('background:var(--dsw-alias-state-business-tertiary)')

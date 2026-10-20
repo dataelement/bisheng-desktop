@@ -1,5 +1,5 @@
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js b/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js
-index 7f3f791..3141063 100644
+index 7f3f791..21f7efa 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js
 @@ -14533,8 +14533,8 @@ window.__ModuleLoader__.load({
@@ -47,7 +47,28 @@ index 7f3f791..3141063 100644
  			"heroWorkspaceRow": "wSkVaW_heroWorkspaceRow",
  			"root": "wSkVaW_root",
  			"scrollBody": "wSkVaW_scrollBody",
-@@ -16280,12 +16282,17 @@ window.__ModuleLoader__.load({
+@@ -16187,10 +16189,10 @@ window.__ModuleLoader__.load({
+ 							}, { fallback: (0, react_jsx_runtime.jsx)(HeroFish, { hovering }) })
+ 						}), (0, react_jsx_runtime.jsxs)("span", {
+ 							className: HeroShell_module_css_default.titleGroup,
+-							children: [(0, react_jsx_runtime.jsx)("span", { children: t("hero.headline") }), (0, react_jsx_runtime.jsx)("span", {
++							children: renderSlot("conversation.hero.brand.title", {}, { fallback: [(0, react_jsx_runtime.jsx)("span", { children: t("hero.headline") }), (0, react_jsx_runtime.jsx)("span", {
+ 								className: HeroShell_module_css_default.previewBadge,
+ 								children: t("hero.preview")
+-							})]
++							})] })
+ 						})]
+ 					}), (0, react_jsx_runtime.jsx)("div", { className: HeroShell_module_css_default.body })]
+ 				}), children]
+@@ -16255,6 +16257,7 @@ window.__ModuleLoader__.load({
+ 			const chipTitle = storedChipTitle === void 0 ? void 0 : workspaceDisplayTitle(storedChipTitle, t("workspace.defaultName"));
+ 			const heroWorkspaceRow = (0, react_jsx_runtime.jsxs)("div", {
+ 				className: ConversationRoot_module_css_default.heroWorkspaceRow,
++				"data-dsh-hero-controls": true,
+ 				children: [
+ 					(0, react_jsx_runtime.jsx)(WorkspaceChip, {
+ 						buttonRef: pickerAnchor,
+@@ -16280,12 +16283,17 @@ window.__ModuleLoader__.load({
  							setPickerOpen(false);
  						}
  					}),
@@ -66,7 +87,7 @@ index 7f3f791..3141063 100644
  				...inert ? {
  					disabled: true,
  					placeholder: t("placeholder.workspace"),
-@@ -16307,7 +16314,8 @@ window.__ModuleLoader__.load({
+@@ -16307,7 +16315,8 @@ window.__ModuleLoader__.load({
  					}),
  					hero && heroWorkspaceRow,
  					zone !== void 0 && renderSlot("conversation.input.dock", zone),
@@ -76,7 +97,7 @@ index 7f3f791..3141063 100644
  				]
  			});
  			const composer = renderSlotChain("conversation.composer", {
-@@ -16351,7 +16359,8 @@ window.__ModuleLoader__.load({
+@@ -16351,7 +16360,8 @@ window.__ModuleLoader__.load({
  		* @returns the Conversation subtree.
  		*/
  		function ConversationPanel({ renderSlot }) {
@@ -86,7 +107,7 @@ index 7f3f791..3141063 100644
  		}
  		//#endregion
  		//#region lib/types/client/skeleton/ConversationHeader.js
-@@ -17169,13 +17178,16 @@ window.__ModuleLoader__.load({
+@@ -17169,13 +17179,16 @@ window.__ModuleLoader__.load({
  		}
  		//#endregion
  		//#region \0dsh-css:/home/runner/work/deepseek-harness/deepseek-harness/packages/client/ui-conversation/src/client/skeleton/InputBar.module.css.mjs
@@ -104,7 +125,7 @@ index 7f3f791..3141063 100644
  			document.head.appendChild(tag);
  		}
  		var InputBar_module_css_default = {
-@@ -17197,6 +17209,7 @@ window.__ModuleLoader__.load({
+@@ -17197,6 +17210,7 @@ window.__ModuleLoader__.load({
  			"pending": "uV2eYG_pending",
  			"placeholder": "uV2eYG_placeholder",
  			"primary": "uV2eYG_primary",
@@ -112,7 +133,7 @@ index 7f3f791..3141063 100644
  			"retry": "uV2eYG_retry",
  			"root": "uV2eYG_root",
  			"row": "uV2eYG_row",
-@@ -17223,7 +17236,7 @@ window.__ModuleLoader__.load({
+@@ -17223,7 +17237,7 @@ window.__ModuleLoader__.load({
  		* The no-session state renders the SAME div inert as the Workspace-picker
  		* trigger instead of a parallel tree.
  		*/
@@ -121,7 +142,7 @@ index 7f3f791..3141063 100644
  			const input = useInput((s) => s);
  			const notice = useNotices((s) => s);
  			const busyEnter = useBusyEnter((s) => s);
-@@ -17451,10 +17464,6 @@ window.__ModuleLoader__.load({
+@@ -17451,10 +17465,6 @@ window.__ModuleLoader__.load({
  								className: InputBar_module_css_default.overlayAnchor,
  								children: renderSlot("conversation.input.overlay", {})
  							}),
@@ -132,7 +153,7 @@ index 7f3f791..3141063 100644
  							renderSlot("conversation.input.attachments", {
  								attachments,
  								canAcceptDrop,
-@@ -17466,25 +17475,35 @@ window.__ModuleLoader__.load({
+@@ -17466,25 +17476,35 @@ window.__ModuleLoader__.load({
  								onRetryFile: (id) => {
  									retryFileUpload?.(id);
  								},
@@ -182,7 +203,7 @@ index 7f3f791..3141063 100644
  							}),
  							(0, react_jsx_runtime.jsxs)("div", {
  								ref: rowRef,
-@@ -17612,7 +17631,7 @@ window.__ModuleLoader__.load({
+@@ -17612,7 +17632,7 @@ window.__ModuleLoader__.load({
  					}),
  					(0, react_jsx_runtime.jsxs)("div", {
  						className: InputBar_module_css_default.dock,
@@ -191,7 +212,15 @@ index 7f3f791..3141063 100644
  							useProjection,
  							t
  						})]
-@@ -18179,6 +18198,14 @@ window.__ModuleLoader__.load({
+@@ -18168,6 +18188,7 @@ window.__ModuleLoader__.load({
+ 						kind: "list",
+ 						scope: "session"
+ 					},
++					"conversation.hero.brand.title": { kind: "single", scope: "root" },
+ 					"conversation.hero.brand.mark": {
+ 						kind: "single",
+ 						scope: "root"
+@@ -18179,6 +18200,14 @@ window.__ModuleLoader__.load({
  					"conversation.hero.agentPreset": {
  						kind: "single",
  						scope: "session-maybe"
@@ -206,7 +235,7 @@ index 7f3f791..3141063 100644
  					}
  				},
  				slots: {
-@@ -18302,6 +18329,10 @@ window.__ModuleLoader__.load({
+@@ -18302,6 +18331,10 @@ window.__ModuleLoader__.load({
  						kind: "list",
  						scope: "session"
  					},
@@ -217,7 +246,7 @@ index 7f3f791..3141063 100644
  					"conversation.input.permission": {
  						kind: "single",
  						scope: "session"
-@@ -18338,6 +18369,7 @@ window.__ModuleLoader__.load({
+@@ -18338,6 +18371,7 @@ window.__ModuleLoader__.load({
  						removeAttachment: void 0,
  						resolveDraftAttachments: void 0,
  						retryFileUpload: void 0,
@@ -225,7 +254,7 @@ index 7f3f791..3141063 100644
  						toggleCommandMenu: void 0,
  						stop: void 0,
  						hooks: {
-@@ -18404,6 +18436,11 @@ window.__ModuleLoader__.load({
+@@ -18404,6 +18438,11 @@ window.__ModuleLoader__.load({
  						retryFileUpload: (id) => {
  							if (sessions.binding(sessionId) !== void 0) conversation.retryFileUpload(sessionId, id);
  						},
@@ -237,7 +266,7 @@ index 7f3f791..3141063 100644
  						toggleCommandMenu: inputTriggers === void 0 ? void 0 : (selection) => {
  							shell.dismissPopup();
  							const snapshot = shell.snapshot;
-@@ -18436,10 +18473,7 @@ window.__ModuleLoader__.load({
+@@ -18436,10 +18475,7 @@ window.__ModuleLoader__.load({
  				yield slots.register({
  					name: "main",
  					key: "conversation",
@@ -250,7 +279,7 @@ index 7f3f791..3141063 100644
  				yield registerConversationRoot();
  				yield registerConversationContent();
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/types/client/contract/slots.d.ts b/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/types/client/contract/slots.d.ts
-index 74f5846..66e825e 100644
+index 74f5846..08eea10 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/types/client/contract/slots.d.ts
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/types/client/contract/slots.d.ts
 @@ -118,6 +118,12 @@ export type UseConversation = SnapshotSelectorHook<ConversationSnapshot>;
@@ -266,7 +295,16 @@ index 74f5846..66e825e 100644
          /** Conversation shell beneath its root-scoped main-panel entry. */
          'main.conversation': {
              kind: 'single';
-@@ -210,6 +216,18 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+@@ -199,6 +205,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+             owner: EmptyWorkspaceOwnerProps;
+         };
+         /** Brand mark shown before the blank-session headline. */
++        /** Optional welcome title; defaults to the upstream title and badge. */
++        'conversation.hero.brand.title': { kind: 'single'; scope: 'root'; owner: Record<string, never>; };
+         'conversation.hero.brand.mark': {
+             kind: 'single';
+             scope: 'root';
+@@ -210,6 +218,18 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
              scope: 'session-maybe';
              owner: HeroAgentPresetOwnerProps;
          };
@@ -285,7 +323,7 @@ index 74f5846..66e825e 100644
          /** Full-width entries above the composer card. */
          'conversation.input.dock': {
              kind: 'list';
-@@ -221,10 +239,17 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+@@ -221,10 +241,17 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
              kind: 'list';
              scope: 'session';
          };
@@ -303,7 +341,15 @@ index 74f5846..66e825e 100644
          };
          /** Compact controls at the left of the composer tool row. */
          'conversation.input.left': {
-@@ -440,8 +465,10 @@ export interface ComposerBarOwnerProps {
+@@ -299,6 +326,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+                     kind: 'list';
+                     scope: 'session';
+                 };
++                'conversation.hero.brand.title': { kind: 'single'; scope: 'root'; };
+                 'conversation.hero.brand.mark': {
+                     kind: 'single';
+                     scope: 'root';
+@@ -440,8 +468,10 @@ export interface ComposerBarOwnerProps {
      /** Open the Workspace picker from the inert composer surface. */
      onRequestWorkspace?: () => void;
      placeholder?: string;
@@ -315,7 +361,7 @@ index 74f5846..66e825e 100644
  }
  /** Package-private operations injected into the resident composer bar. */
  export interface ComposerBarInjected {
-@@ -486,7 +513,7 @@ export interface InputActivityOwnerProps extends InputControlOwnerProps {
+@@ -486,7 +516,7 @@ export interface InputActivityOwnerProps extends InputControlOwnerProps {
      onActiveChange: (active: boolean) => void;
  }
  /** Full props of the resident composer bar. */

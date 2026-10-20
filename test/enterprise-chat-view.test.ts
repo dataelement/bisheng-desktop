@@ -445,3 +445,22 @@ it('pushes connection failures and logout to mounted settings without waiting fo
     expect(f.owner.webContents.send).toHaveBeenLastCalledWith('enterprise-chat:changed', expect.objectContaining({ connected: false, settingsReady: false }))
   } finally { f.host.dispose() }
 })
+
+
+it('delivers welcome motion once on pointer-driven Chat entry', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0].webContents
+    const motions = () => view.executeJavaScript.mock.calls.filter(([script]: [string]) => script.includes('dsh:welcome-enter'))
+    f.host.present(f.owner, { ...presentation, visible: false })
+    f.host.present(f.owner, { ...presentation, welcomeMotion: true })
+    f.host.present(f.owner, { ...presentation, welcomeMotion: true })
+    expect(motions()).toHaveLength(1)
+    f.host.present(f.owner, { ...presentation, visible: false })
+    f.host.present(f.owner, { ...presentation, welcomeMotion: false })
+    expect(motions()).toHaveLength(1)
+    expect(() => parseChatPresentation({ ...presentation, welcomeMotion: 'yes' })).toThrow()
+  } finally { f.host.dispose() }
+})
