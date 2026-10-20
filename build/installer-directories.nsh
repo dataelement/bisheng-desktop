@@ -13,6 +13,7 @@ Var dshNewMoved
   Pop $R1
   ${If} $R0 != 0
     DetailPrint $R1
+    MessageBox MB_ICONSTOP "安装解压失败 (7za 退出码: $R0)$\r$\n$\r$\n目标目录: $INSTDIR$\r$\n详细信息:$\r$\n$R1"
     Call dshRollbackDirectories
     SetErrorLevel 2
     Quit
@@ -23,6 +24,7 @@ Var dshNewMoved
   StrCpy $dshFinalDirectory $INSTDIR
   System::Call 'ole32::CoCreateGuid(g .r0) i .r1'
   ${If} $1 != 0
+    MessageBox MB_ICONSTOP "安装初始化失败：无法生成唯一目录 GUID (错误代码: $1)"
     SetErrorLevel 2
     Quit
   ${EndIf}
@@ -33,6 +35,7 @@ Var dshNewMoved
   ClearErrors
   CreateDirectory $dshNewDirectory
   ${If} ${Errors}
+    MessageBox MB_ICONSTOP "安装暂存失败：无法创建暂存目录$\r$\n$\r$\n路径: $dshNewDirectory$\r$\n$\r$\n请检查是否具有写入权限或磁盘空间是否充足。"
     SetErrorLevel 2
     Quit
   ${EndIf}
@@ -88,6 +91,7 @@ Function dshPromoteDirectories
   ${If} ${FileExists} "$dshFinalDirectory\*.*"
     Rename $dshFinalDirectory $dshOldDirectory
     ${If} ${Errors}
+      MessageBox MB_ICONSTOP "安装目录替换失败：无法备份旧版本目录。$\r$\n$\r$\n源目录: $dshFinalDirectory$\r$\n备份目标: $dshOldDirectory$\r$\n$\r$\n可能原因：原安装目录中有文件被其他进程（如后台残留的程序、杀毒软件等）占用，或没有重命名权限。"
       Call dshRollbackDirectories
       SetErrors
       Return
@@ -99,6 +103,7 @@ Function dshPromoteDirectories
   ClearErrors
   Rename $dshNewDirectory $dshFinalDirectory
   ${If} ${Errors}
+    MessageBox MB_ICONSTOP "安装目录替换失败：无法将新版本目录变更为正式安装目录。$\r$\n$\r$\n源目录: $dshNewDirectory$\r$\n正式目录: $dshFinalDirectory$\r$\n$\r$\n可能原因：目标目录权限不足或被杀毒软件拦截。"
     Call dshRollbackDirectories
     SetErrors
     Return

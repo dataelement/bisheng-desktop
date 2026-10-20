@@ -342,8 +342,7 @@ describe('GitHub release contract', () => {
     expect(workflow).toContain('merge-mac-update-metadata.mjs')
     expect(workflow).toContain('Verify release assets before publication')
     expect(workflow).toContain('verify-release-assets.mjs release-assets')
-    expect(workflow).toContain('dist/mac-arm64/BISHENG.app')
-    expect(workflow).toContain('dist/mac/BISHENG.app')
+    expect(workflow).toContain('dist/${{ matrix.app-directory }}/BISHENG.app')
     expect(workflow).toContain('dist\\win-unpacked\\BISHENG.exe')
     expect(workflow).toContain("--name 'BISHENG'")
     expect(workflow).toContain('--title "BISHENG $release_tag"')
@@ -407,16 +406,10 @@ describe('GitHub release contract', () => {
       'utf8'
     )
 
-    expect(workflow.match(/runs-on: \[self-hosted, macOS, ARM64\]/g)).toHaveLength(2)
-    expect(workflow).not.toContain('runs-on: macos-15-intel')
-    expect(workflow).toContain('runs-on: [self-hosted, macOS, bisheng-intel]')
-    expect(workflow).toContain('architecture: arm64')
-    expect(workflow).toContain('architecture: x64')
-    expect(workflow).toContain('shell: arch -x86_64 /bin/bash --noprofile --norc -e -o pipefail {0}')
-    expect(workflow).toContain('Require Rosetta for Intel packaging')
-    expect(workflow).toContain('arch -x86_64 /usr/bin/true')
-    expect(workflow).toContain('test "$(node -p \'process.arch\')" = x64')
-    expect(workflow).toContain('npm_config_arch: x64')
+    expect(workflow).toContain('runner: [self-hosted, macOS, ARM64]')
+    expect(workflow).toContain('runner: macos-15-intel')
+    expect(workflow).toContain('runs-on: ${' + '{ matrix.runner }}')
+    expect(workflow).toContain('runs-on: [self-hosted, macOS, ARM64]')
     expect(workflow).toContain('runs-on: windows-2022')
     expect(workflow).toContain('npm run package:dev:win')
     expect(workflow).toContain('Smoke test packaged Windows Harness')
@@ -446,7 +439,7 @@ describe('GitHub release contract', () => {
       workflow.match(
         /npm version --no-git-tag-version --allow-same-version "\$\{\{ github\.ref_name \}\}"/g
       )
-    ).toHaveLength(4)
+    ).toHaveLength(3)
   })
 
   it('signs and notarizes both macOS architectures on tag releases', async () => {
@@ -465,17 +458,14 @@ describe('GitHub release contract', () => {
     ]) {
       expect(workflow).toContain(`secrets.${secret}`)
     }
-    expect(workflow.match(/Prepare macOS signing keychain/g)).toHaveLength(2)
-    expect(workflow.match(/xcrun stapler validate/g)).toHaveLength(4)
-    expect(workflow.match(/xcrun notarytool submit/g)).toHaveLength(2)
-    expect(workflow.match(/CSC_IDENTITY_AUTO_DISCOVERY: 'false'/g)).toHaveLength(2)
+    expect(workflow.match(/Prepare macOS signing keychain/g)).toHaveLength(1)
+    expect(workflow.match(/xcrun stapler validate/g)).toHaveLength(2)
+    expect(workflow.match(/xcrun notarytool submit/g)).toHaveLength(1)
+    expect(workflow.match(/CSC_IDENTITY_AUTO_DISCOVERY: 'false'/g)).toHaveLength(1)
     expect(workflow).not.toContain("CSC_LINK: ''")
-    expect(workflow).toMatch(
-      /macos-apple-silicon:\r?\n\s+name: macOS Apple Silicon\r?\n(?:[\s\S]*?)runs-on: \[self-hosted, macOS, ARM64\]\r?\n\s+steps:/
-    )
-    expect(workflow).toMatch(
-      /macos-intel:\r?\n\s+name: macOS Intel\r?\n(?:[\s\S]*?)runs-on: \[self-hosted, macOS, bisheng-intel\]\r?\n\s+defaults:/
-    )
+    expect(workflow).toContain("runs-on: ${{ matrix.runner }}")
+    expect(workflow).toContain("runner: [self-hosted, macOS, ARM64]")
+    expect(workflow).toContain("runner: macos-15-intel")
     expect(workflow).toMatch(
       /windows-x64:\r?\n\s+name: Windows x64\r?\n(?:[\s\S]*?)runs-on: windows-2022\r?\n\s+steps:/
     )
@@ -587,7 +577,7 @@ describe('prerelease parity workflow', () => {
       yml.match(
         /npm version --no-git-tag-version --allow-same-version "\$\{\{ inputs\.signed_version \}\}"/g
       )
-    ).toHaveLength(4)
+    ).toHaveLength(3)
   })
 
   it('publishes prereleases to their separate ModelScope path', async () => {

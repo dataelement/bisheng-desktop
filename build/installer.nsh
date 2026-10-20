@@ -67,7 +67,12 @@
     !define MUI_PAGE_CUSTOMFUNCTION_LEAVE DshEnsureInstDirExists
 
     Function DshEnsureInstDirExists
+      ClearErrors
       CreateDirectory "$INSTDIR"
+      ${If} ${Errors}
+        MessageBox MB_ICONSTOP "无法创建目标安装目录：$\r$\n$INSTDIR$\r$\n$\r$\n请确认您有权限写入该路径（或尝试以管理员身份运行安装程序），或选择其他目录。"
+        Abort
+      ${EndIf}
     FunctionEnd
 
     ; Accept any directory path the user types, even if it does not exist yet.
