@@ -28,8 +28,8 @@ async function fixture(language = 'zh', settingsProtocolVersion = 1, signedIn = 
   const primitives = {
     Menu: ({ open, anchor, children }) => React.createElement('div', null, anchor, open && React.createElement('div', { role: 'menu' }, children)),
     MenuItemButton: ({ children, onSelect, disabled }) => React.createElement('button', { type: 'button', role: 'menuitem', disabled, onClick: onSelect }, children),
-    Modal: ({ open, onClose, title, children }) => open ? React.createElement('div', { role: 'dialog', 'aria-label': title, onKeyDown: event => { if (event.key === 'Escape') onClose() } }, children) : null,
-    ...Object.fromEntries(['IconSettingsOutlineRegular', 'IconChecklistOutlineRegular', 'IconChevronDownOutlineRegular', 'IconCloseOutlineRegular'].map(name => [name, () => React.createElement('svg', { 'aria-hidden': true })]))
+    Modal: ({ open, onClose, title, description, children, footer }) => open ? React.createElement('div', { role: 'dialog', 'aria-label': title, onKeyDown: event => { if (event.key === 'Escape') onClose() } }, description, children, footer) : null,
+    ...Object.fromEntries(['IconSettingsOutlineRegular', 'IconChecklistOutlineRegular', 'IconChecklistOutlineMedium', 'IconPaperPlaneOutlineMedium', 'IconAlarmClockOutlineMedium', 'IconGaugeOutlineMedium', 'IconApiOutlineMedium', 'IconInfoOutlineMedium', 'IconUserOutlineMedium', 'IconChevronDownOutlineRegular', 'IconCloseOutlineRegular'].map(name => [name, () => React.createElement('svg', { 'aria-hidden': true, 'data-icon': name })]))
   }
   const registrations = [], effects = [], dictionaries = new Map()
   const state = { connected: true, phase: 'ready', settingsProtocolVersion, navigation: { settings: { aiAccess: false } } }
@@ -63,7 +63,7 @@ async function fixture(language = 'zh', settingsProtocolVersion = 1, signedIn = 
     const entry = registrations.find(row => row.options.name === name && row.active)
     return entry ? React.createElement(entry.Component, { ...entry.options.inject?.(), ...props }) : options?.fallback
   }
-  return { mount, renderSlot, render, registrations, update: next => subscribers.forEach(listener => listener(next)), root, dom, unregister, request, subscribers, setAccount: next => { account = next } }
+  return { mount, renderSlot, render, registrations, primitives, update: next => subscribers.forEach(listener => listener(next)), root, dom, unregister, request, subscribers, setAccount: next => { account = next } }
 }
 
 /** Exercise the installed DSH owners and their real fallbacks without copying their layouts. */
@@ -113,6 +113,27 @@ it.each(['zh', 'en'])('uses DSH flat navigation, General rows and header actions
   expect(selected).toHaveBeenCalledWith('third-party-extra')
 })
 
+it('gives the Bisheng sections their own nav glyphs through the shell\'s native rows', async () => {
+  const f = await fixture()
+  const { SettingsPanel } = await builtInComponents('@deepseek-ai/dsh-client-ui-settings-general', ['SettingsPanel'])
+  const rows = ['general', 'models', 'enterprise-account', 'desktop-usage', 'desktop-ai-access', 'desktop-about'].map(id => ({ id, label: id }))
+  const selected = vi.fn()
+  await f.mount(SettingsPanel, { rows, activeId: 'general', actionItems: [], renderSlot: f.renderSlot, onSelect: selected, onClose() {} })
+  const cells = [...document.querySelectorAll('nav button')]
+  expect(cells.map(node => node.textContent)).toEqual(rows.map(row => row.label))
+  const glyph = id => cells.find(node => node.textContent === id).querySelector('svg')?.getAttribute('data-icon') ?? null
+  expect(glyph('enterprise-account')).toBe('IconUserOutlineMedium')
+  expect(glyph('desktop-usage')).toBe('IconGaugeOutlineMedium')
+  expect(glyph('desktop-ai-access')).toBe('IconApiOutlineMedium')
+  expect(glyph('desktop-about')).toBe('IconInfoOutlineMedium')
+  // Native sections keep the shell's own glyphs, and the row stays the shell's button: selection still works.
+  expect(glyph('general')).toBeNull()
+  expect(glyph('models')).toBeNull()
+  expect(cells[0].getAttribute('aria-current')).toBe('true')
+  await click(cells[3])
+  expect(selected).toHaveBeenCalledWith('desktop-usage')
+})
+
 it.each(['zh', 'en'])('shows recovery with the other About actions without disclosure (%s)', async language => {
   const f = await fixture(language)
   const entry = f.registrations.find(row => row.options.id === 'desktop-about')
@@ -123,7 +144,7 @@ it.each(['zh', 'en'])('shows recovery with the other About actions without discl
   expect(window.dshDesktop.settingsAction).toHaveBeenCalledWith('safe-mode')
 })
 
-it('shows enterprise models alongside Bisheng account content without disclosure', async () => {
+it('shows enterprise models natively and embeds no account page in Account and security', async () => {
   const f = await fixture()
   f.setAccount({ connected: true, modelsAvailable: true, user: { username: 'employee' }, models: [{ id: 'example-model', display_name: 'Example provider / Example model' }] })
   const code = (await readFile(new URL('../packages/dsh-desktop-enterprise/client.js', import.meta.url), 'utf8')).replace('exports.apply = apply', 'exports.EnterpriseSection = EnterpriseSection\n    exports.apply = apply')
@@ -132,11 +153,16 @@ it('shows enterprise models alongside Bisheng account content without disclosure
   window.__ModuleLoader__.load = next => { definition = next }
   vm.runInNewContext(code, { window, document, fetch: f.request, CustomEvent: window.CustomEvent, localStorage: window.localStorage })
   const { EnterpriseSection } = definition.factory(id => { if (id === 'react') return React; throw new Error(id) })
-  await f.mount(EnterpriseSection, { t: key => key, renderSlot: () => React.createElement('div', { 'data-account-content': '' }, 'Bisheng account') })
+  const renderSlot = vi.fn(() => React.createElement('div', { 'data-account-content': '' }, 'Bisheng account'))
+  await f.mount(EnterpriseSection, { t: key => key, renderSlot })
   expect(document.querySelector('.dshEnterpriseManagedModels').tagName).toBe('SECTION')
   expect(document.querySelector('.dshEnterpriseManagedModels h3').textContent).toBe('managedModels')
   expect(document.querySelector('.dshEnterpriseModels').textContent).toContain('Example model')
-  expect(document.querySelector('[data-account-content]').textContent).toBe('Bisheng account')
+  // The profile and password block lived on the enterprise web page; the section embeds no page now.
+  expect(renderSlot).not.toHaveBeenCalled()
+  expect(document.querySelector('[data-account-content]')).toBeNull()
+  expect(document.querySelector('.dshSettingsRemote')).toBeNull()
+  expect(f.registrations.some(row => row.options.name === 'desktop.settings.account')).toBe(false)
   expect(document.querySelector('details')).toBeNull()
 })
 
@@ -159,14 +185,15 @@ it.each(['zh', 'en'])('does not present the previous enterprise page through an 
   const f = await fixture(language, null)
   const surface = vi.fn()
   window.addEventListener('dsh-desktop:settings-surface', surface)
-  await f.render('desktop.settings.account')
+  const entry = f.registrations.find(row => row.options.id === 'desktop-usage')
+  await f.mount(entry.Component, entry.options.inject())
   expect(document.body.textContent).toContain(language === 'zh' ? '请完全退出并重新启动客户端' : 'Quit and restart the desktop app')
   expect(document.querySelector('.dshSettingsRemote').getAttribute('aria-busy')).toBe('false')
   expect(surface).not.toHaveBeenCalled()
   // A host that supports the protocol may request geometry, but still must await page readiness.
   await act(async () => f.update({ connected: true, phase: 'ready', settingsProtocolVersion: 1 }))
   expect(surface).toHaveBeenCalledOnce()
-  expect(surface.mock.calls[0][0].detail.section).toBe('account')
+  expect(surface.mock.calls[0][0].detail.section).toBe('desktop-usage')
   expect(document.querySelector('.dshSettingsRemote').getAttribute('aria-busy')).toBe('true')
 })
 
@@ -215,7 +242,7 @@ it.each([true, false])('keeps Chat visible while the sidebar account menu opens 
   expect(surface).not.toHaveBeenCalled()
 })
 
-it.each(['zh', 'en'])('shows one account launcher with four ordered actions and preserves the Settings command (%s)', async language => {
+it.each(['zh', 'en'])('shows one account launcher with five ordered actions and preserves the Settings command (%s)', async language => {
   const f = await fixture(language)
   const openSettings = vi.fn()
   expect(f.registrations.some(row => row.options.id === 'desktop-messages')).toBe(false)
@@ -224,7 +251,9 @@ it.each(['zh', 'en'])('shows one account launcher with four ordered actions and 
   expect(document.querySelector('[data-dsh-account-launcher]').textContent).toContain('张三')
   expect(document.querySelector('[role=menu]')).toBeNull()
   await click(document.querySelector('.dshAccountTrigger'))
-  const labels = language === 'zh' ? ['设置', '审批', '连接手机', '退出登录'] : ['Settings', 'Approvals', 'Connect phone', 'Log out']
+  const labels = language === 'zh'
+    ? ['设置', '账号设置', '消息', '连接手机', '退出登录']
+    : ['Settings', 'Account settings', 'Messages', 'Connect phone', 'Log out']
   expect([...document.querySelectorAll('[role=menuitem]')].map(node => node.textContent)).toEqual(labels)
   await click(menuItem(labels[0]))
   expect(openSettings).toHaveBeenCalledOnce()
@@ -234,6 +263,18 @@ it.each(['zh', 'en'])('shows one account launcher with four ordered actions and 
   expect(document.querySelector('.dshAccountTrigger').getAttribute('aria-label')).toContain('张三')
 })
 
+it.each(['zh', 'en'])('opens the enterprise account page from the menu (%s)', async language => {
+  const f = await fixture(language)
+  const openSettings = vi.fn(), navigate = vi.fn()
+  window.addEventListener('dsh-desktop:open-settings-section', navigate)
+  await f.render('settings.launcher', { wide: true, openSettings, settingsOpen: false })
+  await click(document.querySelector('.dshAccountTrigger'))
+  await click(menuItem(language === 'zh' ? '账号设置' : 'Account settings'))
+  expect(openSettings).toHaveBeenCalledOnce()
+  expect(navigate.mock.calls.at(-1)[0].detail.id).toBe('enterprise-account')
+  expect(document.querySelector('[role=menu]')).toBeNull()
+})
+
 it('opens approvals outside Settings and releases the document surface when dismissed', async () => {
   const f = await fixture()
   const openSettings = vi.fn(), visibility = vi.fn(), surface = vi.fn()
@@ -241,15 +282,24 @@ it('opens approvals outside Settings and releases the document surface when dism
   window.addEventListener('dsh-desktop:settings-surface', surface)
   await f.render('settings.launcher', { wide: true, openSettings })
   await click(document.querySelector('.dshAccountTrigger'))
-  await click(menuItem('审批'))
+  await click(menuItem('消息'))
   expect(openSettings).not.toHaveBeenCalled()
-  expect(document.querySelector('[role=dialog]').getAttribute('aria-label')).toBe('审批')
+  expect(document.querySelector('[role=dialog]').getAttribute('aria-label')).toBe('消息')
   expect(visibility.mock.calls.at(-1)[0].detail.open).toBe(true)
   expect(surface.mock.calls.at(-1)[0].detail.section).toBe('my-tasks')
-  const tabs = [...document.querySelectorAll('[role=tab]')]
-  await click(tabs[1])
+  const rail = [...document.querySelectorAll('[data-dsh-approvals-nav] button')]
+  expect(rail.map(cell => cell.textContent)).toEqual(['我的审批', '我的申请', '通知'])
+  expect(rail[0].getAttribute('aria-current')).toBe('true')
+  await click(rail[1])
   expect(surface.mock.calls.at(-1)[0].detail.section).toBe('my-requests')
-  await act(async () => window.dispatchEvent(new window.CustomEvent('dsh-desktop:settings-focus', { detail: { section: 'my-requests', direction: 'next' } })))
+  expect(rail[1].getAttribute('aria-current')).toBe('true')
+  expect(rail[0].getAttribute('aria-current')).toBeNull()
+  await act(async () => window.dispatchEvent(new window.CustomEvent('dsh-desktop:settings-focus', { detail: { section: 'my-requests', direction: 'previous' } })))
+  expect(document.activeElement).toBe(rail[1])
+  await act(async () => rail[1].dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })))
+  expect(surface.mock.calls.at(-1)[0].detail.section).toBe('notifications')
+  expect(document.activeElement).toBe(rail[2])
+  await act(async () => window.dispatchEvent(new window.CustomEvent('dsh-desktop:settings-focus', { detail: { section: 'notifications', direction: 'next' } })))
   expect(document.activeElement).toBe(document.querySelector('[data-dsh-approvals-close]'))
   await click(document.querySelector('[data-dsh-approvals-close]'))
   expect(document.querySelector('[role=dialog]')).toBeNull()
@@ -257,7 +307,7 @@ it('opens approvals outside Settings and releases the document surface when dism
   expect(surface.mock.calls.at(-1)[0].detail.close).toBe(true)
   expect(document.activeElement).toBe(document.querySelector('.dshAccountTrigger'))
   await click(document.querySelector('.dshAccountTrigger'))
-  await click(menuItem('审批'))
+  await click(menuItem('消息'))
   await act(async () => window.dispatchEvent(new window.CustomEvent('dsh-desktop:close-settings')))
   expect(document.querySelector('[role=dialog]')).toBeNull()
   expect(document.activeElement).toBe(document.querySelector('.dshAccountTrigger'))
@@ -277,37 +327,110 @@ it('uses native phone pairing and keeps a failed action retryable', async () => 
   expect(document.querySelector('[role=menu]')).toBeNull()
 })
 
-it('disables enterprise actions while signed out but keeps device settings and phone pairing available', async () => {
+it('offers sign-in while signed out and keeps device settings and phone pairing available', async () => {
   const f = await fixture('zh', 1, false)
-  await f.render('settings.launcher', { wide: true })
+  const openSettings = vi.fn(), navigate = vi.fn()
+  window.addEventListener('dsh-desktop:open-settings-section', navigate)
+  await f.render('settings.launcher', { wide: true, openSettings })
+  // The signed-out row states the account once and names what still works.
+  expect(document.querySelector('.dshAccountTriggerCopy').textContent).toBe('未登录本机模式')
   await click(document.querySelector('.dshAccountTrigger'))
   expect(menuItem('设置').disabled).toBe(false)
   expect(menuItem('连接手机').disabled).toBe(false)
-  expect(menuItem('审批').disabled).toBe(true)
-  expect(menuItem('退出登录').disabled).toBe(true)
+  expect(menuItem('消息').disabled).toBe(true)
+  expect(menuItem('账号设置')).toBeUndefined()
+  expect(menuItem('退出登录')).toBeUndefined()
+  expect(document.querySelector('.dshAccountMenuIdentity').textContent).toBe('未登录登录后可使用企业功能')
+  await click(menuItem('登录企业账号'))
+  expect(openSettings).toHaveBeenCalledOnce()
+  expect(navigate.mock.calls.at(-1)[0].detail.id).toBe('enterprise-account')
+})
+
+const confirmButton = () => document.querySelector('[data-dsh-logout-confirm]')
+
+it('confirms logout before it runs and leaves the account signed in when cancelled', async () => {
+  const f = await fixture()
+  const visibility = vi.fn()
+  window.addEventListener('dsh-desktop:account-dialog-visibility', visibility)
+  await f.render('settings.launcher', { wide: true })
+  await click(document.querySelector('.dshAccountTrigger'))
+  await click(menuItem('退出登录'))
+  expect(document.querySelector('[role=menu]')).toBeNull()
+  const dialog = document.querySelector('[role=dialog]')
+  expect(dialog.getAttribute('aria-label')).toBe('退出登录')
+  expect(dialog.textContent).toContain('退出后需要重新登录企业账号')
+  expect(visibility.mock.calls.at(-1)[0].detail.open).toBe(true)
+  expect(f.request.mock.calls.some(([path]) => path === '/api/enterprise.logout')).toBe(false)
+  await click([...dialog.querySelectorAll('button')].find(node => node.textContent === '取消'))
+  expect(document.querySelector('[role=dialog]')).toBeNull()
+  expect(visibility.mock.calls.at(-1)[0].detail.open).toBe(false)
+  expect(document.activeElement).toBe(document.querySelector('.dshAccountTrigger'))
+  expect(document.querySelector('.dshAccountTrigger').textContent).toContain('张三')
+  expect(f.request.mock.calls.some(([path]) => path === '/api/enterprise.logout')).toBe(false)
 })
 
 it('retains the signed-in account after logout fails and discards profile reads completed after successful logout', async () => {
   const f = await fixture()
   await f.render('settings.launcher', { wide: true })
   await click(document.querySelector('.dshAccountTrigger'))
-  f.request.mockRejectedValueOnce(new Error('Logout failed'))
   await click(menuItem('退出登录'))
-  expect(document.querySelector('[role=alert]')).not.toBeNull()
+  f.request.mockRejectedValueOnce(new Error('Logout failed'))
+  await click(confirmButton())
+  expect(document.querySelector('[role=dialog] [role=alert]').textContent).toContain('退出登录未完成')
+  expect(confirmButton().disabled).toBe(false)
   expect(document.querySelector('.dshAccountTrigger').textContent).toContain('张三')
-  // Begin a slow profile refresh while the menu is closed, then log out.
-  await click(document.querySelector('.dshAccountTrigger'))
+  // Begin a slow profile refresh while the dialog is closed, then log out.
+  await click([...document.querySelectorAll('[role=dialog] button')].find(node => node.textContent === '取消'))
   let finishRead
   f.request.mockImplementationOnce(() => new Promise(resolve => { finishRead = resolve }))
   await click(document.querySelector('.dshAccountTrigger'))
+  await click(menuItem('退出登录'))
   let finishLogout
   f.request.mockImplementationOnce(() => new Promise(resolve => { finishLogout = resolve }))
-  await click(menuItem('退出登录'))
-  expect([...document.querySelectorAll('[role=menuitem]')].every(node => node.disabled)).toBe(true)
+  await click(confirmButton())
+  expect(confirmButton().disabled).toBe(true)
   expect(document.body.textContent).toContain('正在退出登录')
   f.setAccount({ connected: false })
   await act(async () => finishLogout({ ok: true, json: async () => ({ connected: false }) }))
   await act(async () => finishRead({ ok: true, json: async () => ({ connected: true, user: { display_name: '旧账号' } }) }))
+  expect(document.querySelector('[role=dialog]')).toBeNull()
   expect(document.querySelector('.dshAccountTrigger').textContent).toContain('未登录')
   expect(document.querySelector('.dshAccountTrigger').textContent).not.toContain('旧账号')
+})
+
+it('shows reported approvals on the account entry and the approvals action', async () => {
+  const f = await fixture()
+  await f.render('settings.launcher', { wide: true })
+  expect(document.querySelector('.dshAccountBadge')).toBeNull()
+  await act(async () => f.update({ connected: true, phase: 'ready', settingsProtocolVersion: 1, navigation: { entries: [], homeLabel: '', approvals: { pending: 7 } } }))
+  expect(document.querySelector('.dshAccountAvatarWrap > .dshAccountBadge').textContent).toBe('7')
+  expect(document.querySelector('.dshAccountTrigger').getAttribute('aria-label')).toContain('待处理审批 7')
+  await click(document.querySelector('.dshAccountTrigger'))
+  expect(document.querySelector('.dshAccountMenuRow').textContent).toBe('消息7')
+  await act(async () => f.update({ connected: true, phase: 'ready', settingsProtocolVersion: 1, navigation: { entries: [], homeLabel: '', approvals: { pending: 120 } } }))
+  expect(document.querySelector('.dshAccountMenuRow .dshAccountBadge').textContent).toBe('99+')
+  // A host that stops reporting the backlog, or a signed-out account, clears the badge.
+  await act(async () => f.update({ connected: true, phase: 'ready', settingsProtocolVersion: 1, navigation: { entries: [], homeLabel: '' } }))
+  expect(document.querySelector('.dshAccountBadge')).toBeNull()
+})
+
+it('retries the failed account read and the failed action from the menu', async () => {
+  const f = await fixture()
+  await f.render('settings.launcher', { wide: true })
+  window.dshDesktop.openPhonePairing.mockRejectedValueOnce(new Error('Pairing unavailable'))
+  await click(document.querySelector('.dshAccountTrigger'))
+  await click(menuItem('连接手机'))
+  expect(document.querySelector('.dshAccountMenuError').textContent).toContain('操作未完成')
+  await click(menuItem('重试'))
+  expect(window.dshDesktop.openPhonePairing).toHaveBeenCalledTimes(2)
+  expect(document.querySelector('[role=menu]')).toBeNull()
+  // A failed profile read offers the same row and re-reads the account.
+  await click(document.querySelector('.dshAccountTrigger'))
+  f.request.mockRejectedValueOnce(new Error('Account unavailable'))
+  await act(async () => window.dispatchEvent(new window.CustomEvent('dsh-desktop:enterprise-account-changed')))
+  expect(document.querySelector('.dshAccountMenuError').textContent).toContain('暂时无法读取账号')
+  const reads = f.request.mock.calls.filter(([path]) => path === '/api/enterprise.state').length
+  await click(menuItem('重试'))
+  expect(f.request.mock.calls.filter(([path]) => path === '/api/enterprise.state').length).toBeGreaterThan(reads)
+  expect(document.querySelector('.dshAccountMenuError')).toBeNull()
 })

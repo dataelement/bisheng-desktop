@@ -1,5 +1,5 @@
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-settings/lib/types/client/contract/slots.d.ts b/node_modules/@deepseek-ai/dsh-client-ui-settings/lib/types/client/contract/slots.d.ts
-index 3253a36..99fb883 100644
+index 3253a36..9934d0d 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-settings/lib/types/client/contract/slots.d.ts
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-settings/lib/types/client/contract/slots.d.ts
 @@ -10,6 +10,14 @@
@@ -17,7 +17,7 @@ index 3253a36..99fb883 100644
          /** Optional sidebar account launcher; opens the shell-owned settings panel. */
          'settings.launcher': {
              kind: 'single';
-@@ -183,3 +191,11 @@ export interface SettingsLauncherOwnerProps {
+@@ -183,3 +191,12 @@ export interface SettingsLauncherOwnerProps {
      openOnboarding: (id: string) => void;
  }
  //# sourceMappingURL=slots.d.ts.map
@@ -27,6 +27,7 @@ index 3253a36..99fb883 100644
 +export interface SettingsNavigationOwnerProps {
 +    rows: readonly SettingsNavigationRow[];
 +    activeId: string | undefined;
-+    renderEntry: (row: SettingsNavigationRow) => import('react').ReactNode;
++    /** The shell's native row; `overrides.icon` replaces the glyph the shell picks by id, nothing else. */
++    renderEntry: (row: SettingsNavigationRow, overrides?: { icon?: import('react').ComponentType<{ className?: string; size?: number }> }) => import('react').ReactNode;
 +}
 \ No newline at end of file

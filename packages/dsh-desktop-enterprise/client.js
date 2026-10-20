@@ -1104,7 +1104,6 @@ window.__ModuleLoader__.load({
           renderLearnMoreButton(t)),
         status,
         connected ? h('section', { className: 'dshEnterpriseManagedModels' }, accountContent) : accountContent,
-        connected && renderSlot?.('desktop.settings.account', {}, { fallback: null }),
         manualFallback,
         errorPanel,
         confirmationPanel)
@@ -1133,7 +1132,6 @@ window.__ModuleLoader__.load({
         id: ENTERPRISE_SECTION_ID,
         order: 15,
         label: () => t('nav'),
-        children: { 'desktop.settings.account': { kind: 'single', scope: 'root' } },
         inject: () => ({ t })
       }, EnterpriseSection))
     }

@@ -1,4 +1,4 @@
-import type { EnterpriseChatPresentation } from '../../shared/enterprise-chat-view'
+import type { EnterpriseChatPresentation, EnterprisePalette } from '../../shared/enterprise-chat-view'
 
 /**
  * Module pages (knowledge spaces, subscriptions) ship no dark theme of their own: the
@@ -17,10 +17,19 @@ export const MODULE_ROUTE_PATTERN = '^/workspace/(knowledge|channel|apps|skills|
  * (utility overrides apply there too, Chat included); `dsh-module-dark` is the module-only
  * scope where the host owns `html.dark`.
  */
-export function moduleThemeScript(theme: EnterpriseChatPresentation['theme']): string {
+export function moduleThemeScript(theme: EnterpriseChatPresentation['theme'], palette?: EnterprisePalette): string {
   return `(() => {
     const root = document.documentElement;
     root.dataset.dshHostTheme = '${theme}';
+    // The palette follows the host theme, so it is rewritten on every delivery rather than once.
+    const paletteCss = ${JSON.stringify(palette ? moduleThemePaletteCss(palette) : '')};
+    const paletteStyle = document.getElementById('dsh-host-palette');
+    if (paletteCss) {
+      const style = paletteStyle || document.createElement('style');
+      style.id = 'dsh-host-palette';
+      if (style.textContent !== paletteCss) style.textContent = paletteCss;
+      if (!style.isConnected) (document.head || root).appendChild(style);
+    } else if (paletteStyle) paletteStyle.remove();
     if (!window.__dshModuleTheme) {
       const pattern = new RegExp(${JSON.stringify(MODULE_ROUTE_PATTERN)}, 'u');
       const frameCss = ${JSON.stringify(FRAME_DARK_CSS)};
@@ -63,7 +72,89 @@ export function moduleThemeScript(theme: EnterpriseChatPresentation['theme']): s
     }
     window.__dshModuleTheme.apply();
     window.dispatchEvent(new CustomEvent('dsh:appearance', { detail: { theme: '${theme}' } }));
+    // Report the resolved page surface so the host log shows whether its palette reached the page.
+    try {
+      const layout = document.querySelector('#root > *');
+      return 'page=' + getComputedStyle(root).getPropertyValue('--bg-page').trim() + ' layout=' + (layout ? getComputedStyle(layout).backgroundColor : 'none');
+    } catch (error) { return 'unreadable'; }
   })()`
+}
+
+/** Linear channel mix; both ends are already opaque sRGB. */
+function mixChannels(from: readonly [number, number, number], to: readonly [number, number, number], ratio: number): string {
+  return from.map((channel, index) => Math.round(channel + ((to[index] as number) - channel) * ratio)).join(' ')
+}
+
+/** `h s% l%` for the page's shadcn-style tokens, which are consumed through `hsl(var(--token))`. */
+function hslTriple(channels: string): string {
+  const [r = 0, g = 0, b = 0] = channels.split(' ').map((value) => Number(value) / 255)
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), delta = max - min
+  const lightness = (max + min) / 2
+  const saturation = delta === 0 ? 0 : delta / (1 - Math.abs(2 * lightness - 1))
+  const hue = delta === 0 ? 0 : max === r ? 60 * (((g - b) / delta + 6) % 6) : max === g ? 60 * ((b - r) / delta + 2) : 60 * ((r - g) / delta + 4)
+  const fixed = (value: number): string => (Math.round(value * 10) / 10).toString()
+  return `${fixed(hue)} ${fixed(saturation * 100)}% ${fixed(lightness * 100)}%`
+}
+
+/**
+ * The deployed shell declares its ramp twice: once on `.dark` at the root, and again on its layout
+ * root (`.dsh-web-chat` and the dialogs beside it) under `body[data-dsh-chat-theme]`, which the shell
+ * derives from the host theme itself. Embedded settings pages render inside that layout root, so a
+ * root-only override is shadowed there; the same declarations are therefore emitted on both scopes.
+ */
+const CHAT_LAYOUT_SCOPES = '.dsh-web-chat,.dsh-chat-menu,.dsh-chat-preview-modal,.dsh-knowledge-dialog'
+
+/**
+ * The BISHENG client reads its surfaces and ink through `rgb(var(--token))` triples, so one
+ * redefinition of those triples moves the whole embedded page onto the host's palette instead of
+ * its own dark ramp — including every utility the overrides below already redirect at these tokens.
+ * Only the host-dark module scope is redefined: Chat routes keep their deployed theme handling, and
+ * a light host leaves the page's own light design alone. `:root` lifts the specificity above the
+ * page's own `html.dark` ramp whatever order the two stylesheets land in. The brand ramp is not
+ * touched; product color stays the page's own.
+ */
+export function moduleThemePaletteCss(palette: EnterprisePalette): string {
+  const { surface, raised, strong, labelPrimary, labelSecondary, labelTertiary, borderBase, borderDeep } = palette
+  const lifted = mixChannels(raised, strong, 1 / 3)
+  const declarations = [
+    ['--bg-page', surface.join(' ')],
+    ['--arco-gray-1', raised.join(' ')],
+    ['--arco-gray-2', lifted],
+    ['--arco-gray-3', mixChannels(raised, strong, 2 / 3)],
+    ['--arco-gray-4', strong.join(' ')],
+    // The layout root's own card ramp: a subtle card one step up, a stronger one two steps up.
+    ['--fill-1', raised.join(' ')],
+    ['--fill-2', lifted],
+    ['--text-1', labelPrimary.join(' ')],
+    ['--text-2', labelSecondary.join(' ')],
+    ['--text-3', labelTertiary.join(' ')],
+    // The page's faintest ink has no host token of its own; it is tertiary faded toward the surface.
+    ['--text-4', mixChannels(labelTertiary, surface, 0.45)],
+    ['--border-base', borderBase.join(' ')],
+    ['--border-deep', borderDeep.join(' ')]
+  ]
+  // The embedded settings pages paint their container through the shadcn ramp (`bg-background`,
+  // `bg-card`, `border-border`), a second family the `.dark` block defines in HSL; it follows the
+  // same host anchors so a container and the page behind it never show two different darks.
+  const hsl: Array<[string, string]> = [
+    ['--background', hslTriple(surface.join(' '))],
+    ['--card', hslTriple(raised.join(' '))],
+    ['--secondary', hslTriple(lifted)],
+    ['--muted', hslTriple(lifted)],
+    ['--accent', hslTriple(lifted)],
+    ['--border', hslTriple(borderBase.join(' '))],
+    ['--input', hslTriple(borderDeep.join(' '))],
+    ['--foreground', hslTriple(labelPrimary.join(' '))],
+    ['--card-foreground', hslTriple(labelPrimary.join(' '))],
+    ['--secondary-foreground', hslTriple(labelPrimary.join(' '))],
+    ['--accent-foreground', hslTriple(labelPrimary.join(' '))],
+    ['--muted-foreground', hslTriple(labelTertiary.join(' '))]
+  ]
+  const body = [...declarations, ...hsl].map(([name, value]) => `${name}:${value}`).join(';')
+  return [
+    `html.dsh-module-dark:root{${body}}`,
+    `html.dsh-module-dark body[data-dsh-chat-theme] :is(${CHAT_LAYOUT_SCOPES}){${body}}`
+  ].join('\n')
 }
 
 /**

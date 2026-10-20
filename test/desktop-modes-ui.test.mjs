@@ -139,6 +139,15 @@ it('delivers the active Harness language while settings hides Chat and cleans up
   expect(window.dshEnterpriseChat.present).toHaveBeenCalledTimes(calls)
 })
 
+it('hides Chat while a sidebar account dialog is open and restores it afterwards', async () => {
+  await mount(true)
+  expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
+  await act(async () => window.dispatchEvent(new CustomEvent('dsh-desktop:account-dialog-visibility', { detail: { open: true } })))
+  expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
+  await act(async () => window.dispatchEvent(new CustomEvent('dsh-desktop:account-dialog-visibility', { detail: { open: false } })))
+  expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
+})
+
 it('keeps one shared history across modes and routes records to their owner', async () => {
   const ui = await mount(true)
   const sidebar = container.querySelector('aside')

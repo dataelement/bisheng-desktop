@@ -4,9 +4,31 @@ export interface EnterpriseChatPresentation {
   theme: 'light' | 'dark'
   locale?: 'zh' | 'en'
   settings?: EnterpriseSettingsSection
+  /** Host surfaces and ink resolved from the active Harness theme; absent when they cannot be sampled. */
+  palette?: EnterprisePalette
 }
 
-export const ENTERPRISE_SETTINGS_SECTIONS = ['account', 'desktop-usage', 'ai-access', 'my-tasks', 'my-requests', 'notifications'] as const
+/** Roles the host samples from its own tokens; the embedded document never reads host CSS. */
+export const ENTERPRISE_PALETTE_ROLES = ['surface', 'raised', 'strong', 'labelPrimary', 'labelSecondary', 'labelTertiary', 'borderBase', 'borderDeep'] as const
+export type EnterprisePaletteRole = (typeof ENTERPRISE_PALETTE_ROLES)[number]
+/** Opaque sRGB channels; translucent host tokens are flattened over the surface before they are sent. */
+export type EnterprisePalette = Record<EnterprisePaletteRole, readonly [number, number, number]>
+
+function parseEnterprisePalette(value: unknown): EnterprisePalette | undefined {
+  if (value === undefined) return undefined
+  if (!value || typeof value !== 'object') throw new Error('Invalid Chat palette.')
+  const input = value as Record<string, unknown>
+  const entries = ENTERPRISE_PALETTE_ROLES.map((role): [EnterprisePaletteRole, readonly [number, number, number]] => {
+    const channels = input[role]
+    if (!Array.isArray(channels) || channels.length !== 3 || channels.some((channel) =>
+      typeof channel !== 'number' || !Number.isInteger(channel) || channel < 0 || channel > 255
+    )) throw new Error('Invalid Chat palette.')
+    return [role, [channels[0] as number, channels[1] as number, channels[2] as number]]
+  })
+  return Object.fromEntries(entries) as EnterprisePalette
+}
+
+export const ENTERPRISE_SETTINGS_SECTIONS = ['desktop-usage', 'ai-access', 'my-tasks', 'my-requests', 'notifications'] as const
 export type EnterpriseSettingsSection = (typeof ENTERPRISE_SETTINGS_SECTIONS)[number]
 
 export function parseEnterpriseSettingsSection(value: unknown): EnterpriseSettingsSection {
@@ -40,6 +62,7 @@ export function parseChatPresentation(value: unknown): EnterpriseChatPresentatio
     throw new Error('Invalid Chat locale.')
   }
   const settings = input.settings === undefined ? undefined : parseEnterpriseSettingsSection(input.settings)
+  const palette = parseEnterprisePalette(input.palette)
   const bounds = input.bounds as Record<string, unknown> | undefined
   if (!bounds || ['x', 'y', 'width', 'height'].some((key) =>
     typeof bounds[key] !== 'number' || !Number.isFinite(bounds[key]) || Number(bounds[key]) < 0 || Number(bounds[key]) > 20000
@@ -49,6 +72,7 @@ export function parseChatPresentation(value: unknown): EnterpriseChatPresentatio
     theme: input.theme as 'light' | 'dark',
     locale: input.locale,
     settings,
+    ...(palette ? { palette } : {}),
     bounds: { x: Number(bounds.x), y: Number(bounds.y), width: Number(bounds.width), height: Number(bounds.height) }
   }
 }
@@ -83,7 +107,10 @@ export interface EnterpriseNavigation {
   entries: EnterpriseNavigationEntry[]
   homeLabel: string
   settings?: { aiAccess: boolean }
+  /** Outstanding approvals reported by the enterprise document; absent when it does not report them. */
+  approvals?: { pending: number }
 }
+const MAX_PENDING_APPROVALS = 9999
 const modulePaths: Record<string, RegExp> = {
   knowledge: /^\/knowledge$/u,
   channel: /^\/channel$/u,
@@ -92,6 +119,17 @@ const modulePaths: Record<string, RegExp> = {
   square: /^\/square$/u
 }
 const moduleGrants: Record<string, string> = { knowledge: 'knowledge_space', channel: 'subscription', apps: 'apps', skills: 'home' }
+/** A reported approval backlog is advisory presentation data, never an authorization signal. */
+function parseEnterpriseApprovals(value: unknown): { pending: number } | undefined {
+  if (value === undefined) return undefined
+  if (!value || typeof value !== 'object') throw new Error('Invalid enterprise approvals summary.')
+  const pending = (value as Record<string, unknown>).pending
+  if (typeof pending !== 'number' || !Number.isInteger(pending) || pending < 0 || pending > MAX_PENDING_APPROVALS) {
+    throw new Error('Invalid enterprise approvals summary.')
+  }
+  return { pending }
+}
+
 /** Validate presentation metadata from the isolated enterprise document. */
 export function parseEnterpriseNavigation(value: unknown): EnterpriseNavigation {
   if (!value || typeof value !== 'object') throw new Error('Invalid enterprise navigation.')
@@ -113,5 +151,6 @@ export function parseEnterpriseNavigation(value: unknown): EnterpriseNavigation 
   if (settings !== undefined && (!settings || typeof settings !== 'object' || !('aiAccess' in settings) || typeof settings.aiAccess !== 'boolean')) {
     throw new Error('Invalid enterprise settings capabilities.')
   }
-  return { entries, homeLabel: typeof input.homeLabel === 'string' ? input.homeLabel.slice(0, 80) : '', ...(settings && typeof settings === 'object' && 'aiAccess' in settings ? { settings: { aiAccess: settings.aiAccess === true } } : {}) }
+  const approvals = parseEnterpriseApprovals(input.approvals)
+  return { ...(approvals ? { approvals } : {}), entries, homeLabel: typeof input.homeLabel === 'string' ? input.homeLabel.slice(0, 80) : '', ...(settings && typeof settings === 'object' && 'aiAccess' in settings ? { settings: { aiAccess: settings.aiAccess === true } } : {}) }
 }

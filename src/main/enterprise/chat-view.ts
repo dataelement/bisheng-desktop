@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { session, shell, WebContentsView, type BrowserWindow, type Session } from 'electron'
 import { parseEnterpriseNavigation, parseEnterpriseSettingsSection, parseChatPage, parseChatId, parseChatPresentation, type EnterpriseSettingsSection, type EnterpriseChatHistory, type EnterpriseChatPresentation, type EnterpriseChatViewState } from '../../shared/enterprise-chat-view'
 import type { EnterpriseDesktopRuntime } from './enterprise-desktop'
-import { MODULE_THEME_CSS, moduleThemeScript } from './chat-module-theme'
+import { MODULE_ROUTE_PATTERN, MODULE_THEME_CSS, moduleThemeScript } from './chat-module-theme'
 import { chatLocaleScript } from './chat-locale'
 
 /** Remote Chat gets its own in-memory browser session and a presentation-only preload. */
@@ -38,6 +38,7 @@ export class EnterpriseChatView {
   private settingsReady = false
   private settingsFailure?: 'load' | 'unsupported'
   private settingsTimer?: NodeJS.Timeout
+  private appearance?: string
 
   constructor(private enterprise: EnterpriseDesktopRuntime, private note: (line: string) => void) {
     this.unsubscribe = enterprise.subscribe((state) => {
@@ -200,7 +201,12 @@ export class EnterpriseChatView {
     const x = Math.max(0, Math.round(bounds.x * zoom))
     const y = Math.max(0, Math.round(bounds.y * zoom))
     this.view.setBounds({ x, y, width: Math.max(0, Math.min(width - x, Math.round(bounds.width * zoom))), height: Math.max(0, Math.min(height - y, Math.round(bounds.height * zoom))) })
-    this.view.setBackgroundColor(theme === 'dark' ? '#141416' : '#ffffff')
+    // Module routes paint the host surface, so the view backs them with the same color and shows no
+    // foreign flash; Chat routes keep their own deployed theme and its original backing.
+    const surface = new RegExp(MODULE_ROUTE_PATTERN, 'u').test(new URL(this.view.webContents.getURL() || 'about:blank').pathname)
+      ? this.presentation.palette?.surface
+      : undefined
+    this.view.setBackgroundColor(surface ? `#${surface.map((channel) => channel.toString(16).padStart(2, '0')).join('')}` : theme === 'dark' ? '#141416' : '#ffffff')
     if (this.state.phase === 'ready') this.applyTheme()
   }
 
@@ -208,7 +214,13 @@ export class EnterpriseChatView {
   private applyTheme(): void {
     const theme = this.presentation?.theme
     if (!this.view || !theme) return
-    void this.view.webContents.executeJavaScript(moduleThemeScript(theme)).catch(() => this.note('[enterprise-chat] appearance_delivery_failed'))
+    const palette = this.presentation?.palette
+    void this.view.webContents.executeJavaScript(moduleThemeScript(theme, palette)).then((result: unknown) => {
+      const summary = `theme=${theme} palette=${palette ? palette.surface.join(' ') : 'absent'} ${typeof result === 'string' ? result : 'unreported'}`
+      if (summary === this.appearance) return
+      this.appearance = summary
+      this.note(`[enterprise-chat] appearance ${summary}`)
+    }).catch(() => this.note('[enterprise-chat] appearance_delivery_failed'))
   }
 
   private entryURL(path: string, base: string): string {

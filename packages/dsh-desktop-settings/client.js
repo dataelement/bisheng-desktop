@@ -3,25 +3,26 @@ window.__ModuleLoader__.load({
   factory: (require) => {
     const React = require('react')
     const { createElement: h, useEffect, useRef, useState } = React
-    const { Menu, MenuItemButton, Modal, IconSettingsOutlineRegular, IconChecklistOutlineRegular, IconChevronDownOutlineRegular, IconCloseOutlineRegular } = require('@deepseek-ai/dsh-client-ui-primitives')
+    const { Menu, MenuItemButton, Modal, IconSettingsOutlineRegular, IconChecklistOutlineRegular, IconChecklistOutlineMedium, IconPaperPlaneOutlineMedium, IconAlarmClockOutlineMedium, IconGaugeOutlineMedium, IconApiOutlineMedium, IconInfoOutlineMedium, IconUserOutlineMedium, IconChevronDownOutlineRegular, IconCloseOutlineRegular } = require('@deepseek-ai/dsh-client-ui-primitives')
     const NS = 'desktop.settings'
     const COPY = {
       zh: {
-        accountMenu: '账号菜单', enterpriseAccount: '企业账号', signedOut: '未登录', identityLoading: '正在读取账号…', identityError: '暂时无法读取账号', settings: '设置', approvals: '审批', phone: '连接手机', logout: '退出登录', close: '关闭', loggingOut: '正在退出登录…',
-        openContent: '进入设置内容', usage: '用量与存储', about: '关于与帮助', messages: '消息与审批', tasks: '我的审批', requests: '我的申请', notifications: '通知', ai: 'AI 助手接入', loading: '正在加载企业设置…', error: '暂时无法加载企业设置，请检查连接后重试。', restart: '请完全退出并重新启动客户端，以启用统一设置。', unsupported: '平台暂不支持统一设置，请联系管理员更新平台。', retry: '重新连接', signIn: '登录企业账号后可查看', openAccount: '前往账号设置', desktopVersion: 'BISHENG 版本', harnessVersion: 'Harness 版本', infoError: '无法读取版本信息', update: '检查更新', logs: '查看日志', recovery: '安全模式与插件恢复', localHint: '本机设置仍可正常使用。', actionError: '操作未完成，请重试。',
+        accountMenu: '账号菜单', enterpriseAccount: '企业账号', signedOut: '未登录', deviceOnly: '本机模式', signInHint: '登录后可使用企业功能', identityLoading: '正在读取账号…', identityError: '暂时无法读取账号', settings: '设置', accountSettings: '账号设置', approvals: '消息', approvalsPending: '待处理审批', phone: '连接手机', login: '登录企业账号', logout: '退出登录', logoutBody: '退出后需要重新登录企业账号。本机设置、已安装插件和本地数据保留。', logoutFailed: '退出登录未完成，请重试。', cancel: '取消', again: '重试', close: '关闭', loggingOut: '正在退出登录…',
+        openContent: '进入设置内容', usage: '用量与存储', about: '关于与帮助', tasks: '我的审批', requests: '我的申请', notifications: '通知', ai: 'AI 助手接入', loading: '正在加载企业设置…', error: '暂时无法加载企业设置，请检查连接后重试。', restart: '请完全退出并重新启动客户端，以启用统一设置。', unsupported: '平台暂不支持统一设置，请联系管理员更新平台。', retry: '重新连接', signIn: '登录企业账号后可查看', openAccount: '前往账号设置', desktopVersion: 'BISHENG 版本', harnessVersion: 'Harness 版本', infoError: '无法读取版本信息', update: '检查更新', logs: '查看日志', recovery: '安全模式与插件恢复', localHint: '本机设置仍可正常使用。', actionError: '操作未完成，请重试。',
       },
       en: {
-        accountMenu: 'Account menu', enterpriseAccount: 'Enterprise account', signedOut: 'Not signed in', identityLoading: 'Loading account…', identityError: 'Account unavailable', settings: 'Settings', approvals: 'Approvals', phone: 'Connect phone', logout: 'Log out', close: 'Close', loggingOut: 'Logging out…',
-        openContent: 'Enter settings content', usage: 'Usage and storage', about: 'About and help', messages: 'Messages and approvals', tasks: 'My approvals', requests: 'My requests', notifications: 'Notifications', ai: 'AI assistant access', loading: 'Loading enterprise settings…', error: 'Enterprise settings could not load. Check the connection and try again.', restart: 'Quit and restart the desktop app to enable unified settings.', unsupported: 'This platform does not support unified settings yet. Ask your administrator to update it.', retry: 'Reconnect', signIn: 'Sign in to view enterprise settings', openAccount: 'Open account settings', desktopVersion: 'BISHENG version', harnessVersion: 'Harness version', infoError: 'Could not read version information', update: 'Check for updates', logs: 'Show logs', recovery: 'Safe Mode and plugin recovery', localHint: 'Device settings remain available.', actionError: 'The action did not complete. Try again.',
+        accountMenu: 'Account menu', enterpriseAccount: 'Enterprise account', signedOut: 'Not signed in', deviceOnly: 'Device only', signInHint: 'Sign in to use enterprise features', identityLoading: 'Loading account…', identityError: 'Account unavailable', settings: 'Settings', accountSettings: 'Account settings', approvals: 'Messages', approvalsPending: 'Pending approvals', phone: 'Connect phone', login: 'Sign in', logout: 'Log out', logoutBody: 'You will need to sign in again. Device settings, installed plugins and local data are kept.', logoutFailed: 'Logout did not complete. Try again.', cancel: 'Cancel', again: 'Retry', close: 'Close', loggingOut: 'Logging out…',
+        openContent: 'Enter settings content', usage: 'Usage and storage', about: 'About and help', tasks: 'My approvals', requests: 'My requests', notifications: 'Notifications', ai: 'AI assistant access', loading: 'Loading enterprise settings…', error: 'Enterprise settings could not load. Check the connection and try again.', restart: 'Quit and restart the desktop app to enable unified settings.', unsupported: 'This platform does not support unified settings yet. Ask your administrator to update it.', retry: 'Reconnect', signIn: 'Sign in to view enterprise settings', openAccount: 'Open account settings', desktopVersion: 'BISHENG version', harnessVersion: 'Harness version', infoError: 'Could not read version information', update: 'Check for updates', logs: 'Show logs', recovery: 'Safe Mode and plugin recovery', localHint: 'Device settings remain available.', actionError: 'The action did not complete. Try again.',
       }
     }
     const openAccount = () => window.dispatchEvent(new CustomEvent('dsh-desktop:open-settings-section', { detail: { id: 'enterprise-account' } }))
 
-    function navigateTabs(event, ids, active, select, refs) {
-      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) || !ids.length) return
+    /** The approvals rail is a vertical list, so it answers the up/down keys the settings nav uses. */
+    function navigateSections(event, ids, active, select, refs) {
+      if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key) || !ids.length) return
       event.preventDefault()
       const index = Math.max(0, ids.indexOf(active))
-      const next = ids[event.key === 'Home' ? 0 : event.key === 'End' ? ids.length - 1 : (index + (event.key === 'ArrowLeft' ? -1 : 1) + ids.length) % ids.length]
+      const next = ids[event.key === 'Home' ? 0 : event.key === 'End' ? ids.length - 1 : (index + (event.key === 'ArrowUp' ? -1 : 1) + ids.length) % ids.length]
       select(next); refs.current[next]?.focus()
     }
 
@@ -69,7 +70,7 @@ window.__ModuleLoader__.load({
           if (event.detail?.section !== section) return
           const approvals = target.current?.closest('[data-dsh-approvals]')
           if (approvals) {
-            approvals.querySelector(event.detail.direction === 'previous' ? '[role=tab][aria-selected=true]' : '[data-dsh-approvals-close]')?.focus()
+            approvals.querySelector(event.detail.direction === 'previous' ? '[data-dsh-approvals-nav] [aria-current=true]' : '[data-dsh-approvals-close]')?.focus()
           } else {
             document.querySelector(event.detail.direction === 'previous' ? '[data-dsh-settings-section] [aria-current="true"]' : '[data-dsh-settings-close]')?.focus()
           }
@@ -92,14 +93,30 @@ window.__ModuleLoader__.load({
 
     function Usage({ t }) { return h('section', { className: 'dshSettingsSection' }, h('h2', null, t('usage')), h(RemoteSettings, { section: 'desktop-usage', t })) }
     function AiAccess({ t }) { return h('section', { className: 'dshSettingsSection' }, h('h2', null, t('ai')), h(RemoteSettings, { section: 'ai-access', t })) }
-    function ApprovalsContent({ t }) {
-      const tabsId = React.useId()
+    const APPROVAL_SECTIONS = [['my-tasks', 'tasks'], ['my-requests', 'requests'], ['notifications', 'notifications']]
+
+    /** Rail glyphs follow the native settings nav: one 16px outline icon per section. */
+    function approvalsIcon(id) {
+      if (id === 'my-requests') return h(IconPaperPlaneOutlineMedium, { className: 'dshApprovalsNavIcon', size: 16 })
+      if (id === 'notifications') return h(IconAlarmClockOutlineMedium, { className: 'dshApprovalsNavIcon', size: 16 })
+      return h(IconChecklistOutlineMedium, { className: 'dshApprovalsNavIcon', size: 16 })
+    }
+
+    /** Same two-column frame as the native settings panel: a section rail beside one owned content column. */
+    function ApprovalsPanel({ onClose, t }) {
+      const titleId = React.useId()
       const refs = useRef({})
       const [section, setSection] = useState('my-tasks')
-      return h('section', { className: 'dshSettingsSection dshApprovalsBody' },
-        h('div', { className: 'dshSettingsTabs', role: 'tablist', 'aria-label': t('messages'), onKeyDown: event => navigateTabs(event, ['my-tasks', 'my-requests', 'notifications'], section, setSection, refs) },
-          ...[['my-tasks', 'tasks'], ['my-requests', 'requests'], ['notifications', 'notifications']].map(([id, key]) => h('button', { key: id, id: `${tabsId}-${id}`, ref: node => { refs.current[id] = node }, type: 'button', role: 'tab', 'aria-selected': section === id, tabIndex: section === id ? 0 : -1, 'aria-controls': `${tabsId}-panel`, 'data-modal-autofocus': id === 'my-tasks' ? '' : undefined, onClick: () => setSection(id) }, t(key)))),
-        h('div', { role: 'tabpanel', id: `${tabsId}-panel`, 'aria-labelledby': `${tabsId}-${section}` }, h(RemoteSettings, { key: section, section, t })))
+      return h('div', { 'data-dsh-approvals': '', className: 'dshApprovalsPanel' },
+        h('nav', { 'data-dsh-approvals-nav': '', className: 'dshApprovalsNav', 'aria-labelledby': titleId },
+          h('div', { className: 'dshApprovalsNavTitle', id: titleId }, t('approvals')),
+          h('div', { className: 'dshApprovalsNavList', onKeyDown: event => navigateSections(event, APPROVAL_SECTIONS.map(([id]) => id), section, setSection, refs) },
+            ...APPROVAL_SECTIONS.map(([id, key]) => h('button', { key: id, ref: node => { refs.current[id] = node }, type: 'button', className: 'dshApprovalsNavCell', 'aria-current': section === id ? 'true' : undefined, 'data-modal-autofocus': section === id ? '' : undefined, onClick: () => setSection(id) },
+              approvalsIcon(id), h('span', { className: 'dshApprovalsNavLabel' }, t(key)))))),
+        h('div', { className: 'dshApprovalsContent' },
+          h('div', { className: 'dshApprovalsHeader' },
+            h('button', { type: 'button', className: 'dshApprovalsClose', 'data-dsh-approvals-close': '', 'aria-label': t('close'), onClick: onClose }, h(IconCloseOutlineRegular, { size: 14 }))),
+          h('div', { 'data-dsh-approvals-content': '', className: 'dshApprovalsOptions' }, h(RemoteSettings, { key: section, section, t }))))
     }
     function About({ t }) {
       const [info, setInfo] = useState()
@@ -189,67 +206,135 @@ window.__ModuleLoader__.load({
         return () => window.dispatchEvent(new CustomEvent('dsh-desktop:approvals-visibility', { detail: { open: false } }))
       }, [open])
       return h(Modal, { open, onClose, title: t('approvals'), headless: true, className: 'dshApprovalsDialog' },
-        h('div', { 'data-dsh-approvals': '', className: 'dshApprovalsPanel' },
-          h('header', { className: 'dshApprovalsHeader' }, h('h2', null, t('approvals')),
-            h('button', { type: 'button', 'data-dsh-approvals-close': '', 'aria-label': t('close'), onClick: onClose }, h(IconCloseOutlineRegular))),
-          h('div', { 'data-dsh-approvals-content': '', className: 'dshApprovalsContent' }, open && h(ApprovalsContent, { t }))))
+        open && h(ApprovalsPanel, { onClose, t }))
     }
 
     function AccountAvatar({ name }) {
       return h('span', { className: 'dshAccountAvatar', 'aria-hidden': 'true' }, name ? Array.from(name).slice(0, 2).join('').toLocaleUpperCase() : h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5 }, h('circle', { cx: 12, cy: 8, r: 4 }), h('path', { d: 'M4 22v-2a8 8 0 0 1 16 0v2' })))
     }
 
-    function AccountMenuIcon({ phone }) {
-      return h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, 'aria-hidden': 'true' },
-        phone ? h('rect', { x: 6, y: 2, width: 12, height: 20, rx: 2 }) : h('path', { d: 'M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M13 7l5 5-5 5M8 12h13' }),
-        phone && h('path', { d: 'M10 5h4M11 19h2' }))
+    function AccountMenuIcon({ kind }) {
+      const frame = { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, 'aria-hidden': 'true' }
+      if (kind === 'phone') return h('svg', frame, h('rect', { x: 6, y: 2, width: 12, height: 20, rx: 2 }), h('path', { d: 'M10 5h4M11 19h2' }))
+      if (kind === 'account') return h('svg', frame, h('circle', { cx: 12, cy: 8, r: 3.5 }), h('path', { d: 'M5 21a7 7 0 0 1 14 0' }))
+      // Sign in points into the panel; sign out points away from it.
+      return h('svg', frame, h('path', { d: kind === 'login' ? 'M15 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M10 8l4 4-4 4M3 12h11' : 'M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M13 7l5 5-5 5M8 12h13' }))
+    }
+
+    function AccountBadge({ count }) {
+      return h('span', { className: 'dshAccountBadge' }, count > 99 ? '99+' : String(count))
+    }
+
+    /** Outstanding approvals are advisory presentation data reported by the enterprise document. */
+    function useApprovalsPending() {
+      const [pending, setPending] = useState(0)
+      useEffect(() => {
+        const bridge = window.dshEnterpriseChat
+        if (!bridge) return undefined
+        let disposed = false
+        const read = next => {
+          if (disposed) return
+          const value = next?.connected ? next.navigation?.approvals?.pending : 0
+          setPending(Number.isInteger(value) && value > 0 ? value : 0)
+        }
+        const unsubscribe = bridge.subscribe(read)
+        void bridge.state().then(read).catch(() => { /* The badge stays hidden until the host reports again. */ })
+        return () => { disposed = true; unsubscribe() }
+      }, [])
+      return pending
+    }
+
+    /** Signing out is destructive, so it is confirmed outside the menu and keeps its own retry. */
+    function LogoutDialog({ open, busy, failed, onCancel, onConfirm, t }) {
+      useEffect(() => {
+        if (!open) return undefined
+        const publish = value => window.dispatchEvent(new CustomEvent('dsh-desktop:account-dialog-visibility', { detail: { open: value } }))
+        publish(true)
+        return () => publish(false)
+      }, [open])
+      return h(Modal, {
+        open, title: t('logout'), closeLabel: t('close'), description: t('logoutBody'), className: 'dshAccountDialog',
+        onClose: () => { if (!busy) onCancel() },
+        footer: h('div', { className: 'dshAccountDialogActions' },
+          h('button', { type: 'button', 'data-modal-autofocus': '', disabled: busy, onClick: onCancel }, t('cancel')),
+          h('button', { type: 'button', className: 'dshAccountDialogDanger', 'data-dsh-logout-confirm': '', disabled: busy, onClick: onConfirm }, t(busy ? 'loggingOut' : 'logout')))
+      }, failed && h('p', { className: 'dshAccountDialogError', role: 'alert' }, t('logoutFailed')))
     }
 
     function AccountLauncher({ wide, settingsOpen, openSettings, settingsShortcut, t }) {
       const identity = useAccountIdentity()
+      const pending = useApprovalsPending()
       const [menuOpen, setMenuOpen] = useState(false)
       const [approvalsOpen, setApprovalsOpen] = useState(false)
+      const [logoutOpen, setLogoutOpen] = useState(false)
+      const [logoutFailed, setLogoutFailed] = useState(false)
       const [actionBusy, setActionBusy] = useState(false)
       const [actionError, setActionError] = useState(false)
       const alive = useRef(true)
       const trigger = useRef(null)
       const closeApprovals = React.useCallback(() => { setApprovalsOpen(false); trigger.current?.focus() }, [])
+      const closeLogout = React.useCallback(() => { setLogoutOpen(false); setLogoutFailed(false); trigger.current?.focus() }, [])
       useEffect(() => {
         alive.current = true
-        const close = () => closeApprovals()
+        const close = () => { closeApprovals(); closeLogout() }
         window.addEventListener('dsh-desktop:close-settings', close)
         return () => { alive.current = false; window.removeEventListener('dsh-desktop:close-settings', close) }
-      }, [closeApprovals])
-      useEffect(() => { if (settingsOpen) { setMenuOpen(false); setApprovalsOpen(false) } }, [settingsOpen])
+      }, [closeApprovals, closeLogout])
+      useEffect(() => { if (settingsOpen) { setMenuOpen(false); setApprovalsOpen(false); setLogoutOpen(false); setLogoutFailed(false) } }, [settingsOpen])
       useEffect(() => {
-        if (identity.account?.connected === false) setApprovalsOpen(false)
+        if (identity.account?.connected === false) { setApprovalsOpen(false); setLogoutOpen(false) }
       }, [identity.account?.connected])
       const name = [identity.account?.user?.display_name, identity.account?.user?.username, identity.account?.user?.id].find(value => typeof value === 'string' && value.trim())
       const label = name || t(identity.account ? 'signedOut' : identity.error ? 'identityError' : 'identityLoading')
       const connected = identity.account?.connected === true
       const busy = actionBusy || identity.busy
-      const run = async operation => {
+      // A failed read and a failed action share one retry row; the action takes precedence.
+      const failure = actionError ? 'actionError' : identity.error ? 'identityError' : undefined
+      const pairPhone = async () => {
         if (busy) return
         setActionBusy(true); setActionError(false)
         try {
-          if (operation === 'logout') await identity.logout()
-          else await window.dshDesktop.openPhonePairing()
+          await window.dshDesktop.openPhonePairing()
           if (alive.current) { setMenuOpen(false); setApprovalsOpen(false) }
         } catch { if (alive.current) { setActionError(true); setMenuOpen(true) } }
         finally { if (alive.current) setActionBusy(false) }
       }
+      const openAccountSettings = () => { setMenuOpen(false); openSettings(); openAccount() }
+      const confirmLogout = async () => {
+        if (busy) return
+        setActionBusy(true); setLogoutFailed(false)
+        try {
+          await identity.logout()
+          if (alive.current) { setLogoutOpen(false); setApprovalsOpen(false); trigger.current?.focus() }
+        } catch { if (alive.current) setLogoutFailed(true) }
+        finally { if (alive.current) setActionBusy(false) }
+      }
+      const badge = pending > 0 ? h(AccountBadge, { count: pending }) : null
+      const triggerLabel = `${t('accountMenu')}: ${label}${pending > 0 ? ` · ${t('approvalsPending')} ${pending}` : ''}`
       // The sidebar menu does not cover the native Chat view or own its presentation.
       return h('div', { className: 'dshAccountLauncher', 'data-dsh-account-launcher': '' },
         h(Menu, { open: menuOpen, onClose: () => { if (!busy) setMenuOpen(false) }, side: 'top', align: 'start', portal: true, autoFocus: true, className: 'dshAccountMenuAnchor', listClassName: 'dshAccountMenu',
-          anchor: h('button', { ref: trigger, type: 'button', className: `dshAccountTrigger${wide ? '' : ' dshAccountTriggerRail'}`, 'aria-label': `${t('accountMenu')}: ${label}`, title: wide ? undefined : label, 'aria-haspopup': 'menu', 'aria-expanded': menuOpen, disabled: settingsOpen || busy, onClick: () => { setMenuOpen(previous => !previous); setActionError(false); void identity.refresh() } },
-            h(AccountAvatar, { name }), wide && h('span', { className: 'dshAccountTriggerCopy' }, h('span', null, label), h('small', null, t(connected ? 'enterpriseAccount' : 'signedOut'))), wide && h(IconChevronDownOutlineRegular)) },
-          h('div', { className: 'dshAccountMenuIdentity' }, h(AccountAvatar, { name }), h('div', null, h('strong', null, label), connected && h('small', null, t('enterpriseAccount')))),
+          anchor: h('button', { ref: trigger, type: 'button', className: `dshAccountTrigger${wide ? '' : ' dshAccountTriggerRail'}`, 'aria-label': triggerLabel, title: wide ? undefined : label, 'aria-haspopup': 'menu', 'aria-expanded': menuOpen, disabled: settingsOpen || busy, onClick: () => { setMenuOpen(previous => !previous); setActionError(false); void identity.refresh() } },
+            h('span', { className: 'dshAccountAvatarWrap' }, h(AccountAvatar, { name }), badge),
+            wide && h('span', { className: 'dshAccountTriggerCopy' }, h('span', null, label), h('small', null, t(connected ? 'enterpriseAccount' : 'deviceOnly'))), wide && h(IconChevronDownOutlineRegular)) },
+          h('div', { className: 'dshAccountMenuIdentity' }, h(AccountAvatar, { name }), h('div', null, h('strong', null, label), h('small', null, t(connected ? 'enterpriseAccount' : 'signInHint')))),
           h(MenuItemButton, { icon: h(IconSettingsOutlineRegular), shortcut: settingsShortcut, disabled: busy, onSelect: () => { setMenuOpen(false); openSettings() } }, t('settings')),
-          h(MenuItemButton, { icon: h(IconChecklistOutlineRegular), disabled: busy || !connected, onSelect: () => { setMenuOpen(false); setApprovalsOpen(true) } }, t('approvals')),
-          h(MenuItemButton, { icon: h(AccountMenuIcon, { phone: true }), disabled: busy, onSelect: () => { void run('phone') } }, t('phone')),
-          h(MenuItemButton, { icon: h(AccountMenuIcon, { phone: false }), separatorBefore: true, danger: true, disabled: busy || !connected, onSelect: () => { void run('logout') } }, t(identity.busy ? 'loggingOut' : 'logout')),
-          (actionError || identity.error) && h('p', { className: 'dshAccountMenuError', role: 'alert' }, t(actionError ? 'actionError' : 'identityError'))),
-        h(ApprovalsDialog, { open: approvalsOpen, onClose: closeApprovals, t }))
+          connected && h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'account' }), disabled: busy, onSelect: openAccountSettings }, t('accountSettings')),
+          h(MenuItemButton, { icon: h(IconChecklistOutlineRegular), disabled: busy || !connected, onSelect: () => { setMenuOpen(false); setApprovalsOpen(true) } },
+            h('span', { className: 'dshAccountMenuRow' }, t('approvals'), badge)),
+          h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'phone' }), disabled: busy, onSelect: () => { void pairPhone() } }, t('phone')),
+          connected
+            ? h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'logout' }), separatorBefore: true, danger: true, disabled: busy, onSelect: () => { setMenuOpen(false); setLogoutFailed(false); setLogoutOpen(true) } }, t('logout'))
+            : h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'login' }), separatorBefore: true, disabled: busy, onSelect: openAccountSettings }, t('login')),
+          failure && h('p', { className: 'dshAccountMenuError', role: 'alert' }, t(failure)),
+          failure && h(MenuItemButton, { disabled: busy, onSelect: () => { if (actionError) { void pairPhone(); return } setActionError(false); void identity.refresh() } }, t('again'))),
+        h(ApprovalsDialog, { open: approvalsOpen, onClose: closeApprovals, t }),
+        h(LogoutDialog, { open: logoutOpen, busy, failed: logoutFailed, onCancel: closeLogout, onConfirm: () => { void confirmLogout() }, t }))
+    }
+
+    const NAV_GLYPHS = { 'enterprise-account': IconUserOutlineMedium, 'desktop-usage': IconGaugeOutlineMedium, 'desktop-ai-access': IconApiOutlineMedium, 'desktop-about': IconInfoOutlineMedium }
+    function SettingsNavigation({ rows, renderEntry }) {
+      return rows.map(row => renderEntry(row, NAV_GLYPHS[row.id] ? { icon: NAV_GLYPHS[row.id] } : undefined))
     }
 
     function apply(ctx) {
@@ -265,11 +350,18 @@ window.__ModuleLoader__.load({
           .dshSettingsSection button:hover,.dshSettingsStatus button:hover{background:var(--dsw-alias-interactive-bg-hover)}.dshSettingsSection button[aria-selected=true]{background:var(--dsw-alias-interactive-bg-hover);font-weight:600}.dshSettingsSection button:disabled{opacity:.5;cursor:default}
           .dshSettingsVersions{display:grid;grid-template-columns:1fr auto;gap:20px;padding:20px 0;border-bottom:1px solid var(--dsw-alias-border-l2);font-size:14px}.dshSettingsVersions dd{margin:0;color:var(--dsw-alias-label-secondary)}.dshSettingsButtons{display:flex;gap:12px;padding:20px 0;flex-wrap:wrap}
           .dshAccountLauncher,.dshAccountMenuAnchor{display:block;width:100%;min-width:0}.dshAccountTrigger{display:flex;align-items:center;gap:10px;width:100%;min-width:0;height:48px;box-sizing:border-box;padding:6px 10px;border:0;border-radius:var(--dsw-radius-md);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;text-align:left;cursor:pointer}.dshAccountTrigger:hover,.dshAccountTrigger[aria-expanded=true]{background:var(--dsw-alias-interactive-bg-hover)}.dshAccountTrigger:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}.dshAccountTrigger:disabled{cursor:default}.dshAccountTriggerRail{width:36px;height:36px;padding:4px;margin:auto;justify-content:center}.dshAccountTrigger>svg{flex:none;color:var(--dsw-alias-label-tertiary)}
-          .dshAccountAvatar{display:flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;border-radius:50%;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-size:11px;font-weight:600}.dshAccountTriggerCopy{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;font-size:13px}.dshAccountTriggerCopy>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dshAccountTriggerCopy small,.dshAccountMenuIdentity small{color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:400}
+          .dshAccountAvatar{display:flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;border-radius:50%;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-size:11px;font-weight:600}.dshAccountAvatarWrap{position:relative;display:flex;flex:none}.dshAccountBadge{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--dsw-alias-state-error-primary);color:#fff;font-size:10px;font-weight:600;line-height:1}.dshAccountAvatarWrap>.dshAccountBadge{position:absolute;top:-4px;right:-6px}.dshAccountMenuRow{display:flex;align-items:center;gap:8px;min-width:0}.dshAccountTriggerCopy{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;font-size:13px}.dshAccountTriggerCopy>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dshAccountTriggerCopy small,.dshAccountMenuIdentity small{color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:400}
           .dshAccountMenu{min-width:248px;max-width:min(320px,calc(100vw - 24px))}.dshAccountMenuIdentity{display:flex;align-items:center;gap:12px;padding:10px 10px 14px;margin-bottom:4px;border-bottom:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary)}.dshAccountMenuIdentity>div{display:flex;flex-direction:column;gap:4px;min-width:0}.dshAccountMenuIdentity strong{font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dshAccountMenuError{font-size:12px;line-height:1.5;padding:4px 10px;color:var(--dsw-alias-label-secondary)}
-          .dshApprovalsDialog{width:min(1120px,100%);max-height:100%;padding:0;gap:0}.dshApprovalsPanel{display:flex;flex-direction:column;min-height:0}.dshApprovalsHeader{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:24px 24px 12px}.dshApprovalsHeader h2{font-size:18px;font-weight:600;margin:0;color:var(--dsw-alias-label-primary)}.dshApprovalsHeader button{display:grid;place-items:center;width:28px;height:28px;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}.dshApprovalsHeader button:hover{background:var(--dsw-alias-interactive-bg-hover)}.dshApprovalsContent{padding:0 24px 24px;overflow:auto;min-height:0}.dshApprovalsBody .dshSettingsRemote{height:clamp(240px,calc(100vh - 240px),600px)}
+          .dshAccountDialog{width:min(420px,100%)}.dshAccountDialogActions{display:flex;justify-content:flex-end;gap:8px}.dshAccountDialogActions button{font:inherit;color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);border-radius:var(--dsw-radius-md);padding:7px 14px;cursor:pointer}.dshAccountDialogActions button:hover{background:var(--dsw-alias-interactive-bg-hover)}.dshAccountDialogActions button:disabled{opacity:.5;cursor:default}.dshAccountDialogActions .dshAccountDialogDanger{border-color:transparent;background:var(--dsw-alias-state-error-primary);color:#fff}.dshAccountDialogActions .dshAccountDialogDanger:hover{background:var(--dsw-alias-state-error-primary);opacity:.9}.dshAccountDialogError{margin:0;font-size:13px;line-height:1.5;color:var(--dsw-alias-state-error-primary)}
+          /* 1080 = 188 导航 + 48 内边距 + 844 嵌入视口。网页的审批列表/详情双栏挂在 Tailwind md(768px) 视口断点上，
+             嵌入区窄于 768px 会退回单栏，所以弹窗宽度要留出这条余量；窗口放不下时仍按 100% 收缩并回到单栏。 */
+          .dshApprovalsDialog{width:min(1080px,100%);height:min(800px,100%);max-height:100%;padding:0;gap:0}.dshApprovalsPanel{display:flex;flex:1;min-height:0;min-width:0}
+          .dshApprovalsNav{box-sizing:border-box;display:flex;flex-direction:column;flex:none;gap:18px;width:188px;min-height:0;padding:22px 12px;overflow-y:auto}.dshApprovalsNavTitle{padding:0 12px;color:var(--dsw-alias-label-primary);font-size:16px;font-weight:500;line-height:24px}.dshApprovalsNavList{display:flex;flex-direction:column;gap:4px;overflow-y:auto}
+          .dshApprovalsNavCell{box-sizing:border-box;display:flex;align-items:center;gap:8px;height:40px;padding:9px 16px 9px 12px;border:0;border-radius:var(--dsw-radius-md);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:14px;font-weight:400;line-height:22px;text-align:left;cursor:pointer}.dshApprovalsNavCell:hover{background:var(--dsw-specific-sidebar-nav-item-hover)}.dshApprovalsNavCell[aria-current=true]{background:var(--dsw-specific-sidebar-nav-item-active)}.dshApprovalsNavIcon{flex:none}.dshApprovalsNavLabel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+          .dshApprovalsContent{display:flex;flex-direction:column;flex:1;min-width:0}.dshApprovalsHeader{box-sizing:border-box;display:flex;flex:none;align-items:flex-start;justify-content:flex-end;gap:8px;height:54px;padding:20px 14px 8px 10px}.dshApprovalsClose{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);cursor:pointer}.dshApprovalsClose:hover{background:var(--dsw-alias-interactive-bg-hover)}
+          .dshApprovalsOptions{display:flex;flex-direction:column;flex:1;min-height:0;padding:0 24px 24px}.dshApprovalsOptions .dshSettingsRemote{flex:1;min-height:0;height:auto}
 
-          @media(max-width:640px){.dshSettingsRemote{height:max(300px,calc(100vh - 280px))}}
+          @media(max-width:640px){.dshSettingsRemote{height:max(300px,calc(100vh - 280px))}.dshApprovalsNav{width:152px;gap:14px;padding:18px 8px}.dshApprovalsOptions{padding:0 16px 16px}}
         `
         document.head.appendChild(style)
         return () => style.remove()
@@ -290,8 +382,10 @@ window.__ModuleLoader__.load({
         void window.dshEnterpriseChat?.state().then(state => { if (!disposed && request === revision) sync(state) }).catch(() => { /* Unavailable capability stays hidden until the next host state. */ })
         return () => { disposed = true; unsubscribe?.(); disposeEntry?.() }
       }, 'desktop-settings: account capabilities')
-      register('desktop.settings.account', 'desktop-account-details', props => h(RemoteSettings, { section: 'account', t: props.t }))
       register('settings.launcher', 'desktop-account-menu', AccountLauncher)
+      // The shell only has glyphs for its native sections and falls back to the gear; the Bisheng
+      // sections get theirs here, through the shell's own row so selection and focus stay native.
+      ctx.slots.inject('settings.navigation', () => ctx.slots.register({ name: 'settings.navigation', id: 'desktop-nav-glyphs', inject: () => ({ t }) }, SettingsNavigation))
     }
     return { apply, inject: ['slots', 'locale'] }
   }

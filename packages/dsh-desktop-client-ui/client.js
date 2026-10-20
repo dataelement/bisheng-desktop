@@ -243,9 +243,64 @@ window.__ModuleLoader__.load({
       zh: { welcome: '欢迎来到', newConversation: '新建对话', navigation: '导航', moreNavigation: '更多', recent: '对话', projects: '项目', all: '所有会话', results: '搜索结果', cloud: '云端聊天', local: '本地工作', recentEmpty: '暂无最近会话', recentSearchEmpty: '当前列表没有匹配的会话', chat: '聊天', work: '工作', label: '聊天与工作', loading: '正在连接企业聊天…', error: '企业聊天连接失败，请重试', retry: '重新连接', refresh: '刷新聊天记录', historyLoading: '正在加载聊天记录…', historyError: '加载失败，点击重试', empty: '暂无聊天记录', more: '加载更多', newChat: '新聊天', signIn: '登录企业账号', justNow: '刚刚' },
       en: { welcome: 'Welcome', newConversation: 'New conversation', navigation: 'Navigation', moreNavigation: 'More', recent: 'Conversations', projects: 'Projects', all: 'All conversations', results: 'Search results', cloud: 'Cloud chat', local: 'Local work', recentEmpty: 'No recent conversations', recentSearchEmpty: 'No matches in the current list', chat: 'Chat', work: 'Work', label: 'Chat and Work', loading: 'Connecting to enterprise Chat…', error: 'Could not connect to enterprise Chat. Try again.', retry: 'Reconnect', refresh: 'Refresh Chat history', historyLoading: 'Loading history…', historyError: 'Loading failed. Retry', empty: 'No chats yet', more: 'Load more', newChat: 'New chat', signIn: 'Enterprise account', justNow: 'Now' }
     }
+    /**
+     * Host tokens the embedded enterprise document reuses. It cannot read the host's CSS, so the
+     * presenter resolves them here and sends plain channels with the presentation.
+     */
+    const PALETTE_TOKENS = {
+      surface: '--dsw-alias-bg-layer-2', raised: '--dsw-alias-bg-layer-3', strong: '--dsw-alias-bg-overlay',
+      labelPrimary: '--dsw-alias-label-primary', labelSecondary: '--dsw-alias-label-secondary', labelTertiary: '--dsw-alias-label-tertiary',
+      borderBase: '--dsw-alias-border-l2', borderDeep: '--dsw-alias-border-l3'
+    }
+    // A token that does not resolve leaves the fallback behind, which is how a missing one is told
+    // apart from a real color; the probe never renders, so the sentinel is never seen.
+    const PALETTE_FALLBACK = [1, 2, 3]
+
+    function samplePalette() {
+      if (!document.body) return undefined
+      const probe = document.createElement('span')
+      probe.setAttribute('aria-hidden', 'true')
+      probe.style.cssText = 'position:fixed;left:-9999px;top:0;width:0;height:0;pointer-events:none'
+      document.body.appendChild(probe)
+      try {
+        const read = (token) => {
+          probe.style.color = `var(${token}, rgb(1, 2, 3))`
+          const channels = (getComputedStyle(probe).color.match(/[\d.]+/g) || []).map(Number)
+          if (channels.length < 3 || PALETTE_FALLBACK.every((channel, index) => channel === channels[index])) return undefined
+          return channels
+        }
+        const surface = read(PALETTE_TOKENS.surface)
+        if (!surface) return undefined
+        const palette = {}
+        for (const [role, token] of Object.entries(PALETTE_TOKENS)) {
+          const channels = read(token)
+          if (!channels) return undefined
+          // Translucent host tokens (borders, hover fills) are flattened over the surface they sit on.
+          const alpha = channels.length > 3 ? channels[3] : 1
+          palette[role] = channels.slice(0, 3).map((channel, index) => Math.max(0, Math.min(255, Math.round(surface[index] + (channel - surface[index]) * alpha))))
+        }
+        return palette
+      } catch { return undefined } finally { probe.remove() }
+    }
+
+    let sampledPalette
+    /**
+     * The palette only moves with the theme, so a successful probe is kept per theme rather than run
+     * per frame; a probe that found no tokens yet (theme styles still loading) is tried again next time.
+     */
+    function hostPalette() {
+      const theme = document.body?.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light'
+      if (sampledPalette?.theme !== theme) {
+        const value = samplePalette()
+        sampledPalette = value ? { theme, value } : undefined
+        return value
+      }
+      return sampledPalette.value
+    }
+
     /** One renderer-owned mode/history controller shared by the content and sidebar slots. */
     function createChatNavigation(ctx) {
-      let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, approvalsOpen: false, settingsSurface: undefined, pageId: undefined, navigation: undefined, workLanding: false, panelOpen: false, activePanelId: null }
+      let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, approvalsOpen: false, accountDialogOpen: false, settingsSurface: undefined, pageId: undefined, navigation: undefined, workLanding: false, panelOpen: false, activePanelId: null }
       const listeners = new Set()
       let active = false, revision = 0, historyRequest = 0, timer, lastHistory = 0
       const publish = (patch) => { value = { ...value, ...patch }; listeners.forEach(fn => fn()) }
@@ -326,6 +381,8 @@ window.__ModuleLoader__.load({
           })
           const settings = (event) => publish({ settingsOpen: event.detail?.open === true, ...(event.detail?.open ? {} : { settingsSurface: undefined }) })
           const approvals = (event) => publish({ approvalsOpen: event.detail?.open === true })
+          // A sidebar account dialog is drawn by the renderer, so the native view yields the region.
+          const accountDialog = (event) => publish({ accountDialogOpen: event.detail?.open === true })
           const settingsSurface = (event) => {
             const detail = event.detail
             if (detail?.close) { if (value.settingsSurface?.token === detail.token) publish({ settingsSurface: undefined }); return }
@@ -360,6 +417,7 @@ window.__ModuleLoader__.load({
           window.addEventListener('dsh-desktop:enterprise-account-changed', account)
           window.addEventListener('dsh-desktop:settings-visibility', settings)
           window.addEventListener('dsh-desktop:approvals-visibility', approvals)
+          window.addEventListener('dsh-desktop:account-dialog-visibility', accountDialog)
           window.addEventListener('dsh-desktop:settings-surface', settingsSurface)
           window.addEventListener('focus', sync)
           void poll()
@@ -369,6 +427,7 @@ window.__ModuleLoader__.load({
             disposeNavigation()
             window.removeEventListener('dsh-desktop:settings-visibility', settings)
             window.removeEventListener('dsh-desktop:approvals-visibility', approvals)
+            window.removeEventListener('dsh-desktop:account-dialog-visibility', accountDialog)
             window.removeEventListener('dsh-desktop:settings-surface', settingsSurface)
             window.removeEventListener('focus', sync)
           }
@@ -446,9 +505,10 @@ window.__ModuleLoader__.load({
           if (!rect) return
           const sidebarRight = document.querySelector('[data-dsh-sidebar-root]')?.getBoundingClientRect().right || 0
           const x = Math.max(rect.x, sidebarRight)
-          const surfaceOpen = settingsOpen || state.approvalsOpen
+          const surfaceOpen = settingsOpen || state.approvalsOpen || state.accountDialogOpen
           const remote = surfaceOpen && state.settingsProtocolVersion === 1 && settingsSurface
-          void bridge.present({ visible: (remote ? state.connected && remote.bounds.width > 0 && remote.bounds.height > 0 : mode === 'chat' && !surfaceOpen), ...(remote ? { settings: remote.section } : {}), bounds: remote ? remote.bounds : { x, y: rect.y, width: Math.max(0, rect.right - x), height: rect.height }, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light', locale: locale.getSnapshot().active === 'zh' ? 'zh' : 'en' }).catch(() => {})
+          const palette = hostPalette()
+          void bridge.present({ visible: (remote ? state.connected && remote.bounds.width > 0 && remote.bounds.height > 0 : mode === 'chat' && !surfaceOpen), ...(remote ? { settings: remote.section } : {}), ...(palette ? { palette } : {}), bounds: remote ? remote.bounds : { x, y: rect.y, width: Math.max(0, rect.right - x), height: rect.height }, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light', locale: locale.getSnapshot().active === 'zh' ? 'zh' : 'en' }).catch(() => {})
         }
         const resize = new ResizeObserver(present)
         if (panel.current) resize.observe(panel.current)
@@ -462,7 +522,7 @@ window.__ModuleLoader__.load({
         return () => {
           resize.disconnect(); theme.disconnect(); unsubscribeLocale(); window.removeEventListener('resize', present)
         }
-      }, [mode, settingsOpen, state.approvalsOpen, settingsSurface, state.connected, state.settingsProtocolVersion, locale])
+      }, [mode, settingsOpen, state.approvalsOpen, state.accountDialogOpen, settingsSurface, state.connected, state.settingsProtocolVersion, locale])
       React.useEffect(() => () => {
         void window.dshEnterpriseChat?.present({ visible: false, bounds: { x: 0, y: 48, width: 0, height: 0 }, theme: 'light' }).catch(() => {})
       }, [])

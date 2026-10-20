@@ -234,6 +234,58 @@ it('opens only account-published module entries and clears them with the identit
   } finally { f.host.dispose() }
 })
 
+it('publishes a reported approval backlog and rejects a malformed one without dropping the identity', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0].webContents
+    const entries = [{ id: 'knowledge', label: 'Knowledge', path: '/knowledge', primary: true, active: false }]
+    view.emit('ipc-message', { senderFrame: view.mainFrame }, 'enterprise-chat:navigation', { path: '/workspace/', navigation: { entries } })
+    expect(f.host.snapshot().navigation?.approvals).toBeUndefined()
+    view.emit('ipc-message', { senderFrame: view.mainFrame }, 'enterprise-chat:navigation', { path: '/workspace/', navigation: { entries, approvals: { pending: 7 } } })
+    expect(f.host.snapshot().navigation?.approvals).toEqual({ pending: 7 })
+    for (const approvals of [{ pending: -1 }, { pending: 1.5 }, { pending: '3' }, { pending: 10_000 }, {}, null]) {
+      view.emit('ipc-message', { senderFrame: view.mainFrame }, 'enterprise-chat:navigation', { path: '/workspace/', navigation: { entries, approvals } })
+      expect(f.host.snapshot().navigation?.approvals).toEqual({ pending: 7 })
+    }
+    view.emit('ipc-message', { senderFrame: view.mainFrame }, 'enterprise-chat:navigation', { path: '/workspace/', navigation: { entries, approvals: { pending: 0 } } })
+    expect(f.host.snapshot().navigation?.approvals).toEqual({ pending: 0 })
+  } finally { f.host.dispose() }
+})
+
+it('delivers the host palette to module pages, backs the view with it, and rejects a malformed one', async () => {
+  const f = fixture()
+  try {
+    const palette = {
+      surface: [44, 44, 46], raised: [53, 54, 56], strong: [97, 102, 107],
+      labelPrimary: [249, 250, 251], labelSecondary: [207, 211, 214], labelTertiary: [173, 178, 184],
+      borderBase: [69, 69, 71], borderDeep: [78, 78, 79]
+    }
+    f.host.present(f.owner, { ...presentation, palette })
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    // Chat routes keep their own deployed theme, so their backing is unchanged.
+    expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#141416')
+    f.host.present(f.owner, { ...presentation, palette, settings: 'desktop-usage' })
+    await flush()
+    expect(wc.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('--bg-page:44 44 46'))
+    expect(wc.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('--text-1:249 250 251'))
+    // The module page paints the host surface, so the view backs it with the same color.
+    expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#2c2c2e')
+    // Approvals open in a Modal on the same layer-2 surface; its pages take the same backing.
+    for (const section of ['my-tasks', 'my-requests', 'notifications'] as const) {
+      f.host.present(f.owner, { ...presentation, palette, settings: section })
+      await flush()
+      expect(wc.loadURL).toHaveBeenLastCalledWith(`https://enterprise.example/workspace/settings/${section}?dshSettings=1&embed=dsh&dshTheme=dark`)
+      expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#2c2c2e')
+    }
+    for (const invalid of [{ ...palette, surface: [44, 44] }, { ...palette, surface: [44, 44, 256] }, { ...palette, raised: ['53', 54, 56] }, { ...palette, strong: undefined }, 'dark']) {
+      expect(() => f.host.present(f.owner, { ...presentation, palette: invalid })).toThrow('Invalid Chat palette.')
+    }
+  } finally { f.host.dispose() }
+})
+
 it('installs the host module stylesheet and theme script once the document is ready', async () => {
   const f = fixture()
   try {
@@ -291,19 +343,19 @@ it('opens content-only settings, waits for the current main frame and restores t
     await flush()
     await f.host.open('new')
     const view = fake.views[0], wc = view.webContents
-    f.host.present(f.owner, { ...presentation, settings: 'account' })
+    f.host.present(f.owner, { ...presentation, settings: 'desktop-usage' })
     await flush()
-    expect(wc.loadURL).toHaveBeenLastCalledWith('https://enterprise.example/workspace/settings/account?dshSettings=1&embed=dsh&dshTheme=dark')
+    expect(wc.loadURL).toHaveBeenLastCalledWith('https://enterprise.example/workspace/settings/desktop-usage?dshSettings=1&embed=dsh&dshTheme=dark')
     expect(view.setVisible).toHaveBeenLastCalledWith(false)
-    const report = (frame: unknown, section: string, path = '/workspace/settings/account') => wc.emit('ipc-message', { senderFrame: frame }, 'enterprise-chat:settings-ready', { section, path })
-    report({}, 'account')
+    const report = (frame: unknown, section: string, path = '/workspace/settings/desktop-usage') => wc.emit('ipc-message', { senderFrame: frame }, 'enterprise-chat:settings-ready', { section, path })
+    report({}, 'desktop-usage')
     report(wc.mainFrame, 'notifications')
-    report(wc.mainFrame, 'account', '/workspace/settings/notifications')
+    report(wc.mainFrame, 'desktop-usage', '/workspace/settings/notifications')
     expect(f.host.snapshot().settingsReady).toBe(false)
-    report(wc.mainFrame, 'account')
-    expect(f.host.snapshot()).toMatchObject({ settingsSection: 'account', settingsReady: true })
+    report(wc.mainFrame, 'desktop-usage')
+    expect(f.host.snapshot()).toMatchObject({ settingsSection: 'desktop-usage', settingsReady: true })
     expect(view.setVisible).toHaveBeenLastCalledWith(true)
-    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:settings-close', { path: '/workspace/settings/account' })
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:settings-close', { path: '/workspace/settings/desktop-usage' })
     expect(f.owner.webContents.send).toHaveBeenLastCalledWith('enterprise-chat:close-settings')
     f.host.present(f.owner, { ...presentation, visible: false })
     await flush()
@@ -335,11 +387,11 @@ it('restricts settings navigation and rejects stale readiness after an identity 
 it('hides settings when the ready document navigates away and requires a new report after reload', async () => {
   const f = fixture()
   try {
-    f.host.present(f.owner, { ...presentation, settings: 'account' })
+    f.host.present(f.owner, { ...presentation, settings: 'desktop-usage' })
     await flush()
     const view = fake.views[0], wc = view.webContents
     wc.focus = vi.fn()
-    const ready = () => wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:settings-ready', { section: 'account', path: '/workspace/settings/account' })
+    const ready = () => wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:settings-ready', { section: 'desktop-usage', path: '/workspace/settings/desktop-usage' })
     expect(f.host.snapshot().settingsProtocolVersion).toBe(1)
     ready()
     expect(view.setVisible).toHaveBeenLastCalledWith(true)
@@ -349,7 +401,7 @@ it('hides settings when the ready document navigates away and requires a new rep
     expect(f.host.snapshot().settingsReady).toBe(false)
     f.host.focusSettings()
     expect(wc.focus).not.toHaveBeenCalled()
-    await wc.loadURL('https://enterprise.example/workspace/settings/account?dshSettings=1')
+    await wc.loadURL('https://enterprise.example/workspace/settings/desktop-usage?dshSettings=1')
     expect(view.setVisible).toHaveBeenLastCalledWith(false)
     ready()
     expect(view.setVisible).toHaveBeenLastCalledWith(true)
@@ -367,7 +419,7 @@ it('leaves failed remote settings without blocking the original conversation', a
     await f.host.open('new')
     const view = fake.views[0]
     view.webContents.loadURL.mockRejectedValueOnce(Object.assign(new Error('Settings unavailable'), { code: 'ERR_CONNECTION_RESET' }))
-    f.host.present(f.owner, { ...presentation, settings: 'account' })
+    f.host.present(f.owner, { ...presentation, settings: 'desktop-usage' })
     await flush()
     expect(f.host.snapshot().settingsFailure).toBe('load')
     expect(view.setVisible).toHaveBeenLastCalledWith(false)
@@ -383,7 +435,7 @@ it('pushes connection failures and logout to mounted settings without waiting fo
   const f = fixture()
   try {
     f.enterprise.webSession.mockRejectedValueOnce(new Error('Temporary connection failure'))
-    f.host.present(f.owner, { ...presentation, settings: 'account' })
+    f.host.present(f.owner, { ...presentation, settings: 'desktop-usage' })
     await flush()
     expect(f.owner.webContents.send).toHaveBeenLastCalledWith('enterprise-chat:changed', expect.objectContaining({ phase: 'error' }))
     f.host.retry()

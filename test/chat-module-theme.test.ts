@@ -1,10 +1,28 @@
 import { describe, expect, it } from 'vitest'
-import { FRAME_DARK_CSS, MODULE_ROUTE_PATTERN, MODULE_THEME_CSS, darkDeclaration, moduleThemeScript } from '../src/main/enterprise/chat-module-theme'
+import { FRAME_DARK_CSS, MODULE_ROUTE_PATTERN, MODULE_THEME_CSS, darkDeclaration, moduleThemePaletteCss, moduleThemeScript } from '../src/main/enterprise/chat-module-theme'
+import type { EnterprisePalette } from '../src/shared/enterprise-chat-view'
+
+interface FakeStyle { id: string; textContent: string; isConnected: boolean; remove: () => void }
+/** The host script writes a style element, so every sandbox document owns a head it can reach. */
+function fakeHead() {
+  const children: FakeStyle[] = []
+  const head = {
+    children,
+    appendChild: (child: FakeStyle) => { child.isConnected = true; children.push(child) },
+    getElementById: (id: string) => children.find(child => child.id === id) ?? null,
+    createElement: (): FakeStyle => {
+      const style: FakeStyle = { id: '', textContent: '', isConnected: false, remove: () => { children.splice(children.indexOf(style), 1); style.isConnected = false } }
+      return style
+    }
+  }
+  return head
+}
 
 describe('enterprise module page theme', () => {
   it('matches module routes but never conversation routes', () => {
     const route = new RegExp(MODULE_ROUTE_PATTERN, 'u')
-    for (const path of ['/workspace/knowledge', '/workspace/knowledge/space-1', '/workspace/channel?x=1', '/workspace/channel/abc/settings', '/workspace/apps', '/workspace/apps/explore', '/workspace/skills', '/workspace/square?type=apps']) expect(route.test(path)).toBe(true)
+    // Embedded settings pages, approvals included, sit inside host panels and share the module scope.
+    for (const path of ['/workspace/knowledge', '/workspace/knowledge/space-1', '/workspace/channel?x=1', '/workspace/channel/abc/settings', '/workspace/apps', '/workspace/apps/explore', '/workspace/skills', '/workspace/square?type=apps', '/workspace/settings/desktop-usage?dshSettings=1', '/workspace/settings/my-tasks', '/workspace/settings/notifications']) expect(route.test(path)).toBe(true)
     for (const path of ['/workspace/c/new', '/workspace/chat/1/2/3', '/workspace/linsight/x', '/workspace/knowledgebase', '/workspace/channels', '/workspace/appstore', '/workspace/']) expect(route.test(path)).toBe(false)
   })
 
@@ -19,7 +37,8 @@ describe('enterprise module page theme', () => {
     }
     const root = { dataset: vm.dataset, classList }
     const window = { dispatchEvent: (event: { type: string }) => vm.events.push(event.type) } as Record<string, unknown>
-    const sandbox = { document: { documentElement: root, querySelectorAll: () => [] }, location: vm.location, window, CustomEvent: class { type: string; constructor(type: string) { this.type = type } }, RegExp, WeakSet, MutationObserver: class { constructor(private fn: () => void) {} observe(_target: unknown, options: { attributes?: boolean }) { if (options.attributes) vm.observers.push(this.fn) } } }
+    const head = fakeHead()
+    const sandbox = { document: { documentElement: root, head, querySelectorAll: () => [], getElementById: head.getElementById, createElement: head.createElement }, location: vm.location, window, CustomEvent: class { type: string; constructor(type: string) { this.type = type } }, RegExp, WeakSet, MutationObserver: class { constructor(private fn: () => void) {} observe(_target: unknown, options: { attributes?: boolean }) { if (options.attributes) vm.observers.push(this.fn) } } }
     const run = (theme: 'dark' | 'light') => new Function(...Object.keys(sandbox), `return ${moduleThemeScript(theme)}`)(...Object.values(sandbox))
     run('dark')
     expect([...vm.className].sort()).toEqual(['dark', 'dsh-host-dark', 'dsh-module-dark'])
@@ -58,6 +77,60 @@ describe('enterprise module page theme', () => {
     expect(vm.observers).toHaveLength(before)
   })
 
+  it('moves the embedded page onto the host palette and withdraws it when the host cannot sample one', () => {
+    const palette: EnterprisePalette = {
+      surface: [44, 44, 46], raised: [53, 54, 56], strong: [97, 102, 107],
+      labelPrimary: [249, 250, 251], labelSecondary: [207, 211, 214], labelTertiary: [173, 178, 184],
+      borderBase: [71, 71, 73], borderDeep: [85, 85, 87]
+    }
+    const css = moduleThemePaletteCss(palette)
+    // The page reads `rgb(var(--token))`, so the host writes channels and never a color function.
+    expect(css.startsWith('html.dsh-module-dark:root{')).toBe(true)
+    expect(css).toContain('--bg-page:44 44 46')
+    expect(css).toContain('--arco-gray-1:53 54 56')
+    expect(css).toContain('--arco-gray-4:97 102 107')
+    expect(css).toContain('--text-1:249 250 251')
+    expect(css).toContain('--border-base:71 71 73')
+    // The middle surfaces are interpolated between the host's own raised and strong anchors.
+    expect(css).toContain('--arco-gray-2:68 70 73')
+    expect(css).toContain('--arco-gray-3:82 86 90')
+    expect(css).toContain('--fill-1:53 54 56')
+    expect(css).toContain('--fill-2:68 70 73')
+    // The settings container paints `hsl(var(--background))`, so the shadcn ramp follows the same anchors.
+    expect(css).toContain('--background:240 2.2% 17.6%')
+    expect(css).toContain('--card:220 2.8% 21.4%')
+    expect(css).toContain('--muted:216 3.5% 27.6%')
+    expect(css).toContain('--border:240 1.4% 28.2%')
+    expect(css).toContain('--foreground:210 20% 98%')
+    expect(css).toContain('--muted-foreground:212.7 7.2% 70%')
+    expect(css).not.toContain('--primary:')
+    expect(css).not.toContain('--destructive:')
+    expect(css).not.toContain('--brand-500')
+    // The shell re-declares the ramp on its layout root under the chat-theme attribute it derives
+    // from the host; the override lands there too, or the embedded settings page keeps its own dark.
+    const rules = css.split('\n')
+    expect(rules).toHaveLength(2)
+    expect(rules[1]).toMatch(/^html\.dsh-module-dark body\[data-dsh-chat-theme\] :is\(\.dsh-web-chat,/u)
+    expect(rules[1]?.slice(rules[1].indexOf('{'))).toBe(rules[0]?.slice(rules[0].indexOf('{')))
+
+    const head = fakeHead()
+    const className = new Set<string>()
+    const classList = { contains: (name: string) => className.has(name), toggle: (name: string, force: boolean) => { force ? className.add(name) : className.delete(name) }, add: (name: string) => className.add(name), remove: (name: string) => className.delete(name) }
+    const sandbox = { document: { documentElement: { dataset: {} as Record<string, string>, classList }, head, getElementById: head.getElementById, createElement: head.createElement, querySelectorAll: () => [] }, location: { pathname: '/workspace/settings/desktop-usage' }, window: { dispatchEvent: () => true }, CustomEvent: class {}, RegExp, WeakSet, MutationObserver: class { observe() {} } }
+    const run = (theme: 'dark' | 'light', value?: EnterprisePalette) => new Function(...Object.keys(sandbox), `return ${moduleThemeScript(theme, value)}`)(...Object.values(sandbox))
+    run('dark', palette)
+    expect(head.children.map(child => child.id)).toEqual(['dsh-host-palette'])
+    expect(head.children[0]?.textContent).toBe(css)
+    // Re-delivery keeps one element rather than stacking a style per theme change.
+    run('dark', palette)
+    expect(head.children).toHaveLength(1)
+    run('dark', { ...palette, surface: [20, 20, 22] })
+    expect(head.children).toHaveLength(1)
+    expect(head.children[0]?.textContent).toContain('--bg-page:20 20 22')
+    run('dark')
+    expect(head.children).toHaveLength(0)
+  })
+
   it('styles reachable srcdoc frames on dark module routes and clears them again', () => {
     const makeDoc = () => {
       const head = { children: [] as Array<{ id: string; textContent: string }> }
@@ -75,7 +148,8 @@ describe('enterprise module page theme', () => {
     const sandboxed = { contentDocument: null, listeners: [] as Array<() => void>, addEventListener(_type: string, fn: () => void) { this.listeners.push(fn) } }
     const className = new Set<string>()
     const classList = { contains: (name: string) => className.has(name), toggle: (name: string, force: boolean) => { force ? className.add(name) : className.delete(name) }, add: (name: string) => className.add(name), remove: (name: string) => className.delete(name) }
-    const sandbox = { document: { documentElement: { dataset: {} as Record<string, string>, classList }, querySelectorAll: () => [article, sandboxed] }, location: { pathname: '/workspace/channel/abc' }, window: { dispatchEvent: () => true }, CustomEvent: class {}, RegExp, WeakSet, MutationObserver: class { observe() {} } }
+    const hostHead = fakeHead()
+    const sandbox = { document: { documentElement: { dataset: {} as Record<string, string>, classList }, head: hostHead, getElementById: hostHead.getElementById, createElement: hostHead.createElement, querySelectorAll: () => [article, sandboxed] }, location: { pathname: '/workspace/channel/abc' }, window: { dispatchEvent: () => true }, CustomEvent: class {}, RegExp, WeakSet, MutationObserver: class { observe() {} } }
     const run = (theme: 'dark' | 'light') => new Function(...Object.keys(sandbox), `return ${moduleThemeScript(theme)}`)(...Object.values(sandbox))
     run('dark')
     expect(article.contentDocument.head.children.map(child => child.id)).toEqual(['dsh-host-frame-dark'])
