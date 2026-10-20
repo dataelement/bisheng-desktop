@@ -111,6 +111,12 @@ describe('enterprise module page theme', () => {
     expect(darkDeclaration('bg', 'e8f3ff')).toBeUndefined()
     expect(darkDeclaration('border', 'e5e6eb')).toBe('border-color:rgb(var(--border-base))')
     expect(darkDeclaration('border', '8d93a0')).toBe('border-color:rgb(var(--border-deep))')
+    expect(darkDeclaration('bg', 'ffffff', '0.85')).toBe('background-color:rgb(var(--bg-page) / 0.85)')
+    expect(darkDeclaration('from', 'ffffff')).toBe('--tw-gradient-from:rgb(var(--bg-page)) var(--tw-gradient-from-position);--tw-gradient-to:rgb(var(--bg-page) / 0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)')
+    expect(darkDeclaration('from', 'ffffff', '0')).toBe('--tw-gradient-from:rgb(var(--bg-page) / 0) var(--tw-gradient-from-position);--tw-gradient-to:rgb(var(--bg-page) / 0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)')
+    expect(darkDeclaration('via', 'ffffff', '0.85')).toBe('--tw-gradient-to:rgb(var(--bg-page) / 0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),rgb(var(--bg-page) / 0.85) var(--tw-gradient-via-position),var(--tw-gradient-to)')
+    expect(darkDeclaration('to', 'f9fafb')).toBe('--tw-gradient-to:rgb(var(--arco-gray-1)) var(--tw-gradient-to-position)')
+    expect(darkDeclaration('from', '1f2937')).toBeUndefined()
   })
 
   it('scopes fixed rules to module routes, utilities to every dark host route, and covers both hex spellings', () => {
@@ -121,11 +127,12 @@ describe('enterprise module page theme', () => {
     expect(rules[4]).toBe('html.dsh-host-dark [class*="bg-[linear-gradient("][class*="#FFF"],html.dsh-host-dark [class*="bg-[linear-gradient("][class*="#fff"]{background-image:linear-gradient(135deg,rgb(var(--brand-500) / 0.08),rgb(var(--arco-gray-1)) 50%,rgb(var(--brand-500) / 0.08))}')
     for (const rule of rules.slice(0, 4)) for (const selector of rule.slice(0, rule.indexOf('{')).replace(/:is\([^)]*\)/gu, '').split(',')) expect(selector.startsWith('html.dsh-module-dark')).toBe(true)
     for (const rule of rules.slice(4)) for (const selector of rule.slice(0, rule.indexOf('{')).split(',')) expect(selector.startsWith('html.dsh-host-dark ')).toBe(true)
-    for (const selector of ['.bg-white{', '.bg-\\[\\#fbfbfb\\]', '.bg-\\[\\#FBFBFB\\]', '.bg-\\[\\#f7f7f7\\]', '.text-\\[\\#1d2129\\]', '.text-\\[\\#1D2129\\]', '.text-black', '.text-gray-900', '.border-gray-200', '.bg-gray-50', '.border-white']) {
+    for (const selector of ['.bg-white{', '.bg-\\[\\#fbfbfb\\]', '.bg-\\[\\#FBFBFB\\]', '.bg-\\[\\#f7f7f7\\]', '.text-\\[\\#1d2129\\]', '.text-\\[\\#1D2129\\]', '.text-black', '.text-gray-900', '.border-gray-200', '.bg-gray-50', '.border-white', '.from-white{', '.to-white{', '.from-white\\/0{', '.to-white\\/0{', '.via-white\\/85{']) {
       expect(MODULE_THEME_CSS).toContain(`html.dsh-host-dark ${selector}`)
     }
     for (const kept of [/\.text-\\\[\\#f53f3f\\\][,{]/u, /\.bg-\\\[\\#212121\\\][,{]/u, /\.text-white[,{]/u, /\.bg-black[,{]/u, /\.text-gray-50[,{]/u]) expect(MODULE_THEME_CSS).not.toMatch(kept)
     expect(MODULE_THEME_CSS).not.toMatch(/\.dark\b[^-]/u)
+    expect(MODULE_THEME_CSS).not.toMatch(/\.from-gray-800[,{]/u)
     expect(MODULE_THEME_CSS.match(/html\.dsh-host-dark \.text-\\\[\\#111\\\]/gu)).toHaveLength(1)
   })
 })

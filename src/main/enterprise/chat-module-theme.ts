@@ -122,7 +122,11 @@ const HARDCODED_UTILITIES: readonly string[] = [
   'text-slate-600', 'text-slate-700', 'text-slate-800',
   'bg-white/10', 'bg-white/20', 'bg-white/30', 'bg-white/50', 'bg-white/60', 'bg-white/70', 'bg-white/85', 'bg-white/90',
   'bg-gray-50/80', 'bg-gray-50/90', 'bg-gray-100/50', 'bg-gray-100/80', 'border-gray-100/40', 'text-black/40',
-  'border-white'
+  'border-white',
+  // Gradient stops: the masks behind ask bars and docks fade list content into a white page.
+  'from-white', 'from-white/0', 'from-white/20', 'via-white/85', 'to-white', 'to-white/0', 'to-white/20',
+  'from-gray-50', 'from-gray-200', 'from-gray-500', 'from-gray-700', 'from-gray-800', 'from-gray-850', 'from-gray-900',
+  'to-gray-500', 'to-gray-900'
 ]
 
 /** Tailwind's default gray ramp; slate / zinc / neutral / stone share its lightness steps. */
@@ -131,7 +135,7 @@ const GRAY_RAMP: Readonly<Record<string, string>> = {
   500: '#6b7280', 600: '#4b5563', 700: '#374151', 800: '#1f2937', 850: '#171717', 900: '#111827', 950: '#030712'
 }
 
-interface Utility { kind: 'bg' | 'text' | 'border' | 'divide' | 'placeholder'; hex: string; names: string[]; alpha?: string }
+interface Utility { kind: 'bg' | 'text' | 'border' | 'divide' | 'placeholder' | 'from' | 'via' | 'to'; hex: string; names: string[]; alpha?: string }
 
 /** Tailwind opacity modifiers (`bg-white/85`) keep their alpha on the replacement token. */
 function parseUtility(name: string): Utility | undefined {
@@ -142,20 +146,22 @@ function parseUtility(name: string): Utility | undefined {
     const alpha = (Number(modifier[2]) / 100).toString()
     return { ...base, alpha, names: base.names.map((alias) => `${alias}/${modifier[2]}`) }
   }
-  const hex = name.match(/^(bg|text|border|divide|placeholder)-\[#([0-9a-f]{3}|[0-9a-f]{6})\]$/u)
+  const hex = name.match(/^(bg|text|border|divide|placeholder|from|via|to)-\[#([0-9a-f]{3}|[0-9a-f]{6})\]$/u)
   if (hex) {
     const kind = hex[1] as Utility['kind']
     const value = hex[2] as string
     const upper = `${kind}-[#${value.toUpperCase()}]`
     return { kind, hex: value.length === 3 ? [...value].map((c) => c + c).join('') : value, names: [...new Set([name, upper])] }
   }
-  const named = name.match(/^(bg|text|border|divide)-(?:gray|slate|zinc|neutral|stone)-(\d{2,3})$/u)
+  const named = name.match(/^(bg|text|border|divide|from|via|to)-(?:gray|slate|zinc|neutral|stone)-(\d{2,3})$/u)
   if (named) {
     const step = GRAY_RAMP[named[2] as string]
     return step ? { kind: named[1] as Utility['kind'], hex: step.slice(1), names: [name] } : undefined
   }
   if (name === 'text-black') return { kind: 'text', hex: '000000', names: [name] }
   if (name === 'border-white') return { kind: 'border', hex: 'ffffff', names: [name] }
+  const stop = name.match(/^(from|via|to)-white$/u)
+  if (stop) return { kind: stop[1] as Utility['kind'], hex: 'ffffff', names: [name] }
   if (name === 'bg-white' || name === 'bg-[#fff]') return { kind: 'bg', hex: 'ffffff', names: name === 'bg-white' ? [name] : [name, 'bg-[#FFF]', 'bg-[#ffffff]', 'bg-[#FFFFFF]'] }
   return undefined
 }
@@ -177,27 +183,41 @@ function tone(hex: string): { lightness: number; saturation: number; chroma: num
  * already-light text. Dark grays such as Tailwind's blue-tinted gray-900 read as saturated
  * in HSL, so near-black colors are judged by chroma instead.
  */
-export function darkDeclaration(kind: Utility['kind'], hex: string): string | undefined {
+export function darkDeclaration(kind: Utility['kind'], hex: string, alpha?: string): string | undefined {
   const { lightness, saturation, chroma } = tone(hex)
   const neutral = saturation <= 0.25 || (lightness < 0.5 && chroma < 0.12)
   if (!neutral) return undefined
-  if (kind === 'bg') {
-    if (lightness >= 0.985) return 'background-color:rgb(var(--bg-page))'
-    if (lightness >= 0.95) return 'background-color:rgb(var(--arco-gray-1))'
-    if (lightness >= 0.9) return 'background-color:rgb(var(--arco-gray-2))'
-    if (lightness >= 0.78) return 'background-color:rgb(var(--arco-gray-3))'
-    if (lightness >= 0.5) return 'background-color:rgb(var(--arco-gray-4))'
+  const token = (name: string, opacity = alpha): string => `rgb(var(--${name})${opacity === undefined ? '' : ` / ${opacity}`})`
+  const surface = (): string | undefined => {
+    if (lightness >= 0.985) return 'bg-page'
+    if (lightness >= 0.95) return 'arco-gray-1'
+    if (lightness >= 0.9) return 'arco-gray-2'
+    if (lightness >= 0.78) return 'arco-gray-3'
+    if (lightness >= 0.5) return 'arco-gray-4'
     return undefined
+  }
+  if (kind === 'bg') {
+    const name = surface()
+    return name && `background-color:${token(name)}`
+  }
+  // Tailwind 3 gradient stops are custom properties; the replacement mirrors what the
+  // light utility set, so `from-*` still seeds a transparent `to` and `via` keeps both ends.
+  if (kind === 'from' || kind === 'via' || kind === 'to') {
+    const name = surface()
+    if (!name) return undefined
+    if (kind === 'from') return `--tw-gradient-from:${token(name)} var(--tw-gradient-from-position);--tw-gradient-to:${token(name, '0')} var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)`
+    if (kind === 'via') return `--tw-gradient-to:${token(name, '0')} var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),${token(name)} var(--tw-gradient-via-position),var(--tw-gradient-to)`
+    return `--tw-gradient-to:${token(name)} var(--tw-gradient-to-position)`
   }
   if (kind === 'text' || kind === 'placeholder') {
-    if (lightness < 0.3) return 'color:rgb(var(--text-1))'
-    if (lightness < 0.48) return 'color:rgb(var(--text-2))'
-    if (lightness < 0.75) return 'color:rgb(var(--text-3))'
-    if (lightness < 0.9) return 'color:rgb(var(--text-4))'
+    if (lightness < 0.3) return `color:${token('text-1')}`
+    if (lightness < 0.48) return `color:${token('text-2')}`
+    if (lightness < 0.75) return `color:${token('text-3')}`
+    if (lightness < 0.9) return `color:${token('text-4')}`
     return undefined
   }
-  if (lightness >= 0.78) return 'border-color:rgb(var(--border-base))'
-  if (lightness >= 0.5) return 'border-color:rgb(var(--border-deep))'
+  if (lightness >= 0.78) return `border-color:${token('border-base')}`
+  if (lightness >= 0.5) return `border-color:${token('border-deep')}`
   return undefined
 }
 
@@ -206,9 +226,8 @@ function buildModuleThemeCss(): string {
   for (const name of HARDCODED_UTILITIES) {
     const utility = parseUtility(name)
     if (!utility) throw new Error(`Unrecognised module theme utility: ${name}`)
-    const base = darkDeclaration(utility.kind, utility.hex)
-    if (!base) continue
-    const declaration = utility.alpha ? base.replace(/\)\)$/u, `) / ${utility.alpha})`) : base
+    const declaration = darkDeclaration(utility.kind, utility.hex, utility.alpha)
+    if (!declaration) continue
     const selectors = groups.get(declaration) ?? []
     for (const alias of utility.names) {
       const selector = `html.dsh-host-dark .${escapeUtility(alias)}${utility.kind === 'placeholder' ? '::placeholder' : ''}`

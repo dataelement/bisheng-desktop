@@ -1,7 +1,7 @@
 ## 2026-10-20 — 深色模式全页走查与补齐
 
 - 走查方式：桌面窗口在后台时 Chromium 不重绘且侧栏菜单的 AXPress 不触发，改在 Chrome 打开 3006 的 `?embed=dsh&dshTheme=dark` 页面并注入与宿主相同的 `MODULE_THEME_CSS` / `moduleThemeScript`，用脚本扫描视口内浅色底、浅色边框与低对比文字，再回到桌面应用复验。
-- 发现并修复（`src/main/enterprise/chat-module-theme.ts`）：知识空间首页文件夹磁贴白字压在浅色 SVG 上（对 SVG 反色）；知识广场卡片写死 `#FFF` 的任意值渐变底白字不可读（类名子串匹配替换为 token 渐变）；订阅文章阅读区 srcdoc iframe 保持白底（注入 `FRAME_DARK_CSS` 整页反色、媒体复原，随 iframe 重载重新注入）；聊天路由的参考来源面板 `bg-[#FBFBFB]` / `bg-white`、引用标签 `bg-[#F7F7F7]`、来源头像 `bg-[#F4F5F8]` 白底白字——工具类覆盖作用域从模块页扩大到所有宿主深色路由（新增 `html.dsh-host-dark`，`dsh-module-dark` 仍只用于宿主接管 `html.dark` 的模块页），并补 `border-white`。
+- 发现并修复（`src/main/enterprise/chat-module-theme.ts`）：知识空间首页文件夹磁贴白字压在浅色 SVG 上（对 SVG 反色）；知识广场卡片写死 `#FFF` 的任意值渐变底白字不可读（类名子串匹配替换为 token 渐变）；订阅文章阅读区 srcdoc iframe 保持白底（注入 `FRAME_DARK_CSS` 整页反色、媒体复原，随 iframe 重载重新注入）；聊天路由的参考来源面板 `bg-[#FBFBFB]` / `bg-white`、引用标签 `bg-[#F7F7F7]`、来源头像 `bg-[#F4F5F8]` 白底白字——工具类覆盖作用域从模块页扩大到所有宿主深色路由（新增 `html.dsh-host-dark`，`dsh-module-dark` 仍只用于宿主接管 `html.dark` 的模块页），并补 `border-white`；知识空间详情提问栏底部的 `bg-gradient-to-b from-white/0 to-white` 蒙版在深底上发白，新增 Tailwind 3 渐变停色工具类（`from/via/to-white` 及灰阶、含透明度修饰）的 token 替换，`from-*` 同样重置透明的 `to` 端。
 - 已核对为正常：知识空间详情/文件夹/文件列表、新增下拉、订阅首页与频道详情、技能中心、聊天落地页、`+` 菜单与对话正文。`/workspace/apps` 在 3006 当前构建上触发网页自身错误边界（与主题无关）；知识空间内点开文件走 `window.open`，桌面端按现有策略交给系统浏览器，未在本轮处理。
 - 验证：定向测试 `test/chat-module-theme.test.ts`、`test/enterprise-chat-view.test.ts` 18 项通过，typecheck、build 通过；Chrome 注入复验四处修复生效。10-20 重启开发应用（`/tmp/bisheng-dev-modules`，设置切深色）后实机确认：知识空间首页文件夹磁贴反色且名称可读、知识广场卡片深底白字、订阅文章阅读区整页深色且配图正常、聊天参考来源面板与来源卡片深底。全量回归 `npx vitest run`：223 文件、1900 项通过、1 项跳过；`git diff --check` 无告警。Windows 与安装包未验证。
 
