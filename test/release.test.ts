@@ -409,7 +409,7 @@ describe('GitHub release contract', () => {
     expect(workflow).toContain('runner: [self-hosted, macOS, ARM64]')
     expect(workflow).toContain('runner: [self-hosted, macOS, bisheng-intel]')
     expect(workflow).toContain('runs-on: ${' + '{ matrix.runner }}')
-    expect(workflow).toContain('runs-on: [self-hosted, macOS, ARM64]')
+    expect(workflow).toContain('runs-on: [self-hosted, macOS, bisheng-windows]')
     expect(workflow).toContain('runs-on: windows-2022')
     expect(workflow).toContain('npm run package:dev:win')
     expect(workflow).toContain('Smoke test packaged Windows Harness')
@@ -479,7 +479,7 @@ describe('GitHub release contract', () => {
 
     expect(workflow).toContain('Stage unsigned Windows assets in draft release')
     expect(workflow).toContain('Sign Windows package locally with UKey')
-    expect(workflow).toContain('runs-on: [self-hosted, macOS, ARM64]')
+    expect(workflow).toContain('runs-on: [self-hosted, macOS, bisheng-windows]')
     expect(workflow).toContain('--storetype ETOKEN')
     expect(workflow).toContain('--storepass "file:$pin_file"')
     expect(workflow).toContain('--tsmode RFC3161')
