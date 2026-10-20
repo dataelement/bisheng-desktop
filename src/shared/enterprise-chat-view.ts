@@ -4,6 +4,7 @@ export interface EnterpriseChatPresentation {
   theme: 'light' | 'dark'
   locale?: 'zh' | 'en'
   settings?: EnterpriseSettingsSection
+  welcomeMotion?: boolean
 }
 
 export const ENTERPRISE_SETTINGS_SECTIONS = ['account', 'desktop-usage', 'ai-access', 'my-tasks', 'my-requests', 'notifications'] as const
@@ -39,6 +40,7 @@ export function parseChatPresentation(value: unknown): EnterpriseChatPresentatio
   if (input.locale !== undefined && input.locale !== 'zh' && input.locale !== 'en') {
     throw new Error('Invalid Chat locale.')
   }
+  if (input.welcomeMotion !== undefined && typeof input.welcomeMotion !== 'boolean') throw new Error('Invalid welcome motion.')
   const settings = input.settings === undefined ? undefined : parseEnterpriseSettingsSection(input.settings)
   const bounds = input.bounds as Record<string, unknown> | undefined
   if (!bounds || ['x', 'y', 'width', 'height'].some((key) =>
@@ -49,6 +51,7 @@ export function parseChatPresentation(value: unknown): EnterpriseChatPresentatio
     theme: input.theme as 'light' | 'dark',
     locale: input.locale,
     settings,
+    ...(input.welcomeMotion === undefined ? {} : { welcomeMotion: input.welcomeMotion }),
     bounds: { x: Number(bounds.x), y: Number(bounds.y), width: Number(bounds.width), height: Number(bounds.height) }
   }
 }
