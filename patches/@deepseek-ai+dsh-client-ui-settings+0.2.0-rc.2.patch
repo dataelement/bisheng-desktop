@@ -1,5 +1,5 @@
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-settings/lib/types/client/contract/slots.d.ts b/node_modules/@deepseek-ai/dsh-client-ui-settings/lib/types/client/contract/slots.d.ts
-index 3253a36..9934d0d 100644
+index 3253a36..2f0baaf 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-settings/lib/types/client/contract/slots.d.ts
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-settings/lib/types/client/contract/slots.d.ts
 @@ -10,6 +10,14 @@
@@ -30,4 +30,3 @@ index 3253a36..9934d0d 100644
 +    /** The shell's native row; `overrides.icon` replaces the glyph the shell picks by id, nothing else. */
 +    renderEntry: (row: SettingsNavigationRow, overrides?: { icon?: import('react').ComponentType<{ className?: string; size?: number }> }) => import('react').ReactNode;
 +}
-\ No newline at end of file
