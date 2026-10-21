@@ -1,3 +1,4 @@
+import { normalizeAuditContext } from './contract.js'
 import {
   LlmAdapter,
   LlmError,
@@ -9,8 +10,13 @@ import {
   requestImageHandleText,
   textOnlyImageText
 } from '@deepseek-ai/dsh-llm'
+import {
+  enforceEnterpriseRequestSize,
+  projectEnterpriseOffloadedImages,
+  readEnterpriseRequestImages
+} from './request-images.js'
 
-export const ALLOWED_ATTRIBUTION_HEADERS = Object.freeze(['user-agent'])
+export const ALLOWED_ATTRIBUTION_HEADERS = Object.freeze(['user-agent', 'x-dsh-conversation-id', 'x-dsh-request-purpose'])
 
 export function pickAttributionHeaders(headers = {}) {
   const picked = {}
@@ -19,6 +25,27 @@ export function pickAttributionHeaders(headers = {}) {
     if (typeof value === 'string' && value.length > 0) picked[key] = value
   }
   return picked
+}
+
+const KNOWN_REQUEST_PURPOSES = new Set(['chat', 'compaction', 'session-title'])
+
+/**
+ * Forward conversation attribution only for fields this connection negotiated.
+ * Callers that do not pass capabilities keep the header fallback used by Responses.
+ * An unknown purpose is omitted so it cannot fail the model call.
+ */
+export function streamAttributionHeaders(sessionId, purpose, auditFields) {
+  const base = attributionHeaders()
+  if (sessionId === undefined) return pickAttributionHeaders(base)
+  const negotiated = Array.isArray(auditFields)
+  const requested = purpose ?? 'chat'
+  return pickAttributionHeaders({
+    ...base,
+    ...(!negotiated || auditFields.includes('conversation_id') ? { 'x-dsh-conversation-id': String(sessionId) } : {}),
+    ...(KNOWN_REQUEST_PURPOSES.has(requested) && (!negotiated || auditFields.includes('request_kind'))
+      ? { 'x-dsh-request-purpose': requested }
+      : {})
+  })
 }
 
 function textContent(blocks) {
@@ -34,19 +61,6 @@ function assertTextOnly(blocks) {
   }
 }
 
-function messageImageBlocks(message) {
-  const blocks = []
-  for (const block of message.content ?? []) {
-    if (block.type === 'image') blocks.push(block)
-    else if (block.type === 'tool-result') {
-      for (const inner of block.content ?? []) {
-        if (inner.type === 'image') blocks.push(inner)
-      }
-    }
-  }
-  return blocks
-}
-
 function assertRoleAllowsImages(message) {
   if (message.role === 'user' || message.role === 'tool') return
   assertTextOnly(message.content)
@@ -57,7 +71,7 @@ function assertRoleAllowsImages(message) {
 
 // Text-only routes stay usable by replacing images with the upstream placeholder.
 // The shared projection does not recurse into legacy tool-result blocks.
-function projectEnterpriseMessagesForTextModel(messages) {
+export function projectEnterpriseMessagesForTextModel(messages) {
   return projectImagesForTextModel(messages).map((message) => {
     if (!message.content?.some((block) => block.type === 'tool-result' && contentHasImage(block.content ?? []))) {
       return message
@@ -85,29 +99,6 @@ function imageUrlPart(block, images) {
   return { type: 'image_url', image_url: { url: image.url } }
 }
 
-async function readRequestImages(messages, readImage, signal) {
-  const images = new Map()
-  let imageBytes = 0
-  for (const message of messages) {
-    assertRoleAllowsImages(message)
-    for (const block of messageImageBlocks(message)) {
-      const image = await readImage?.(block.attachment, signal)
-      if (!image) throw new LlmError('Image attachment is unavailable.', 'UNSUPPORTED_CONTENT')
-      imageBytes += image.data.byteLength
-      if (image.data.byteLength > 5 * 1024 * 1024 || imageBytes > 20 * 1024 * 1024) {
-        throw new LlmError('Image request exceeds the size limit.', 'UNSUPPORTED_CONTENT')
-      }
-      images.set(block.attachment.attachmentId, {
-        url: `data:${image.mediaType};base64,${Buffer.from(image.data).toString('base64')}`,
-        width: image.width,
-        height: image.height,
-        mediaType: image.mediaType
-      })
-    }
-  }
-  return images
-}
-
 function assistantMessage(message, includeReasoning) {
   const content = textContent(message.content)
   const reasoning = message.content
@@ -129,19 +120,25 @@ function assistantMessage(message, includeReasoning) {
   }
 }
 
-export function serializeEnterpriseRequest(options, model, images = new Map()) {
+export function serializeEnterpriseRequest(options, model, images = new Map(), onMessage) {
   const history = model.capabilities.vision
     ? options.messages
     : projectEnterpriseMessagesForTextModel(options.messages)
   const messages = []
+  const append = (message, sources = []) => {
+    const index = messages.length
+    messages.push(message)
+    onMessage?.(index, sources)
+  }
   // 109 accepts image_url on user messages, not image arrays on tool.content.
   // Keep each tool call contiguous, then flush retained images once.
   const pendingToolImages = []
+  const pendingToolSources = []
   const flushToolImages = () => {
     if (pendingToolImages.length === 0) return
-    messages.push({ role: 'user', content: pendingToolImages.splice(0) })
+    append({ role: 'user', content: pendingToolImages.splice(0) }, pendingToolSources.splice(0))
   }
-  const queueToolImages = (toolCallId, blocks) => {
+  const queueToolImages = (toolCallId, blocks, source) => {
     if (!model.capabilities.vision) return
     for (const block of blocks ?? []) {
       if (block.type !== 'image') continue
@@ -152,37 +149,38 @@ export function serializeEnterpriseRequest(options, model, images = new Map()) {
         text: `Tool call ${toolCallId}. ${requestImageHandleText(block.attachment, image)}`
       })
       pendingToolImages.push(imageUrlPart(block, images))
+      pendingToolSources.push(source)
     }
   }
-  const pushToolResult = (toolCallId, blocks) => {
-    messages.push({
+  const pushToolResult = (toolCallId, blocks, source) => {
+    append({
       role: 'tool',
       tool_call_id: toolCallId,
       content: textContent(blocks) || '(no output)'
-    })
-    queueToolImages(toolCallId, blocks)
+    }, [source])
+    queueToolImages(toolCallId, blocks, source)
   }
-  if (options.system !== undefined) messages.push({ role: 'system', content: options.system })
+  if (options.system !== undefined) append({ role: 'system', content: options.system })
   for (const message of history) {
     if (model.capabilities.vision) assertRoleAllowsImages(message)
     if (message.role === 'system') {
       flushToolImages()
-      messages.push({ role: 'system', content: textContent(message.content) })
+      append({ role: 'system', content: textContent(message.content) }, [message.source])
       continue
     }
     if (message.role === 'assistant') {
       flushToolImages()
-      messages.push(assistantMessage(message, model.capabilities.reasoning_content))
+      append(assistantMessage(message, model.capabilities.reasoning_content), [message.source])
       continue
     }
     // Harness carries tool results as messages; the call ID belongs to the message.
     if (message.role === 'tool') {
-      pushToolResult(message.toolCallId, message.content)
+      pushToolResult(message.toolCallId, message.content, message.source)
       continue
     }
     const toolResults = message.content.filter((block) => block.type === 'tool-result')
     if (toolResults.length === 0) flushToolImages()
-    for (const result of toolResults) pushToolResult(result.toolCallId, result.content)
+    for (const result of toolResults) pushToolResult(result.toolCallId, result.content, message.source)
     if (toolResults.length > 0) flushToolImages()
     const regularText = textContent(message.content)
     const parts = message.content.filter(block => block.type === 'text' || block.type === 'image')
@@ -190,7 +188,7 @@ export function serializeEnterpriseRequest(options, model, images = new Map()) {
     const content = hasImages ? parts.map(block => (
       block.type === 'text' ? block : imageUrlPart(block, images)
     )) : regularText
-    if (hasImages || regularText || toolResults.length === 0) messages.push({ role: 'user', content })
+    if (hasImages || regularText || toolResults.length === 0) append({ role: 'user', content }, [message.source])
   }
   flushToolImages()
   const tools = options.tools?.map((tool) => ({
@@ -204,11 +202,16 @@ export function serializeEnterpriseRequest(options, model, images = new Map()) {
   if (tools && tools.length > 0 && !model.capabilities.tools) {
     throw new LlmError(`BiSheng model "${model.id}" does not support tools.`, 'UNSUPPORTED_OPTION')
   }
+  const reasoningEffort = options.reasoningEffort ?? model.reasoning?.defaultEffort
+  if (reasoningEffort !== undefined && !model.reasoning?.efforts.some((effort) => effort.id === reasoningEffort)) {
+    throw new LlmError(`BiSheng model "${model.id}" does not support reasoning effort "${reasoningEffort}".`, 'UNSUPPORTED_REASONING_EFFORT')
+  }
   return {
     model: options.model,
     messages,
     stream: true,
     stream_options: { include_usage: true },
+    ...(reasoningEffort === undefined ? {} : { reasoning_effort: reasoningEffort }),
     ...(tools && tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
     ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
     ...(options.maxTokens === undefined ? {} : { max_completion_tokens: options.maxTokens }),
@@ -217,20 +220,30 @@ export function serializeEnterpriseRequest(options, model, images = new Map()) {
   }
 }
 
-export async function* parseSseEvents(body, signal) {
+export async function* parseSseEvents(body, signal, limits) {
   if (!body) throw new LlmError('BiSheng returned an empty event stream.', 'STREAM_CLOSED')
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  let total = 0
+  let pendingCr = false
+  const onAbort = () => { void reader.cancel().catch(() => undefined) }
+  signal?.addEventListener('abort', onAbort, { once: true })
   try {
     while (true) {
       if (signal?.aborted) throw signal.reason
       const { value, done } = await reader.read()
-      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done })
-      buffer = buffer.replace(/\r\n/gu, '\n').replace(/\r/gu, '\n')
+      signal?.throwIfAborted()
+      total += value?.byteLength ?? 0
+      if (limits && total > limits.total) throw new LlmError('BiSheng stream exceeds the size limit.', 'INVALID_RESPONSE')
+      let decoded = (pendingCr ? '\r' : '') + decoder.decode(value ?? new Uint8Array(), { stream: !done })
+      pendingCr = !done && decoded.endsWith('\r')
+      if (pendingCr) decoded = decoded.slice(0, -1)
+      buffer += decoded.replace(/\r\n/gu, '\n').replace(/\r/gu, '\n')
       let boundary
       while ((boundary = buffer.indexOf('\n\n')) >= 0) {
         const frame = buffer.slice(0, boundary)
+        if (limits && Buffer.byteLength(frame) > limits.event) throw new LlmError('BiSheng event exceeds the size limit.', 'INVALID_RESPONSE')
         buffer = buffer.slice(boundary + 2)
         if (!frame || frame.startsWith(':')) continue
         let event = 'message'
@@ -241,12 +254,15 @@ export async function* parseSseEvents(body, signal) {
         }
         if (data.length > 0) yield { event, data: data.join('\n') }
       }
+      if (limits && Buffer.byteLength(buffer) > limits.event) throw new LlmError('BiSheng event exceeds the size limit.', 'INVALID_RESPONSE')
       if (done) break
     }
     if (buffer.trim() && !buffer.trimStart().startsWith(':')) {
       throw new LlmError('BiSheng event stream ended with an incomplete frame.', 'STREAM_CLOSED')
     }
   } finally {
+    signal?.removeEventListener('abort', onAbort)
+    await reader.cancel().catch(() => undefined)
     reader.releaseLock()
   }
 }
@@ -259,6 +275,10 @@ const LOCAL_CHAT_FAILURES = Object.freeze({
   'Enterprise session changed.': {
     zh: '企业会话已变更。',
     en: 'Enterprise session changed.'
+  },
+  'Enterprise model response timed out.': {
+    zh: '模型响应超时，请稍后手动重试。',
+    en: 'The model response timed out. Try again manually later.'
   }
 })
 
@@ -375,6 +395,10 @@ function formatEnterpriseChatFailure(status, payload, language) {
 }
 
 function platformChatCode(payload) {
+  const carried = payload && typeof payload === 'object' && !Array.isArray(payload) && typeof payload.errorCode === 'string'
+    ? payload.errorCode.trim()
+    : ''
+  if (carried && carried !== 'request_failed' && CHAT_PLATFORM_CODES.has(carried)) return carried
   const code = payloadError(payload)?.code
   if (typeof code === 'string' && code.trim() && code.trim() !== 'request_failed') return code.trim()
   const phrase = normalizeChatPhrase(rawChatMessage(payload))
@@ -411,7 +435,7 @@ function requestFailure(status, requestId, payload) {
   )
 }
 
-async function responseFailure(response) {
+export async function responseFailure(response) {
   const payload = await response.json().catch(() => ({}))
   return requestFailure(response.status, response.headers.get('x-request-id') ?? undefined, payload)
 }
@@ -465,6 +489,15 @@ function finishReason(value) {
 }
 
 export class EnterpriseLlmAdapter extends LlmAdapter {
+  /**
+   * @param {object} options
+   * @param {() => string} options.providerName
+   * @param {() => import('./contract.js').EnterpriseModel[]} options.models
+   * @param {() => readonly string[]} [options.auditFields] Current trusted connection capability; not persisted.
+   * @param {Function} options.request Existing credential broker transport.
+   * @param {Function} [options.readImage]
+   * @param {Function} [options.onComplete]
+   */
   constructor(options) {
     super()
     this.options = options
@@ -483,6 +516,7 @@ export class EnterpriseLlmAdapter extends LlmAdapter {
       provider,
       id: model.id,
       name: model.display_name,
+      ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
       inputModalities: model.capabilities.vision ? ['text', 'image'] : ['text']
     })))
   }
@@ -494,6 +528,7 @@ export class EnterpriseLlmAdapter extends LlmAdapter {
       provider,
       id,
       name: model.display_name,
+      ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
       inputModalities: model.capabilities.vision ? ['text', 'image'] : ['text']
     })
   }
@@ -501,16 +536,52 @@ export class EnterpriseLlmAdapter extends LlmAdapter {
   async *stream(options) {
     const model = this.options.models().find((candidate) => candidate.id === options.model)
     if (!model) throw new LlmError(`BiSheng provider has no authorized model "${options.model}".`, 'UNKNOWN_MODEL')
+    if (model.capabilities.responses === true) {
+      const connectionKey = this.options.connectionKey?.()
+      const { streamEnterpriseResponses } = await import('./responses.js')
+      yield* streamEnterpriseResponses(options, model, this.options, connectionKey)
+      return
+    }
     const history = model.capabilities.vision
-      ? options.messages
+      ? projectEnterpriseOffloadedImages(options.messages)
       : projectEnterpriseMessagesForTextModel(options.messages)
     const images = model.capabilities.vision
-      ? await readRequestImages(history, this.options.readImage, options.signal)
+      ? await readEnterpriseRequestImages(history, this.options.readImage, options.signal)
       : new Map()
+    options.signal?.throwIfAborted()
+    const auditFields = this.options.auditFields?.() ?? []
+    const headers = streamAttributionHeaders(options.sessionId, options.purpose, auditFields)
+    const serialize = (messages) => serializeEnterpriseRequest({ ...options, messages }, model, images)
+    enforceEnterpriseRequestSize(history, serialize, headers)
+    const sourceItems = []
+    let truncated = false
+    const onMessage = auditFields.includes('message_sources') ? (message_index, sources) => {
+      const known = sources.filter(source => source && typeof source.kind === 'string')
+      if (sources.length > 1 && known.length !== sources.length) truncated = true
+      if (!known.length) return
+      if (sourceItems.length >= 128) { truncated = true; return }
+      sourceItems.push({ message_index, sources: known.map(source => ({ kind: source.kind, ...(source.form === undefined ? {} : { form: source.form }) })) })
+    } : undefined
+    const request = serializeEnterpriseRequest({ ...options, messages: history }, model, images, onMessage)
+    let session
+    try {
+      session = this.options.resolveAuditSession?.(options.sessionId)
+    } catch {
+      // Optional live-session metadata must not interrupt a model call.
+      session = undefined
+    }
+    const auditContext = normalizeAuditContext({
+      conversation_id: options.sessionId,
+      request_kind: options.purpose === undefined ? 'chat' : options.purpose,
+      session_origin: session?.session_origin,
+      parent_conversation_id: session?.parent_conversation_id,
+      ...(sourceItems.length || truncated ? { message_sources: { items: sourceItems, truncated } } : {})
+    }, auditFields, request.messages.length)
+    if (auditContext) request.audit_context = auditContext
     const response = await this.options.request(
-      serializeEnterpriseRequest({ ...options, messages: history }, model, images),
+      request,
       options.signal,
-      pickAttributionHeaders(attributionHeaders())
+      headers
     )
     if (!response.ok) throw await responseFailure(response)
     const contentType = response.headers.get('content-type') ?? ''

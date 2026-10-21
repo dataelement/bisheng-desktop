@@ -4,10 +4,11 @@ export interface BundleManifest {
   targets: Record<string, Record<string, string>>
 }
 export interface BundleIdentity { name: string; version: string; digest: string }
-export interface OfflineGeneration { id: string; directory: string; pluginName: string; version: string; sourceSpec: string; manifest: BundleManifest }
+export interface OfflineGeneration { id: string; directory: string; pluginName: string; version: string; sourceSpec: string; manifest: BundleManifest; integrity?: string }
 export declare const MAX_ARCHIVE: number
 export declare function sha256(data: Buffer | string): string
 export declare function safePath(value: string): boolean
+export declare function assertHostEntry(dshEntryPath?: string): void
 export declare function readBundleZip(bytes: Buffer): Map<string, { data: Buffer; executable: boolean }>
 export declare function validateOfflineBundle(bytes: Buffer, expected: BundleIdentity, target: string): { manifest: BundleManifest; files: Map<string, { data: Buffer; executable: boolean }> }
 export declare function installOfflineBundle(home: string, bytes: Buffer, expected: BundleIdentity, target: string, options?: { dshEntryPath?: string }): Promise<OfflineGeneration>

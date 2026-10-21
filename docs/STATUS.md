@@ -22,7 +22,7 @@
 ## 2026-09-22 — PR #519 review corrections
 
 - Market compatibility now receives Electron `app.getVersion()` through the authenticated enterprise Broker; catalog UI and install enforce the same SemVer verdict. Missing/invalid versions fail compatibility checks.
-- Signing keys are persisted on first use and held across sync/restart; a changed advertised key blocks online installation. Administrator-provided `DSH_DESKTOP_MARKET_PUBLIC_KEY` supplies an independent pin. Default TOFU trust starts at the confirmed enterprise service; see the documented trust boundary.
+- Enterprise plugin distribution uses an online seat and an unsigned publication snapshot (market contract 2). Install records stay on disk when the network drops; a revoked seat, expired session, or confirmed unpublish stops use. `DSH_DESKTOP_MARKET_PUBLIC_KEY` is no longer read.
 - Stop and expiry invalidate in-flight/queued operations immediately and serialize document/Loader cleanup with installation. Catalog traversal is bounded to 100 pages and validates totals. Enterprise runtime dependencies are explicitly declared.
 - Baseline remains `upstream/V0.9.2@294e9290262dd68f402fa526cfb6aeacd571f627`; Harness `0.1.5-rc.2`. Fresh `npm ci` / repository postinstall, `npm run typecheck`, `npm run build`, and `git diff --check`: PASS. Full `npm test`: 149 files / 1,247 tests PASS (30.83s). npm reports skipped dependency lifecycle scripts under the local npm policy; repository postinstall completed.
 - A physical dependency closure outside the repository passes child-process import, real Loader installation, disable/enable, failed-update rollback and stop tests. This uses locally signed test fixtures, not a production enterprise service.

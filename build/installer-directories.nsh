@@ -140,7 +140,6 @@ Function dshPromoteDirectories
       Return
     backup_done:
   ${EndIf}
-
   ; Promote new staged directory to final installation directory with retry.
   promote_user_retry:
   StrCpy $R3 0

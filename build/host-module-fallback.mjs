@@ -1,4 +1,4 @@
-import { registerHooks } from 'node:module'
+import { createRequire, registerHooks } from 'node:module'
 import { pathToFileURL } from 'node:url'
 
 const HOST_PACKAGE_PREFIX = '@deepseek-ai/'
@@ -6,14 +6,15 @@ const HOST_PACKAGE_PREFIX = '@deepseek-ai/'
 /**
  * Resolution failures the installation anchor can legitimately answer.
  *
- * `ERR_MODULE_NOT_FOUND` is the plugin having no copy at all.
+ * `ERR_MODULE_NOT_FOUND` (ESM) and `MODULE_NOT_FOUND` (CommonJS) mean the
+ * plugin has no copy at all.
  * `ERR_PACKAGE_PATH_NOT_EXPORTED` is the copy it found being older than the
  * subpath its importer needs — observed in the field as
  * `@deepseek-ai/dsh-subprocess-local` importing `dsh-subprocess/control` from a
  * stale `profiles/node_modules` copy. Retrying it is safe: the retry only
  * succeeds when the host copy really exports that subpath.
  */
-const HOST_RETRYABLE = new Set(['ERR_MODULE_NOT_FOUND', 'ERR_PACKAGE_PATH_NOT_EXPORTED'])
+const HOST_RETRYABLE = new Set(['ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND', 'ERR_PACKAGE_PATH_NOT_EXPORTED'])
 
 /**
  * Let linked Profile plugins consume the Harness packages carried by Desktop.
@@ -26,6 +27,7 @@ const HOST_RETRYABLE = new Set(['ERR_MODULE_NOT_FOUND', 'ERR_PACKAGE_PATH_NOT_EX
  */
 export function registerHostModuleFallback(dshEntryPath) {
   const hostEntryUrl = pathToFileURL(dshEntryPath).href
+  const hostRequire = createRequire(hostEntryUrl)
   return registerHooks({
     resolve(specifier, context, nextResolve) {
       try {
@@ -35,6 +37,10 @@ export function registerHostModuleFallback(dshEntryPath) {
           throw error
         }
         try {
+          // CommonJS resolution retains its original parent despite parentURL changes.
+          if (context.conditions.includes('require')) {
+            return nextResolve(hostRequire.resolve(specifier), context)
+          }
           return nextResolve(specifier, { ...context, parentURL: hostEntryUrl })
         } catch (hostError) {
           // Only the first failure names the importing plugin, and crash

@@ -2,7 +2,7 @@ import { request as httpRequest } from 'node:http'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   assertPublicBrokerPayload,
   ENTERPRISE_BROKER_CAPABILITY_ENV,
@@ -67,6 +67,43 @@ async function brokerFetch(
 }
 
 describe('restricted enterprise credential broker', () => {
+  it('serializes a coded chat rejection as status and errorCode', async () => {
+    const { service, broker } = await createRuntime()
+    vi.spyOn(service, 'proxyChat').mockRejectedValue(Object.assign(
+      new Error('Enterprise model response timed out.'),
+      { status: 504, code: 'upstream_timeout' }
+    ))
+    const response = await brokerFetch(broker, '/v1/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        request: {
+          model: 'bisheng:42',
+          messages: [{ role: 'user', content: 'hello' }],
+          stream: true,
+          stream_options: { include_usage: true },
+          n: 1
+        }
+      })
+    })
+    expect(response.status).toBe(504)
+    expect(await response.json()).toEqual({
+      error: 'Enterprise model response timed out.',
+      errorCode: 'upstream_timeout'
+    })
+  })
+
+  it('AC-T07/AC-T09: title route retains loopback security, cancellation and its own body limit', async () => {
+    const { service, broker } = await createRuntime()
+    const title = vi.spyOn(service, 'reportAuditTitle').mockResolvedValue({ status: 'UPDATED', title_event_seq: 12 })
+    const body = { connectionKey: 'test', auditTitleEpoch: 1, update: { conversation_id: 'e2e-title', title: 'e2e-title', title_event_seq: 12 } }
+    const path = '/v1/audit/conversations/title'
+    const response = await brokerFetch(broker, path, { method: 'POST', body: JSON.stringify(body) })
+    expect(await response.json()).toEqual({ status: 'UPDATED', title_event_seq: 12 })
+    expect(title).toHaveBeenCalledWith(body, expect.any(AbortSignal))
+    expect((await brokerFetch(broker, path, { method: 'POST', body: JSON.stringify(body), headers: { origin: 'https://evil.example' } })).status).toBe(403)
+    expect((await brokerFetch(broker, path, { method: 'POST', body: JSON.stringify({ padding: 'x'.repeat(8192) }) })).status).toBe(413)
+    expect(title).toHaveBeenCalledTimes(1)
+  })
   it('rejects browser, host, and non-JSON requests and never returns CORS or tokens', async () => {
     const { broker } = await createRuntime()
     const withOrigin = await brokerFetch(broker, '/v1/state', {

@@ -3,6 +3,8 @@ import type { Generation } from './registry'
 
 export interface GenerationInstallOptions {
   dshHome: string
+  /** Enterprise installs stay in the enterprise generation directories. */
+  namespace?: 'enterprise'
   profile?: string
   strictDepBuilds?: boolean
   /** Explicit market peer policy; otherwise inherit the Profile's explicit boolean. */

@@ -238,7 +238,11 @@ export async function installGeneration(options) {
   }
   const { dshHome, pluginSpec, onTrace } = options
   const trace = (line) => onTrace?.(`generation-install: ${line}`)
-  const layout = await ensureRegistryDirectories(dshHome)
+  const layout = options.namespace === 'enterprise'
+    ? { staging: join(dshHome, 'profiles', '.enterprise-staging'), generations: join(dshHome, 'profiles', '.enterprise-generations') }
+    : await ensureRegistryDirectories(dshHome)
+  await mkdir(layout.staging, { recursive: true })
+  await mkdir(layout.generations, { recursive: true })
   // Known registry/path names make staging provenance readable; generic git and
   // tarball specs are resolved to their actual direct dependency after pnpm runs.
   let pluginName = options.expectedPluginName ?? (pluginSpec.replace(/@[^@/]+$/u, '') || pluginSpec)
@@ -351,7 +355,7 @@ export async function installGeneration(options) {
     // reuse an older unbuilt generation after the user approves its scripts.
     const buildIdentity = options.strictDepBuilds === true || approvals.length > 0
       ? `\nbuild-policy-v1:${JSON.stringify([...approvals].sort())}:${process.platform}:${process.arch}` : ''
-    const id = generationId(pluginName, version, lockfileText + buildIdentity)
+    const id = generationId(pluginName, version, lockfileText + buildIdentity + (options.namespace === 'enterprise' ? randomUUID() : ''))
     const generationDir = join(layout.generations, id)
 
     if (existsSync(generationDir)) {
@@ -692,6 +696,11 @@ export async function verifyGenerationPeers(dshHome, generation, options = {}) {
         resolved = requireFromPackage.resolve(dependency)
       } catch {
         resolved = await resolveNonRootPackage(requireFromPackage, dependency)
+      }
+      // Offline enterprise generations need not have legacy Profile links yet.
+      // Match the runtime's explicit host namespace fallback, never arbitrary dependencies.
+      if (resolved === undefined && dependency.startsWith('@deepseek-ai/')) {
+        resolved = await hostEntry(dependency)
       }
       const requiredDependency =
         Object.hasOwn(dependencies, dependency) && !Object.hasOwn(optionalDependencies, dependency)

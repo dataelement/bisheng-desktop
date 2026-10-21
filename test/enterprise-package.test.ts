@@ -258,8 +258,8 @@ describe('DSH Desktop enterprise package', () => {
     }
   })
 
-  it('waits for connection and llm before applying the Harness adapter', () => {
-    expect(enterpriseInject).toEqual(['connection', 'llm'])
+  it('waits for connection, llm and loader before applying the Harness adapter', () => {
+    expect(enterpriseInject).toEqual(['connection', 'llm', 'loader'])
   })
 
   it('registers the chat adapter from settings state reads instead of waiting for the idle poll', async () => {

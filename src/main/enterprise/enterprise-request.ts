@@ -127,6 +127,7 @@ export async function requestEnterpriseStream(
     : options.signal
   const requestId = randomUUID()
   const fetchEnterprise = createEnterpriseFetch(fetchImpl)
+  const body = withConversationAuditContext(options.body, options.attribution)
   try {
     return await fetchEnterprise(endpoint.toString(), {
       method: 'POST',
@@ -136,15 +137,30 @@ export async function requestEnterpriseStream(
         'content-type': 'application/json',
         'x-request-id': requestId,
         authorization: `Bearer ${options.accessToken}`,
-        ...(options.attribution?.['user-agent'] ? { 'user-agent': options.attribution['user-agent'] } : {})
+        ...Object.fromEntries(['user-agent', 'x-dsh-conversation-id', 'x-dsh-request-purpose']
+          .flatMap((key) => options.attribution?.[key] ? [[key, options.attribution[key]]] : []))
       },
-      body: JSON.stringify(options.body)
+      body: JSON.stringify(body)
     })
   } catch (error) {
     if (options.signal?.aborted) throw error
     throw new EnterprisePlatformError('Could not reach the BiSheng platform.', {
       code: 'network_error'
     })
+  }
+}
+
+function withConversationAuditContext(body: unknown, attribution?: Record<string, string>): unknown {
+  const conversationId = attribution?.['x-dsh-conversation-id']
+  if (!conversationId || !isPlainObject(body)) return body
+  const auditContext = body.audit_context
+  if (auditContext !== undefined && !isPlainObject(auditContext)) {
+    throw new Error('Enterprise audit context must be a JSON object.')
+  }
+  // BiSheng reads body metadata; retain headers for older gateways and prefer body metadata.
+  return {
+    ...body,
+    audit_context: { conversation_id: conversationId, ...auditContext }
   }
 }
 

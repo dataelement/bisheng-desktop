@@ -1268,6 +1268,9 @@ window.__ModuleLoader__.load({
       .dshWbSettings{box-sizing:border-box;padding-top:8px;display:flex;flex-direction:column;gap:8px}.dshWbSettings h2{margin:0;font-size:15px;line-height:22px;font-weight:600}.dshWbSettings p{margin:0}
       .dshWbMarket::selection,.dshWbMarket *::selection{background:var(--dsw-alias-label-primary);color:var(--dsw-alias-label-primary-foreground)}
       .dshWbMarketHeader{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:28px}
+      .dshWbMarketHeader:empty{margin-bottom:0}
+      /* macOS drag is the header box. Fold the section top padding into that box so the blank band above the title drags too. */
+      html[data-platform=darwin] .dshWbMarket{padding-top:0}html[data-platform=darwin] .dshWbMarketHeader{padding-top:30px}
       .dshWbMarketHeaderText{max-width:70ch}.dshWbMarket h1{font-size:28px;line-height:36px;letter-spacing:-.025em;font-weight:650;margin:0 0 7px;text-wrap:balance}.dshWbMarketHeader p{margin:0}
       .dshWbMarketHeaderActions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}
       .dshWbRefresh{display:grid;place-items:center;width:36px;height:36px;padding:0;flex:none}.dshWbRefresh[aria-busy=true] svg{animation:dshWbSpin .8s linear infinite}@keyframes dshWbSpin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.dshWbRefresh[aria-busy=true] svg{animation:none}}
@@ -1366,8 +1369,8 @@ window.__ModuleLoader__.load({
       @media(hover:none){.dshWbUninstall{opacity:1;transform:none}}@media(prefers-reduced-motion:reduce){.dshWbCard,.dshWbFavorite,.dshWbUninstall,.dshWbModal,.dshWbModalBackdrop,.dshWbDockSwitch::after{animation:none;transition:none}}
       @container workbench-market (max-width:980px){.dshWbGrid{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}}
       @container workbench-market (max-width:620px){.dshWbGrid{grid-template-columns:1fr}}
-      @media(max-width:900px){.dshWbMarket{padding:24px}.dshWbBusiness{min-width:180px}}
-      @media(max-width:640px){.dshWbMarket{padding:20px 16px 40px}.dshWbMarketHeader{flex-direction:column;margin-bottom:22px}.dshWbMarketHeaderActions{width:100%;justify-content:flex-start}.dshWbCreate{flex:1;justify-content:center}.dshWbTabs{min-width:0}.dshWbTabs [role=tablist]{width:100%}.dshWbBody{flex-direction:column}.dshWbBusiness,.dshWbBusiness[data-side=left]{order:2;width:100%;max-width:none;min-width:0;max-height:35%;border-left:0;border-top:1px solid var(--dsw-alias-border-l2)}.dshWbBusiness textarea{min-height:100px}.dshWbGrid{grid-template-columns:1fr}.dshWbBrowseTools,.dshWbSearch{width:100%;max-width:none}.dshWbCategories{width:100%}.dshWbSteps{grid-template-columns:1fr}.dshWbConfirm .dshWbActions{flex-direction:column;align-items:stretch}.dshWbConfirm .dshWbActions .dshWbBtn{width:100%}}
+      @media(max-width:900px){.dshWbMarket{padding:24px}html[data-platform=darwin] .dshWbMarket{padding-top:0}html[data-platform=darwin] .dshWbMarketHeader{padding-top:24px}.dshWbBusiness{min-width:180px}}
+      @media(max-width:640px){.dshWbMarket{padding:20px 16px 40px}html[data-platform=darwin] .dshWbMarket{padding-top:0}html[data-platform=darwin] .dshWbMarketHeader{padding-top:20px}.dshWbMarketHeader{flex-direction:column;margin-bottom:22px}.dshWbMarketHeaderActions{width:100%;justify-content:flex-start}.dshWbCreate{flex:1;justify-content:center}.dshWbTabs{min-width:0}.dshWbTabs [role=tablist]{width:100%}.dshWbBody{flex-direction:column}.dshWbBusiness,.dshWbBusiness[data-side=left]{order:2;width:100%;max-width:none;min-width:0;max-height:35%;border-left:0;border-top:1px solid var(--dsw-alias-border-l2)}.dshWbBusiness textarea{min-height:100px}.dshWbGrid{grid-template-columns:1fr}.dshWbBrowseTools,.dshWbSearch{width:100%;max-width:none}.dshWbCategories{width:100%}.dshWbSteps{grid-template-columns:1fr}.dshWbConfirm .dshWbActions{flex-direction:column;align-items:stretch}.dshWbConfirm .dshWbActions .dshWbBtn{width:100%}}
     `
     function ensureStyles() {
       const existing = document.querySelector('style[data-plugin-css="dsh-desktop-workbenches"]')
@@ -1877,6 +1880,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
       const [submitCategory, setSubmitCategory] = React.useState('')
       const [categoryIdea, setCategoryIdea] = React.useState('')
       if (!workbenchEnabled) return h('section', { className: 'dshWb dshWbMarket', 'aria-label': '工作台市场' },
+        h('header', { className: 'dshWbMarketHeader', 'data-window-drag': true }),
         h('div', { className: 'dshWbDisabledHint' }, h('h1', null, '工作台功能已关闭')))
       const developmentPrompt = developmentWorkbenchAgentPrompt()
       const chosenCategory = marketCategories.find((item) => item.id === submitCategory)
@@ -1926,7 +1930,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
         catch { setCopyStatus('复制失败，请展开指令后手动全选复制。') }
       }
       return h('section', { className: 'dshWb dshWbMarket', 'aria-label': '工作台市场' },
-        h('header', { className: 'dshWbMarketHeader' },
+        h('header', { className: 'dshWbMarketHeader', 'data-window-drag': true },
           h('div', { className: 'dshWbMarketHeaderText' },
             h('h1', null, tab === 'submit' ? '制作属于你的工作台' : '工作台'),
             h('p', { className: 'dshWbMuted' }, tab === 'submit' ? '遵循规范开发、安装并验证，也可以准备材料提交到工作台市场。' : '工作台把专属界面、会话和资料组织在一起。可通过顶部快捷栏在会话与不同工作台之间切换。')),

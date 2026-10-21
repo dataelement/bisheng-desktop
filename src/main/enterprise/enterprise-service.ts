@@ -1,13 +1,20 @@
 import { parseMarketRequest } from './enterprise-market'
+import { parseEnterpriseResponsesPayload } from './enterprise-responses'
 import { discardWorkbenchArtifact, rememberWorkbenchArtifact, releaseWorkbenchArtifact as releaseRetainedWorkbenchArtifact, verifyWorkbenchArtifactResponse, WORKBENCH_ARTIFACT_LIMIT } from './workbench-artifact'
+import { randomUUID } from 'node:crypto'
+import { EnterpriseAuthError, EnterpriseAuthTransport, type EnterpriseAuthState } from './enterprise-auth'
 import { createEnterpriseFetch } from './platform-fetch'
 import { resolveEnterpriseEndpoint } from './enterprise-request'
 import type { ServerResponse } from 'node:http'
+import type { AuditContextField } from 'dsh-desktop-enterprise/contract'
 import {
   CHAT_HEADER_TIMEOUT_MS,
   CHAT_IDLE_TIMEOUT_MS,
   CHAT_MAX_CONCURRENT,
   CHAT_TOTAL_TIMEOUT_MS,
+  desktopChatAbortError,
+  enterpriseHeaderTimeoutAbortReason,
+  enterpriseSessionChangedAbortReason,
   isSseContentType,
   parseEnterpriseChatPayload
 } from './enterprise-chat'
@@ -66,11 +73,13 @@ export interface EnterprisePublicUsage {
 export interface EnterprisePublicModel {
   id: string
   display_name: string
+  reasoning?: { efforts: Array<{ id: string; name: string }>; defaultEffort?: string }
   capabilities: {
     streaming: boolean
     tools: boolean
     reasoning_content: boolean
     vision?: boolean
+    responses?: boolean
   }
 }
 
@@ -93,6 +102,9 @@ export interface EnterprisePublicState {
   connectionKey?: string
   sessionExpiresAt?: string
   loginExpiresAt?: string
+  audit_context?: { fields: AuditContextField[] }
+  audit_conversation_title?: { version: 1 }
+  auditTitleEpoch?: number
 }
 
 export interface EnterpriseLoginStartResult {
@@ -106,6 +118,9 @@ export interface EnterpriseServiceNote {
   status?: number
   requestId?: string
   originHash?: string
+  pluginId?: string
+  path?: string
+  duration?: number
 }
 
 export interface EnterpriseServiceOptions {
@@ -121,6 +136,7 @@ export interface EnterpriseServiceOptions {
 
 interface PendingLogin {
   epoch: number
+  authEpoch: number
   base: string
   codeVerifier: string
   state: string
@@ -157,6 +173,14 @@ export class EnterpriseService {
   private chatInFlight = 0
   private readonly chatControllers = new Set<AbortController>()
   private allowPrivateHttpForSession = false
+  private readonly authTransport = new EnterpriseAuthTransport()
+  private readonly authVersionPrefix = randomUUID()
+  private authEpoch = 0
+  private authEnabled = false
+  private auditFields: AuditContextField[] = []
+  private auditRefreshGeneration = 0
+  private auditTitleAvailable = false
+  private auditTitleInFlight = false
 
   constructor(private readonly options: EnterpriseServiceOptions) {
     this.phase = options.vault.available ? 'idle' : 'disabled'
@@ -174,6 +198,8 @@ export class EnterpriseService {
     const connected = this.phase === 'connected' || this.phase === 'degraded' || this.phase === 'refreshing'
     return {
       connected,
+      ...(connected && this.auditFields.length ? { audit_context: { fields: [...this.auditFields] } } : {}),
+      ...(connected && this.auditTitleAvailable ? { audit_conversation_title: { version: 1 as const }, auditTitleEpoch: this.epoch } : {}),
       secureStorageAvailable: this.options.vault.available,
       phase: this.phase,
       revision: this.revision,
@@ -183,6 +209,7 @@ export class EnterpriseService {
       models: this.models.map((model) => ({
         id: model.id,
         display_name: model.display_name,
+        ...(model.reasoning === undefined ? {} : { reasoning: structuredClone(model.reasoning) }),
         capabilities: { ...model.capabilities }
       })),
       modelsAvailable: this.modelsAvailable && (this.phase === 'connected' || this.phase === 'refreshing'),
@@ -207,9 +234,11 @@ export class EnterpriseService {
       this.vaultGeneration = stored.generation
       if (!stored.session) return
       this.session = stored.session
+      this.authEnabled = true
       const { isInsecurePrivateHttpOrigin } = await import('dsh-desktop-enterprise/deep-link')
       this.allowPrivateHttpForSession = isInsecurePrivateHttpOrigin(stored.session.base ?? '')
       this.phase = 'connected'
+      await this.refreshAuditCapability()
       this.clearError()
       this.publish()
       this.scheduleModels(0)
@@ -243,6 +272,8 @@ export class EnterpriseService {
     baseValue: string,
     options: { confirmInsecurePrivateHttp?: boolean } = {}
   ): Promise<EnterpriseLoginStartResult> {
+    this.invalidateAuthSession()
+    const authEpoch = this.authEpoch
     return this.enqueueMutation(async () => {
       if (!this.options.vault.available) {
         throw Object.assign(new Error(this.options.vault.unavailableReason ?? 'Secure storage is unavailable.'), {
@@ -271,6 +302,10 @@ export class EnterpriseService {
       this.epoch += 1
       const loginEpoch = this.epoch
       this.pauseSessionForRelogin()
+      const config = contract.parseConfig((await requestEnterpriseJson(
+        this.options.fetchImpl, base, contract.API_PATHS.config, this.platformRequestOptions()
+      )).body)
+      if (!config.enabled) throw Object.assign(new Error('Enterprise login is disabled.'), { status: 503 })
       const pkce = contract.createPkceTransaction()
       let expectedAuthId: string | undefined
       const callback = await (this.options.startCallback ?? startLoginCallbackServer)({
@@ -309,6 +344,7 @@ export class EnterpriseService {
         callback.alignTimeout(lifetimeMs)
         this.pendingLogin = {
           epoch: loginEpoch,
+          authEpoch,
           base,
           codeVerifier: pkce.codeVerifier,
           state: pkce.state,
@@ -367,6 +403,7 @@ export class EnterpriseService {
   }
 
   async logout(): Promise<EnterprisePublicState> {
+    this.invalidateAuthSession()
     return this.enqueueMutation(async () => {
       const current = this.session
       await this.cancelPendingLogin()
@@ -392,7 +429,22 @@ export class EnterpriseService {
   }
 
   async proxyChat(payload: unknown, response: ServerResponse, signal: AbortSignal): Promise<void> {
-    const parsed = parseEnterpriseChatPayload(payload)
+    const parsed = parseEnterpriseChatPayload(payload, this.auditFields)
+    await this.proxyModel(parsed, response, signal)
+  }
+
+  async proxyResponses(payload: unknown, response: ServerResponse, signal: AbortSignal): Promise<void> {
+    const parsed = parseEnterpriseResponsesPayload(payload)
+    if (parsed.connectionKey !== this.connectionKey()) {
+      throw Object.assign(new Error('Enterprise session changed.'), { status: 409 })
+    }
+    if (!this.models.some((model) => model.id === parsed.model && model.capabilities.responses === true)) {
+      throw Object.assign(new Error('Native Responses is unavailable for this model.'), { status: 403 })
+    }
+    await this.proxyModel(parsed, response, signal)
+  }
+
+  private async proxyModel(parsed: ReturnType<typeof parseEnterpriseChatPayload> | ReturnType<typeof parseEnterpriseResponsesPayload>, response: ServerResponse, signal: AbortSignal): Promise<void> {
     if (!this.session?.base || !this.session.access_token || !this.modelsAvailable) {
       throw Object.assign(new Error('Enterprise models are unavailable.'), { status: 409 })
     }
@@ -403,23 +455,24 @@ export class EnterpriseService {
       throw Object.assign(new Error('Too many enterprise chats.'), { status: 429 })
     }
     const epoch = this.epoch
-    const controller = new AbortController()
-    const combined = AbortSignal.any([signal, controller.signal])
-    this.chatControllers.add(controller)
+    const sessionController = new AbortController()
+    this.chatControllers.add(sessionController)
     this.chatInFlight += 1
     try {
-      await this.runChat(parsed, response, combined, epoch, false)
+      await this.runChat(parsed, response, signal, sessionController.signal, epoch, false)
     } finally {
-      this.chatControllers.delete(controller)
+      this.chatControllers.delete(sessionController)
       this.chatInFlight -= 1
     }
   }
 
   async stop(): Promise<void> {
+    this.invalidateAuthSession()
+    this.auditFields = []
     await this.cancelPendingLogin()
     this.clearModelsTimer()
     this.epoch += 1
-    for (const controller of this.chatControllers) controller.abort()
+    for (const controller of this.chatControllers) controller.abort(enterpriseSessionChangedAbortReason())
     this.chatControllers.clear()
   }
 
@@ -474,6 +527,7 @@ export class EnterpriseService {
       )
       if (this.epoch !== expectedEpoch) return
       await this.commitSession(token as EnterpriseCredentialSession, expectedEpoch)
+      if (this.authEpoch === pending.authEpoch && this.session?.access_token) this.authEnabled = true
       await this.syncCatalog(expectedEpoch, { includeUsage: true })
       this.note('login_committed', { originHash: hashEnterpriseOrigin(pending.base) })
       try {
@@ -562,7 +616,9 @@ export class EnterpriseService {
       this.modelsAttempt = 0
       // Leave phase as refreshing; syncCatalog flips to connected after usage.
     } catch {
+      this.invalidateAuthSession()
       this.session = null
+      this.auditFields = []
       this.allowPrivateHttpForSession = false
       this.models = []
       this.modelsAvailable = false
@@ -585,6 +641,8 @@ export class EnterpriseService {
   private async syncCatalog(expectedEpoch: number, options: { includeUsage: boolean }): Promise<void> {
     if (this.epoch !== expectedEpoch || !this.session?.base || !this.session.access_token) return
     const contract = await loadEnterpriseContract()
+    await this.refreshAuditCapability()
+    if (this.epoch !== expectedEpoch) return
     try {
       const modelsResult = await requestEnterpriseJson(
         this.options.fetchImpl,
@@ -600,6 +658,7 @@ export class EnterpriseService {
       this.models = parsedModels.map((model) => ({
         id: model.id,
         display_name: model.display_name,
+        ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
         capabilities: model.capabilities
       }))
       this.modelsAvailable = this.models.length > 0
@@ -649,6 +708,7 @@ export class EnterpriseService {
       this.models = contract.parseModelsLenient(modelsResult.body).map((model) => ({
         id: model.id,
         display_name: model.display_name,
+        ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
         capabilities: model.capabilities
       }))
       this.modelsAvailable = this.models.length > 0
@@ -683,36 +743,38 @@ export class EnterpriseService {
   }
 
   private async runChat(
-    parsed: ReturnType<typeof parseEnterpriseChatPayload>,
+    parsed: ReturnType<typeof parseEnterpriseChatPayload> | ReturnType<typeof parseEnterpriseResponsesPayload>,
     response: ServerResponse,
-    signal: AbortSignal,
+    callerSignal: AbortSignal,
+    sessionSignal: AbortSignal,
     epoch: number,
     retried: boolean
   ): Promise<void> {
-    if (this.epoch !== epoch) {
-      throw Object.assign(new Error('Enterprise session changed.'), { status: 409 })
-    }
+    if (this.epoch !== epoch) throw enterpriseSessionChangedAbortReason()
     const accessToken = await this.ensureAccess(epoch)
     const contract = await loadEnterpriseContract()
     const totalTimeout = AbortSignal.timeout(CHAT_TOTAL_TIMEOUT_MS)
     const headerController = new AbortController()
-    const headerTimer = setTimeout(() => headerController.abort(), CHAT_HEADER_TIMEOUT_MS)
+    const headerTimer = setTimeout(() => headerController.abort(enterpriseHeaderTimeoutAbortReason()), CHAT_HEADER_TIMEOUT_MS)
+    const lifetime = AbortSignal.any([callerSignal, sessionSignal])
+    const upstreamSignal = AbortSignal.any([lifetime, headerController.signal, totalTimeout])
     let upstream: Response
     try {
       upstream = await requestEnterpriseStream(
         this.options.fetchImpl,
         this.session!.base!,
-        contract.API_PATHS.chat,
+        'protocol' in parsed ? contract.API_PATHS.responses : contract.API_PATHS.chat,
         {
           body: parsed.request,
           accessToken,
-          signal: AbortSignal.any([signal, totalTimeout, headerController.signal]),
+          signal: upstreamSignal,
           ...this.platformRequestOptions(),
           attribution: parsed.attribution
         }
       )
     } catch (error) {
-      if (signal.aborted) throw error
+      const classified = desktopChatAbortError(upstreamSignal.reason)
+      if (classified !== undefined) throw classified
       throw error
     } finally {
       clearTimeout(headerTimer)
@@ -720,25 +782,124 @@ export class EnterpriseService {
     if (upstream.status === 401 && !retried && !response.headersSent) {
       await upstream.body?.cancel().catch(() => undefined)
       await this.refresh()
-      if (this.epoch !== epoch) {
-        throw Object.assign(new Error('Enterprise session changed.'), { status: 409 })
-      }
-      await this.runChat(parsed, response, signal, epoch, true)
+      if (this.epoch !== epoch) throw enterpriseSessionChangedAbortReason()
+      await this.runChat(parsed, response, callerSignal, sessionSignal, epoch, true)
       return
     }
     const contentType = upstream.headers.get('content-type')
     if (!upstream.ok || !isSseContentType(contentType)) {
-      const text = await upstream.text()
+      const text = await this.boundedResponseText(upstream)
       this.handleChatStatus(upstream.status, text, parsed.model, epoch)
       this.writeForwarded(response, upstream, text)
       return
     }
-    await this.pipeSse(upstream, response, signal)
+    await this.pipeSse(upstream, response, lifetime, 'protocol' in parsed)
     if (this.epoch === epoch) void this.syncUsage(epoch, parsed.model)
   }
 
   private connectionKey(): string {
     return hashEnterpriseOrigin(JSON.stringify([this.session?.base, this.session?.tenant?.id, this.session?.user?.id]))
+  }
+
+  authState(): EnterpriseAuthState {
+    const connected = this.authEnabled && Boolean(this.session?.base && this.session.access_token) &&
+      ['connected', 'degraded', 'refreshing'].includes(this.phase) &&
+      (this.session?.session_expires_at === undefined || Date.parse(this.session.session_expires_at) > this.now())
+    return {
+      connected,
+      sessionVersion: this.authVersionPrefix + ':' + this.authEpoch,
+      ...(connected && this.session?.tenant?.id ? { enterpriseId: this.session.tenant.id } : {}),
+      ...(connected && this.session?.user?.id ? { userId: this.session.user.id } : {})
+    }
+  }
+
+  private invalidateAuthSession(): void {
+    this.authEpoch += 1
+    this.authEnabled = false
+    this.authTransport.invalidate()
+  }
+
+  async authRequest(plugin: { pluginId: string; instanceId: string }, input: unknown, signal: AbortSignal): Promise<Response> {
+    const epoch = this.epoch
+    const assertSession = (version: string) => {
+      const state = this.authState()
+      if (state.sessionVersion !== version) throw new EnterpriseAuthError('session_changed', 409)
+      if (!state.connected) throw new EnterpriseAuthError('not_connected', 401)
+    }
+    return this.authTransport.request(plugin, input, signal, {
+      assertSession,
+      access: async request => {
+        const accessToken = await this.ensureAccess(epoch)
+        assertSession(request.sessionVersion)
+        const base = this.session?.base
+        if (!base) throw new EnterpriseAuthError('not_connected', 401)
+        const { endpoint } = await resolveEnterpriseEndpoint(base, request.path,
+          this.options.allowInsecureLoopback, this.platformRequestOptions().allowInsecurePrivateHttp)
+        assertSession(request.sessionVersion)
+        if (endpoint.origin !== new URL(base).origin) throw new EnterpriseAuthError('invalid_request', 400)
+        return { endpoint: endpoint.toString(), accessToken }
+      },
+      fetch: this.options.fetchImpl,
+      audit: entry => this.note('auth_request', entry)
+    })
+  }
+
+  async reportAuditTitle(input: unknown, signal?: AbortSignal): Promise<unknown> {
+    const invalid = () => Object.assign(new Error('Invalid audit title request.'), { status: 400 })
+    if (!input || typeof input !== 'object' || Array.isArray(input) ||
+        Object.keys(input).sort().join(',') !== 'auditTitleEpoch,connectionKey,update') throw invalid()
+    const request = input as Record<string, unknown>
+    const contract = await loadEnterpriseContract()
+    let update
+    try { update = contract.parseAuditTitleUpdate(request.update) } catch { throw invalid() }
+    const epoch = this.epoch
+    const assertConnection = () => {
+      if (!this.session?.base || !this.snapshot().connected || !this.auditTitleAvailable ||
+          epoch !== this.epoch || request.auditTitleEpoch !== epoch || request.connectionKey !== this.connectionKey() ||
+          (this.session.session_expires_at !== undefined && !(Date.parse(this.session.session_expires_at) > this.now()))) {
+        throw Object.assign(new Error('Enterprise audit title connection changed.'), { status: 409 })
+      }
+      signal?.throwIfAborted()
+    }
+    const controller = new AbortController()
+    assertConnection()
+    if (this.auditTitleInFlight) throw Object.assign(new Error('Audit title synchronization busy.'), { status: 429 })
+    this.auditTitleInFlight = true
+    this.chatControllers.add(controller)
+    const combined = AbortSignal.any([controller.signal, ...(signal ? [signal] : [])])
+    try {
+      assertConnection()
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const accessToken = await this.ensureAccess(epoch)
+        assertConnection()
+        const base = this.session?.base
+        if (!base) throw Object.assign(new Error('Enterprise account changed.'), { status: 409 })
+        try {
+          const result = await requestEnterpriseJson(this.options.fetchImpl, base, contract.API_PATHS.auditTitle, {
+            ...this.platformRequestOptions(), method: 'POST', body: update, accessToken, timeoutMs: 5000, signal: combined
+          })
+          assertConnection()
+          const body = result.body
+          if (!body || typeof body !== 'object' || Array.isArray(body)) throw invalid()
+          const value = body as Record<string, unknown>
+          if (!['UPDATED', 'UNCHANGED', 'STALE', 'CONFLICT', 'DISABLED', 'NOT_READY'].includes(String(value.status)) ||
+              (value.title_event_seq !== undefined && (!Number.isSafeInteger(value.title_event_seq) || Number(value.title_event_seq) < 0))) throw invalid()
+          return { status: value.status, ...(value.title_event_seq === undefined ? {} : { title_event_seq: value.title_event_seq }) }
+        } catch (error) {
+          assertConnection()
+          if (error instanceof EnterprisePlatformError && error.status === 401 && attempt === 0) {
+            await this.refresh()
+            assertConnection()
+            continue
+          }
+          const status = error instanceof EnterprisePlatformError ? error.status ?? 503 : 503
+          throw Object.assign(new Error('Audit title synchronization unavailable.'), { status })
+        }
+      }
+    } finally {
+      this.auditTitleInFlight = false
+      this.chatControllers.delete(controller)
+    }
   }
 
   async marketRequest(input: unknown): Promise<{ bytes: Buffer, binary: boolean }> {
@@ -771,10 +932,13 @@ export class EnterpriseService {
         continue
       }
       if (!response.ok) {
-        await response.body?.cancel()
-        throw Object.assign(new Error(`Enterprise market request failed (${response.status}).`), { status: response.status })
+        const code = await readMarketErrorCode(response)
+        throw Object.assign(new Error(`Enterprise market request failed (${response.status}).`), {
+          status: response.status,
+          ...(code ? { code } : {})
+        })
       }
-      const limit = request.binary ? 256 * 1024 * 1024 : 16 * 1024 * 1024
+      const limit = request.binary ? 512 * 1024 * 1024 : 16 * 1024 * 1024
       const chunks: Uint8Array[] = []
       let length = 0
       if (response.body) for await (const chunk of response.body) {
@@ -979,7 +1143,27 @@ export class EnterpriseService {
     response.end(text)
   }
 
-  private async pipeSse(upstream: Response, response: ServerResponse, signal: AbortSignal): Promise<void> {
+  private async boundedResponseText(upstream: Response): Promise<string> {
+    if (!upstream.body) return ''
+    const reader = upstream.body.getReader()
+    const chunks: Uint8Array[] = []
+    let size = 0
+    try {
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        size += value.byteLength
+        if (size > 2 * 1024 * 1024) throw new Error('Enterprise error response is too large.')
+        chunks.push(value)
+      }
+      return Buffer.concat(chunks).toString('utf8')
+    } finally {
+      await reader.cancel().catch(() => undefined)
+      reader.releaseLock()
+    }
+  }
+
+  private async pipeSse(upstream: Response, response: ServerResponse, signal: AbortSignal, native = false): Promise<void> {
     if (response.headersSent) return
     const requestId = sanitizeRequestId(upstream.headers.get('x-request-id') ?? undefined)
     const contentType = upstream.headers.get('content-type') ?? 'text/event-stream'
@@ -993,6 +1177,7 @@ export class EnterpriseService {
       return
     }
     const reader = upstream.body.getReader()
+    let totalBytes = 0
     let idle = setTimeout(() => response.destroy(), CHAT_IDLE_TIMEOUT_MS)
     const resetIdle = () => {
       clearTimeout(idle)
@@ -1010,6 +1195,8 @@ export class EnterpriseService {
         if (done) break
         resetIdle()
         const chunk = Buffer.from(value)
+        totalBytes += chunk.byteLength
+        if (native && totalBytes > 32 * 1024 * 1024) throw new Error('Enterprise response is too large.')
         if (!response.write(chunk)) {
           await waitForDrain(response, signal)
         }
@@ -1018,6 +1205,7 @@ export class EnterpriseService {
     } finally {
       clearTimeout(idle)
       signal.removeEventListener('abort', onAbort)
+      await reader.cancel().catch(() => undefined)
       reader.releaseLock()
     }
   }
@@ -1036,9 +1224,11 @@ export class EnterpriseService {
   }
 
   private async clearLocalSession(phase: EnterprisePhase): Promise<void> {
+    this.invalidateAuthSession()
+    this.auditFields = []
     this.epoch += 1
     this.clearModelsTimer()
-    for (const controller of this.chatControllers) controller.abort()
+    for (const controller of this.chatControllers) controller.abort(enterpriseSessionChangedAbortReason())
     await this.cancelPendingLogin()
     this.session = null
     this.allowPrivateHttpForSession = false
@@ -1069,6 +1259,7 @@ export class EnterpriseService {
   }
 
   private pauseSessionForRelogin(): void {
+    this.auditFields = []
     this.modelsAvailable = false
     this.publish()
   }
@@ -1078,6 +1269,31 @@ export class EnterpriseService {
     const pending = this.pendingLogin
     this.pendingLogin = undefined
     if (pending) await pending.callback.close()
+  }
+
+  async refreshAuditCapability(): Promise<void> {
+    const generation = ++this.auditRefreshGeneration
+    this.auditFields = []
+    this.auditTitleAvailable = false
+    this.publish()
+    const epoch = this.epoch
+    const base = this.session?.base
+    const connectionKey = this.connectionKey()
+    if (!base || !this.session?.access_token) return
+    try {
+      const contract = await loadEnterpriseContract()
+      const config = contract.parseConfig((await requestEnterpriseJson(
+        this.options.fetchImpl, base, contract.API_PATHS.config, this.platformRequestOptions()
+      )).body)
+      if (generation !== this.auditRefreshGeneration || epoch !== this.epoch ||
+          base !== this.session?.base || connectionKey !== this.connectionKey()) return
+      this.auditFields = config.enabled ? config.audit_context?.fields ?? [] : []
+      this.auditTitleAvailable = config.enabled && config.audit_conversation_title?.version === 1
+    } catch {
+      // Only optional audit capability is lost; do not replay or reject model calls.
+      if (generation === this.auditRefreshGeneration && epoch === this.epoch) this.note('audit_capability_unavailable')
+    }
+    if (generation === this.auditRefreshGeneration && epoch === this.epoch) this.publish()
   }
 
   private scheduleLoginExpiry(epoch: number): void {
@@ -1172,12 +1388,40 @@ export class EnterpriseService {
       event,
       ...(details.status ? { status: details.status } : {}),
       ...(sanitizeRequestId(details.requestId) ? { requestId: sanitizeRequestId(details.requestId) } : {}),
-      ...(details.originHash ? { originHash: details.originHash } : {})
+      ...(details.originHash ? { originHash: details.originHash } : {}),
+      ...(details.pluginId ? { pluginId: details.pluginId } : {}),
+      ...(details.path ? { path: details.path } : {}),
+      ...(details.duration !== undefined ? { duration: details.duration } : {})
     })
   }
 
   private now(): number {
     return this.options.now?.() ?? Date.now()
+  }
+}
+
+async function readMarketErrorCode(response: Response): Promise<string | undefined> {
+  const chunks: Uint8Array[] = []
+  let length = 0
+  try {
+    if (response.body) {
+      for await (const chunk of response.body as AsyncIterable<Uint8Array>) {
+        length += chunk.byteLength
+        if (length > 4096) break
+        chunks.push(chunk)
+      }
+    }
+  } catch {
+    return undefined
+  } finally {
+    await response.body?.cancel().catch(() => undefined)
+  }
+  try {
+    const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { data?: { code?: unknown }, detail?: { code?: unknown } }
+    const candidate = parsed.data?.code ?? parsed.detail?.code
+    return typeof candidate === 'string' && /^[a-z0-9_]{1,64}$/u.test(candidate) ? candidate : undefined
+  } catch {
+    return undefined
   }
 }
 
@@ -1199,6 +1443,9 @@ function publicStateSignature(state: EnterprisePublicState): string {
     phase: state.phase,
     models: state.models,
     modelsAvailable: state.modelsAvailable,
+    audit_context: state.audit_context,
+    audit_conversation_title: state.audit_conversation_title,
+    auditTitleEpoch: state.auditTitleEpoch,
     base: state.base,
     user: state.user,
     tenant: state.tenant,

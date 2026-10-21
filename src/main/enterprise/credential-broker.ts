@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { SlidingWindowLimiter } from './enterprise-rate-limit'
 import type { EnterpriseService } from './enterprise-service'
+import { createEnterpriseAuthBroker } from './enterprise-auth-broker'
 
 export const ENTERPRISE_BROKER_HOST = '127.0.0.1'
 export const ENTERPRISE_BROKER_JSON_LIMIT = 256 * 1024
@@ -17,6 +18,8 @@ const JSON_ROUTES = new Map<string, 'GET' | 'POST'>([
   ['/v1/refresh', 'POST'],
   ['/v1/logout', 'POST'],
   ['/v1/chat', 'POST'],
+  ['/v1/responses', 'POST'],
+  ['/v1/audit/conversations/title', 'POST'],
   ['/v1/market', 'POST'],
   ['/v1/workbench/verify', 'POST'],
   ['/v1/workbench/materialize', 'POST'],
@@ -36,6 +39,7 @@ export async function startEnterpriseCredentialBroker(
   options: { allowInsecureLoopback: boolean } = { allowInsecureLoopback: false }
 ): Promise<EnterpriseCredentialBroker> {
   let capability = createCapability()
+  const authBroker = createEnterpriseAuthBroker(service, readJsonBody, sendJson)
   const loginLimit = new SlidingWindowLimiter(10, 60_000)
   const refreshLimit = new SlidingWindowLimiter(30, 60_000)
   const logoutLimit = new SlidingWindowLimiter(20, 60_000)
@@ -72,6 +76,10 @@ export async function startEnterpriseCredentialBroker(
       sendJson(response, 400, { error: 'Invalid request.' })
       return
     }
+    if (path.startsWith('/v1/auth/')) {
+      await authBroker.handle(request, response, path, authorize(request, capability))
+      return
+    }
     const allowedMethod = JSON_ROUTES.get(path)
     if (!allowedMethod) {
       sendJson(response, 404, { error: 'Not found.' })
@@ -94,7 +102,7 @@ export async function startEnterpriseCredentialBroker(
         sendJson(response, 200, await service.readState())
         return
       }
-      if (path === '/v1/chat') {
+      if (path === '/v1/chat' || path === '/v1/responses') {
         const body = await readJsonBody(request, ENTERPRISE_BROKER_CHAT_LIMIT)
         const controller = new AbortController()
         const abortIfClientGone = () => {
@@ -103,14 +111,24 @@ export async function startEnterpriseCredentialBroker(
         request.on('aborted', abortIfClientGone)
         response.on('close', abortIfClientGone)
         try {
-          await service.proxyChat(body, response, controller.signal)
+          if (path === '/v1/chat') await service.proxyChat(body, response, controller.signal)
+          else await service.proxyResponses(body, response, controller.signal)
         } finally {
           request.off('aborted', abortIfClientGone)
           response.off('close', abortIfClientGone)
         }
         return
       }
-      const body = await readJsonBody(request, ENTERPRISE_BROKER_JSON_LIMIT)
+      const body = await readJsonBody(request, path === '/v1/audit/conversations/title' ? 8192 : ENTERPRISE_BROKER_JSON_LIMIT)
+      if (path === '/v1/audit/conversations/title') {
+        const controller = new AbortController()
+        const abort = () => { if (!response.writableFinished) controller.abort() }
+        request.on('aborted', abort)
+        response.on('close', abort)
+        try { sendJson(response, 200, await service.reportAuditTitle(body, controller.signal)) }
+        finally { request.off('aborted', abort); response.off('close', abort) }
+        return
+      }
       if (path === '/v1/market') {
         const result = await service.marketRequest(body)
         response.writeHead(200, { 'content-type': result.binary ? 'application/octet-stream' : 'application/json', 'cache-control': 'no-store' })
@@ -218,9 +236,11 @@ export async function startEnterpriseCredentialBroker(
       }
     },
     rotateCapability() {
+      authBroker.revokeAll()
       capability = createCapability()
     },
     async stop() {
+      authBroker.revokeAll()
       capability = createCapability()
       if (!server.listening) return
       await new Promise<void>((resolve) => server.close(() => resolve()))
