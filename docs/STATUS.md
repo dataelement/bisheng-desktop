@@ -2,7 +2,7 @@
 
 - 基线：`origin/V1.2.0@2867a36`，工作区 `bisheng-work-v120-credits` / `codex/v120-unified-credits`，Harness `0.2.0-rc.2`；包含同事最新企业模型卡片更新。
 - Work 使用宿主 Modal 的焦点、Esc、遮罩退出能力，按 Chat 的设计统一标题、搜索、分组、复选框、书本图标、修改时间、计数和按钮。列表固定为 `min(440px, 48vh)`，加载及搜索结果变化时保持高度。平台目录透传真实 `update_time`，原生引用与发送前权限校验沿用现有链路。
-- 自动检查：初版相关 40 项测试、类型检查、构建与打包 Office 检查通过；本轮合入最新代码后重新构建打包。按照用户要求，界面交互由用户在本地包手动验收。
+- 自动检查：初版相关 40 项测试、类型检查、构建与打包 Office 检查通过；本轮 `6a90646` 合入最新代码后构建、DMG/ZIP 打包及包内 Office 检查通过；已推送 `dataelement/bisheng-work:V1.2.0` 并打开 `dist-dev/mac-arm64/BISHENG Dev.app`。产物位于主工作区 `outputs/bisheng-dev-3006-knowledge-20261022`。按照用户要求，界面交互由用户在本地包手动验收。
 
 ## 2026-10-22 — 3006 联合验收桌面包
 
