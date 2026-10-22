@@ -413,3 +413,10 @@ Verification:
 - Baseline: remote `V1.2.0@0b64190cf5c3c529acad3222c0eeb760d6e4a9c5`; worktree `bisheng-work-v120-credits`; installed Harness `0.2.0-rc.2`, Electron `43.0.0`. Includes the latest colleague enterprise skills integration.
 - The connected account page ends with the logout action after usage, managed models and storage. Removed the redundant enterprise account heading and service address display, together with their unused copy/styles. The sign-in address field remains available for connection setup.
 - JavaScript syntax check, production build and packaged Office authoring/conversion checks passed. User performs local visual acceptance.
+
+
+## 2026-10-22 Combined desktop installer correction
+- Verified remote `V1.2.0@3a56272`, which includes enterprise skills and source attribution from `0b64190`, plus the account footer simplification. Harness remains `0.2.0-rc.2`; worktree `bisheng-work-v120-credits`.
+- Previous account-cleanup DMG was rebuilt with the containing directory as `--prepackaged`, producing a nested app. Rebuilt the complete application and DMG/ZIP through the standard packaging flow; documented the correct `.app` input for installer-only rebuilds.
+- Production build and packaged Office checks passed. Read-only mounted DMG contains the executable, Info.plist and icon in the expected bundle layout. Mounted ASAR/executable hashes match the fresh build; packaged client and enterprise skill files match source. The app launched directly from the corrected image and reached the authenticated 3006 Chat home.
+- Delivery: `outputs/bisheng-dev-3006-combined-20261022`, with checksums. User performs visual feature acceptance.
