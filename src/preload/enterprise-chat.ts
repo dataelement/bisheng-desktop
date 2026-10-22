@@ -5,6 +5,9 @@ contextBridge.exposeInMainWorld('dshChatPresentation', Object.freeze({
   reportNavigation(navigation: unknown): void {
     ipcRenderer.send('enterprise-chat:navigation', { navigation, path: window.location.pathname })
   },
+  reportKnowledgeDialog(open: unknown): void {
+    if (typeof open === 'boolean') ipcRenderer.send('enterprise-chat:knowledge-dialog', { open, path: window.location.pathname })
+  },
   reportLanding(landing: unknown): void {
     if (typeof landing === 'boolean') ipcRenderer.send('enterprise-chat:landing', { landing, path: window.location.pathname })
   },

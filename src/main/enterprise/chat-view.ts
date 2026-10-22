@@ -4,6 +4,7 @@ import { session, shell, WebContentsView, type BrowserWindow, type Session } fro
 import { parseEnterpriseNavigation, parseEnterpriseSettingsSection, parseChatPage, parseChatId, parseChatPresentation, type EnterpriseSettingsSection, type EnterpriseChatHistory, type EnterpriseChatPresentation, type EnterpriseChatViewState } from '../../shared/enterprise-chat-view'
 import type { EnterpriseDesktopRuntime } from './enterprise-desktop'
 import { MODULE_ROUTE_PATTERN, MODULE_THEME_CSS, moduleThemeScript } from './chat-module-theme'
+import { chatDialogViewportScript } from './chat-dialog-viewport'
 import { chatLocaleScript } from './chat-locale'
 import { parseUsageSummary, parseUsageStorage, type EnterpriseUsage } from '../../shared/enterprise-usage'
 
@@ -19,6 +20,8 @@ async function loadWithin<T>(operation: Promise<T>, ms: number): Promise<T> {
 }
 
 export class EnterpriseChatView {
+  private knowledgeDialogOpen = false
+  private dialogViewport?: string
   private landing?: boolean
   private navigation?: ReturnType<typeof parseEnterpriseNavigation>
   private navigationRequest = 0
@@ -235,13 +238,26 @@ export class EnterpriseChatView {
     const [width = 0, height = 0] = this.owner.getContentSize()
     const x = Math.max(0, Math.round(bounds.x * zoom))
     const y = Math.max(0, Math.round(bounds.y * zoom))
-    this.view.setBounds({ x, y, width: Math.max(0, Math.min(width - x, Math.round(bounds.width * zoom))), height: Math.max(0, Math.min(height - y, Math.round(bounds.height * zoom))) })
+    const contentBounds = { x, y, width: Math.max(0, Math.min(width - x, Math.round(bounds.width * zoom))), height: Math.max(0, Math.min(height - y, Math.round(bounds.height * zoom))) }
+    const windowDialog = this.knowledgeDialogOpen && !this.presentation.settings
+    this.view.setBounds(windowDialog ? { x: 0, y: 0, width, height } : contentBounds)
+    const viewZoom = this.view.webContents.getZoomFactor()
+    const viewportScript = chatDialogViewportScript(windowDialog ? {
+      x: x / viewZoom, y: y / viewZoom, width: contentBounds.width / viewZoom, height: contentBounds.height / viewZoom
+    } : undefined, this.presentation.palette?.mask)
+    if (this.state.phase === 'ready' && viewportScript !== this.dialogViewport) {
+      this.dialogViewport = viewportScript
+      void this.view.webContents.executeJavaScript(viewportScript).catch(() => {
+        if (this.dialogViewport === viewportScript) this.dialogViewport = undefined
+        this.note('[enterprise-chat] dialog_viewport_failed')
+      })
+    }
     // Module routes paint the host surface, so the view backs them with the same color and shows no
     // foreign flash; Chat routes keep their own deployed theme and its original backing.
     const surface = new RegExp(MODULE_ROUTE_PATTERN, 'u').test(new URL(this.view.webContents.getURL() || 'about:blank').pathname)
       ? this.presentation.palette?.surface
       : undefined
-    this.view.setBackgroundColor(surface ? `#${surface.map((channel) => channel.toString(16).padStart(2, '0')).join('')}` : theme === 'dark' ? '#141416' : '#ffffff')
+    this.view.setBackgroundColor(windowDialog ? '#00000000' : surface ? `#${surface.map((channel) => channel.toString(16).padStart(2, '0')).join('')}` : theme === 'dark' ? '#141416' : '#ffffff')
     if (this.state.phase === 'ready') this.applyTheme()
   }
 
@@ -320,6 +336,12 @@ export class EnterpriseChatView {
             this.note(`[enterprise-settings] ready_report path_match=${report.path === url.pathname} section_match=${report.section === this.settingsSection} content_mode=${url.searchParams.get('dshSettings') === '1'}`)
           }
           if (report.path !== url.pathname) return
+          if (channel === 'enterprise-chat:knowledge-dialog') {
+            if (typeof report.open !== 'boolean' || !/^\/workspace\/(?:c|chat|linsight)\/[a-zA-Z0-9_-]+$/u.test(url.pathname)) return
+            this.knowledgeDialogOpen = report.open
+            this.layout()
+            return
+          }
           if (channel === 'enterprise-chat:settings-ready') {
             try {
               const section = parseEnterpriseSettingsSection(report.section)
@@ -355,6 +377,11 @@ export class EnterpriseChatView {
           this.notify()
         })
         view.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+          if (isMainFrame && !isInPlace && generation === this.generation && this.view === view) {
+            this.knowledgeDialogOpen = false
+            this.dialogViewport = undefined
+            this.layout()
+          }
           if (isMainFrame && !isInPlace && generation === this.generation && this.view === view && this.settingsSection) {
             this.settingsReady = false
             this.layout(); this.notify()
@@ -362,6 +389,7 @@ export class EnterpriseChatView {
         })
         view.webContents.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
           if (isMainFrame && generation === this.generation && this.view === view) {
+            this.knowledgeDialogOpen = false
             this.landing = undefined
             if (this.settingsSection) {
               const url = new URL(view.webContents.getURL())
@@ -413,6 +441,8 @@ export class EnterpriseChatView {
   }
 
   private clear(): void {
+    this.knowledgeDialogOpen = false
+    this.dialogViewport = undefined
     clearTimeout(this.settingsTimer)
     this.settingsSection = undefined
     this.settingsReturnRoute = undefined

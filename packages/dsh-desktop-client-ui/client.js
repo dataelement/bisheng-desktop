@@ -293,6 +293,8 @@ window.__ModuleLoader__.load({
           const alpha = channels.length > 3 ? channels[3] : 1
           palette[role] = channels.slice(0, 3).map((channel, index) => Math.max(0, Math.min(255, Math.round(surface[index] + (channel - surface[index]) * alpha))))
         }
+        const mask = read('--dsw-alias-bg-mask-1')
+        if (mask) palette.mask = [...mask.slice(0, 3), mask[3] ?? 1]
         return palette
       } catch { return undefined } finally { probe.remove() }
     }

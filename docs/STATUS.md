@@ -390,3 +390,9 @@ Verification:
 - Native Desktop login, real provider calls, and installed-app UI acceptance: `NOT_RUN`.
 
 - 3006 backend is now `feat/3.0.0-beta4@db2381113` with deployed migration head `beta4_merge_3006_history`; API healthy and r4 frontend retained. Beta4 renewed the JWT signing secret; web-session handoff from enterprise identity remains to be implemented.
+
+
+## 2026-10-22 Chat knowledge dialog window presentation
+- Desktop baseline: `V1.2.0@a2d2f43`, Harness `0.2.0-rc.2`, Electron `43.0.0`; working tree `bisheng-work-v120-credits`.
+- Chat reports its knowledge dialog lifecycle through a presentation-only bridge. The native view expands to the window while the chat content retains its region geometry; close/navigation restores the region. The backdrop uses Work's sampled mask token including alpha.
+- Type checking, production build and 29 targeted host/theme tests passed. macOS arm64 DMG/ZIP and packaged Office checks passed. 3006 client release `chat-window-dialog-20261022-1905` deployed; package stored in `outputs/bisheng-dev-3006-dialog-20261022`. Visual acceptance belongs to the user.

@@ -21,7 +21,7 @@ vi.mock('electron', async () => {
       setBackgroundColor = vi.fn()
       constructor(public options: any) {
         let url = ''
-        this.webContents = Object.assign(new EventEmitter(), { session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), mainFrame: {}, getURL: () => url, close: vi.fn(), executeJavaScript: vi.fn(async () => {}), insertCSS: vi.fn(async () => 'key'), loadURL: vi.fn(async (next) => { url = next; this.webContents.emit('did-finish-load') }) })
+        this.webContents = Object.assign(new EventEmitter(), { session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), mainFrame: {}, getURL: () => url, getZoomFactor: () => 1, close: vi.fn(), executeJavaScript: vi.fn(async () => {}), insertCSS: vi.fn(async () => 'key'), loadURL: vi.fn(async (next) => { url = next; this.webContents.emit('did-finish-load') }) })
         fake.views.push(this)
       }
     }
@@ -473,5 +473,33 @@ it('pushes connection failures and logout to mounted settings without waiting fo
     expect(f.host.snapshot().phase).toBe('ready')
     f.change({ connected: false, connectionKey: 'tenant-a' })
     expect(f.owner.webContents.send).toHaveBeenLastCalledWith('enterprise-chat:changed', expect.objectContaining({ connected: false, settingsReady: false }))
+  } finally { f.host.dispose() }
+})
+
+
+it('presents the knowledge dialog across the window and restores the chat region on close or navigation', async () => {
+  const f = fixture()
+  try {
+    const region = { x: 240, y: 56, width: 860, height: 744 }
+    f.host.present(f.owner, { ...presentation, bounds: region })
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    await wc.loadURL('https://enterprise.example/workspace/c/new')
+    const report = (senderFrame: unknown, open: unknown, path = '/workspace/c/new') =>
+      wc.emit('ipc-message', { senderFrame }, 'enterprise-chat:knowledge-dialog', { open, path })
+    report({}, true)
+    report(wc.mainFrame, 'true')
+    report(wc.mainFrame, true, '/workspace/c/old')
+    expect(view.setBounds).toHaveBeenLastCalledWith(region)
+    report(wc.mainFrame, true)
+    expect(view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 1100, height: 800 })
+    expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#00000000')
+    expect(wc.executeJavaScript.mock.calls.some(([script]: [string]) => script.includes('left: 240px; top: 56px'))).toBe(true)
+    report(wc.mainFrame, false)
+    expect(view.setBounds).toHaveBeenLastCalledWith(region)
+    expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#141416')
+    report(wc.mainFrame, true)
+    wc.emit('did-navigate-in-page', {}, 'https://enterprise.example/workspace/c/other', true)
+    expect(view.setBounds).toHaveBeenLastCalledWith(region)
   } finally { f.host.dispose() }
 })
