@@ -705,7 +705,8 @@ export class EnterpriseService {
         }
       )
       if (this.epoch !== epoch) return
-      this.models = contract.parseModelsLenient(modelsResult.body).map((model) => ({
+      const parsedModels = contract.parseModelsLenient(modelsResult.body)
+      this.models = parsedModels.map((model) => ({
         id: model.id,
         display_name: model.display_name,
         ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
@@ -715,6 +716,8 @@ export class EnterpriseService {
       if (this.phase === 'degraded') this.phase = 'connected'
       this.modelsAttempt = 0
       this.clearError()
+      await this.refreshUsageCatalog(epoch)
+      if (this.epoch !== epoch) return
       this.publish()
       this.scheduleModels(this.modelsDelay())
     } catch (error) {
