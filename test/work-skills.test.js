@@ -12,7 +12,7 @@ async function setup() {
   let files = { 'SKILL.md': Buffer.from('---\nname: office\ndescription: office\n---\nEnterprise instructions'), 'scripts/run.py': Buffer.from('print(42)'), 'templates/file.bin': Buffer.from([0, 255, 42]) }
   const version = () => skillContentHash(new Map(Object.entries(files).map(([key, data]) => [key, { data }])))
   let enabled = true
-  const request = vi.fn(async body => body.operation === 'list' ? (enabled ? [{ id: 7, name: 'office', display_name: 'Office', description: 'Create documents', content_hash: version() }] : []) : Buffer.from(zipSync(files)))
+  const request = vi.fn(async body => body.operation === 'dependencies' ? [7] : body.operation === 'list' ? (enabled ? [{ id: 7, name: 'office', display_name: 'Office', description: 'Create documents', content_hash: version() }] : []) : Buffer.from(zipSync(files)))
   const skills = createEnterpriseSkills({ state: () => state, request, home })
   return { skills, request, setState: value => { state = value }, state, disable: () => { enabled = false }, update: () => { files = { ...files, 'SKILL.md': Buffer.from('Updated instructions') } } }
 }
@@ -24,6 +24,7 @@ describe('enterprise Work skill provider', () => {
     expect(row.name).toMatch(/^bisheng-[a-f0-9]+-7$/)
     const loaded = await skills.load(row.name)
     expect(loaded.content).toContain('Enterprise instructions')
+    expect(loaded.content).toContain('mcp__bisheng__bisheng_tool_7')
     expect(await readFile(join(loaded.resourceBase.path, 'templates/file.bin'))).toEqual(Buffer.from([0, 255, 42]))
     expect(await readFile(join(loaded.resourceBase.path, 'scripts/run.py'), 'utf8')).toBe('print(42)')
   })
@@ -56,9 +57,9 @@ describe('enterprise Work skill provider', () => {
     const { skills, request } = await setup()
     const [row] = await skills.catalog()
     const original = request.getMockImplementation()
-    request.mockImplementation(async body => body.operation === 'list' ? original(body) : Buffer.from(zipSync({ '../outside': Buffer.from('x') })))
+    request.mockImplementation(async body => body.operation !== 'bundle' ? original(body) : Buffer.from(zipSync({ '../outside': Buffer.from('x') })))
     await expect(skills.load(row.name)).rejects.toThrow('Unsafe ZIP')
-    request.mockImplementation(async body => body.operation === 'list' ? original(body) : Buffer.from(zipSync({ 'SKILL.md': Buffer.from('substituted') })))
+    request.mockImplementation(async body => body.operation !== 'bundle' ? original(body) : Buffer.from(zipSync({ 'SKILL.md': Buffer.from('substituted') })))
     await expect(skills.load(row.name)).rejects.toThrow('verification failed')
   })
 })

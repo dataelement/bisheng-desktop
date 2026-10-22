@@ -62,7 +62,7 @@ async function presenter({ computedStyle } = {}) {
 it('sends the resolved host palette with the presentation and flattens translucent tokens', async () => {
   const f = await presenter({ computedStyle: hostStyles(HOST_COLORS) })
   expect(f.presented().palette).toEqual({
-    surface: [44, 44, 46], raised: [53, 54, 56], strong: [97, 102, 107], composer: [40, 41, 45],
+    mask: [1, 1, 2, 3], surface: [44, 44, 46], raised: [53, 54, 56], strong: [97, 102, 107], composer: [40, 41, 45],
     labelPrimary: [249, 250, 251], labelSecondary: [207, 211, 214], labelTertiary: [173, 178, 184],
     // Translucent host borders are composited over the surface they sit on.
     borderBase: [69, 69, 71], borderDeep: [78, 78, 79]

@@ -77,11 +77,15 @@ export function createEnterpriseSkills({ state, request, home = process.env.DSH_
       } finally { await rm(temporary, { recursive: true, force: true }) }
     }
     assertCurrent()
+    const toolIds = await request({ operation: 'dependencies', connectionKey: loc.connectionKey, id: loc.id, version: loc.version }, signal)
+    assertCurrent()
+    if (!Array.isArray(toolIds) || toolIds.some(id => !Number.isSafeInteger(id) || id <= 0)) throw new Error('Invalid enterprise tool dependencies.')
+    const dependencies = toolIds.map(id => `- Tool ${id}: mcp__bisheng__bisheng_tool_${id}`).join('\n')
     const skill = files.get('SKILL.md')
     if (!skill) throw new Error('Skill instructions are missing.')
     const directory = join(path, 'files')
     return { ...candidate, path: join(directory, 'SKILL.md'), resourceBase: { kind: 'directory', path: directory },
-      content: `Enterprise skill: ${loc.displayName}\nOriginal bundle name: ${loc.originalName}\nRun this skill in the current Work environment using its available tools and permissions. Resolve bundled scripts and templates relative to the skill resource base. Report any unavailable tool or runtime dependency.\n\n${skill.data.toString('utf8')}` }
+      content: `Enterprise skill: ${loc.displayName}\nOriginal bundle name: ${loc.originalName}\nRun this skill in the current Work environment using its available tools and permissions. Resolve bundled scripts and templates relative to the skill resource base. Report any unavailable tool or runtime dependency.\n\n${skill.data.toString('utf8')}${dependencies ? `\n\nEnterprise tools available in this Work task:\n${dependencies}` : ''}` }
   }
   const load = async (name, signal) => {
     const candidate = (await catalog(signal)).find(row => row.name === name)

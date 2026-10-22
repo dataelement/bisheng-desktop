@@ -633,3 +633,40 @@ describe('enterprise browser session handoff', () => {
     expect(exchanges).toBe(2)
   })
 })
+
+
+describe('enterprise Work MCP single sign-on', () => {
+  it('uses the logged-in account, refreshes access automatically, and rejects stale identity', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    let exchanges = 0, calls = 0
+    const cookie = 'work-browser-cookie-host-owned'
+    const fetchImpl: EnterpriseFetch = async (input, init) => {
+      if (input.endsWith('/api/v1/dsh/web-session')) {
+        exchanges++
+        if (exchanges === 1) return Response.json({ error: { code: 'invalid_access_token', message: 'Expired' } }, { status: 401 })
+        expect(new Headers(init?.headers).get('authorization')).toMatch(/^Bearer /u)
+        return Response.json({ cookie, expires_in: 300 })
+      }
+      if (input.endsWith('/api/v1/dsh/work/mcp')) {
+        calls++
+        expect(new Headers(init?.headers).get('cookie')).toBe(`access_token_cookie=${cookie}`)
+        expect(new Headers(init?.headers).has('authorization')).toBe(false)
+        return Response.json({ jsonrpc: '2.0', id: 1, result: { tools: [] } })
+      }
+      return globalThis.fetch(input, init)
+    }
+    const { service } = await createService(createEnterpriseFetch(fetchImpl))
+    const login = await service.startLogin(origin)
+    await completeBrowserLogin(origin, login.authorizationUrl)
+    await waitFor(() => service.snapshot().connected)
+    const request = { connectionKey: service.snapshot().connectionKey, message: { jsonrpc: '2.0', id: 1, method: 'tools/list' } }
+    expect(await service.workMcp(request)).toMatchObject({ result: { tools: [] } })
+    expect(exchanges).toBe(2)
+    expect(JSON.stringify(service.snapshot())).not.toContain(cookie)
+    await service.logout()
+    await expect(service.workMcp(request)).rejects.toThrow('account changed')
+    expect(calls).toBe(1)
+  })
+})

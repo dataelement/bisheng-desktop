@@ -503,3 +503,18 @@ it('presents the knowledge dialog across the window and restores the chat region
     expect(view.setBounds).toHaveBeenLastCalledWith(region)
   } finally { f.host.dispose() }
 })
+
+it('validates platform cookie names and applies the isolated cookie to embedded Chat', async () => {
+  const value = { cookie: 'a'.repeat(40), expires_in: 300, cookie_name: 'bs_credits_3007' }
+  expect(parseWebSession(value, 'https://enterprise.example', 'tenant-a').cookieName).toBe('bs_credits_3007')
+  for (const name of ['x; injected=value', 'x\r\nHeader:value', '', 42]) {
+    expect(() => parseWebSession({ ...value, cookie_name: name }, 'https://enterprise.example', 'tenant-a')).toThrow()
+  }
+  const f = fixture()
+  f.enterprise.webSession.mockResolvedValue(parseWebSession(value, 'https://enterprise.example', 'tenant-a'))
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    expect(fake.sessions[0].cookies.set).toHaveBeenCalledWith(expect.objectContaining({ name: 'bs_credits_3007' }))
+  } finally { f.host.dispose() }
+})
