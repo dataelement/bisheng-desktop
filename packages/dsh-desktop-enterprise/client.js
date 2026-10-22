@@ -341,13 +341,18 @@ window.__ModuleLoader__.load({
         }
         .dshEnterpriseModels {
           display: grid;
-          margin: 8px 0 0;
+          gap: 8px;
+          margin: 12px 0 0;
           padding: 0;
           list-style: none;
         }
         .dshEnterpriseModels li {
           box-sizing: border-box;
-          padding: 6px 0;
+          min-width: 0;
+          border: .5px solid var(--dsw-alias-settings-card-stroke);
+          border-radius: var(--dsw-radius-xl);
+          background: var(--dsw-alias-settings-card-fill);
+          padding: 12px 14px;
           font-size: 14px;
           line-height: 22px;
         }

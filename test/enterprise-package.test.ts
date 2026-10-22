@@ -77,6 +77,17 @@ describe('DSH Desktop enterprise package', () => {
     expect(client).not.toContain('.dshEnterpriseModelUsage')
   })
 
+  it('uses native DSH settings card tokens for enterprise model rows', async () => {
+    const client = await readFile(path.join(projectRoot, 'packages/dsh-desktop-enterprise/client.js'), 'utf8')
+    const row = client.match(/\.dshEnterpriseModels li \{([^}]+)\}/)?.[1]
+    const list = client.match(/\.dshEnterpriseModels \{([^}]+)\}/)?.[1]
+    expect(row).toContain('border: .5px solid var(--dsw-alias-settings-card-stroke);')
+    expect(row).toContain('background: var(--dsw-alias-settings-card-fill);')
+    expect(row).toContain('border-radius: var(--dsw-radius-xl);')
+    expect(row).toContain('padding: 12px 14px;')
+    expect(list).toContain('gap: 8px;')
+  })
+
   it('exports the declared Client bundle for the Harness module loader', async () => {
     const packageJson = JSON.parse(await readFile(
       path.join(projectRoot, 'packages', 'dsh-desktop-enterprise', 'package.json'),
