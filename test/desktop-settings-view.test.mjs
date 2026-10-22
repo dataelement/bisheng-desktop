@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom'
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { JSDOM } from 'jsdom'
+import { SlotCore } from '@deepseek-ai/dsh-client-ui-slots'
 import { afterEach, expect, it, vi } from 'vitest'
 
 const source = await readFile(new URL('../packages/dsh-desktop-settings/client.js', import.meta.url), 'utf8')
@@ -83,13 +84,15 @@ it.each(['zh', 'en'])('renders native usage with enterprise data, switching metr
   document.querySelectorAll('style[data-plugin="unrelated-lazy-plugin"]').forEach(style => style.remove())
   expect(ownedStyle.isConnected).toBe(true)
   expect(document.querySelector('.dshUsageStorage').textContent).toContain('51.2 MB')
-  expect(document.querySelector('.dshUsageTotals dd').title).toBe('1200')
+  expect(document.querySelectorAll('.dshUsageOverview dd')[1].textContent).toBe(language === 'zh' ? '1200' : '1.2K')
+   expect(entry.options.name).toBe('desktop.account.usage')
+   expect(f.registrations.some(row => row.options.name === 'settings.section' && row.options.id === 'desktop-usage')).toBe(false)
   await click(document.querySelectorAll('[role=tab]')[1])
-  expect(document.querySelector('.dshUsageTotals dd').textContent).toBe('12')
+  expect(document.querySelectorAll('.dshUsageOverview dd')[2].textContent).toBe('12')
   expect(document.querySelector('[role=listitem]').title).toContain('12')
   expect(surface).not.toHaveBeenCalled()
   await act(async () => f.update({ epoch: 2, connected: false }))
-  expect(document.querySelector('.dshUsageTotals')).toBeNull()
+  expect(document.querySelector('.dshUsageOverview')).toBeNull()
   expect(document.body.textContent).toContain(language === 'zh' ? '登录企业账号后可查看' : 'Sign in to view')
 })
 
@@ -106,7 +109,7 @@ it.each(['zh', 'en'])('avoids overlapping month labels for a partial starting we
   const columns = labels.map(node => Number(node.style.gridColumn.split('/')[0]))
   expect(columns.every((column, index) => index === 0 || column - columns[index - 1] >= 3)).toBe(true)
   expect(labels.every(node => node.style.gridRow === '1')).toBe(true)
-  expect(document.querySelectorAll('.dshUsageDay')).toHaveLength(365)
+  expect(document.querySelectorAll('.dshUsageGrid .dshUsageDay')).toHaveLength(365)
   expect(document.querySelector('.dshUsageGrid').style.gridTemplateColumns).toContain('minmax(0, 1fr)')
 })
 
@@ -213,15 +216,48 @@ it('shows enterprise models natively and embeds no account page in Account and s
   // The enterprise bundle registers through the same loader used by the fixture.
   window.__ModuleLoader__.load = next => { definition = next }
   vm.runInNewContext(code, { window, document, fetch: f.request, CustomEvent: window.CustomEvent, localStorage: window.localStorage })
-  const { EnterpriseSection } = definition.factory(id => { if (id === 'react') return React; throw new Error(id) })
-  const renderSlot = vi.fn(() => React.createElement('div', { 'data-account-content': '' }, 'Bisheng account'))
+  const enterprise = definition.factory(id => {
+    if (id === 'react') return React
+    if (id === '@deepseek-ai/dsh-client-ui-primitives') return { Button: ({ variant, size, ...props }) => React.createElement('button', { ...props, 'data-native-variant': variant, 'data-native-size': size }) }
+    throw new Error(id)
+  })
+  const { EnterpriseSection } = enterprise
+  // Use the installed registry, not the permissive rendering stub: a misspelled
+  // children declaration must fail before it can silently hide the usage panel.
+  const core = new SlotCore()
+  core.register({ name: 'root', children: { 'settings.section': { kind: 'list', scope: 'root' } } }, () => null)
+  const disposers = []
+  enterprise.apply({
+    locale: { register() {}, bind: () => key => key },
+    effect: fn => { const dispose = fn(); if (dispose) disposers.push(dispose) },
+    slots: { inject: (_name, fn) => fn(), register: (config, Component) => core.register(config, Component) }
+  })
+  const usageEntry = f.registrations.find(row => row.options.id === 'desktop-usage')
+  expect(() => core.register(usageEntry.options, usageEntry.Component)).not.toThrow()
+  disposers.reverse().forEach(dispose => dispose())
+  window.dshEnterpriseChat.usage = vi.fn(async () => ({ totals: { total_tokens: 900, input_tokens: 800, output_tokens: 100, message_count: 9, missing_usage_count: 0 }, points: [], storage: { used: 0.05, limit: 1 } }))
+  const renderSlot = vi.fn((...args) => f.renderSlot(...args))
   await f.mount(EnterpriseSection, { t: key => key, renderSlot })
   expect(document.querySelector('.dshEnterpriseManagedModels').tagName).toBe('SECTION')
   expect(document.querySelector('.dshEnterpriseManagedModels h3').textContent).toBe('managedModels')
+  const security = document.querySelector('.dshEnterpriseSecurity')
+  expect(document.querySelector('.dshEnterpriseManagedModels').nextElementSibling).toBe(document.querySelector('.dshUsageStorage'))
+  expect(document.querySelector('.dshUsage').nextElementSibling).toBe(security)
+  expect(document.querySelectorAll('.dshEnterpriseManagedModels')).toHaveLength(1)
+  expect(security.querySelector('h3').textContent).toBe('security')
+  expect(security.lastElementChild).toBe(security.querySelector('.dshEnterpriseLogout'))
+  expect(security.lastElementChild.dataset.nativeVariant).toBe('ghost')
+  expect(security.lastElementChild.dataset.nativeSize).toBe('sm')
+  expect(security.querySelector('.dshEnterpriseServiceAddress').nextElementSibling).toBe(security.lastElementChild)
   expect(document.querySelector('.dshEnterpriseModels').textContent).toContain('Example model')
   // The profile and password block lived on the enterprise web page; the section embeds no page now.
-  expect(renderSlot).not.toHaveBeenCalled()
-  expect(document.querySelector('[data-account-content]')).toBeNull()
+  expect(renderSlot).toHaveBeenCalledOnce()
+  expect(renderSlot.mock.calls[0][0]).toBe('desktop.account.usage')
+  expect(document.querySelectorAll('.dshUsage')).toHaveLength(1)
+  expect(document.querySelectorAll('.dshUsageOverview dd')[1].textContent).toBe('900')
+  expect(window.dshEnterpriseChat.usage).toHaveBeenCalledOnce()
+  expect(document.querySelector('.dshUsageProgress').value).toBe(0.05)
+  expect(document.querySelector('.dshEnterpriseIdentity').textContent).toContain('employee')
   expect(document.querySelector('.dshSettingsRemote')).toBeNull()
   expect(f.registrations.some(row => row.options.name === 'desktop.settings.account')).toBe(false)
   expect(document.querySelector('details')).toBeNull()
@@ -282,6 +318,20 @@ it('uses DSH plugin tabs for inventory and enterprise contributions without an A
 
 const click = async node => { expect(node).not.toBeNull(); await act(async () => node.click()) }
 const menuItem = label => [...document.querySelectorAll('[role=menuitem]')].find(node => node.textContent === label)
+
+it.each(['zh', 'en'])('shows remaining enterprise credits in the account menu and refreshes on open (%s)', async language => {
+  const f = await fixture(language)
+  f.setAccount({ connected: true, user: { username: 'admin' }, usage: { used: 100_000_000, limit: 12_000_000_000, quota_state: 'available' } })
+  await f.render('settings.launcher', { wide: true })
+  await click(document.querySelector('.dshAccountTrigger'))
+  expect(document.querySelector('.dshAccountMenuCredits strong').textContent).toBe('11,900.0')
+  expect(document.querySelector('.dshAccountMenuCredits small').textContent).toBe(language === 'zh' ? '剩余积分' : 'Credits remaining')
+  await click(document.querySelector('.dshAccountTrigger'))
+  f.setAccount({ connected: true, user: { username: 'admin' }, usage: { source: 'unavailable' } })
+  await click(document.querySelector('.dshAccountTrigger'))
+  expect(document.querySelector('.dshAccountMenuCredits strong').textContent).toBe('—')
+  expect(document.querySelector('.dshAccountMenuCredits small').textContent).toBe(language === 'zh' ? '积分暂不可用' : 'Credits unavailable')
+})
 
 it.each([true, false])('keeps Chat visible while the sidebar account menu opens and closes (wide=%s)', async wide => {
   const f = await fixture()

@@ -166,9 +166,11 @@ export function moduleThemePaletteCss(palette: EnterprisePalette): string {
     ['--muted-foreground', hslTriple(labelTertiary.join(' '))]
   ]
   const body = [...declarations, ...hsl].map(([name, value]) => `${name}:${value}`).join(';')
+  // Chat owns its page/composer contrast. Module layouts use the panel palette;
+  // root tokens also reach portaled controls outside either layout.
   return [
     `html.dsh-host-dark:root{${body}}`,
-    `html.dsh-host-dark body[data-dsh-chat-theme] :is(${CHAT_LAYOUT_SCOPES}){${body}}`,
+    `html.dsh-module-dark body[data-dsh-chat-theme] :is(${CHAT_LAYOUT_SCOPES}){${body}}`,
     ...(palette.composer ? [`html[data-dsh-host-theme=dark] body[data-dsh-chat-theme=dark] .dsh-web-chat{--dsh-composer-bg:${palette.composer.join(' ')}}`] : [])
   ].join('\n')
 }

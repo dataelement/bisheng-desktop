@@ -149,6 +149,12 @@ Work 从 sessions.binding(id).session 订阅当前主视图的 pendingSubmission
 
 `data-dsh-hero-controls` 标记原生 Work 首页控件行，样式由桌面插件拥有。鼠标切入 Work 采用 180ms 从左向右揭示，结束后清除裁切；键盘切换与 reduced-motion 即时呈现。标记不改变控件 slot、布局或挂载次数。上游提供等价标题 slot 和控件标记后迁移并移除本地接缝。
 
+## 账号与用量组合（2026-10-22）
+
+`dsh-desktop-enterprise` 的 `enterprise-account` 设置贡献项声明 `desktop.account.usage`（single/root）。仅登录时在账号资料与安全操作之间渲染一次，owner 提供 `credits`、`creditsLabel`、`creditsHelp` 展示字符串及 `models` ReactNode；用量贡献项将模型区挂载一次，位于热力图之后、存储之前（用量加载/失败时仍呈现模型区），无贡献项时 fallback 同样保留模型列表。容器宽度跟随设置内容区；用量贡献项不得另建弹窗或改变登录流程。`dsh-desktop-settings` 将原用量组件注册到该出口，不再注册独立的用量导航项。无贡献项时账号页仍显示剩余积分；卸载企业插件时用量贡献项随 slot 注入生命周期释放。统计请求、身份代际隔离与取消过期响应继续由原组件管理。
+
+概览 Token/消息数来自用量接口的统计期汇总（不是全生命周期统计），界面显式标注每日桶起止日期。月份、每日用量、Token/消息切换及存储均复用原数据；账号安全与模型授权仍由企业插件拥有。此组合仅使用宿主插件自有出口，不新增第三方 patch，也不改变启动和认证协议。
+
 ## V1.2.0 模型授权与积分组合
 
 `conversation/input-before-submit` 保留知识空间引用快照及取消信号；随后模型目录完成撤权恢复和可路由检查，再提交消息。目录恢复与模型名称补丁共同适用于 Harness 0.2.0-rc.2。目录不可用时返回可恢复错误并保留草稿；配置模型名称只用于展示，调用仍使用原稳定路由 ID。上游支持这些行为后删除相应补丁并迁入正式 API。
