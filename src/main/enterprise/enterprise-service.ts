@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+import { parseWorkSkillRequest, readSkillBytes } from './work-skills'
 import { parseWorkResourceRequest, readResourceJson } from './work-resources'
 import { parseWebSession, type EnterpriseWebSession } from './web-session'
 import { parseMarketRequest } from './enterprise-market'
@@ -791,6 +793,42 @@ export class EnterpriseService {
       return { bytes: Buffer.concat(chunks), binary: request.binary }
     }
     throw Object.assign(new Error('Enterprise login required.'), { status: 401 })
+  }
+
+  async workSkills(input: unknown, signal?: AbortSignal): Promise<{ bytes: Buffer; binary: boolean }> {
+    const request = parseWorkSkillRequest(input)
+    const epoch = this.epoch
+    const assertCurrent = () => {
+      signal?.throwIfAborted()
+      if (!this.snapshot().connected || this.connectionKey() !== request.connectionKey || this.epoch !== epoch) {
+        throw Object.assign(new Error('Enterprise account changed. Select skills again.'), { status: 409 })
+      }
+    }
+    assertCurrent()
+    const credential = await this.webSession(request.connectionKey)
+    assertCurrent()
+    const binary = request.operation === 'bundle'
+    const path = binary ? `/api/v1/linsight/skill/runtime/${request.id}/bundle?version=${request.version}` : '/api/v1/linsight/skill/runtime/catalog'
+    const { endpoint } = await resolveEnterpriseEndpoint(credential.base, path,
+      this.options.allowInsecureLoopback, this.platformRequestOptions().allowInsecurePrivateHttp)
+    assertCurrent()
+    const timeout = AbortSignal.timeout(120_000)
+    const response = await createEnterpriseFetch(this.options.fetchImpl)(endpoint.toString(), {
+      method: 'GET', signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+      headers: { cookie: `${credential.cookieName}=${credential.cookie}` }
+    })
+    const bytes = await readSkillBytes(response, binary ? 256 * 1024 * 1024 : 4 * 1024 * 1024)
+    assertCurrent()
+    if (binary) {
+      if (!response.headers.get('content-type')?.includes('application/zip') ||
+          createHash('sha256').update(bytes).digest('hex') !== response.headers.get('x-skill-archive-sha256')) throw new Error('Skill bundle verification failed.')
+    } else {
+      const result = JSON.parse(bytes.toString('utf8'))
+      if (result?.status_code !== 200 || !Array.isArray(result.data)) throw new Error('Skill catalog unavailable.')
+      return { bytes: Buffer.from(JSON.stringify(result.data)), binary }
+    }
+    this.options.note?.({ event: 'work_skill_bundle_read', status: 200 })
+    return { bytes, binary }
   }
 
   async workResources(input: unknown, signal?: AbortSignal): Promise<unknown> {

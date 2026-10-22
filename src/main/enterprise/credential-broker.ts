@@ -18,7 +18,8 @@ const JSON_ROUTES = new Map<string, 'GET' | 'POST'>([
   ['/v1/logout', 'POST'],
   ['/v1/chat', 'POST'],
   ['/v1/market', 'POST'],
-  ['/v1/work-resources', 'POST']
+  ['/v1/work-resources', 'POST'],
+  ['/v1/work-skills', 'POST']
 ])
 
 export interface EnterpriseCredentialBroker {
@@ -109,6 +110,18 @@ export async function startEnterpriseCredentialBroker(
         return
       }
       const body = await readJsonBody(request, ENTERPRISE_BROKER_JSON_LIMIT)
+      if (path === '/v1/work-skills') {
+        const controller = new AbortController()
+        const abort = () => { if (!response.writableFinished) controller.abort() }
+        request.on('aborted', abort)
+        response.on('close', abort)
+        try {
+          const result = await service.workSkills(body, controller.signal)
+          response.writeHead(200, { 'content-type': result.binary ? 'application/zip' : 'application/json', 'cache-control': 'no-store' })
+          response.end(result.bytes)
+        } finally { request.off('aborted', abort); response.off('close', abort) }
+        return
+      }
       if (path === '/v1/work-resources') {
         const controller = new AbortController()
         const abort = () => { if (!response.writableFinished) controller.abort() }

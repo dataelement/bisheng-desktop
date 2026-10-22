@@ -651,8 +651,8 @@ window.__ModuleLoader__.load({
 
     const RESOURCE_NS = 'desktop-work-resources'
     const RESOURCE_COPY = {
-      zh: { skills: '技能', skillsHint: '选择本次任务使用的技能', knowledge: '知识空间', knowledgeHint: '选择本次任务检索的知识空间', search: '搜索知识空间', empty: '暂无可用知识空间', noMatch: '没有匹配的知识空间', loading: '正在加载知识空间…', retry: '重试', cancel: '取消', confirm: '确认添加', close: '关闭', remove: '移除', department: '部门知识空间', mine: '我创建的', joined: '我加入的', selectKnowledge: '选择知识空间', modified: '修改时间', selected: '已选 {count} 个知识空间', limit: '最多选择 50 个空间' },
-      en: { skills: 'Skills', skillsHint: 'Choose a skill for this task', knowledge: 'Knowledge spaces', knowledgeHint: 'Choose knowledge spaces to search in this task', search: 'Search knowledge spaces', empty: 'No knowledge spaces available', noMatch: 'No matching knowledge spaces', loading: 'Loading knowledge spaces…', retry: 'Retry', cancel: 'Cancel', confirm: 'Add selected', close: 'Close', remove: 'Remove', department: 'Department spaces', mine: 'Created by me', joined: 'Joined spaces', selectKnowledge: 'Select knowledge spaces', modified: 'Modified', selected: '{count} knowledge spaces selected', limit: 'Select up to 50 spaces' }
+      zh: { skills: '技能', skillsHint: '选择本次任务使用的技能', skillAttribution: '来自 BISHENG', knowledge: '知识空间', knowledgeHint: '选择本次任务检索的知识空间', search: '搜索知识空间', empty: '暂无可用知识空间', noMatch: '没有匹配的知识空间', loading: '正在加载知识空间…', retry: '重试', cancel: '取消', confirm: '确认添加', close: '关闭', remove: '移除', department: '部门知识空间', mine: '我创建的', joined: '我加入的', selectKnowledge: '选择知识空间', modified: '修改时间', selected: '已选 {count} 个知识空间', limit: '最多选择 50 个空间' },
+      en: { skills: 'Skills', skillsHint: 'Choose a skill for this task', skillAttribution: 'From BISHENG', knowledge: 'Knowledge spaces', knowledgeHint: 'Choose knowledge spaces to search in this task', search: 'Search knowledge spaces', empty: 'No knowledge spaces available', noMatch: 'No matching knowledge spaces', loading: 'Loading knowledge spaces…', retry: 'Retry', cancel: 'Cancel', confirm: 'Add selected', close: 'Close', remove: 'Remove', department: 'Department spaces', mine: 'Created by me', joined: 'Joined spaces', selectKnowledge: 'Select knowledge spaces', modified: 'Modified', selected: '{count} knowledge spaces selected', limit: 'Select up to 50 spaces' }
     }
     async function workResourceRequest(operation, sessionId, spaceIds, signal) {
       const response = await fetch('/api/enterprise.work-resources', {
@@ -662,6 +662,31 @@ window.__ModuleLoader__.load({
       const result = await response.json().catch(() => ({ error: `Knowledge service unavailable (${response.status})` }))
       if (!response.ok) throw new Error(result.error || `Knowledge request failed (${response.status})`)
       return result
+    }
+    async function workSkillRequest(body, signal) {
+      const response = await fetch('/api/enterprise.work-skills', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, signal, body: JSON.stringify(body)
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Skill request failed.')
+      return data
+    }
+    const SKILL_REFERENCE_SOURCE = 'desktop-skill'
+    const decodeSkillReference = ref => {
+      const value = JSON.parse(ref)
+      if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.name) || typeof value.label !== 'string') throw new Error('Invalid skill reference.')
+      return value
+    }
+    const skillReferenceSource = {
+      trigger: '/', name: SKILL_REFERENCE_SOURCE, candidates: async () => [], onPick: () => undefined, openReference: () => false,
+      codec: {
+        clipboardText: ref => `/${decodeSkillReference(ref).label}`,
+        serialize: async (ref, signal) => {
+          const skill = decodeSkillReference(ref)
+          if (skill.enterprise) await workSkillRequest({ operation: 'validate', names: [skill.name] }, signal)
+          return ` /${skill.name} `
+        }
+      }
     }
     const KNOWLEDGE_REFERENCE_SOURCE = 'desktop-knowledge'
 
@@ -799,6 +824,7 @@ window.__ModuleLoader__.load({
         return { scope, input: ctx.conversation.input.for(scope) }
       } })
       ctx.effect(() => ctx.inputTriggers.registerSource(knowledge.source), 'desktop knowledge references')
+      ctx.effect(() => ctx.inputTriggers.registerSource(skillReferenceSource), 'desktop skill references')
       ctx.on('conversation/input-before-submit', knowledge.prepare)
       ctx.effect(() => ctx.locale.register(RESOURCE_NS, RESOURCE_COPY), 'desktop Work resources locale')
       const t = ctx.locale.bind(RESOURCE_NS)
@@ -806,9 +832,16 @@ window.__ModuleLoader__.load({
       ctx.commandUi.register({ name: 'skills', label: () => t('skills'), description: () => t('skillsHint'), icon: props => React.createElement(NavigationIcon, { ...props, id: 'skills' }), available,
         ui: { kind: 'popupSelect', searchMode: 'fuzzy-label',
           options: ({ sessionId }, signal) => ctx.sessions.using(sessionId, { source: 'workSkillPicker', signal }, async () => {
+            const catalog = await workSkillRequest({ operation: 'catalog' }, signal)
+            const labels = new Map(catalog.skills.map(skill => [skill.name, skill.displayName]))
             const result = await ctx.remote.skills.list({ sessionId }, signal)
             if (!result.ok) throw new Error(result.error.message)
-            return result.value.skills.map(skill => ({ id: skill.name, label: skill.name, detail: skill.description }))
+            return result.value.skills.map(skill => ({
+              id: JSON.stringify({ name: skill.name, label: labels.get(skill.name) || skill.name, enterprise: labels.has(skill.name) }),
+              label: labels.get(skill.name) || skill.name, detail: labels.has(skill.name)
+                ? [t('skillAttribution'), skill.description].filter(Boolean).join(' · ')
+                : skill.description
+            }))
           }),
           onSelect: (option, { sessionId }) => {
             const scope = ctx.sessions.scope(sessionId)
@@ -816,7 +849,7 @@ window.__ModuleLoader__.load({
             const input = ctx.conversation.input.for(scope)
             scope.bail(scope, 'slash/input-consume-token', { guard: { kind: 'bare-token', token: '/skills' } })
             const state = input.state.getSnapshot()
-            const applied = scope.bail(scope, 'slash/input-insert-text', { text: `/${option.id} `, span: { start: 0, end: 0, draftRev: state.draftRev } })
+            const applied = input.insertReference({ source: SKILL_REFERENCE_SOURCE, ref: option.id, label: option.label, clipboardText: `/${option.label}` }, { start: 0, end: 0, draftRev: state.draftRev })
             if (!applied) throw new Error('Finish editing the current command, then choose a skill.')
           }
         } })
@@ -1001,6 +1034,7 @@ window.__ModuleLoader__.load({
     }
 
     exports.createWorkKnowledgeComposer = createWorkKnowledgeComposer
+    exports.skillReferenceSource = skillReferenceSource
     exports.apply = apply
     exports.inject = inject
     return module.exports
