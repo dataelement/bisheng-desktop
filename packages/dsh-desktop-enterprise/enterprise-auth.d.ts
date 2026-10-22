@@ -33,5 +33,6 @@ export interface EnterpriseAuthHost {
   revoke(transport: EnterpriseAuthTransport): Promise<void>
 }
 export declare function applyEnterpriseAuth(ctx: Context): void
-export declare function bindEnterpriseAuth(ctx: Context, transport: EnterpriseAuthTransport): Promise<() => void>
+/** Host-only observer: latest request completion, after full body consumption; cancellation is ignored. */
+export declare function bindEnterpriseAuth(ctx: Context, transport: EnterpriseAuthTransport, onRequestSettled?: (error?: unknown) => void): Promise<() => void>
 export declare function createEnterpriseAuthTransport(origin: string, capability: string): EnterpriseAuthTransport

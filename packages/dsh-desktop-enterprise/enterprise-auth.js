@@ -1,4 +1,5 @@
 import { Service } from '@deepseek-ai/cordis'
+import { observeRequestResponse } from './request-status.js'
 
 const bindings = new WeakMap()
 
@@ -48,11 +49,11 @@ export function applyEnterpriseAuth(ctx) {
 }
 
 /** Only the trusted loader binds an actual per-instance tree context. */
-export async function bindEnterpriseAuth(ctx, transport) {
+export async function bindEnterpriseAuth(ctx, transport, onRequestSettled) {
   const lifetime = new AbortController()
   const binding = { active: true, state: publicState(await transport.state(lifetime.signal)), request }
   bindings.set(ctx, binding)
-  let refreshing
+  let refreshing, requestRevision = 0
   const refresh = () => refreshing ??= transport.state(lifetime.signal).then(value => {
     if (binding.active) binding.state = publicState(value)
   }).catch(() => {
@@ -64,8 +65,16 @@ export async function bindEnterpriseAuth(ctx, transport) {
     if (!binding.active) throw new EnterpriseAuthError('authorization_denied', 'This plugin instance was revoked.', 403)
     const signal = init.signal ? AbortSignal.any([init.signal, lifetime.signal]) : lifetime.signal
     if (signal.aborted) throw abortError(signal)
+    const revision = ++requestRevision
+    const settle = error => {
+      if (binding.active && !signal.aborted && revision === requestRevision) onRequestSettled?.(error)
+    }
     try {
-      return await transport.request(path, { ...init, signal, sessionVersion: binding.state.sessionVersion })
+      const response = await transport.request(path, { ...init, signal, sessionVersion: binding.state.sessionVersion })
+      return onRequestSettled ? observeRequestResponse(response, signal, settle) : response
+    } catch (error) {
+      settle(error)
+      throw error
     } finally { if (binding.active) void refresh() }
   }
   return () => {

@@ -66,6 +66,57 @@ describe('enterpriseAuth instance SDK', () => {
   })
 })
 
+describe('enterpriseAuth request recovery', () => {
+  it('reports failure then success only after the response body completes', async () => {
+    const ctx = fixture().extend(), settled = vi.fn()
+    let stream
+    const transport = { state: async () => state, request: vi.fn() }
+    transport.request.mockRejectedValueOnce(new Error('request timed out'))
+    transport.request.mockResolvedValueOnce(new Response(new ReadableStream({ start(controller) { stream = controller } })))
+    cleanup.push(await bindEnterpriseAuth(ctx, transport, settled))
+    await expect(ctx.enterpriseAuth.request('/search')).rejects.toThrow('request timed out')
+    expect(settled).toHaveBeenLastCalledWith(expect.objectContaining({ message: 'request timed out' }))
+    const response = await ctx.enterpriseAuth.request('/search')
+    expect(settled).toHaveBeenCalledTimes(1)
+    const body = response.text()
+    stream.enqueue(new TextEncoder().encode('result')); stream.close()
+    expect(await body).toBe('result')
+    expect(settled).toHaveBeenLastCalledWith(undefined)
+  })
+
+  it('does not call success for HTTP failure, stream failure or cancellation', async () => {
+    const ctx = fixture().extend(), settled = vi.fn()
+    const transport = { state: async () => state, request: vi.fn() }
+    cleanup.push(await bindEnterpriseAuth(ctx, transport, settled))
+    transport.request.mockResolvedValueOnce(new Response('denied', { status: 403 }))
+    expect((await ctx.enterpriseAuth.request('/search')).status).toBe(403)
+    expect(settled).toHaveBeenLastCalledWith(expect.any(Error))
+    transport.request.mockResolvedValueOnce(new Response(new ReadableStream({ pull(controller) { controller.error(new Error('stream failed')) } })))
+    await expect((await ctx.enterpriseAuth.request('/search')).text()).rejects.toThrow('stream failed')
+    expect(settled).toHaveBeenLastCalledWith(expect.objectContaining({ message: 'stream failed' }))
+    transport.request.mockResolvedValueOnce(new Response('cancelled'))
+    const response = await ctx.enterpriseAuth.request('/search')
+    await response.body.cancel()
+    expect(settled).toHaveBeenCalledTimes(2)
+  })
+
+  it('ignores completion from an older request or a revoked instance', async () => {
+    const ctx = fixture().extend(), settled = vi.fn()
+    const transport = { state: async () => state, request: vi.fn(async () => new Response('ok')) }
+    const dispose = await bindEnterpriseAuth(ctx, transport, settled)
+    cleanup.push(dispose)
+    const old = await ctx.enterpriseAuth.request('/old')
+    transport.request.mockRejectedValueOnce(new Error('new failure'))
+    await expect(ctx.enterpriseAuth.request('/new')).rejects.toThrow('new failure')
+    await old.text()
+    expect(settled).toHaveBeenCalledTimes(1)
+    const late = await ctx.enterpriseAuth.request('/late')
+    dispose()
+    await late.text()
+    expect(settled).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('enterpriseAuth market lifecycle', () => {
   it('grants host record identities independently and revokes on disposal and failed activation', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'enterprise-sdk-'))
@@ -80,7 +131,8 @@ describe('enterpriseAuth market lifecycle', () => {
     const grant = vi.fn(async () => ({ state: async () => state, request: async () => new Response('ok') }))
     const revoke = vi.fn(async () => {})
     let load
-    ctx.provide('runtimeFactory', { create(scoped) { load = createMarketRuntime(scoped, { grant, revoke }) } })
+    const settled = vi.fn()
+    ctx.provide('runtimeFactory', { create(scoped) { load = createMarketRuntime(scoped, { grant, revoke }, settled) } })
     const owner = join(directory, 'owner.mjs')
     await writeFile(owner, "export const inject = ['runtimeFactory']; export function apply(ctx) { ctx.runtimeFactory.create(ctx) }")
     const ownerId = await ctx.loader.create({ name: pathToFileURL(owner).href })
@@ -99,6 +151,10 @@ describe('enterpriseAuth market lifecycle', () => {
     expect(disposed).toHaveBeenCalledTimes(1)
     expect(() => oldSdk.getState()).toThrow(EnterpriseAuthError)
     expect(contexts[1].enterpriseAuth.getState()).toEqual(state)
+    const result = await contexts[1].enterpriseAuth.request('/search')
+    expect(settled).not.toHaveBeenCalled()
+    await result.text()
+    expect(settled).toHaveBeenCalledWith(record, undefined)
     await expect(load({ ...record, config: { fail: true } })).rejects.toThrow()
     expect(revoke).toHaveBeenCalledTimes(2)
     await second.dispose()

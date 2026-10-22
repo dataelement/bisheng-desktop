@@ -520,9 +520,10 @@ window.__ModuleLoader__.load({
       const [error, setError] = useState('')
       const request = React.useRef(null)
       const mounted = React.useRef(true)
+      const stateRequest = React.useRef(null)
       const identity = `${account.base}|${account.tenant.id}|${account.user.id}`
       const refresh = useCallback(async () => {
-        request.current?.abort()
+        request.current?.abort(); stateRequest.current?.abort()
         const controller = new AbortController(); request.current = controller
         setLoading(true); setError('')
         try {
@@ -541,8 +542,30 @@ window.__ModuleLoader__.load({
       }, [identity])
       useEffect(() => {
         mounted.current = true; void refresh()
-        return () => { mounted.current = false; request.current?.abort() }
+        return () => { mounted.current = false; request.current?.abort(); stateRequest.current?.abort() }
       }, [refresh])
+      useEffect(() => {
+        const updateRuntimeState = async () => {
+          if (pendingPlugins.current.size || stateRequest.current) return
+          const controller = new AbortController(); stateRequest.current = controller
+          try {
+            const next = await api('/api/enterprise.market.state', undefined, controller.signal)
+            if (mounted.current && !controller.signal.aborted && !pendingPlugins.current.size && next.connected && Array.isArray(next.installed) &&
+                `${next.base}|${next.tenant?.id}|${next.user?.id}` === identity) {
+              setCatalog(current => current && ({ ...current, installed: next.installed }))
+            }
+          } catch {
+            // Keep the last plugin state until a later poll or explicit refresh succeeds.
+          } finally { if (stateRequest.current === controller) stateRequest.current = null }
+        }
+        const timer = window.setInterval(() => { void updateRuntimeState() }, 3000)
+        const onFocus = () => { void updateRuntimeState() }
+        window.addEventListener('focus', onFocus)
+        return () => {
+          window.clearInterval(timer); window.removeEventListener('focus', onFocus)
+          stateRequest.current?.abort(); stateRequest.current = null
+        }
+      }, [identity])
       async function operate(action, plugin, version) {
         if (pendingPlugins.current.has(plugin.id)) return
         pendingPlugins.current.add(plugin.id)
@@ -552,7 +575,7 @@ window.__ModuleLoader__.load({
           if (!result.connected || `${result.base}|${result.tenant?.id}|${result.user?.id}` !== identity) throw new Error(marketCopy.failed)
           if (mounted.current) {
             // A completed operation supersedes catalog requests started earlier.
-            request.current?.abort(); setLoading(false)
+            request.current?.abort(); stateRequest.current?.abort(); setLoading(false)
             const local = result.installed.find(item => item.plugin_id === plugin.id)
             setCatalog(current => current && ({ ...current, tenant: result.tenant, user: result.user,
               installed: [...current.installed.filter(item => item.plugin_id !== plugin.id), ...(local ? [local] : [])] }))
