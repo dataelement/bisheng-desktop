@@ -545,6 +545,37 @@ describe('enterprise service login loop', () => {
     expect(connected.modelUsage?.['bisheng:42']?.limit).toBeGreaterThan(0)
   })
 
+  it('loads per-model usage when a saved session is restored', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    const directory = await mkdtemp(join(tmpdir(), 'enterprise-service-'))
+    const vault = new SecureEnterpriseCredentialVault(join(directory, ENTERPRISE_VAULT_FILENAME), memorySafeStorage())
+    const fetchImpl = createEnterpriseFetch(globalThis.fetch)
+    const service = new EnterpriseService({ vault, fetchImpl, allowInsecureLoopback: true })
+    cleanups.push(async () => service.stop())
+    await service.restore()
+    await completeBrowserLogin(origin, (await service.startLogin(origin)).authorizationUrl)
+    await waitFor(() => {
+      const usage = service.snapshot().modelUsage?.['bisheng:42']
+      return service.snapshot().phase === 'connected' && typeof usage?.used === 'number'
+    })
+    await service.stop()
+
+    const restarted = new EnterpriseService({ vault, fetchImpl, allowInsecureLoopback: true })
+    cleanups.push(async () => restarted.stop())
+    expect(restarted.snapshot().modelUsage).toBeUndefined()
+    await restarted.restore()
+    await waitFor(() => {
+      const snapshot = restarted.snapshot()
+      const usage = snapshot.modelUsage?.['bisheng:42']
+      return snapshot.modelsAvailable === true
+        && usage?.quota_state === 'available'
+        && typeof usage.used === 'number'
+        && typeof usage.limit === 'number'
+    })
+  })
+
   it('completes login from a pasted one-time code without the loopback callback', async () => {
     const platform = createMockEnterpriseServer({ port: 0 })
     const origin = await platform.listen()
