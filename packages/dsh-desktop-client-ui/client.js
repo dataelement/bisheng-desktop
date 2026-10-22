@@ -662,10 +662,63 @@ window.__ModuleLoader__.load({
       if (!response.ok) throw new Error(result.error || `Knowledge request failed (${response.status})`)
       return result
     }
-    function WorkResourceAccessory({ sessionId, controls, t, inputActions, ensureSession }) {
+    const KNOWLEDGE_REFERENCE_SOURCE = 'desktop-knowledge'
+
+    // The editor owns the draft selection. Retrieval scope is committed before
+    // submission, so clearing a sent draft leaves the running task's scope intact.
+    function createWorkKnowledgeComposer({ inputFor, ensureSession, request }) {
+      const used = new WeakSet()
+      const decode = ref => {
+        const space = JSON.parse(ref)
+        if (!Number.isSafeInteger(space.id) || space.id <= 0 || typeof space.name !== 'string') throw new Error('Invalid knowledge reference.')
+        return space
+      }
+      const read = sessionId => inputFor(sessionId).input.state.getSnapshot().occurrences
+        .filter(item => item.source === KNOWLEDGE_REFERENCE_SOURCE).map(item => decode(item.ref))
+      const update = (sessionId, spaces, captureInsertion) => {
+        const { input, scope } = inputFor(sessionId)
+        if (input.state.getSnapshot().phase !== 'plain') throw new Error('Finish editing the current command, then choose knowledge spaces.')
+        const wanted = new Set(spaces.map(space => space.id))
+        const snapshot = input.state.getSnapshot()
+        let shift = 0
+        const removed = []
+        for (const item of snapshot.occurrences) {
+          if (item.source === KNOWLEDGE_REFERENCE_SOURCE && !wanted.has(decode(item.ref).id)) removed.push(item.offset - shift)
+          shift += item.length - 1
+        }
+        for (const start of removed.reverse()) {
+          const state = input.state.getSnapshot()
+          if (!scope.bail(scope, 'slash/input-insert-text', { text: '', span: { start, end: start + 1, draftRev: state.draftRev } })) throw new Error('Knowledge selection changed. Please try again.')
+        }
+        const present = new Set(read(sessionId).map(space => space.id))
+        for (const space of spaces) {
+          if (present.has(space.id)) continue
+          const ref = JSON.stringify({ id: space.id, name: space.name })
+          if (!input.insertReference({ source: KNOWLEDGE_REFERENCE_SOURCE, ref, label: space.name, clipboardText: `@${space.name}` }, captureInsertion())) throw new Error('Knowledge selection changed. Please try again.')
+          present.add(space.id)
+        }
+        used.add(inputFor(sessionId).input)
+      }
+      const source = {
+        trigger: '@', name: KNOWLEDGE_REFERENCE_SOURCE,
+        candidates: async () => [],
+        onPick: () => undefined,
+        openReference: () => false,
+        codec: { clipboardText: ref => `@${decode(ref).name}`, serialize: async ref => `@${decode(ref).name}` },
+      }
+      const prepare = async ({ sessionId, references, signal }) => {
+        const ids = [...new Set(references.filter(item => item.source === KNOWLEDGE_REFERENCE_SOURCE).map(item => decode(item.ref).id))]
+        if (!ids.length && !used.has(inputFor(sessionId).input)) return
+        await ensureSession(sessionId, signal)
+        await request('select', sessionId, ids, signal)
+        used.add(inputFor(sessionId).input)
+      }
+      return { read, update, source, prepare }
+    }
+
+    function WorkResourceAccessory({ sessionId, controls, t, inputActions, knowledge }) {
       const [open, setOpen] = React.useState(false)
       const [spaces, setSpaces] = React.useState([])
-      const [selected, setSelected] = React.useState([])
       const [draft, setDraft] = React.useState([])
       const [keyword, setKeyword] = React.useState('')
       const [loading, setLoading] = React.useState(false)
@@ -675,33 +728,27 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         const control = { open: () => { setKeyword(''); setOpen(true) }, captureInsertion: () => inputActions.captureInsertion() }
         controls.set(sessionId, control)
-        const abort = new AbortController()
-        ensureSession(sessionId, abort.signal).then(() => workResourceRequest('get', sessionId, undefined, abort.signal)).then(result => setSelected(result.spaces)).catch(reason => { if (!abort.signal.aborted) setError(reason.message) })
-        return () => { abort.abort(); if (controls.get(sessionId) === control) controls.delete(sessionId) }
+        return () => { if (controls.get(sessionId) === control) controls.delete(sessionId) }
       }, [sessionId, controls, inputActions])
       React.useEffect(() => {
         if (!open) return
         const abort = new AbortController()
         setLoading(true); setError('')
-        Promise.all([workResourceRequest('catalog', sessionId, undefined, abort.signal), workResourceRequest('get', sessionId, undefined, abort.signal)])
-          .then(([catalog, selection]) => { if (!abort.signal.aborted) { setSpaces(catalog.spaces); setSelected(selection.spaces); setDraft(selection.spaces.map(space => space.id)) } })
+        workResourceRequest('catalog', sessionId, undefined, abort.signal)
+          .then(catalog => { if (!abort.signal.aborted) { setSpaces(catalog.spaces); setDraft(knowledge.read(sessionId).map(space => space.id)) } })
           .catch(reason => { if (!abort.signal.aborted) setError(reason.message) })
           .finally(() => { if (!abort.signal.aborted) setLoading(false) })
         return () => abort.abort()
-      }, [open, revision, sessionId])
+      }, [open, revision, sessionId, knowledge])
       const close = () => { if (!saving) setOpen(false) }
       const commit = async ids => {
         setSaving(true); setError('')
-        try { const result = await workResourceRequest('select', sessionId, ids); setSelected(result.spaces); setOpen(false) }
+        try { knowledge.update(sessionId, spaces.filter(space => ids.includes(space.id)), () => inputActions.captureInsertion()); setOpen(false) }
         catch (reason) { setError(reason.message) }
         finally { setSaving(false) }
       }
       const visible = spaces.filter(space => `${space.name} ${space.description}`.toLowerCase().includes(keyword.trim().toLowerCase()))
       return React.createElement(React.Fragment, null,
-        selected.length > 0 && React.createElement('div', { className: 'dshWorkResources' }, selected.map(space => React.createElement('div', { key: space.id, className: 'dshWorkResourceChip' },
-          React.createElement(NavigationIcon, { id: 'knowledge' }),
-          React.createElement('button', { type: 'button', title: space.name, onClick: () => setOpen(true) }, space.name),
-          React.createElement('button', { type: 'button', disabled: saving, 'aria-label': `${t('remove')} ${space.name}`, onClick: () => commit(selected.filter(item => item.id !== space.id).map(item => item.id)) }, '×')))),
         error && !open && React.createElement('div', { role: 'alert', className: 'dshWorkResourceError' }, error),
         React.createElement(Modal, { open, onClose: close, title: t('knowledge'), closeLabel: t('close'), backdropBlur: false, className: 'dshWorkKnowledgeDialog',
           footer: React.createElement(React.Fragment, null, React.createElement('span', { className: 'dshWorkSelectionCount', 'aria-live': 'polite' }, `${t('selected')} ${draft.length}`),
@@ -724,6 +771,13 @@ window.__ModuleLoader__.load({
     function installWorkResources(ctx) {
       const controls = new Map()
       const ensureSession = (sessionId, signal) => ctx.sessions.using(sessionId, { source: 'workResources', signal }, async () => undefined)
+      const knowledge = createWorkKnowledgeComposer({ ensureSession, request: workResourceRequest, inputFor: sessionId => {
+        const scope = ctx.sessions.scope(sessionId)
+        if (!scope) throw new Error('Work task changed.')
+        return { scope, input: ctx.conversation.input.for(scope) }
+      } })
+      ctx.effect(() => ctx.inputTriggers.registerSource(knowledge.source), 'desktop knowledge references')
+      ctx.on('conversation/input-before-submit', knowledge.prepare)
       ctx.effect(() => ctx.locale.register(RESOURCE_NS, RESOURCE_COPY), 'desktop Work resources locale')
       const t = ctx.locale.bind(RESOURCE_NS)
       const available = session => ctx.sessions.subagentAddress(session.sessionId) === undefined
@@ -746,12 +800,12 @@ window.__ModuleLoader__.load({
         } })
       ctx.commandUi.register({ name: 'knowledge', label: () => t('knowledge'), description: () => t('knowledgeHint'), icon: props => React.createElement(NavigationIcon, { ...props, id: 'knowledge' }), available,
         ui: { kind: 'action', run: ({ sessionId }) => controls.get(sessionId)?.open() } })
-      ctx.slots.inject('conversation.input.accessory', () => ctx.slots.register({ name: 'conversation.input.accessory', id: 'desktop-work-resources', order: 20, inject: sessionId => ({ sessionId, controls, t, ensureSession }) }, WorkResourceAccessory))
+      ctx.slots.inject('conversation.input.accessory', () => ctx.slots.register({ name: 'conversation.input.accessory', id: 'desktop-work-resources', order: 20, inject: sessionId => ({ sessionId, controls, t, knowledge }) }, WorkResourceAccessory))
       ctx.effect(() => {
         if (document.getElementById('desktop-work-resources-style')) return
         const style = document.createElement('style')
         style.id = 'desktop-work-resources-style'
-        style.textContent = `.dshWorkResources{display:flex;flex-wrap:wrap;gap:8px;padding:10px 12px 0}.dshWorkResourceChip{display:flex;align-items:center;gap:6px;max-width:260px;padding:6px 8px;background:var(--dsw-alias-bg-layer-2);border-radius:8px;color:var(--dsw-alias-label-primary)}.dshWorkResourceChip svg,.dshWorkKnowledgeRow svg{width:16px;height:16px;flex:none}.dshWorkResourceChip button{font:inherit;border:0;background:transparent;color:inherit;cursor:pointer;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.dshWorkKnowledgeDialog{width:min(680px,90vw)}.dshWorkKnowledgeSearch{box-sizing:border-box;width:100%;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit}.dshWorkKnowledgeList{min-height:180px;max-height:50vh;overflow:auto;margin-top:12px}.dshWorkKnowledgeList h3{font-size:12px;font-weight:400;color:var(--dsw-alias-label-secondary);padding:8px}.dshWorkKnowledgeRow{display:flex;align-items:center;gap:8px;padding:12px 8px;border-radius:8px;cursor:pointer;min-width:0}.dshWorkKnowledgeRow:hover{background:var(--dsw-alias-interactive-bg-hover)}.dshWorkResourceName{flex:0 1 auto;overflow-wrap:anywhere;color:var(--dsw-alias-label-primary)}.dshWorkResourceDescription{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary)}.dshWorkSelectionCount{margin-right:auto;color:var(--dsw-alias-label-secondary)}.dshWorkResourceError{padding:8px 12px;color:var(--dsw-alias-state-error-primary);font-size:12px}`
+        style.textContent = `.dshWorkKnowledgeRow svg{width:16px;height:16px;flex:none}.dshWorkKnowledgeDialog{width:min(680px,90vw)}.dshWorkKnowledgeSearch{box-sizing:border-box;width:100%;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit}.dshWorkKnowledgeList{min-height:180px;max-height:50vh;overflow:auto;margin-top:12px}.dshWorkKnowledgeList h3{font-size:12px;font-weight:400;color:var(--dsw-alias-label-secondary);padding:8px}.dshWorkKnowledgeRow{display:flex;align-items:center;gap:8px;padding:12px 8px;border-radius:8px;cursor:pointer;min-width:0}.dshWorkKnowledgeRow:hover{background:var(--dsw-alias-interactive-bg-hover)}.dshWorkResourceName{flex:0 1 auto;overflow-wrap:anywhere;color:var(--dsw-alias-label-primary)}.dshWorkResourceDescription{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary)}.dshWorkSelectionCount{margin-right:auto;color:var(--dsw-alias-label-secondary)}.dshWorkResourceError{padding:8px 12px;color:var(--dsw-alias-state-error-primary);font-size:12px}`
         document.head.appendChild(style)
         return () => style.remove()
       })
@@ -888,6 +942,7 @@ window.__ModuleLoader__.load({
       )
     }
 
+    exports.createWorkKnowledgeComposer = createWorkKnowledgeComposer
     exports.apply = apply
     exports.inject = inject
     return module.exports
