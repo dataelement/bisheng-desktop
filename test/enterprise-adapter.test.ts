@@ -30,7 +30,7 @@ function createPluginContext(
   const routes: RegisteredRoute[] = []
   applyEnterprise({
     inject(dependencies: string[], install: (ctx: unknown) => unknown) {
-      if (!dependencies.includes('tools')) return
+      if (!dependencies.includes('tools') || dependencies.includes('skills')) return
       const value = install({
         sessions: { get: () => undefined }, on() {}, effect() {},
         connection: { fetch: { register: (route: RegisteredRoute) => { routes.push(route) } } },

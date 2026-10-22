@@ -1,4 +1,5 @@
 import { parseWorkResourceRequest, readResourceJson } from './work-resources'
+import { parseWorkMcpRequest, sendWorkMcp } from './work-mcp'
 import { parseWebSession, type EnterpriseWebSession } from './web-session'
 import { parseMarketRequest } from './enterprise-market'
 import { createEnterpriseFetch } from './platform-fetch'
@@ -157,7 +158,7 @@ export class EnterpriseService {
   private modelsAttempt = 0
   private lastPublicSignature = ''
   private chatInFlight = 0
-  private readonly chatControllers = new Set<AbortController>()
+  private readonly authenticatedControllers = new Set<AbortController>()
   private allowPrivateHttpForSession = false
 
   constructor(private readonly options: EnterpriseServiceOptions) {
@@ -271,6 +272,7 @@ export class EnterpriseService {
       const contract = await loadEnterpriseContract()
       await this.cancelPendingLogin()
       this.epoch += 1
+      for (const controller of this.authenticatedControllers) controller.abort()
       const loginEpoch = this.epoch
       this.pauseSessionForRelogin()
       const pkce = contract.createPkceTransaction()
@@ -407,12 +409,12 @@ export class EnterpriseService {
     const epoch = this.epoch
     const controller = new AbortController()
     const combined = AbortSignal.any([signal, controller.signal])
-    this.chatControllers.add(controller)
+    this.authenticatedControllers.add(controller)
     this.chatInFlight += 1
     try {
       await this.runChat(parsed, response, combined, epoch, false)
     } finally {
-      this.chatControllers.delete(controller)
+      this.authenticatedControllers.delete(controller)
       this.chatInFlight -= 1
     }
   }
@@ -421,8 +423,8 @@ export class EnterpriseService {
     await this.cancelPendingLogin()
     this.clearModelsTimer()
     this.epoch += 1
-    for (const controller of this.chatControllers) controller.abort()
-    this.chatControllers.clear()
+    for (const controller of this.authenticatedControllers) controller.abort()
+    this.authenticatedControllers.clear()
   }
 
   private async completeLogin(expectedEpoch: number, result: LoginCallbackAccepted): Promise<void> {
@@ -791,6 +793,31 @@ export class EnterpriseService {
     throw Object.assign(new Error('Enterprise login required.'), { status: 401 })
   }
 
+  async workMcp(input: unknown, signal?: AbortSignal): Promise<unknown> {
+    const request = parseWorkMcpRequest(input)
+    const epoch = this.epoch
+    const controller = new AbortController()
+    const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
+    const assertCurrent = () => {
+      combined.throwIfAborted()
+      if (!this.snapshot().connected || this.connectionKey() !== request.connectionKey || this.epoch !== epoch) {
+        throw Object.assign(new Error('Enterprise account changed. Refresh Work capabilities.'), { status: 409 })
+      }
+    }
+    assertCurrent()
+    this.authenticatedControllers.add(controller)
+    try {
+      // webSession performs the verified Desktop exchange and access refresh.
+      const credential = await this.webSession(request.connectionKey)
+      assertCurrent()
+      const result = await sendWorkMcp({ request, credential, assertCurrent,
+        fetchImpl: this.options.fetchImpl, allowInsecureLoopback: this.options.allowInsecureLoopback,
+        allowInsecurePrivateHttp: this.platformRequestOptions().allowInsecurePrivateHttp, signal: combined })
+      this.options.note?.({ event: 'work_mcp_request', status: 200 })
+      return result
+    } finally { this.authenticatedControllers.delete(controller) }
+  }
+
   async workResources(input: unknown, signal?: AbortSignal): Promise<unknown> {
     const request = parseWorkResourceRequest(input)
     const epoch = this.epoch
@@ -1037,7 +1064,7 @@ export class EnterpriseService {
   private async clearLocalSession(phase: EnterprisePhase): Promise<void> {
     this.epoch += 1
     this.clearModelsTimer()
-    for (const controller of this.chatControllers) controller.abort()
+    for (const controller of this.authenticatedControllers) controller.abort()
     await this.cancelPendingLogin()
     this.session = null
     this.allowPrivateHttpForSession = false

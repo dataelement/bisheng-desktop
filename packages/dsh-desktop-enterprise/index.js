@@ -1,4 +1,5 @@
 import { applyWorkResources } from './work-resources.js'
+import { applyWorkCapabilities } from './work-capabilities.js'
 import { requestImageDimensions } from '@deepseek-ai/dsh-attachment'
 import { applyEnterpriseMarket } from './market.js'
 import { parseThirdPartyPolicy } from './contract.js'
@@ -178,6 +179,7 @@ export function apply(ctx) {
   let capabilityPolicy
   let account = disabledState()
   let workResources
+  let workCapabilities
   let ingestEnterpriseState = () => undefined
   const thirdPartyFlags = () => {
     const snap = capabilityPolicy?.snapshot()
@@ -193,7 +195,7 @@ export function apply(ctx) {
       await market?.stop()
       capabilityPolicy?.reset()
     }
-    if (!state.connected || account.connectionKey !== state.connectionKey) workResources?.clear()
+    if (!state.connected || account.connectionKey !== state.connectionKey) { workResources?.clear(); workCapabilities?.clear() }
     account = state
     if (!state.connected) capabilityPolicy?.reset()
     else void capabilityPolicy?.refresh(state.connectionKey).catch(() => undefined)
@@ -218,6 +220,12 @@ export function apply(ctx) {
     state: () => account, refreshState: readBrokerState,
     request: (body, signal) => brokerJson('/v1/work-resources', body, signal)
   }) })
+  if (typeof ctx.inject === 'function') ctx.inject(['tools', 'sessions', 'skills'], scoped => {
+    workCapabilities = applyWorkCapabilities(scoped, {
+      state: () => account, refreshState: readBrokerState,
+      request: (body, signal) => brokerJson('/v1/work-mcp', body, signal)
+    })
+  })
   market = applyEnterpriseMarket(ctx, {
     state: () => account,
     refreshState: readBrokerState,
@@ -264,7 +272,7 @@ export function apply(ctx) {
   registerJsonRoute(connection, LOCAL_PATHS.manual, ['POST'], async (request) => {
     const body = await readJson(request)
     const state = await brokerJson('/v1/login/manual', { identityTicket: String(body?.identityTicket ?? '') })
-    if (!state.connected || account.connectionKey !== state.connectionKey) workResources?.clear()
+    if (!state.connected || account.connectionKey !== state.connectionKey) { workResources?.clear(); workCapabilities?.clear() }
     account = state
     ingestEnterpriseState(state)
     if (state.connected) await capabilityPolicy?.refresh(state.connectionKey).catch(() => undefined)
@@ -295,7 +303,7 @@ export function apply(ctx) {
     const state = await brokerJson('/v1/logout', {})
     await market.stop()
     capabilityPolicy?.reset()
-    if (!state.connected || account.connectionKey !== state.connectionKey) workResources?.clear()
+    if (!state.connected || account.connectionKey !== state.connectionKey) { workResources?.clear(); workCapabilities?.clear() }
     account = state
     ingestEnterpriseState(state)
     return { ...state, allowThirdPartyPlugins: false, allowThirdPartyWorkbenches: false }

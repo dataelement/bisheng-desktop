@@ -1,3 +1,10 @@
+## 2026-10-22 — Work 企业工具与 Skill 本地链路
+
+- 用户批准单次登录、自动凭据管理和本地实施。桌面基线 V1.2.0@a1ce7bf83c1d3f98dda0802f197e906669de167f，Harness 0.2.0-rc.2；后端基线 06dfe76d6ff83778ed7df1a38f540431057a80af。两个隔离工作树使用 codex/local-enterprise-capabilities，后端目标分支待用户指定。
+- 实现宿主固定 MCP 代理、现有登录交换/刷新、租户发布集与用户权限交集、逐次授权复查、原生工具策略/审批、企业 Skill 完整包校验加载、依赖检查、账号清理和结构化审计。新增发布表迁移，管理端先提供发布接口。
+- 本地自动验证：桌面完整回归 232 文件 / 1975 项通过 / 1 项条件跳过，类型检查、生产构建通过；后端定向 13 项通过。跨语言测试覆盖实际 Python MCP、宿主代理及原生 Harness 工具和 Skill 运行时；业务身份、工具执行器与对象存储采用测试夹具。最后日志与复跑方式见主工作区 outputs/enterprise-work-local-20261022/README.md。
+- 真实企业工具/上游 MCP、完整后台、真实模型任务、原生窗口和正式安装包验收随目标分支继续执行。代码和证据保存在本地，项目 G1–G4 状态沿用原记录。
+
 ## 2026-10-22 — Work 知识库使用原生内联引用
 
 - 基线：`bisheng-work-chat-work` / `codex/chat-work-integration`，整合 `origin/V1.2.0@adaa781`，Harness / conversation `0.2.0-rc.2`；远端 `dsh-desktop` 的 `v0.9.0` 标签为 `7a9ed7f94257ff82daf76f2ec5e9defe16bb8661`。延续企业集成工作区与原 `bisheng-dev` Profile。
