@@ -3,7 +3,7 @@
 - 基线：`dataelement/bisheng-work:V1.2.0@ccd9a09`，工作树 `bisheng-work-v120-credits`，安装的 Harness `0.2.0-rc.2`，Electron `43.0.0`。本轮拉取远端后与本地基线一致。
 - 宿主深色转换遵循 `data-document-canvas` 内容边界，覆盖普通/交互色彩、行内色彩、表头、代码高亮和 iframe。文档内容使用自身配色，外围界面使用宿主主题。
 - 宿主配色传递到 Chat 根节点及门户菜单/弹窗，补齐背景、文字、填充、灰色按钮、禁用控件和 popover 色彩。
-- 类型检查通过；主题与企业 Chat 相关回归 28 项通过。页面使用 BISHENG 配套改动，桌面安装包及 3006 发布完成后由用户手动验收。
+- 类型检查通过；主题与企业 Chat 相关回归 28 项通过。源码 `e4a27e0` 已推送 `V1.2.0`，配套 BISHENG `b3fbbd166` 已发布到 3006。使用本机 Electron 43.0.0 生成 macOS arm64 DMG/ZIP，Office 打包检查通过，桌面端已打开，由用户手动验收。
 
 ## 2026-10-22 — Work 知识空间弹窗与 Chat 对齐
 
