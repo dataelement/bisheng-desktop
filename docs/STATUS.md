@@ -9,6 +9,12 @@
 - 3006 后端接口已部署，健康检查通过。本地开发应用已启动，原登录与会话保留；实际 Work 菜单已显示企业 Office 技能和本地技能。完整企业 Office 文件产出仍由用户验收；列表展示与自动化加载验证分别记录。
 - 本次本地应用采用 macOS ad-hoc 开发签名。发布安装包签名与跨平台验收单独执行。
 
+## 2026-10-22 — 最新账号与用量整合体验包
+
+- 已核对并快进到 `dataelement/bisheng-work:V1.2.0@b8bfd4e98504d00fa1dfd82186c047a009939c3a`，包含同事的账号信息、企业模型、积分与用量整合，以及此前的 Chat 背景、文件主题和知识空间修复。本地实现与远端一致。
+- 工作树为 `bisheng-work-v120-credits`，Harness `0.2.0-rc.2`，Electron `43.0.0`。构建及包内 Office 检查通过，已生成 macOS arm64 开发 DMG/ZIP，产物目录 `outputs/bisheng-dev-3006-account-20261022`（主工作区）。
+- 桌面连接 3006，Chat 字体更新由网页端加载；应用重新打开供用户手动验收账号、模型及用量页面。
+
 ## 2026-10-22 — 用户可选模型显示名称联动
 
 - 交付方式按用户确认调整为直接合入 `V1.2.0`；推送前核对远端基线为 `f97e158`，Harness 为 `0.2.0-rc.2`。
@@ -395,3 +401,9 @@ Verification:
 - Native Desktop login, real provider calls, and installed-app UI acceptance: `NOT_RUN`.
 
 - 3006 backend is now `feat/3.0.0-beta4@db2381113` with deployed migration head `beta4_merge_3006_history`; API healthy and r4 frontend retained. Beta4 renewed the JWT signing secret; web-session handoff from enterprise identity remains to be implemented.
+
+
+## 2026-10-22 Chat knowledge dialog window presentation
+- Desktop baseline: `V1.2.0@a2d2f43`, Harness `0.2.0-rc.2`, Electron `43.0.0`; working tree `bisheng-work-v120-credits`.
+- Chat reports its knowledge dialog lifecycle through a presentation-only bridge. The native view expands to the window while the chat content retains its region geometry; close/navigation restores the region. The backdrop uses Work's sampled mask token including alpha.
+- Type checking, production build and 29 targeted host/theme tests passed. macOS arm64 DMG/ZIP and packaged Office checks passed. 3006 client release `chat-window-dialog-20261022-1905` deployed; package stored in `outputs/bisheng-dev-3006-dialog-20261022`. Visual acceptance belongs to the user.
