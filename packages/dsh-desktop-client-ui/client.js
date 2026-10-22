@@ -254,11 +254,6 @@ window.__ModuleLoader__.load({
         }
         style.textContent = `
           [data-dsh-sidebar-brand-identity] { display:none !important; }
-          html[data-platform='darwin'] [data-dsh-sidebar-root][data-dsh-sidebar-wide='true']
-            div[data-window-drag]:has([data-dsh-sidebar-brand-identity]) {
-              display:none !important;
-              height:0 !important; min-height:0 !important; margin:0 !important; padding:0 !important;
-            }
           [data-dsh-preset-heading] { display:flex; align-items:center; flex-wrap:wrap; gap:12px 16px; }
           [data-dsh-preset-heading] h2 { margin:0; }
           [data-dsh-preset-actions] { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-left:auto; }
