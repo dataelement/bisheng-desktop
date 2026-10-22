@@ -42,7 +42,7 @@ export function moduleThemeScript(theme: EnterpriseChatPresentation['theme'], pa
         let doc = null;
         try { doc = frame.contentDocument; } catch (error) { doc = null; }
         if (!doc) return;
-        const dark = root.classList.contains('dsh-module-dark');
+        const dark = root.classList.contains('dsh-module-dark') && !frame.closest('[data-document-canvas]');
         let style = doc.getElementById('dsh-host-frame-dark');
         if (dark && !style) { style = doc.createElement('style'); style.id = 'dsh-host-frame-dark'; style.textContent = frameCss; (doc.head || doc.documentElement).appendChild(style); }
         else if (!dark && style) style.remove();
@@ -108,7 +108,7 @@ const CHAT_LAYOUT_SCOPES = '.dsh-web-chat,.dsh-chat-menu,.dsh-chat-preview-modal
  * The BISHENG client reads its surfaces and ink through `rgb(var(--token))` triples, so one
  * redefinition of those triples moves the whole embedded page onto the host's palette instead of
  * its own dark ramp — including every utility the overrides below already redirect at these tokens.
- * Only the host-dark module scope is redefined: Chat routes keep their deployed theme handling, and
+ * The host-dark root supplies tokens to Chat, module pages and portaled dialogs, while
  * a light host leaves the page's own light design alone. `:root` lifts the specificity above the
  * page's own `html.dark` ramp whatever order the two stylesheets land in. The brand ramp is not
  * touched; product color stays the page's own.
@@ -125,6 +125,19 @@ export function moduleThemePaletteCss(palette: EnterprisePalette): string {
     // The layout root's own card ramp: a subtle card one step up, a stronger one two steps up.
     ['--fill-1', raised.join(' ')],
     ['--fill-2', lifted],
+    ['--fill-3', mixChannels(raised, strong, 2 / 3)],
+    ['--fill-4', strong.join(' ')],
+    ['--btn-gray-text', labelSecondary.join(' ')],
+    ['--btn-gray-solid-bg', strong.join(' ')],
+    ['--btn-gray-border', borderBase.join(' ')],
+    ['--btn-fill-1', raised.join(' ')],
+    ['--btn-fill-2', lifted],
+    ['--btn-fill-3', mixChannels(raised, strong, 2 / 3)],
+    ['--btn-fill-4', strong.join(' ')],
+    ['--btn-disabled-bg', raised.join(' ')],
+    ['--btn-disabled-text', labelTertiary.join(' ')],
+    ['--btn-disabled-border', borderBase.join(' ')],
+    ['--tooltip-bg', raised.join(' ')],
     ['--text-1', labelPrimary.join(' ')],
     ['--text-2', labelSecondary.join(' ')],
     ['--text-3', labelTertiary.join(' ')],
@@ -139,6 +152,8 @@ export function moduleThemePaletteCss(palette: EnterprisePalette): string {
   const hsl: Array<[string, string]> = [
     ['--background', hslTriple(surface.join(' '))],
     ['--card', hslTriple(raised.join(' '))],
+    ['--popover', hslTriple(raised.join(' '))],
+    ['--popover-foreground', hslTriple(labelPrimary.join(' '))],
     ['--secondary', hslTriple(lifted)],
     ['--muted', hslTriple(lifted)],
     ['--accent', hslTriple(lifted)],
@@ -152,8 +167,8 @@ export function moduleThemePaletteCss(palette: EnterprisePalette): string {
   ]
   const body = [...declarations, ...hsl].map(([name, value]) => `${name}:${value}`).join(';')
   return [
-    `html.dsh-module-dark:root{${body}}`,
-    `html.dsh-module-dark body[data-dsh-chat-theme] :is(${CHAT_LAYOUT_SCOPES}){${body}}`,
+    `html.dsh-host-dark:root{${body}}`,
+    `html.dsh-host-dark body[data-dsh-chat-theme] :is(${CHAT_LAYOUT_SCOPES}){${body}}`,
     ...(palette.composer ? [`html[data-dsh-host-theme=dark] body[data-dsh-chat-theme=dark] .dsh-web-chat{--dsh-composer-bg:${palette.composer.join(' ')}}`] : [])
   ].join('\n')
 }
@@ -366,6 +381,9 @@ function liftSurface(declaration: string): string {
   return declaration.replace(/--(bg-page|arco-gray-[1-3])\b/u, (_match, name: string) => `--${SURFACE_LIFT[name] ?? name}`)
 }
 
+/** File content owns its palette; host overrides apply to application chrome. */
+const APP_SURFACE = ':not(:where([data-document-canvas], [data-document-canvas] *))'
+
 function buildModuleThemeCss(): string {
   // declaration → variant prefix ('' for the plain utility) → escaped class names
   const groups = new Map<string, Map<string, string[]>>()
@@ -402,7 +420,7 @@ function buildModuleThemeCss(): string {
     const declaration = placeholder ? key.slice(0, -'::placeholder'.length) : key
     const selectors = [...variants].map(([prefix, list]) => {
       const variant = VARIANTS.find((candidate) => candidate.prefix === prefix)
-      return `html.dsh-host-dark ${variant ? variant.wrap(list.join(',')) : `:is(${list.join(',')})${placeholder ? '::placeholder' : ''}`}`
+      return `html.dsh-host-dark ${variant ? variant.wrap(list.join(',')) : `:is(${list.join(',')})`}${APP_SURFACE}${placeholder ? '::placeholder' : ''}`
     })
     return `${selectors.join(',')}{${declaration}}`
   })
@@ -414,24 +432,24 @@ function buildModuleThemeCss(): string {
     if (!declaration) throw new Error(`Inline style color has no dark replacement: ${hex}`)
     const property = kind === 'text' ? 'color' : 'background-color'
     const serial = `rgb(${[0, 2, 4].map((offset) => parseInt(hex.slice(offset, offset + 2), 16)).join(', ')})`
-    inline.push(`html.dsh-host-dark [style^="${property}: ${serial}"],html.dsh-host-dark [style*="; ${property}: ${serial}"]{${declaration} !important}`)
+    inline.push(`html.dsh-host-dark [style^="${property}: ${serial}"]${APP_SURFACE},html.dsh-host-dark [style*="; ${property}: ${serial}"]${APP_SURFACE}{${declaration} !important}`)
   }
-  inline.push(`html.dsh-host-dark [style*="${DOT_TEXTURE_LIGHT}"]{background-image:${DOT_TEXTURE_DARK} !important}`)
+  inline.push(`html.dsh-host-dark [style*="${DOT_TEXTURE_LIGHT}"]${APP_SURFACE}{background-image:${DOT_TEXTURE_DARK} !important}`)
   // Arbitrary gradient utilities (`bg-[linear-gradient(...,#FFF_50%,...)]`) are matched by
   // substring: the class attribute names the white stop, whatever the surrounding stops are.
-  const whiteGradient = ['#FFF', '#fff'].map((stop) => `html.dsh-host-dark [class*="bg-[linear-gradient("][class*="${stop}"]`).join(',')
+  const whiteGradient = ['#FFF', '#fff'].map((stop) => `html.dsh-host-dark [class*="bg-[linear-gradient("][class*="${stop}"]${APP_SURFACE}`).join(',')
   return [
     'html.dsh-module-dark{color-scheme:dark}',
     'html.dsh-module-dark body,html.dsh-module-dark #root{background-color:rgb(var(--bg-page));color:rgb(var(--text-1))}',
     // Table headers carry their light surface through component styles rather than utilities.
-    'html.dsh-module-dark :is(thead,th,[role=columnheader]){background-color:rgb(var(--arco-gray-1))}',
+    `html.dsh-module-dark :is(thead,th,[role=columnheader])${APP_SURFACE}{background-color:rgb(var(--arco-gray-1))}`,
     // Knowledge home folder tiles are inline SVG art with fixed pastel fills under a token-colored
     // name; inverting the art keeps the white name legible without touching the text tokens.
     'html.dsh-module-dark[data-dsh-page="knowledge"] .aspect-\\[4\\/3\\] > svg[viewBox="0 0 120 90"]{filter:invert(1) hue-rotate(180deg)}',
     `${whiteGradient}{background-image:linear-gradient(135deg,rgb(var(--brand-500) / 0.08),rgb(var(--arco-gray-1)) 50%,rgb(var(--brand-500) / 0.08))}`,
     ...rules,
     ...inline,
-    ...HLJS_DARK.map(([selectors, color]) => `${selectors.split(',').map((selector) => `html.dsh-host-dark ${selector}`).join(',')}{color:${color}}`)
+    ...HLJS_DARK.map(([selectors, color]) => `${selectors.split(',').map((selector) => `html.dsh-host-dark ${selector}${APP_SURFACE}`).join(',')}{color:${color}}`)
   ].join('\n')
 }
 

@@ -85,7 +85,7 @@ describe('enterprise module page theme', () => {
     }
     const css = moduleThemePaletteCss(palette)
     // The page reads `rgb(var(--token))`, so the host writes channels and never a color function.
-    expect(css.startsWith('html.dsh-module-dark:root{')).toBe(true)
+    expect(css.startsWith('html.dsh-host-dark:root{')).toBe(true)
     expect(css).toContain('html[data-dsh-host-theme=dark] body[data-dsh-chat-theme=dark] .dsh-web-chat{--dsh-composer-bg:40 41 45}')
     expect(moduleThemePaletteCss({ ...palette, composer: undefined })).not.toContain('--dsh-composer-bg')
     expect(css).toContain('--bg-page:44 44 46')
@@ -112,7 +112,7 @@ describe('enterprise module page theme', () => {
     // from the host; the override lands there too, or the embedded settings page keeps its own dark.
     const rules = css.split('\n')
     expect(rules).toHaveLength(3)
-    expect(rules[1]).toMatch(/^html\.dsh-module-dark body\[data-dsh-chat-theme\] :is\(\.dsh-web-chat,/u)
+    expect(rules[1]).toMatch(/^html\.dsh-host-dark body\[data-dsh-chat-theme\] :is\(\.dsh-web-chat,/u)
     expect(rules[1]?.slice(rules[1].indexOf('{'))).toBe(rules[0]?.slice(rules[0].indexOf('{')))
 
     const head = fakeHead()
@@ -146,8 +146,8 @@ describe('enterprise module page theme', () => {
       ;(head as { appendChild?: (child: { id: string; textContent: string }) => void }).appendChild = (child) => { head.children.push(child) }
       return doc
     }
-    const article = { contentDocument: makeDoc(), listeners: [] as Array<() => void>, addEventListener(_type: string, fn: () => void) { this.listeners.push(fn) } }
-    const sandboxed = { contentDocument: null, listeners: [] as Array<() => void>, addEventListener(_type: string, fn: () => void) { this.listeners.push(fn) } }
+    const article = { documentCanvas: false, closest() { return this.documentCanvas ? {} : null }, contentDocument: makeDoc(), listeners: [] as Array<() => void>, addEventListener(_type: string, fn: () => void) { this.listeners.push(fn) } }
+    const sandboxed = { closest: () => null, contentDocument: null, listeners: [] as Array<() => void>, addEventListener(_type: string, fn: () => void) { this.listeners.push(fn) } }
     const className = new Set<string>()
     const classList = { contains: (name: string) => className.has(name), toggle: (name: string, force: boolean) => { force ? className.add(name) : className.delete(name) }, add: (name: string) => className.add(name), remove: (name: string) => className.delete(name) }
     const hostHead = fakeHead()
@@ -165,6 +165,9 @@ describe('enterprise module page theme', () => {
     expect(article.contentDocument.head.children).toHaveLength(1)
     run('dark')
     expect(article.listeners).toHaveLength(1)
+    article.documentCanvas = true
+    run('dark')
+    expect(article.contentDocument.head.children).toHaveLength(0)
     run('light')
     expect(article.contentDocument.head.children).toHaveLength(0)
     expect(FRAME_DARK_CSS).toContain('img,video,canvas')
@@ -198,7 +201,8 @@ describe('enterprise module page theme', () => {
   })
 
   it('scopes fixed rules to module routes, utilities to every dark host route, and covers both hex spellings', () => {
-    const rules = MODULE_THEME_CSS.split('\n')
+    const chromeCss = MODULE_THEME_CSS.replaceAll(':not(:where([data-document-canvas], [data-document-canvas] *))', '')
+    const rules = chromeCss.split('\n')
     expect(rules[0]).toBe('html.dsh-module-dark{color-scheme:dark}')
     expect(rules[2]).toBe('html.dsh-module-dark :is(thead,th,[role=columnheader]){background-color:rgb(var(--arco-gray-1))}')
     expect(rules[3]).toBe('html.dsh-module-dark[data-dsh-page="knowledge"] .aspect-\\[4\\/3\\] > svg[viewBox="0 0 120 90"]{filter:invert(1) hue-rotate(180deg)}')
@@ -209,36 +213,36 @@ describe('enterprise module page theme', () => {
     // A plain utility sits in the base :is() list of its declaration's rule, in both hex spellings.
     const base = (cls: string) => new RegExp(`html\\.dsh-host-dark :is\\([^)]*${cls.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}[,)]`, 'u')
     for (const cls of ['.bg-white', '.bg-\\[\\#fbfbfb\\]', '.bg-\\[\\#FBFBFB\\]', '.bg-\\[\\#f7f7f7\\]', '.text-\\[\\#1d2129\\]', '.text-\\[\\#1D2129\\]', '.text-black', '.text-gray-900', '.border-gray-200', '.bg-gray-50', '.border-white', '.from-white', '.to-white', '.from-white\\/0', '.to-white\\/0', '.via-white\\/85']) {
-      expect(MODULE_THEME_CSS).toMatch(base(cls))
+      expect(chromeCss).toMatch(base(cls))
     }
-    for (const kept of [/\.text-\\\[\\#f53f3f\\\][,{)]/u, /\.bg-\\\[\\#212121\\\][,{)]/u, /\.text-white[,{)]/u, /\.bg-black[,{)]/u, /\.text-gray-50[,{)]/u, /\.from-gray-800[,{)]/u]) expect(MODULE_THEME_CSS).not.toMatch(kept)
-    expect(MODULE_THEME_CSS).not.toMatch(/\.dark\b[^-]/u)
-    expect(MODULE_THEME_CSS.match(/\.text-\\\[\\#111\\\][,)]/gu)).toHaveLength(1)
+    for (const kept of [/\.text-\\\[\\#f53f3f\\\][,{)]/u, /\.bg-\\\[\\#212121\\\][,{)]/u, /\.text-white[,{)]/u, /\.bg-black[,{)]/u, /\.text-gray-50[,{)]/u, /\.from-gray-800[,{)]/u]) expect(chromeCss).not.toMatch(kept)
+    expect(chromeCss).not.toMatch(/\.dark\b[^-]/u)
+    expect(chromeCss.match(/\.text-\\\[\\#111\\\][,)]/gu)).toHaveLength(1)
     // Variant classes are separate utilities; each variant wraps its own :is() list.
-    expect(MODULE_THEME_CSS).toMatch(/html\.dsh-host-dark :is\([^)]*\.hover\\:bg-\\\[\\#f7f7f7\\\][,)][^)]*\):hover/u)
-    expect(MODULE_THEME_CSS).toMatch(/html\.dsh-host-dark :is\([^)]*\.fine-pointer\\:hover\\:bg-gray-50[,)][^)]*\):hover/u)
-    expect(MODULE_THEME_CSS).toMatch(/html\.dsh-host-dark \.group:hover :is\([^)]*\.group-hover\\:text-\\\[\\#333\\\][,)]/u)
-    expect(MODULE_THEME_CSS).toMatch(/html\.dsh-host-dark :is\([^)]*\.data-\\\[state\\=open\\\]\\:bg-gray-100[,)][^)]*\)\[data-state=open\]/u)
-    expect(MODULE_THEME_CSS).toMatch(/html\.dsh-host-dark :is\([^)]*\.has-\\\[\\\[data-state\\=open\\\]\\\]\\:bg-\\\[\\#f7f7f7\\\][,)][^)]*\):has\(\[data-state=open\]\)/u)
-    expect(MODULE_THEME_CSS).not.toContain('::placeholder:hover')
+    expect(chromeCss).toMatch(/html\.dsh-host-dark :is\([^)]*\.hover\\:bg-\\\[\\#f7f7f7\\\][,)][^)]*\):hover/u)
+    expect(chromeCss).toMatch(/html\.dsh-host-dark :is\([^)]*\.fine-pointer\\:hover\\:bg-gray-50[,)][^)]*\):hover/u)
+    expect(chromeCss).toMatch(/html\.dsh-host-dark \.group:hover :is\([^)]*\.group-hover\\:text-\\\[\\#333\\\][,)]/u)
+    expect(chromeCss).toMatch(/html\.dsh-host-dark :is\([^)]*\.data-\\\[state\\=open\\\]\\:bg-gray-100[,)][^)]*\)\[data-state=open\]/u)
+    expect(chromeCss).toMatch(/html\.dsh-host-dark :is\([^)]*\.has-\\\[\\\[data-state\\=open\\\]\\\]\\:bg-\\\[\\#f7f7f7\\\][,)][^)]*\):has\(\[data-state=open\]\)/u)
+    expect(chromeCss).not.toContain('::placeholder:hover')
     // Interactive surfaces lift one step: hover on a gray-1 surface renders as gray-2.
-    const hoverRule = MODULE_THEME_CSS.split('\n').find((rule) => /\.hover\\:bg-\\\[\\#f7f7f7\\\][,)]/u.test(rule))
+    const hoverRule = chromeCss.split('\n').find((rule) => /\.hover\\:bg-\\\[\\#f7f7f7\\\][,)]/u.test(rule))
     expect(hoverRule?.endsWith('{background-color:rgb(var(--arco-gray-2))}')).toBe(true)
-    const baseRule = MODULE_THEME_CSS.split('\n').find((rule) => /:is\([^)]*\.bg-\\\[\\#f7f7f7\\\][,)]/u.test(rule))
+    const baseRule = chromeCss.split('\n').find((rule) => /:is\([^)]*\.bg-\\\[\\#f7f7f7\\\][,)]/u.test(rule))
     expect(baseRule?.endsWith('{background-color:rgb(var(--arco-gray-1))}')).toBe(true)
-    const whiteHover = MODULE_THEME_CSS.split('\n').find((rule) => /\.hover\\:bg-white[,)]/u.test(rule))
+    const whiteHover = chromeCss.split('\n').find((rule) => /\.hover\\:bg-white[,)]/u.test(rule))
     expect(whiteHover?.endsWith('{background-color:rgb(var(--arco-gray-1))}')).toBe(true)
     // Linsight inline palette: matched on the serialized style attribute, overridden with !important.
-    expect(MODULE_THEME_CSS).toContain('html.dsh-host-dark [style^="color: rgb(29, 33, 41)"],html.dsh-host-dark [style*="; color: rgb(29, 33, 41)"]{color:rgb(var(--text-1)) !important}')
-    expect(MODULE_THEME_CSS).toContain('[style^="color: rgb(92, 92, 92)"]')
-    expect(MODULE_THEME_CSS).toContain('html.dsh-host-dark [style^="background-color: rgb(255, 255, 255)"],html.dsh-host-dark [style*="; background-color: rgb(255, 255, 255)"]{background-color:rgb(var(--bg-page)) !important}')
-    expect(MODULE_THEME_CSS).toContain(`html.dsh-host-dark [style*="%23EAEEFF"]{background-image:url("data:image/svg+xml,`)
-    expect(MODULE_THEME_CSS).toMatch(/fill='%232C2F36'[^\n]*!important\}/u)
+    expect(chromeCss).toContain('html.dsh-host-dark [style^="color: rgb(29, 33, 41)"],html.dsh-host-dark [style*="; color: rgb(29, 33, 41)"]{color:rgb(var(--text-1)) !important}')
+    expect(chromeCss).toContain('[style^="color: rgb(92, 92, 92)"]')
+    expect(chromeCss).toContain('html.dsh-host-dark [style^="background-color: rgb(255, 255, 255)"],html.dsh-host-dark [style*="; background-color: rgb(255, 255, 255)"]{background-color:rgb(var(--bg-page)) !important}')
+    expect(chromeCss).toContain(`html.dsh-host-dark [style*="%23EAEEFF"]{background-image:url("data:image/svg+xml,`)
+    expect(chromeCss).toMatch(/fill='%232C2F36'[^\n]*!important\}/u)
     // highlight.js keeps its light palette; the host supplies the dark ink for every token group.
-    expect(MODULE_THEME_CSS).toContain('html.dsh-host-dark code.hljs,html.dsh-host-dark code[class*="language-"],html.dsh-host-dark pre[class*="language-"]{color:rgb(var(--text-1))}')
-    expect(MODULE_THEME_CSS).toContain('html.dsh-host-dark .hljs-comment,html.dsh-host-dark .hljs-meta{color:#8b949e}')
-    expect(MODULE_THEME_CSS).toContain('html.dsh-host-dark .hljs-keyword,')
-    expect(MODULE_THEME_CSS).toContain('html.dsh-host-dark .hljs-string{color:#a5d6ff}')
-    expect(MODULE_THEME_CSS).toContain('html.dsh-host-dark .hljs-attr,')
+    expect(chromeCss).toContain('html.dsh-host-dark code.hljs,html.dsh-host-dark code[class*="language-"],html.dsh-host-dark pre[class*="language-"]{color:rgb(var(--text-1))}')
+    expect(chromeCss).toContain('html.dsh-host-dark .hljs-comment,html.dsh-host-dark .hljs-meta{color:#8b949e}')
+    expect(chromeCss).toContain('html.dsh-host-dark .hljs-keyword,')
+    expect(chromeCss).toContain('html.dsh-host-dark .hljs-string{color:#a5d6ff}')
+    expect(chromeCss).toContain('html.dsh-host-dark .hljs-attr,')
   })
 })

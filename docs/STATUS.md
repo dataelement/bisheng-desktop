@@ -1,3 +1,10 @@
+## 2026-10-22 — 企业 Chat 文件预览深色模式
+
+- 基线：`dataelement/bisheng-work:V1.2.0@ccd9a09`，工作树 `bisheng-work-v120-credits`，安装的 Harness `0.2.0-rc.2`，Electron `43.0.0`。本轮拉取远端后与本地基线一致。
+- 宿主深色转换遵循 `data-document-canvas` 内容边界，覆盖普通/交互色彩、行内色彩、表头、代码高亮和 iframe。文档内容使用自身配色，外围界面使用宿主主题。
+- 宿主配色传递到 Chat 根节点及门户菜单/弹窗，补齐背景、文字、填充、灰色按钮、禁用控件和 popover 色彩。
+- 类型检查通过；主题与企业 Chat 相关回归 28 项通过。页面使用 BISHENG 配套改动，桌面安装包及 3006 发布完成后由用户手动验收。
+
 ## 2026-10-22 — Work 知识空间弹窗与 Chat 对齐
 
 - 基线：`origin/V1.2.0@2867a36`，工作区 `bisheng-work-v120-credits` / `codex/v120-unified-credits`，Harness `0.2.0-rc.2`；包含同事最新企业模型卡片更新。
