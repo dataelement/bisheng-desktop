@@ -19,8 +19,9 @@ window.__ModuleLoader__.load({
       seat_revoked: '当前登录已失效，请重新登录。',
       seat_limit_reached: '当前平台仍启用了旧版接入限制，请联系管理员升级。',
 
-      nav: '账号与安全',
-      title: '账号与安全',
+      nav: '账号与用量',
+      title: '账号与用量',
+      security: '企业账号',
       managedModels: '企业提供的模型',
       accountLabel: '当前账号',
       platform: '企业服务地址',
@@ -80,8 +81,9 @@ window.__ModuleLoader__.load({
       seat_revoked: 'Your sign-in is no longer valid. Sign in again.',
       seat_limit_reached: 'This server still enforces a legacy access limit. Ask your administrator to upgrade.',
 
-      nav: 'Account and security',
-      title: 'Account and security',
+      nav: 'Account and usage',
+      title: 'Account and usage',
+      security: 'Enterprise account',
       managedModels: 'Models provided by your enterprise',
       accountLabel: 'Current account',
       platform: 'Enterprise service URL',
@@ -175,6 +177,12 @@ window.__ModuleLoader__.load({
           color: var(--ds-text-secondary, #6d7178);
           line-height: 1.55;
         }
+        .dshEnterpriseServiceAddress {
+          color: var(--dsw-alias-label-secondary);
+          font-size: 12px;
+          line-height: 1.6;
+          overflow-wrap: anywhere;
+        }
         .dshEnterpriseLabel {
           display: grid;
           gap: 7px;
@@ -230,8 +238,7 @@ window.__ModuleLoader__.load({
         .dshEnterpriseLearnMoreShell {
           display: inline-flex;
         }
-        .dshEnterpriseLearnMore,
-        .dshEnterpriseLogout {
+        .dshEnterpriseLearnMore {
           display: inline-flex;
           align-items: center;
           gap: 5px;
@@ -246,14 +253,9 @@ window.__ModuleLoader__.load({
           cursor: pointer;
           white-space: nowrap;
         }
-        .dshEnterpriseLearnMore:hover,
-        .dshEnterpriseLogout:hover {
+        .dshEnterpriseLearnMore:hover {
           color: var(--dsw-alias-label-primary);
           background: var(--dsw-alias-interactive-bg-hover);
-        }
-        .dshEnterpriseLogout:disabled {
-          opacity: .5;
-          cursor: default;
         }
         .dshEnterpriseLearnMore:focus-visible,
         .dshEnterpriseLogout:focus-visible,
@@ -264,22 +266,31 @@ window.__ModuleLoader__.load({
         .dshEnterpriseIdentity {
           display: flex;
           align-items: center;
+          flex-direction: column;
           gap: 12px;
-          padding: 16px 0 20px;
-          border-bottom: 1px solid color-mix(in srgb, var(--dsw-alias-border-l4) 40%, transparent);
+          padding: 20px 0 28px;
+          text-align: center;
         }
         .dshEnterpriseAvatar {
           display: grid;
           place-items: center;
-          flex: 0 0 38px;
-          width: 38px;
-          height: 38px;
-          border-radius: 10px;
+          flex: none;
+          width: 64px;
+          height: 64px;
+          border-radius: 50%;
+          font-size: 22px;
+          font-weight: 500;
           color: var(--dsw-alias-label-secondary);
           background: var(--dsw-alias-interactive-bg-hover);
         }
-        .dshEnterpriseLogout {
-          margin-left: auto;
+        /* Keep sign-out as the final, explicitly destructive account action. */
+        .dshEnterprise .dshEnterpriseLogout {
+          margin: 0 0 8px;
+          color: var(--dsw-alias-state-error-primary);
+        }
+        .dshEnterprise .dshEnterpriseLogout:hover:not(:disabled),
+        .dshEnterprise .dshEnterpriseLogout:focus-visible:not(:disabled) {
+          background: var(--dsw-alias-interactive-bg-hover-danger);
         }
         .dshEnterpriseAccount {
           display: grid;
@@ -922,22 +933,21 @@ window.__ModuleLoader__.load({
       const userLabel = state?.user?.display_name || state?.user?.username || state?.user?.id || '—'
       const language = readUiLanguage()
 
+      const logoutButton = connected && h(require('@deepseek-ai/dsh-client-ui-primitives').Button, {
+        variant: 'ghost', size: 'sm',
+        className: 'dshEnterpriseLogout', disabled: busy,
+        onClick: () => run(async () => {
+          const next = await api('/api/enterprise.logout', {})
+          setConfirmation(null)
+          applyAccountState(next)
+        })
+      }, t('logout'))
       const status = connected
         ? h('div', { className: 'dshEnterpriseIdentity' },
-          h('span', { className: 'dshEnterpriseAvatar', 'aria-hidden': 'true' }, createAccountIcon()),
+          h('span', { className: 'dshEnterpriseAvatar', 'aria-hidden': 'true' }, String(userLabel).slice(0, 2).toLocaleUpperCase()),
           h('div', { className: 'dshEnterpriseAccount' },
-            h('span', { className: 'dshEnterpriseAccountLabel' }, t('accountLabel')),
-            h('span', null, userLabel)),
-          h('button', {
-            className: 'dshEnterpriseLogout',
-            type: 'button',
-            disabled: busy,
-            onClick: () => run(async () => {
-              const next = await api('/api/enterprise.logout', {})
-              setConfirmation(null)
-              applyAccountState(next)
-            })
-          }, t('logout')))
+            h('strong', null, userLabel),
+            h('span', { className: 'dshEnterpriseAccountLabel' }, state?.user?.username || t('accountLabel'))))
         : null
 
       const accountContent = connected
@@ -1062,7 +1072,18 @@ window.__ModuleLoader__.load({
           h('h2', null, t('title')),
           renderLearnMoreButton(t)),
         status,
-        connected ? h('section', { className: 'dshEnterpriseManagedModels' }, h('p', { title: t('creditsHelp') }, `${t('usageLabel')}: ${usageText(state.usage, document.documentElement.lang, t)}`), accountContent) : accountContent,
+        connected && renderSlot?.('desktop.account.usage', {
+          credits: usageText(state.usage, document.documentElement.lang, t),
+          creditsLabel: t('usageLabel'), creditsHelp: t('creditsHelp'),
+          models: h('section', { className: 'dshEnterpriseManagedModels' }, accountContent)
+        }, { fallback: h(React.Fragment, null,
+          h('p', { title: t('creditsHelp') }, `${t('usageLabel')}: ${usageText(state.usage, document.documentElement.lang, t)}`),
+          h('section', { className: 'dshEnterpriseManagedModels' }, accountContent)) }),
+        connected ? h(React.Fragment, null,
+          h('section', { className: 'dshEnterpriseSecurity' },
+            h('div', { className: 'dshEnterpriseSectionHeader' }, h('h3', null, t('security'))),
+            h('p', { className: 'dshEnterpriseServiceAddress' }, `${t('platform')}: ${state.base || base}`),
+            logoutButton)) : accountContent,
         manualFallback,
         errorPanel,
         confirmationPanel)
@@ -1091,6 +1112,7 @@ window.__ModuleLoader__.load({
         id: ENTERPRISE_SECTION_ID,
         order: 15,
         label: () => t('nav'),
+        children: { 'desktop.account.usage': { kind: 'single', scope: 'root' } },
         inject: () => ({ t })
       }, EnterpriseSection))
     }

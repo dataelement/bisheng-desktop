@@ -102,7 +102,11 @@ async function mountEnterprise(initial, hooks = {}) {
     fetch,
     CustomEvent: dom.window.CustomEvent
   })
-  const extension = definition.factory(name => { if (name === 'react') return React; throw new Error(name) })
+  const extension = definition.factory(name => {
+    if (name === 'react') return React
+    if (name === '@deepseek-ai/dsh-client-ui-primitives') return { Button: ({ variant, size, ...props }) => React.createElement('button', props) }
+    throw new Error(name)
+  })
   const disposers = []
   const root = createRoot(dom.window.document.getElementById('root'))
   cleanup = async () => {

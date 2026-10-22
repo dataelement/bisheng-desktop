@@ -99,7 +99,7 @@ describe('DSH Desktop enterprise package', () => {
 
     expect(packageJson.dsh?.client).toBeTruthy()
     expect(packageJson.dsh?.client).toMatchObject({
-      inject: ['@deepseek-ai/dsh-client-locale', '@deepseek-ai/dsh-client-ui-settings', '@deepseek-ai/dsh-client-ui-settings-plugins']
+      inject: ['@deepseek-ai/dsh-client-locale', '@deepseek-ai/dsh-client-ui-primitives', '@deepseek-ai/dsh-client-ui-settings', '@deepseek-ai/dsh-client-ui-settings-plugins']
     })
     expect(packageJson.exports?.['./client']).toBe('./client.js')
   })
@@ -166,9 +166,10 @@ it('keeps sign-in focused and shows unified credits without model quotas', async
     expect(client).toContain("ctx.locale.register(NS, { zh, en })")
     expect(client).toContain("const t = ctx.locale.bind(NS)")
     expect(client).toContain("label: () => t('nav')")
-    expect(client).toContain("nav: '账号与安全'")
-    expect(client).toContain("nav: 'Account and security'")
-    expect(client).toContain("title: 'Account and security'")
+    expect(client).toContain("nav: '账号与用量'")
+    expect(client).toContain("nav: 'Account and usage'")
+    expect(client).toContain("title: 'Account and usage'")
+    expect(client).toContain("children: { 'desktop.account.usage': { kind: 'single', scope: 'root' } }")
     expect(client).toContain("platform: '企业服务地址'")
     expect(client).toContain("platform: 'Enterprise service URL'")
     expect(client).not.toContain('navigator.language')
