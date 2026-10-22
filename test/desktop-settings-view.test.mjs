@@ -26,7 +26,7 @@ async function fixture(language = 'zh', settingsProtocolVersion = 1, signedIn = 
     return { ok: true, json: async () => account }
   })
   const primitives = {
-    Menu: ({ open, anchor, children }) => React.createElement('div', null, anchor, open && React.createElement('div', { role: 'menu' }, children)),
+    Menu: ({ open, anchor, children, listClassName }) => React.createElement('div', null, anchor, open && React.createElement('div', { role: 'menu', className: listClassName }, children)),
     MenuItemButton: ({ children, onSelect, disabled }) => React.createElement('button', { type: 'button', role: 'menuitem', disabled, onClick: onSelect }, children),
     Modal: ({ open, onClose, title, description, children, footer }) => open ? React.createElement('div', { role: 'dialog', 'aria-label': title, onKeyDown: event => { if (event.key === 'Escape') onClose() } }, description, children, footer) : null,
     ...Object.fromEntries(['IconSettingsOutlineRegular', 'IconChecklistOutlineRegular', 'IconChecklistOutlineMedium', 'IconPaperPlaneOutlineMedium', 'IconAlarmClockOutlineMedium', 'IconGaugeOutlineMedium', 'IconApiOutlineMedium', 'IconInfoOutlineMedium', 'IconUserOutlineMedium', 'IconChevronDownOutlineRegular', 'IconCloseOutlineRegular'].map(name => [name, () => React.createElement('svg', { 'aria-hidden': true, 'data-icon': name })]))
@@ -242,13 +242,26 @@ it.each([true, false])('keeps Chat visible while the sidebar account menu opens 
   expect(surface).not.toHaveBeenCalled()
 })
 
+it('matches the expanded account menu to its trigger without shrinking the collapsed menu', async () => {
+  const f = await fixture()
+  await f.render('settings.launcher', { wide: true })
+  await click(document.querySelector('.dshAccountTrigger'))
+  expect(document.querySelector('[role=menu]').classList.contains('dshAccountMenuWide')).toBe(true)
+  const css = document.querySelector('[data-plugin-css="dsh-desktop-settings"]').textContent
+  expect(css).toContain('anchor-name:--dsh-desktop-account-trigger')
+  expect(css).toContain('.dshAccountMenuWide{position-anchor:--dsh-desktop-account-trigger;box-sizing:border-box;width:anchor-size(width);min-width:0;max-width:none;left:anchor(left)!important}')
+  await f.render('settings.launcher', { wide: false })
+  expect(document.querySelector('[role=menu]').classList.contains('dshAccountMenuWide')).toBe(false)
+})
+
 it.each(['zh', 'en'])('shows one account launcher with five ordered actions and preserves the Settings command (%s)', async language => {
   const f = await fixture(language)
   const openSettings = vi.fn()
   expect(f.registrations.some(row => row.options.id === 'desktop-messages')).toBe(false)
   expect(f.registrations.some(row => row.options.name === 'sidebar.footer.action')).toBe(false)
   await f.render('settings.launcher', { wide: true, openSettings, settingsOpen: false })
-  expect(document.querySelector('[data-dsh-account-launcher]').textContent).toContain('张三')
+  expect(document.querySelector('.dshAccountTriggerCopy').textContent).toBe('张三')
+  expect(document.querySelector('.dshAccountTriggerCopy small')).toBeNull()
   expect(document.querySelector('[role=menu]')).toBeNull()
   await click(document.querySelector('.dshAccountTrigger'))
   const labels = language === 'zh'
@@ -273,6 +286,21 @@ it.each(['zh', 'en'])('opens the enterprise account page from the menu (%s)', as
   expect(openSettings).toHaveBeenCalledOnce()
   expect(navigate.mock.calls.at(-1)[0].detail.id).toBe('enterprise-account')
   expect(document.querySelector('[role=menu]')).toBeNull()
+})
+
+it.each([true, false])('does not steal focus when startup sign-in closes inactive settings (wide=%s)', async wide => {
+  const f = await fixture()
+  await f.render('settings.launcher', { wide })
+  const composer = document.createElement('textarea')
+  document.body.appendChild(composer)
+  composer.focus()
+  const trigger = document.querySelector('.dshAccountTrigger')
+  const focus = vi.spyOn(trigger, 'focus')
+  await act(async () => window.dispatchEvent(new window.CustomEvent('dsh-desktop:close-settings')))
+  expect(focus).not.toHaveBeenCalled()
+  expect(document.activeElement).toBe(composer)
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+  expect(document.querySelector('[role=dialog]')).toBeNull()
 })
 
 it('opens approvals outside Settings and releases the document surface when dismissed', async () => {
@@ -332,8 +360,8 @@ it('offers sign-in while signed out and keeps device settings and phone pairing 
   const openSettings = vi.fn(), navigate = vi.fn()
   window.addEventListener('dsh-desktop:open-settings-section', navigate)
   await f.render('settings.launcher', { wide: true, openSettings })
-  // The signed-out row states the account once and names what still works.
-  expect(document.querySelector('.dshAccountTriggerCopy').textContent).toBe('未登录本机模式')
+  // The sidebar entry only shows the identity, without a secondary account-type label.
+  expect(document.querySelector('.dshAccountTriggerCopy').textContent).toBe('未登录')
   await click(document.querySelector('.dshAccountTrigger'))
   expect(menuItem('设置').disabled).toBe(false)
   expect(menuItem('连接手机').disabled).toBe(false)
