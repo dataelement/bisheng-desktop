@@ -76,6 +76,33 @@ async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<voi
 }
 
 describe('enterprise service login loop', () => {
+  it('publishes a new catalog revision when only an administrator display name changes', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    let label = 'Provider A / Original label'
+    const fetchImpl: EnterpriseFetch = async (input, init) => {
+      const response = await globalThis.fetch(input, init)
+      if (String(input).includes('/api/v1/dsh/models') && response.ok) {
+        const body = await response.json() as { data: Array<{ display_name: string }> }
+        body.data.forEach(model => { model.display_name = label })
+        return Response.json(body)
+      }
+      return response
+    }
+    const { service } = await createService(createEnterpriseFetch(fetchImpl))
+    const started = await service.startLogin(origin)
+    await completeBrowserLogin(origin, started.authorizationUrl)
+    await waitFor(() => service.snapshot().phase === 'connected' && service.snapshot().modelsAvailable)
+    const before = service.snapshot()
+    label = 'Provider A / Renamed label'
+    await service.refresh()
+    const after = service.snapshot()
+    expect(after.models.map(model => model.id)).toEqual(before.models.map(model => model.id))
+    expect(after.models[0]?.display_name).toBe(label)
+    expect(after.revision).toBeGreaterThan(before.revision)
+  })
+
   it.each([false, true])('reports the app version and commits login even when activation fails: %s', async (failActivation) => {
     const platform = createMockEnterpriseServer({ port: 0 })
     const origin = await platform.listen()
