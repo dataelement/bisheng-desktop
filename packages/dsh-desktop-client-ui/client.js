@@ -580,6 +580,14 @@ window.__ModuleLoader__.load({
       const [menuOpen, setMenuOpen] = React.useState(false)
       React.useEffect(() => { setMenuOpen(false) }, [state.epoch])
       React.useEffect(() => { if (!wide) setMenuOpen(false) }, [wide])
+      React.useEffect(() => {
+        if (!menuOpen) return
+        // Electron's embedded Chat view takes focus without an iframe in this document.
+        // Menu already handles outside pointer clicks in the Harness document.
+        const close = () => setMenuOpen(false)
+        window.addEventListener('blur', close)
+        return () => window.removeEventListener('blur', close)
+      }, [menuOpen])
       const entries = state.connected ? state.navigation?.entries || [] : []
       const activeId = state.mode === 'chat' ? entries.find(entry => entry.active)?.id : undefined
       const plugins = panels.find(panel => panel.id === 'plugins')
@@ -604,8 +612,9 @@ window.__ModuleLoader__.load({
       ctx.effect(() => {
         const style = document.createElement('style')
         style.textContent = `
-          .dshPrimaryNavigation{display:flex;flex-direction:column;flex:none;padding:0 0 12px}
-          .dshNavigationMenu{display:flex;flex-direction:column;position:relative;width:100%}.dshNavigationMenuList{max-width:100%;box-sizing:border-box}
+          .dshPrimaryNavigation{display:flex;flex-direction:column;flex:none;gap:4px;padding:0 0 12px}
+          .dshPrimaryNavigation[data-wide=false]{gap:12px}
+          .dshNavigationMenu{display:flex;flex-direction:column;position:relative;width:100%}.dshNavigationMenu .dshNavigationMenuList{width:100%;min-width:0;max-width:100%;box-sizing:border-box}
           .dshModes{grid-column:2 / -1;min-width:0;min-height:0;width:100%;height:100%;display:flex;flex-direction:column;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary)}
           .dshModesHeader{height:56px;flex:none;display:flex;align-items:center;justify-content:center;-webkit-app-region:drag}
           .dshModesTabs{display:flex;padding:3px;border-radius:24px;background:var(--dsw-alias-bg-layer-2);-webkit-app-region:no-drag}

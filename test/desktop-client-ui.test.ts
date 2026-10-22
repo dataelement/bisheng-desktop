@@ -30,10 +30,13 @@ describe('BISHENG client slot occupants', () => {
       createElement: vi.fn(() => ({ id: '', dataset: {}, textContent: '', remove: removeStyle })),
       head: { appendChild: (node: { textContent?: string }) => appended.push(node) }
     }
+    const windowEvents = new EventTarget()
     vm.runInNewContext(source, {
       document,
       navigator: { language: 'en-US' },
       window: {
+        addEventListener: windowEvents.addEventListener.bind(windowEvents),
+        removeEventListener: windowEvents.removeEventListener.bind(windowEvents),
         __ModuleLoader__: {
           load: (value: typeof definition) => {
             definition = value
@@ -52,12 +55,18 @@ describe('BISHENG client slot occupants', () => {
       props: { ...props, children }
     })
     const MenuItemButton = vi.fn()
+    let menuOpen = false
+    const setMenuOpen = vi.fn()
+    const effectDisposers: Array<() => void> = []
     const plugin = definition!.factory((id) => {
       if (id === 'react') {
         return {
           createElement,
-          useEffect: (effect: () => void | (() => void)) => effect(),
-          useState: (initial: unknown) => [initial, vi.fn()],
+          useEffect: (effect: () => void | (() => void)) => {
+            const dispose = effect()
+            if (dispose) effectDisposers.push(dispose)
+          },
+          useState: (initial: unknown) => [typeof initial === 'boolean' ? menuOpen : initial, setMenuOpen],
           useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) => snapshot()
         }
       }
@@ -111,6 +120,31 @@ describe('BISHENG client slot occupants', () => {
     ])
     // Desktop toolbar styles have an owned lifetime; branding stays in currentColor.
     expect(appended).toHaveLength(2)
+    // Match Harness panelList spacing without changing navigation's outer padding.
+    expect(appended[0]?.textContent).toContain('.dshPrimaryNavigation{display:flex;flex-direction:column;flex:none;gap:4px;padding:0 0 12px}')
+    expect(appended[0]?.textContent).toContain('.dshPrimaryNavigation[data-wide=false]{gap:12px}')
+    // The in-place dropdown fills its trigger wrapper instead of shrink-wrapping its labels.
+    expect(appended[0]?.textContent).toContain('.dshNavigationMenu .dshNavigationMenuList{width:100%;min-width:0;max-width:100%;box-sizing:border-box}')
+    const primaryNavigation = registrations.find(({ config }) => config.name === 'sidebar.primaryNavigation')!.component
+    for (const wide of [true, false]) {
+      const nav = primaryNavigation({
+        wide, panels: [], navigation: { subscribe: vi.fn(), snapshot: () => ({ mode: 'work' }) }, t: (key: string) => key
+      }) as { props: Record<string, unknown> }
+      expect(nav.props.className).toBe('dshPrimaryNavigation')
+      expect(nav.props['data-wide']).toBe(wide)
+    }
+    // A native WebContentsView steals window focus without an iframe target.
+    menuOpen = true
+    primaryNavigation({
+      wide: true, panels: [], navigation: { subscribe: vi.fn(), snapshot: () => ({ mode: 'chat' }) }, t: (key: string) => key
+    })
+    setMenuOpen.mockClear()
+    windowEvents.dispatchEvent(new Event('blur'))
+    expect(setMenuOpen).toHaveBeenCalledWith(false)
+    effectDisposers.forEach(dispose => dispose())
+    setMenuOpen.mockClear()
+    windowEvents.dispatchEvent(new Event('blur'))
+    expect(setMenuOpen).not.toHaveBeenCalled()
     expect(appended[1]?.textContent).toContain("[data-dsh-preset-search]")
     disposeStyle?.()
     expect(removeStyle).toHaveBeenCalledOnce()
