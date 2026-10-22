@@ -55,7 +55,16 @@ export function createMarketController(ctx, accountController, options = {}) {
   const home = options.home ?? process.env.DSH_HOME
   const target = options.target ?? `${process.platform}-${process.arch}`
   const desktopVersion = () => options.desktopVersion ?? accountController.state().desktopVersion ?? ''
-  const load = options.load ?? createMarketRuntime(ctx, options.auth)
+  const load = options.load ?? createMarketRuntime(ctx, options.auth, (record, error) => {
+    const requestEpoch = epoch
+    void serialized(async () => {
+      if (requestEpoch !== epoch || !accountController.state().connected || identityKey(accountController.state()) !== key ||
+          !document.installed.includes(record) || !running.has(record.plugin_id)) return
+      if (error) record.error = error instanceof Error ? error.message : 'Enterprise request failed.'
+      else delete record.error
+      await save()
+    }).catch(error => ctx.logger?.warn?.('Enterprise plugin request status could not be saved: %s', error.message))
+  })
   let key, document = rememberedInstall(null)
   let account, capability, policy, lastError, failureCode, queue = Promise.resolve(), epoch = 0
   let online = false, cancellation = 0, operationGeneration = 0, cleaning = false
@@ -121,6 +130,7 @@ export function createMarketController(ctx, accountController, options = {}) {
     if (startedEpoch !== epoch) { await fiber.dispose(); throw new Error('Enterprise account changed.') }
     running.set(record.plugin_id, fiber)
     record.status = 'enabled'
+    delete record.error
   }
   const enforce = async () => {
     const valid = Boolean(account && online && policy && sessionOpen())
@@ -227,6 +237,7 @@ export function createMarketController(ctx, accountController, options = {}) {
       if (input.action === 'disable' || input.action === 'uninstall') {
         if (!previous) throw new Error('Plugin is not installed.')
         await stopRecord(previous); previous.enabled = false
+        delete previous.error
         if (input.action === 'uninstall') {
           document.installed = document.installed.filter(p => p !== previous)
           document.tombstones = [...(document.tombstones ?? []).filter(p => p.plugin_id !== previous.plugin_id),
@@ -243,6 +254,7 @@ export function createMarketController(ctx, accountController, options = {}) {
         previous.config = input.config
         try {
           if (saved.enabled) await startRecord(previous, epoch)
+          delete previous.error
           await save()
         } catch (error) {
           await stopRecord(previous)
@@ -255,6 +267,7 @@ export function createMarketController(ctx, accountController, options = {}) {
       if (input.action === 'enable') {
         if (!previous) throw new Error('Plugin is not installed.')
         if (!running.has(previous.plugin_id)) await startRecord(previous, epoch)
+        delete previous.error
         previous.enabled = true; await save(); return state()
       }
       if (!previous && document.installed.length >= 500) throw new Error('This device has reached the 500 plugin limit.')

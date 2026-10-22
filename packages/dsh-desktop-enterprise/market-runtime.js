@@ -26,7 +26,7 @@ function contained(root, path) {
   if (isAbsolute(nested) || nested.startsWith('..')) throw new Error('Plugin entry leaves its package.')
 }
 
-export function createMarketRuntime(ctx, auth) {
+export function createMarketRuntime(ctx, auth, onRequestSettled) {
   let registry
   return async record => {
     registry ??= new MarketTree(ctx)
@@ -76,7 +76,7 @@ export function createMarketRuntime(ctx, auth) {
           throw new Error('Enterprise plugin identity is required.')
         }
         transport = await auth.grant({ pluginId: record.plugin_id, instanceId: id })
-        unbind = await bindEnterpriseAuth(tree.ctx, transport)
+        unbind = await bindEnterpriseAuth(tree.ctx, transport, error => onRequestSettled?.(record, error))
       }
       const options = { id, name, config }
       registry.children.add(tree)

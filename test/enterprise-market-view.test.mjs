@@ -67,6 +67,8 @@ async function mountMarket({ action, update = false, holdRefresh = false, plugin
   return {
     text, click, requests, plugin, rename: name => { company = name },
     card,
+    setRuntimeError: error => { installedById.set(plugin.id, { ...installedById.get(plugin.id), error }) },
+    syncRuntime: async () => { await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus'))) },
     finish: async (error, name = 'JSON 格式化') => { await act(async () => pendingActions.get(name === other.display_name ? other.id : plugin.id)(error)) },
     finishRefresh: async () => { await act(async () => pendingCatalogs.splice(0).forEach(resolve => resolve())) }
   }
@@ -158,6 +160,28 @@ it('clears only the failed operation and restores the install controls for retry
   expect(document.querySelectorAll('button[aria-busy="true"]')).toHaveLength(0)
 })
 
+
+it('removes a recovered runtime error without reinstalling or toggling the plugin', async () => {
+  const { card, setRuntimeError, syncRuntime, requests } = await mountMarket({ action: 'disable' })
+  setRuntimeError('The operation was aborted due to timeout')
+  await syncRuntime()
+  expect(card('JSON 格式化').querySelector('[role="alert"]').textContent).toContain('timeout')
+  setRuntimeError(undefined)
+  await syncRuntime()
+  expect(card('JSON 格式化').querySelector('[role="alert"]')).toBeNull()
+  expect(requests.some(item => item.path === '/api/enterprise.market.action')).toBe(false)
+})
+
+it('removes the failed request notice after a successful retry', async () => {
+  const { card, click, finish } = await mountMarket({ action: 'install' })
+  await click('安装', 'JSON 格式化')
+  await finish('The operation was aborted due to timeout')
+  expect(card('JSON 格式化').querySelector('[role="alert"]')).not.toBeNull()
+  await click('安装', 'JSON 格式化')
+  await finish()
+  expect(card('JSON 格式化').textContent).toContain('已安装')
+  expect(card('JSON 格式化').querySelector('[role="alert"]')).toBeNull()
+})
 
 it('lets another plugin start and finish independently while the first operation is pending', async () => {
   const { card, click, finish, requests } = await mountMarket({ action: 'install' })

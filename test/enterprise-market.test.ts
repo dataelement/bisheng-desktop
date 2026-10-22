@@ -280,9 +280,12 @@ describe('account-bound lifecycle', () => {
     offline(); await market.synchronize()
     expect(active.size).toBe(0)
     expect(market.state().installed[0]).toMatchObject({ enabled: true, status: 'failed' })
+    expect(market.state().installed[0]?.error).toBe('Network unavailable')
     reconnect(); await market.synchronize()
     expect(active.has('1.1.0')).toBe(true)
     expect(market.state().installed[0]?.status).toBe('enabled')
+    expect(market.state().installed[0]).not.toHaveProperty('error')
+    expect((await market.catalog()).installed[0]).not.toHaveProperty('error')
   })
   it('clears visible installations immediately on account change and unloads on disconnect', async () => {
     const { market, swap, disconnect, active } = await fixture()
