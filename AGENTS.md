@@ -87,6 +87,10 @@ DSH Desktop 是 Electron 宿主，复用 Harness runtime 和 Web UI。保持这�
 - 回归优先走真实子进程和临时 Profile，分别覆盖正常、缺包及错误路径；客户端改动验证认证后的 HTML、bootstrap 响应及执行注册，再补真实浏览器/UI 验收。相关入口包括 `test/harness-node-entry.test.ts`、`test/plugin-startup-failure.test.ts`、`test/safe-mode-host-resolved.test.ts`、`test/safe-mode-runtime.test.ts` 和 `test/desktop-plugin-closure.test.ts`，按实际改动选择并扩展行为覆盖。
 - 交付说明列出已验证阶段和未验证阶段；规则中的验收要求不代表现有测试或 CI 已全部覆盖。声称版本回归须有完整版本/安装产物、Profile 状态与启动路径的对照，单独替换一个 loader 文件的实验不能替代整应用版本对比。
 
+## 提交协作约定
+
+- 用户主动要求“提交代码”时，默认包含 commit 和 push 到指定分支或当前分支对应的远端；除非用户明确要求仅本地提交，不停在本地 commit。推送失败时保留本地提交并明确报告原因，不使用 force push 或覆盖远端历史。
+
 ## 4. 验证与交付
 
 以下命令均在仓库根目录运行：
