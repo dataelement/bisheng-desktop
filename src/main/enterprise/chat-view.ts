@@ -358,7 +358,7 @@ export class EnterpriseChatView {
         this.owner.contentView.addChildView(view)
       }
       const view = this.view
-      await view.webContents.session.cookies.set({ url: credential.base, name: 'access_token_cookie', value: credential.cookie, path: '/', httpOnly: true, secure: new URL(credential.base).protocol === 'https:', sameSite: 'lax', expirationDate: credential.expiresAt / 1000 })
+      await view.webContents.session.cookies.set({ url: credential.base, name: credential.cookieName ?? 'access_token_cookie', value: credential.cookie, path: '/', httpOnly: true, secure: new URL(credential.base).protocol === 'https:', sameSite: 'lax', expirationDate: credential.expiresAt / 1000 })
       if (generation !== this.generation) return
       if (!view.webContents.getURL()) await loadWithin(view.webContents.loadURL(this.entryURL('/workspace/', credential.base)), DOCUMENT_LOAD_TIMEOUT_MS)
       else { this.state = { phase: 'ready' }; this.layout() }

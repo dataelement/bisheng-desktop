@@ -31,3 +31,12 @@ it('preserves HTTP failure and rejects redirect and oversized results', async ()
   await expect(sendWorkMcp({ ...options, fetchImpl: async () => new Response('private error', { status: 403 }) })).rejects.toThrow('(403)')
   await expect(sendWorkMcp({ ...options, fetchImpl: async () => new Response('x'.repeat(25 * 1024 * 1024), { headers: { 'content-type': 'application/json' } }) })).rejects.toThrow('size')
 })
+
+
+it('uses the authenticated platform cookie name for isolated preview environments', async () => {
+  const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) => Response.json({ jsonrpc: '2.0', id: 1, result: {} }))
+  await sendWorkMcp({ request: parseWorkMcpRequest(input),
+    credential: { base: 'http://127.0.0.1:3007', cookie: 'host-owned-cookie', cookieName: 'bs_credits_3007', expiresAt: 1, connectionKey: 'account' },
+    assertCurrent() {}, fetchImpl, allowInsecureLoopback: true })
+  expect(new Headers(fetchImpl.mock.calls[0]?.[1]?.headers).get('cookie')).toBe('bs_credits_3007=host-owned-cookie')
+})

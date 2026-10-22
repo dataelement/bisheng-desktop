@@ -838,7 +838,7 @@ export class EnterpriseService {
       const response = await createEnterpriseFetch(this.options.fetchImpl)(endpoint.toString(), {
         method: body === undefined ? 'GET' : 'POST',
         signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-        headers: { cookie: `access_token_cookie=${credential.cookie}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+        headers: { cookie: `${credential.cookieName ?? 'access_token_cookie'}=${credential.cookie}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) })
       })
       const data = await readResourceJson(response)

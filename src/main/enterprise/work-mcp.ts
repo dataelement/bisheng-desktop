@@ -44,7 +44,7 @@ export async function sendWorkMcp(options: {
   const timeout = AbortSignal.timeout(65_000)
   const response = await createEnterpriseFetch(options.fetchImpl)(endpoint.toString(), {
     method: 'POST', signal: options.signal ? AbortSignal.any([timeout, options.signal]) : timeout,
-    headers: { cookie: `access_token_cookie=${credential.cookie}`, 'content-type': 'application/json',
+    headers: { cookie: `${credential.cookieName ?? 'access_token_cookie'}=${credential.cookie}`, 'content-type': 'application/json',
       accept: 'application/json, text/event-stream', ...(request.protocolVersion ? { 'mcp-protocol-version': request.protocolVersion } : {}) },
     body: JSON.stringify(request.message)
   })
