@@ -420,3 +420,9 @@ Verification:
 - Previous account-cleanup DMG was rebuilt with the containing directory as `--prepackaged`, producing a nested app. Rebuilt the complete application and DMG/ZIP through the standard packaging flow; documented the correct `.app` input for installer-only rebuilds.
 - Production build and packaged Office checks passed. Read-only mounted DMG contains the executable, Info.plist and icon in the expected bundle layout. Mounted ASAR/executable hashes match the fresh build; packaged client and enterprise skill files match source. The app launched directly from the corrected image and reached the authenticated 3006 Chat home.
 - Delivery: `outputs/bisheng-dev-3006-combined-20261022`, with checksums. User performs visual feature acceptance.
+
+
+## 2026-10-22 Logout typography and spacing
+- Baseline: `V1.2.0@3219187`; worktree `bisheng-work-v120-credits`; Harness `0.2.0-rc.2`.
+- Logout uses the standard medium Button (14px text, matching personal storage) with 16px top spacing. Existing destructive styling and logout behavior remain.
+- JavaScript syntax, diff checks and production build passed. Local visual acceptance belongs to the user.

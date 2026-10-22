@@ -277,7 +277,7 @@ window.__ModuleLoader__.load({
         }
         /* Keep sign-out as the final, explicitly destructive account action. */
         .dshEnterprise .dshEnterpriseLogout {
-          margin: 0 0 8px;
+          margin: 16px 0 8px;
           color: var(--dsw-alias-state-error-primary);
         }
         .dshEnterprise .dshEnterpriseLogout:hover:not(:disabled),
@@ -926,7 +926,7 @@ window.__ModuleLoader__.load({
       const language = readUiLanguage()
 
       const logoutButton = connected && h(require('@deepseek-ai/dsh-client-ui-primitives').Button, {
-        variant: 'ghost', size: 'sm',
+        variant: 'ghost', size: 'md',
         className: 'dshEnterpriseLogout', disabled: busy,
         onClick: () => run(async () => {
           const next = await api('/api/enterprise.logout', {})
