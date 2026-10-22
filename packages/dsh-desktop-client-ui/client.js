@@ -651,8 +651,8 @@ window.__ModuleLoader__.load({
 
     const RESOURCE_NS = 'desktop-work-resources'
     const RESOURCE_COPY = {
-      zh: { skills: '技能', skillsHint: '选择本次任务使用的技能', knowledge: '知识空间', knowledgeHint: '选择本次任务检索的知识空间', search: '搜索知识空间', empty: '暂无可用知识空间', noMatch: '没有匹配的知识空间', loading: '正在加载知识空间…', retry: '重试', cancel: '取消', confirm: '确认添加', close: '关闭', remove: '移除', department: '部门知识空间', mine: '我创建的', joined: '我加入的', selected: '已选', limit: '最多选择 50 个空间' },
-      en: { skills: 'Skills', skillsHint: 'Choose a skill for this task', knowledge: 'Knowledge spaces', knowledgeHint: 'Choose knowledge spaces to search in this task', search: 'Search knowledge spaces', empty: 'No knowledge spaces available', noMatch: 'No matching knowledge spaces', loading: 'Loading knowledge spaces…', retry: 'Retry', cancel: 'Cancel', confirm: 'Add selected', close: 'Close', remove: 'Remove', department: 'Department spaces', mine: 'Created by me', joined: 'Joined spaces', selected: 'Selected', limit: 'Select up to 50 spaces' }
+      zh: { skills: '技能', skillsHint: '选择本次任务使用的技能', knowledge: '知识空间', knowledgeHint: '选择本次任务检索的知识空间', search: '搜索知识空间', empty: '暂无可用知识空间', noMatch: '没有匹配的知识空间', loading: '正在加载知识空间…', retry: '重试', cancel: '取消', confirm: '确认添加', close: '关闭', remove: '移除', department: '部门知识空间', mine: '我创建的', joined: '我加入的', selectKnowledge: '选择知识空间', modified: '修改时间', selected: '已选 {count} 个知识空间', limit: '最多选择 50 个空间' },
+      en: { skills: 'Skills', skillsHint: 'Choose a skill for this task', knowledge: 'Knowledge spaces', knowledgeHint: 'Choose knowledge spaces to search in this task', search: 'Search knowledge spaces', empty: 'No knowledge spaces available', noMatch: 'No matching knowledge spaces', loading: 'Loading knowledge spaces…', retry: 'Retry', cancel: 'Cancel', confirm: 'Add selected', close: 'Close', remove: 'Remove', department: 'Department spaces', mine: 'Created by me', joined: 'Joined spaces', selectKnowledge: 'Select knowledge spaces', modified: 'Modified', selected: '{count} knowledge spaces selected', limit: 'Select up to 50 spaces' }
     }
     async function workResourceRequest(operation, sessionId, spaceIds, signal) {
       const response = await fetch('/api/enterprise.work-resources', {
@@ -748,27 +748,48 @@ window.__ModuleLoader__.load({
         catch (reason) { setError(reason.message) }
         finally { setSaving(false) }
       }
-      const visible = spaces.filter(space => `${space.name} ${space.description}`.toLowerCase().includes(keyword.trim().toLowerCase()))
+      const visible = spaces.filter(space => space.name.toLowerCase().includes(keyword.trim().toLowerCase())).sort((a, b) => {
+        const an = a.name.trim(), bn = b.name.trim()
+        const aIsEn = an.length > 0 && an.charCodeAt(0) < 128
+        const bIsEn = bn.length > 0 && bn.charCodeAt(0) < 128
+        return aIsEn !== bIsEn ? (aIsEn ? -1 : 1) : an.localeCompare(bn, aIsEn ? 'en' : 'zh-Hans-u-co-pinyin', { sensitivity: 'base' })
+      })
+      const icon = kind => React.createElement('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
+        kind === 'search' ? [React.createElement('circle', { key: 'circle', cx: 11, cy: 11, r: 8 }), React.createElement('path', { key: 'handle', d: 'm21 21-4.3-4.3' })] :
+        kind === 'close' ? React.createElement('path', { d: 'm18 6-12 12M6 6l12 12' }) :
+        [React.createElement('path', { key: 'left', d: 'M12 7v14m0-14C10 5 8 5 2 5v14c6 0 8 0 10 2' }), React.createElement('path', { key: 'right', d: 'M12 7c2-2 4-2 10-2v14c-6 0-8 0-10 2' })])
       return React.createElement(React.Fragment, null,
         error && !open && React.createElement('div', { role: 'alert', className: 'dshWorkResourceError' }, error),
-        React.createElement(Modal, { open, onClose: close, title: t('knowledge'), closeLabel: t('close'), backdropBlur: false, className: 'dshWorkKnowledgeDialog',
-          footer: React.createElement(React.Fragment, null, React.createElement('span', { className: 'dshWorkSelectionCount', 'aria-live': 'polite' }, `${t('selected')} ${draft.length}`),
-            React.createElement(Button, { variant: 'outline', disabled: saving, onClick: close }, t('cancel')),
-            React.createElement(Button, { variant: 'primary', disabled: loading || saving || Boolean(error), onClick: () => commit(draft) }, t('confirm'))) },
-          React.createElement('input', { className: 'dshWorkKnowledgeSearch', 'data-modal-autofocus': true, type: 'search', placeholder: t('search'), 'aria-label': t('search'), value: keyword, onChange: event => setKeyword(event.target.value) }),
-          React.createElement('div', { className: 'dshWorkKnowledgeList', 'aria-busy': loading },
-            loading ? React.createElement('p', { role: 'status' }, t('loading')) : error ? React.createElement('div', { role: 'alert' }, error, React.createElement(Button, { onClick: retry }, t('retry'))) : visible.length === 0 ? React.createElement('p', { role: 'status' }, t(keyword ? 'noMatch' : 'empty')) :
-            ['department', 'mine', 'joined'].map(group => {
-              const rows = visible.filter(space => space.group === group)
-              return rows.length > 0 && React.createElement('section', { key: group }, React.createElement('h3', null, t(group)), rows.map(space =>
-                React.createElement('label', { key: space.id, className: 'dshWorkKnowledgeRow' },
-                  React.createElement('input', { type: 'checkbox', checked: draft.includes(space.id), disabled: saving || (!draft.includes(space.id) && draft.length >= 50), onChange: event => setDraft(ids => event.target.checked ? [...ids, space.id] : ids.filter(id => id !== space.id)) }),
-                  React.createElement(NavigationIcon, { id: 'knowledge' }),
-                  React.createElement('span', { className: 'dshWorkResourceName' }, space.name),
-                  React.createElement('span', { className: 'dshWorkResourceDescription', title: space.description }, space.description))))
-            })),
-          draft.length >= 50 && React.createElement('p', { role: 'status' }, t('limit'))))
+        React.createElement(Modal, { open, onClose: close, title: t('selectKnowledge'), headless: true, backdropBlur: false, className: 'dshWorkKnowledgeDialog' },
+          React.createElement('header', { className: 'dshWorkKnowledgeHeader' },
+            React.createElement('h2', null, t('selectKnowledge')),
+            React.createElement('button', { type: 'button', onClick: close, disabled: saving, 'aria-label': t('close') }, icon('close'))),
+          React.createElement('div', { className: 'dshWorkKnowledgeBody' },
+            React.createElement('div', { className: 'dshWorkKnowledgeSearchField' }, icon('search'),
+              React.createElement('input', { className: 'dshWorkKnowledgeSearch', 'data-modal-autofocus': true, type: 'search', placeholder: t('search'), 'aria-label': t('search'), value: keyword, onChange: event => setKeyword(event.target.value) })),
+            React.createElement('div', { className: 'dshWorkKnowledgeColumns' }, React.createElement('span', null, t('knowledge')), React.createElement('span', null, t('modified'))),
+            React.createElement('div', { className: 'dshWorkKnowledgeList', 'aria-busy': loading },
+              loading ? React.createElement('p', { role: 'status' }, t('loading')) : error ? React.createElement('div', { role: 'alert' }, error, React.createElement(Button, { onClick: retry }, t('retry'))) : visible.length === 0 ? React.createElement('p', { role: 'status' }, t(keyword ? 'noMatch' : 'empty')) :
+              ['department', 'mine', 'joined'].map(group => {
+                const rows = visible.filter(space => space.group === group)
+                return rows.length > 0 && React.createElement('section', { key: group }, React.createElement('h3', null, t(group)), rows.map(space => {
+                  const checked = draft.includes(space.id)
+                  const date = space.updatedAt ? new Date(space.updatedAt) : null
+                  const validDate = date && !Number.isNaN(date.getTime())
+                  return React.createElement('label', { key: space.id, className: 'dshWorkKnowledgeRow', 'data-selected': checked },
+                    React.createElement('input', { type: 'checkbox', checked, 'aria-label': space.name, disabled: saving || (!checked && draft.length >= 50), onChange: event => setDraft(ids => event.target.checked ? [...ids, space.id] : ids.filter(id => id !== space.id)) }),
+                    React.createElement('span', { className: 'dshWorkKnowledgeIcon' }, icon('book')),
+                    React.createElement('span', { className: 'dshWorkResourceName', title: space.name }, space.name),
+                    React.createElement('time', { className: 'dshWorkKnowledgeModified', dateTime: validDate ? space.updatedAt : undefined }, validDate ? date.toLocaleDateString() : '—'))
+                }))
+              })),
+            draft.length >= 50 && React.createElement('p', { role: 'status' }, t('limit'))),
+          React.createElement('footer', { className: 'dshWorkKnowledgeFooter' },
+            React.createElement('span', { className: 'dshWorkSelectionCount', 'aria-live': 'polite' }, t('selected', { count: draft.length })),
+            React.createElement(Button, { variant: 'outline', className: 'dshWorkKnowledgeCancel', disabled: saving, onClick: close }, t('cancel')),
+            React.createElement(Button, { variant: 'primary', className: 'dshWorkKnowledgeConfirm', disabled: loading || saving || Boolean(error), onClick: () => commit(draft) }, t('confirm')))))
     }
+
     function installWorkResources(ctx) {
       const controls = new Map()
       const ensureSession = (sessionId, signal) => ctx.sessions.using(sessionId, { source: 'workResources', signal }, async () => undefined)
@@ -807,7 +828,41 @@ window.__ModuleLoader__.load({
         const style = document.createElement('style')
         style.dataset.plugin = 'dsh-desktop-client-ui'
         style.id = 'desktop-work-resources-style'
-        style.textContent = `.dshWorkKnowledgeRow svg{width:16px;height:16px;flex:none}.dshWorkKnowledgeDialog{width:min(680px,90vw)}.dshWorkKnowledgeSearch{box-sizing:border-box;width:100%;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit}.dshWorkKnowledgeList{min-height:180px;max-height:50vh;overflow:auto;margin-top:12px}.dshWorkKnowledgeList h3{font-size:12px;font-weight:400;color:var(--dsw-alias-label-secondary);padding:8px}.dshWorkKnowledgeRow{display:flex;align-items:center;gap:8px;padding:12px 8px;border-radius:8px;cursor:pointer;min-width:0}.dshWorkKnowledgeRow:hover{background:var(--dsw-alias-interactive-bg-hover)}.dshWorkResourceName{flex:0 1 auto;overflow-wrap:anywhere;color:var(--dsw-alias-label-primary)}.dshWorkResourceDescription{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary)}.dshWorkSelectionCount{margin-right:auto;color:var(--dsw-alias-label-secondary)}.dshWorkResourceError{padding:8px 12px;color:var(--dsw-alias-state-error-primary);font-size:12px}`
+        // Match the Chat KnowledgeSpaceDialog layout using the native Work modal's focus and dismissal handling.
+        style.textContent = `
+          .dshWorkKnowledgeDialog{width:min(600px,100%);max-height:100%;padding:0;gap:0;border:1px solid var(--dsw-alias-border-l2);border-radius:16px;background:var(--dsw-alias-bg-layer-2);font-size:14px;line-height:20px}
+          .dshWorkKnowledgeHeader{height:56px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 16px}
+          .dshWorkKnowledgeHeader h2{margin:0;font-size:16px;line-height:24px;font-weight:600}
+          .dshWorkKnowledgeHeader button{display:grid;place-items:center;width:28px;height:28px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer}
+          .dshWorkKnowledgeHeader button:hover{background:var(--dsw-alias-interactive-bg-hover)}
+          .dshWorkKnowledgeBody{padding:0 16px;min-height:0;overflow:auto}
+          .dshWorkKnowledgeSearchField{position:relative;display:flex;align-items:center;color:var(--dsw-alias-label-tertiary)}
+          .dshWorkKnowledgeSearchField>svg{position:absolute;left:12px;pointer-events:none}
+          .dshWorkKnowledgeSearch{box-sizing:border-box;width:100%;height:32px;padding:5px 12px 5px 36px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit}
+          .dshWorkKnowledgeSearch::placeholder{color:var(--dsw-alias-label-tertiary)}
+          .dshWorkKnowledgeColumns{display:flex;justify-content:space-between;margin-top:20px;padding:0 8px 10px;color:var(--dsw-alias-label-tertiary);font-size:12px;border-bottom:1px solid var(--dsw-alias-border-l2)}
+          .dshWorkKnowledgeList{height:min(440px,48vh);flex:none;overflow:auto;margin-top:8px}
+          .dshWorkKnowledgeList section{margin-bottom:16px}
+          .dshWorkKnowledgeList h3{margin:0 0 8px;font-size:12px;line-height:20px;font-weight:400;color:var(--dsw-alias-label-tertiary)}
+          .dshWorkKnowledgeRow{box-sizing:border-box;display:flex;align-items:center;gap:12px;min-height:60px;padding:12px 8px;border-radius:8px;border-bottom:1px solid var(--dsw-alias-border-l2);cursor:pointer;min-width:0}
+          .dshWorkKnowledgeRow:hover,.dshWorkKnowledgeRow[data-selected=true]{background:var(--dsw-alias-interactive-bg-hover)}
+          .dshWorkKnowledgeRow input{appearance:none;flex:none;width:16px;height:16px;margin:0;border:1px solid var(--dsw-alias-border-l2);border-radius:4px;background:transparent;cursor:pointer}
+          .dshWorkKnowledgeRow input:checked{background:var(--dsw-alias-state-business-primary);border-color:var(--dsw-alias-state-business-primary);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m3 8 3 3 7-7' fill='none' stroke='white' stroke-width='2'/%3E%3C/svg%3E")}
+          .dshWorkKnowledgeRow input:disabled{opacity:.4;cursor:default}
+          .dshWorkKnowledgeIcon{box-sizing:border-box;display:grid;place-items:center;flex:none;width:32px;height:36px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;color:var(--dsw-alias-label-secondary)}
+          .dshWorkResourceName{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary)}
+          .dshWorkKnowledgeModified{flex:none;font-size:12px;color:var(--dsw-alias-label-tertiary)}
+          .dshWorkKnowledgeFooter{display:flex;align-items:center;gap:12px;flex:none;padding:16px}
+          .dshWorkSelectionCount{margin-right:auto;color:var(--dsw-alias-label-tertiary)}
+          .dshWorkKnowledgeFooter button{height:32px;padding:0 16px;border-radius:6px;font:inherit;white-space:nowrap}
+          .dshWorkKnowledgeCancel{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary)}
+          .dshWorkKnowledgeConfirm{background:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary-foreground);border:1px solid var(--dsw-alias-state-business-primary)}
+          .dshWorkKnowledgeConfirm:hover:not(:disabled){background:var(--dsw-alias-state-business-secondary)}
+          .dshWorkKnowledgeConfirm:disabled{opacity:.5}
+          .dshWorkResourceError{padding:8px 12px;color:var(--dsw-alias-state-error-primary);font-size:12px}
+          @media(max-width:1023px){.dshWorkKnowledgeDialog{width:min(400px,100%)}}
+          @media(max-width:575px){.dshWorkKnowledgeModified{max-width:80px}.dshWorkKnowledgeFooter{flex-wrap:wrap}.dshWorkSelectionCount{flex:1 0 100%}}
+        `
         document.head.appendChild(style)
         return () => style.remove()
       })

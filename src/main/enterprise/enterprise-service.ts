@@ -825,7 +825,7 @@ export class EnterpriseService {
       this.options.note?.({ event: 'work_knowledge_retrieved', status: 200 })
       return data
     }
-    const spaces: { id: number, name: string, description: string, group: string }[] = []
+    const spaces: { id: number, name: string, description: string, group: string, updatedAt: string }[] = []
     const seen = new Set<number>()
     for (const group of ['department', 'mine', 'joined']) {
       const data = await call(`/api/v1/knowledge/space/${group}`)
@@ -834,7 +834,7 @@ export class EnterpriseService {
         if (!Number.isSafeInteger(row.id) || row.id <= 0 || typeof row.name !== 'string') continue
         if (seen.has(row.id)) continue
         seen.add(row.id)
-        spaces.push({ id: row.id, name: row.name, description: typeof row.description === 'string' ? row.description : '', group })
+        spaces.push({ id: row.id, name: row.name, description: typeof row.description === 'string' ? row.description : '', group, updatedAt: typeof row.update_time === 'string' ? row.update_time : '' })
       }
     }
     return { spaces }
