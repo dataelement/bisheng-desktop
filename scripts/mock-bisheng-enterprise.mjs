@@ -250,7 +250,7 @@ function sessionFromAccess(state, request) {
 }
 
 /**
- * @param {{ host?: string, port?: number, contractVersion?: '0.4.0' | '0.5.0' }} [options]
+ * @param {{ host?: string, port?: number, contractVersion?: '0.4.0' | '0.5.0', auditContext?: unknown }} [options]
  */
 export function createMockEnterpriseServer(options = {}) {
   const host = options.host ?? HOST
@@ -258,7 +258,8 @@ export function createMockEnterpriseServer(options = {}) {
   const contractVersion = options.contractVersion ?? DEFAULT_CONTRACT_VERSION
   const state = {
     origin: '', authorizations: new Map(), tickets: new Map(), sessions: new Map(),
-    access: new Map(), refresh: new Map(), users: new Map(USERS.map((user) => [user.id, user])), usage: new Map()
+    access: new Map(), refresh: new Map(), users: new Map(USERS.map((user) => [user.id, user])), usage: new Map(),
+    auditContext: options.auditContext, configRequests: 0, chatRequests: []
   }
 
   const server = createServer(async (request, response) => {
@@ -267,7 +268,13 @@ export function createMockEnterpriseServer(options = {}) {
       const url = new URL(request.url ?? '/', state.origin)
       if (request.method === 'GET' && url.pathname === '/healthz') return sendJson(response, 200, { ok: true, origin: state.origin }, id)
       if (request.method === 'GET' && url.pathname === '/') return sendHtml(response, 200, layout('BiSheng DSH Mock', `<span class="tag">READY</span><h1>DSH 登录与模型 Mock</h1><div class="facts"><div><span>BASE</span><strong>${escapeHtml(state.origin)}</strong></div><div><span>合同版本</span><strong>${contractVersion}</strong></div></div><p>在 DSH Desktop Dev 的「设置 → 账号与企业」中填写此 BASE。</p>`))
-      if (request.method === 'GET' && url.pathname === '/api/v1/dsh/config') return sendJson(response, 200, { enabled: true, client_id: CLIENT_ID, contract_version: contractVersion }, id)
+      if (request.method === 'GET' && url.pathname === '/api/v1/dsh/config') {
+        state.configRequests += 1
+        return sendJson(response, 200, {
+          enabled: true, client_id: CLIENT_ID, contract_version: contractVersion,
+          ...(state.auditContext === undefined ? {} : { audit_context: state.auditContext })
+        }, id)
+      }
       if (request.method === 'GET' && url.pathname === '/api/v1/dsh/market/capabilities') {
         return sendJson(response, 200, {
           status_code: 200,
@@ -312,7 +319,7 @@ export function createMockEnterpriseServer(options = {}) {
         }
       }
 
-      if (request.method === 'POST' && url.pathname === '/api/dsh/authorizations') {
+      if (request.method === 'POST' && url.pathname === '/api/v1/dsh/authorizations') {
         const body = await readJson(request)
         if (!exactFields(body, ['client_id', 'redirect_uri', 'code_challenge', 'code_challenge_method', 'state'], ['device_name', 'client_version']) || body.client_version != null && (typeof body.client_version !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/u.test(body.client_version)) || body.client_id !== CLIENT_ID || body.code_challenge_method !== 'S256' || !validCallback(body.redirect_uri) || !/^[A-Za-z0-9_-]{43}$/u.test(body.code_challenge) || !/^[A-Za-z0-9_-]{43}$/u.test(body.state)) {
           return sendError(response, 400, 'invalid_authorization_request', 'Authorization request is invalid.', 'invalid_request_error', id)
@@ -353,7 +360,7 @@ export function createMockEnterpriseServer(options = {}) {
         return sendHtml(response, 200, ticketPage(callback.toString(), ticket))
       }
 
-      if (request.method === 'POST' && url.pathname === '/api/dsh/token') {
+      if (request.method === 'POST' && url.pathname === '/api/v1/dsh/token') {
         const body = await readJson(request)
         if (body.grant_type === 'identity_ticket') {
           if (!exactFields(body, ['grant_type', 'identity_ticket', 'auth_id', 'code_verifier'])) return sendError(response, 400, 'invalid_request', 'Token request fields are invalid.', 'invalid_request_error', id)
@@ -418,6 +425,7 @@ export function createMockEnterpriseServer(options = {}) {
         if (!session) return sendError(response, 401, 'invalid_access_token', 'Access token is invalid.', 'authentication_error', id)
         const body = await readJson(request)
         const user = state.users.get(session.userId)
+        state.chatRequests.push({ requestId: id, model: body.model, audit_context: body.audit_context })
         if (!user.models.includes(body.model)) return sendError(response, 403, 'model_not_allowed', 'Model is not assigned to this user.', 'permission_error', id)
         if (body.stream !== true || body.stream_options?.include_usage !== true) return sendError(response, 400, 'invalid_request', 'Streaming with usage is required.', 'invalid_request_error', id)
         const prompt = JSON.stringify(body.messages ?? []).length % 40 + 12
@@ -441,7 +449,7 @@ export function createMockEnterpriseServer(options = {}) {
         return
       }
 
-      if (request.method === 'POST' && url.pathname === '/api/dsh/logout') {
+      if (request.method === 'POST' && url.pathname === '/api/v1/dsh/logout') {
         let session = sessionFromAccess(state, request)
         if (!session) {
           const body = await readJson(request)
@@ -480,7 +488,16 @@ export function createMockEnterpriseServer(options = {}) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const service = createMockEnterpriseServer()
+  const auditModes = {
+    both: { fields: ['conversation_id', 'request_kind'] },
+    conversation: { fields: ['conversation_id'] },
+    kind: { fields: ['request_kind'] },
+    malformed: { fields: 'invalid' },
+    none: undefined
+  }
+  const mode = process.env.BISHENG_MOCK_AUDIT_MODE ?? 'none'
+  if (!Object.hasOwn(auditModes, mode)) throw new Error('BISHENG_MOCK_AUDIT_MODE must be both/conversation/kind/malformed/none.')
+  const service = createMockEnterpriseServer({ auditContext: auditModes[mode] })
   const origin = await service.listen()
   process.stdout.write(`BiSheng DSH Mock listening at ${origin}\n`)
   process.stdout.write('DSH Desktop Dev: Settings -> Account & Enterprise -> enter this BASE\n')

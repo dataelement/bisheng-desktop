@@ -43,6 +43,9 @@ def verify_download(url: str, expected_size: int) -> None:
             time.sleep(10)
 
 
+from signed_test_build import TEST_SUGGESTIONS, build_test_changes
+
+
 def notify(directory: Path, target: str, version: str, repo_id: str, webhook: str) -> None:
     if not webhook:
         raise ValueError("Feishu webhook is required for signed test builds")
@@ -62,10 +65,35 @@ def notify(directory: Path, target: str, version: str, repo_id: str, webhook: st
             url = f"https://modelscope.cn/models/{repo_id}/resolve/master/releases/test/{quote(version, safe='')}/{name}"
             verify_download(url, file.stat().st_size)
             links.append(f"- [{label}]({url})")
+
+    server_url = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
+    repo = os.environ.get("GITHUB_REPOSITORY", "dataelement/bisheng-work")
+    run_id = os.environ.get("GITHUB_RUN_ID", "")
+    run_url = f"{server_url}/{repo}/actions/runs/{run_id}" if run_id else ""
+
+    changes = ""
+    try:
+        changes = build_test_changes(f"{server_url}/{repo}")
+    except Exception as error:
+        print(f"Could not generate test changes from git history: {error}")
+
+    parts = []
+    if changes:
+        if len(changes) > 9000:
+            changes = changes[:8500].rsplit("\n", 1)[0] + "\n\n变更较多，已截断展示。"
+        parts.append(changes)
+    else:
+        parts.append("本次为签名测试安装包，用于安装和功能验收，请手动下载安装。在线更新未启用。")
+    parts.append(TEST_SUGGESTIONS)
+    if run_url:
+        parts.append(f"[查看 CI 构建详情]({run_url})")
+
+    notes = "\n\n".join(parts)
+
     send_feishu_notification(
         webhook,
         version,
-        "本次为签名测试安装包，用于安装和功能验收，请手动下载安装。在线更新未启用。",
+        notes,
         signed_test=True,
         download_links="**ModelScope 下载地址**\n" + "\n".join(links),
     )

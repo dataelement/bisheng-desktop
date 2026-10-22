@@ -12,6 +12,8 @@ describe('enterprise contract package export', () => {
     expect(typeof contract.createPkceTransaction).toBe('function')
     expect(typeof contract.parseToken).toBe('function')
     expect(typeof contract.parseModels).toBe('function')
+    expect(typeof contract.normalizeAuditContext).toBe('function')
+    expect(contract.normalizeAuditContext({ request_kind: 'chat' }, ['request_kind'])).toEqual({ request_kind: 'chat' })
     const pkce = contract.createPkceTransaction()
     expect(contract.pkceChallenge(pkce.codeVerifier)).toBe(pkce.codeChallenge)
   })

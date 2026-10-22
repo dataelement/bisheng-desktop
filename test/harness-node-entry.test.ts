@@ -8,7 +8,7 @@ import { applyWindowsHide } from '../build/windows-child-process-hide.mjs'
 import { projectRoot } from './patch-path'
 
 describe('linked Profile plugin host dependency fallback', () => {
-  it('keeps the plugin local and resolves only missing @deepseek-ai peers from the host', async () => {
+  it.each(['esm', 'commonjs'])('keeps the %s plugin local and resolves only missing @deepseek-ai peers from the host', async (mode) => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-host-module-fallback-'))
     try {
       const host = join(root, 'host')
@@ -28,7 +28,14 @@ describe('linked Profile plugin host dependency fallback', () => {
         writeFile(join(hostOrdinary, 'package.json'), JSON.stringify({ name: 'ordinary-host-only', type: 'module', exports: './index.js' })),
         writeFile(join(hostOrdinary, 'index.js'), 'export const source = "host-ordinary"\n'),
         writeFile(join(localPlugin, 'package.json'), JSON.stringify({ name: 'linked-plugin', type: 'module', exports: './index.js' })),
-        writeFile(join(localPlugin, 'index.js'), `
+        writeFile(join(localPlugin, 'index.js'), mode === 'commonjs' ? `
+          import { createRequire } from 'node:module'
+          const require = createRequire(import.meta.url)
+          const { source } = require('@deepseek-ai/host-peer')
+          let ordinary = 'missing'
+          try { require('ordinary-host-only'); ordinary = 'host-leaked' } catch {}
+          export const result = { source, ordinary }
+        ` : `
           import { source } from '@deepseek-ai/host-peer'
           let ordinary = 'missing'
           try { await import('ordinary-host-only'); ordinary = 'host-leaked' } catch {}
@@ -115,7 +122,7 @@ describe('linked Profile plugin host dependency fallback', () => {
   // Crash reports lose `code` to Harness's wrapper, so `imported from <plugin>`
   // is the only thing that still names the faulty plugin. The host retry must
   // not overwrite it with the installation entry.
-  it('keeps the importing plugin in the failure when the host cannot help either', async () => {
+  it.each(['esm', 'commonjs'])('keeps the importing %s plugin in the failure when the host cannot help either', async (mode) => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-host-module-diagnostic-'))
     try {
       const host = join(root, 'host')
@@ -128,7 +135,9 @@ describe('linked Profile plugin host dependency fallback', () => {
       ])
       await Promise.all([
         writeFile(join(localPlugin, 'package.json'), JSON.stringify({ name: 'linked-plugin', type: 'module', exports: './index.js' })),
-        writeFile(join(localPlugin, 'index.js'), "import '@deepseek-ai/nowhere-at-all'\n"),
+        writeFile(join(localPlugin, 'index.js'), mode === 'commonjs'
+          ? "import { createRequire } from 'node:module'; createRequire(import.meta.url)('@deepseek-ai/nowhere-at-all')\n"
+          : "import '@deepseek-ai/nowhere-at-all'\n"),
         writeFile(join(host, 'entry.mjs'), `
           export async function runCli() {
             try {
@@ -148,7 +157,7 @@ describe('linked Profile plugin host dependency fallback', () => {
       ], { encoding: 'utf8' })
 
       expect(result.status, result.stderr).toBe(0)
-      expect(result.stdout).toContain('fixture-code:ERR_MODULE_NOT_FOUND')
+      expect(result.stdout).toContain(mode === 'commonjs' ? 'fixture-code:MODULE_NOT_FOUND' : 'fixture-code:ERR_MODULE_NOT_FOUND')
       const message = result.stdout.split('fixture-message:')[1] ?? ''
       // The plugin's own physical path, not the host entry, owns the failure.
       expect(message).toContain(localPlugin)

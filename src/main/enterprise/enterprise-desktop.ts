@@ -46,6 +46,9 @@ export async function startEnterpriseDesktop(options: {
       if (entry.status) parts.push(`status=${entry.status}`)
       if (entry.requestId) parts.push(`requestId=${entry.requestId}`)
       if (entry.originHash) parts.push(`origin=${entry.originHash}`)
+      if (entry.pluginId) parts.push(`plugin=${JSON.stringify(entry.pluginId)}`)
+      if (entry.path) parts.push(`path=${JSON.stringify(entry.path)}`)
+      if (entry.duration !== undefined) parts.push(`durationMs=${entry.duration}`)
       options.note?.(parts.join(' '))
     }
   })

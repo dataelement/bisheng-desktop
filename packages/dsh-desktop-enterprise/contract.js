@@ -1,18 +1,29 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { normalizeEnterpriseServerUrl } from './deep-link.js'
+export { normalizeAuditContext } from './audit-context.js'
+export { parseAuditTitleUpdate } from './audit-title.js'
 
 export const CONTRACT_VERSION = '0.5.0'
 export const CLIENT_ID = 'dsh-desktop'
 export const CALLBACK_PATH = '/dsh/callback'
 export const ACCESS_REFRESH_SKEW_MS = 60_000
+export const AUDIT_CONTEXT_FIELDS = Object.freeze(['conversation_id', 'request_kind', 'session_origin', 'parent_conversation_id', 'message_sources'])
+
+export function parseAuditContextFields(value) {
+  if (!isObject(value) || !Array.isArray(value.fields) || value.fields.some((field) => typeof field !== 'string')) return []
+  return AUDIT_CONTEXT_FIELDS.filter((field) => value.fields.includes(field))
+}
+
 export const COMPATIBLE_CONTRACT_VERSIONS = Object.freeze(['0.4.0', CONTRACT_VERSION])
 export const API_PATHS = Object.freeze({
   config: '/api/v1/dsh/config',
-  authorizations: '/api/dsh/authorizations',
-  token: '/api/dsh/token',
-  logout: '/api/dsh/logout',
+  authorizations: '/api/v1/dsh/authorizations',
+  token: '/api/v1/dsh/token',
+  logout: '/api/v1/dsh/logout',
   models: '/api/v1/dsh/models',
   chat: '/api/v1/dsh/chat/completions',
+  responses: '/api/v1/dsh/responses',
+  auditTitle: '/api/v1/dsh/audit/conversations/title',
   usage: '/api/v1/dsh/usage'
 })
 
@@ -108,7 +119,11 @@ export function parseConfig(value) {
   if (value.client_id !== CLIENT_ID || !COMPATIBLE_CONTRACT_VERSIONS.includes(contractVersion)) {
     throw new Error('BiSheng DSH contract version is incompatible with this Desktop build.')
   }
-  return { enabled: true, client_id: CLIENT_ID, contract_version: contractVersion }
+  const fields = parseAuditContextFields(value.audit_context)
+  return { enabled: true, client_id: CLIENT_ID, contract_version: contractVersion,
+    ...(fields.length ? { audit_context: { fields } } : {}),
+    ...(isObject(value.audit_conversation_title) && value.audit_conversation_title.version === 1
+      ? { audit_conversation_title: { version: 1 } } : {}) }
 }
 
 export function parseAuthorization(value, base) {
@@ -144,6 +159,25 @@ export function parseToken(value, base, receivedAt = Date.now()) {
   }
 }
 
+function parseModelReasoning(value) {
+  if (!isObject(value) || !Array.isArray(value.efforts) || value.efforts.length === 0 || value.efforts.length > 32) {
+    throw new Error('BiSheng model reasoning metadata is invalid.')
+  }
+  const ids = new Set()
+  const efforts = value.efforts.map((effort) => {
+    if (!isObject(effort) || typeof effort.id !== 'string' || !effort.id.trim() || effort.id.length > 128 || ids.has(effort.id)
+      || typeof effort.name !== 'string' || !effort.name.trim() || effort.name.length > 256) {
+      throw new Error('BiSheng model reasoning effort is invalid.')
+    }
+    ids.add(effort.id)
+    return { id: effort.id, name: effort.name }
+  })
+  if (value.defaultEffort !== undefined && !ids.has(value.defaultEffort)) {
+    throw new Error('BiSheng model default reasoning effort is invalid.')
+  }
+  return { efforts, ...(value.defaultEffort === undefined ? {} : { defaultEffort: value.defaultEffort }) }
+}
+
 function parseModelEntry(entry, seen) {
   if (!isObject(entry) || !isObject(entry.capabilities)) return undefined
   if (typeof entry.id !== 'string' || entry.id.length === 0 || entry.id.length > 512) return undefined
@@ -152,9 +186,19 @@ function parseModelEntry(entry, seen) {
     typeof entry.capabilities.streaming !== 'boolean' ||
     typeof entry.capabilities.tools !== 'boolean' ||
     typeof entry.capabilities.reasoning_content !== 'boolean' ||
-    (entry.capabilities.vision !== undefined && typeof entry.capabilities.vision !== 'boolean')
+    (entry.capabilities.vision !== undefined && typeof entry.capabilities.vision !== 'boolean') ||
+    (entry.capabilities.responses !== undefined && typeof entry.capabilities.responses !== 'boolean')
   ) {
     return undefined
+  }
+  let reasoning
+  if (entry.reasoning !== undefined) {
+    try {
+      reasoning = parseModelReasoning(entry.reasoning)
+    } catch {
+      // Invalid capability metadata makes only this model unavailable.
+      return undefined
+    }
   }
   seen.add(entry.id)
   const usage = isObject(entry.usage) ? parseUsageLenient(entry.usage) : undefined
@@ -164,11 +208,13 @@ function parseModelEntry(entry, seen) {
     created: Number.isSafeInteger(entry.created) ? entry.created : 0,
     owned_by: typeof entry.owned_by === 'string' && entry.owned_by.length > 0 ? entry.owned_by : 'bisheng',
     display_name: typeof entry.display_name === 'string' && entry.display_name.length > 0 ? entry.display_name : entry.id,
+    ...(reasoning === undefined ? {} : { reasoning }),
     capabilities: {
       streaming: entry.capabilities.streaming,
       tools: entry.capabilities.tools,
       vision: entry.capabilities.vision ?? false,
-      reasoning_content: entry.capabilities.reasoning_content
+      reasoning_content: entry.capabilities.reasoning_content,
+      ...(entry.capabilities.responses === undefined ? {} : { responses: entry.capabilities.responses })
     },
     ...(usage && usage.source !== 'unavailable' ? { usage } : {})
   }

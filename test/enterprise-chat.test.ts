@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
   ALLOWED_ATTRIBUTION_HEADERS,
+  CHAT_HEADER_TIMEOUT_MS,
+  desktopChatAbortKind,
+  enterpriseHeaderTimeoutAbortReason,
+  enterpriseSessionChangedAbortReason,
   parseEnterpriseChatPayload,
   pickAttributionHeaders
 } from '../src/main/enterprise/enterprise-chat'
+import { serializeEnterpriseRequest } from '../packages/dsh-desktop-enterprise/openai.js'
+import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 
 const validRequest = {
   model: 'bisheng:42',
@@ -14,8 +20,37 @@ const validRequest = {
 }
 
 describe('enterprise chat payload validation', () => {
+  it.each([undefined, 'high'])('accepts actual adapter serialization with default or explicit effort: %s', (effort) => {
+    const model = {
+      id: 'bisheng:42', display_name: 'Reasoner', capabilities: { streaming: true, tools: true, reasoning_content: false },
+      reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'low' }
+    }
+    const request = serializeEnterpriseRequest({
+      model: model.id, messages: [createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'hello' }] })],
+      ...(effort === undefined ? {} : { reasoningEffort: ReasoningEffortId(effort) })
+    }, model)
+    expect(parseEnterpriseChatPayload({ request }).request.reasoning_effort).toBe(effort ?? 'low')
+  })
+
+  it.each([null, true, 1, {}, '', 'a'.repeat(129), ' high', 'high\r\nx-header: injected'])('rejects invalid effort %j', (effort) => {
+    expect(() => parseEnterpriseChatPayload({ request: { ...validRequest, reasoning_effort: effort } })).toThrow('reasoning effort is invalid')
+  })
+
+  it('soft filters optional audit context by trusted connection capability', () => {
+    const value = { request: { ...validRequest, audit_context: {
+      conversation_id: 'session-a', request_kind: 'chat', user_id: 'forged', version: 1
+    } } }
+    expect(parseEnterpriseChatPayload(value).request).not.toHaveProperty('audit_context')
+    expect(parseEnterpriseChatPayload(value, ['conversation_id']).request.audit_context)
+      .toEqual({ conversation_id: 'session-a' })
+    for (const audit_context of [null, [], { conversation_id: 1 }, { request_kind: 'unknown' }]) {
+      expect(parseEnterpriseChatPayload({ request: { ...validRequest, audit_context } },
+        ['conversation_id', 'request_kind']).request).not.toHaveProperty('audit_context')
+    }
+    expect(value.request.audit_context.user_id).toBe('forged')
+  })
   it('accepts a streaming request and keeps only attribution user-agent', () => {
-    expect(ALLOWED_ATTRIBUTION_HEADERS).toEqual(['user-agent'])
+    expect(ALLOWED_ATTRIBUTION_HEADERS).toEqual(['user-agent', 'x-dsh-conversation-id', 'x-dsh-request-purpose'])
     const parsed = parseEnterpriseChatPayload({
       request: validRequest,
       attribution: { 'user-agent': 'deepseek-harness/0.1.5-rc.2 (+https://github.com/deepseek-ai/deepseek-harness)' }
@@ -82,5 +117,53 @@ describe('enterprise chat payload validation', () => {
         }]
       }
     })).toThrow('size limit')
+  })
+})
+
+describe('desktop chat abort reasons', () => {
+  it('waits 60 seconds for the upstream response headers', () => {
+    expect(CHAT_HEADER_TIMEOUT_MS).toBe(60_000)
+  })
+
+  it('recognizes session and header reasons and ignores a caller abort', () => {
+    expect(desktopChatAbortKind(enterpriseSessionChangedAbortReason())).toBe('session')
+    expect(enterpriseSessionChangedAbortReason()).toMatchObject({
+      status: 409,
+      code: 'enterprise_session_changed',
+      message: 'Enterprise session changed.'
+    })
+    expect(desktopChatAbortKind(enterpriseHeaderTimeoutAbortReason())).toBe('header')
+    expect(enterpriseHeaderTimeoutAbortReason()).toMatchObject({
+      status: 504,
+      code: 'upstream_timeout',
+      message: 'Enterprise model response timed out.'
+    })
+    const caller = new AbortController()
+    caller.abort()
+    expect(desktopChatAbortKind(caller.signal.reason)).toBeUndefined()
+  })
+
+  it('keeps the first abort reason when later sources also abort', () => {
+    const caller = new AbortController()
+    const session = new AbortController()
+    const header = new AbortController()
+    const combined = AbortSignal.any([caller.signal, session.signal, header.signal])
+    session.abort(enterpriseSessionChangedAbortReason())
+    header.abort(enterpriseHeaderTimeoutAbortReason())
+    caller.abort()
+    expect(desktopChatAbortKind(combined.reason)).toBe('session')
+    expect(combined.reason).toMatchObject({ status: 409, code: 'enterprise_session_changed' })
+  })
+
+  it('prefers the caller when every source is already aborted', () => {
+    const caller = new AbortController()
+    const session = new AbortController()
+    const header = new AbortController()
+    caller.abort()
+    session.abort(enterpriseSessionChangedAbortReason())
+    header.abort(enterpriseHeaderTimeoutAbortReason())
+    const combined = AbortSignal.any([caller.signal, session.signal, header.signal])
+    expect(desktopChatAbortKind(combined.reason)).toBeUndefined()
+    expect(combined.reason).not.toMatchObject({ code: 'enterprise_session_changed' })
   })
 })

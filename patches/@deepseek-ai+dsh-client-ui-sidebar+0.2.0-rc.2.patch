@@ -1,5 +1,5 @@
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js b/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js
-index de89863..86fbc97 100644
+index de89863..313d487 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js
 @@ -288,6 +288,8 @@ window.__ModuleLoader__.load({
@@ -11,7 +11,17 @@ index de89863..86fbc97 100644
  				className: clsx(SidebarRoot_module_css_default.root, !wide && SidebarRoot_module_css_default.collapsed, !wide && everWide.current && SidebarRoot_module_css_default.railIn, collapsed && wide && SidebarRoot_module_css_default.fading, !pointerInside && SidebarRoot_module_css_default.quietBars),
  				style: wide ? { width: collapsed ? lastWideWidth.current : width } : void 0,
  				onPointerEnter: () => {
-@@ -309,11 +311,9 @@ window.__ModuleLoader__.load({
+@@ -303,17 +305,18 @@ window.__ModuleLoader__.load({
+ 						"data-window-drag": true,
+ 						children: toggle
+ 					}),
+-					(0, react_jsx_runtime.jsxs)("div", {
++					// The wide logo row is a fixed 60px band. On macOS the toggle
++					// already lives in the traffic-light strip, and the brand mark
++					// is gone, so keeping the row only pushes New Session down.
++					!darwinDesktop && (0, react_jsx_runtime.jsxs)("div", {
+ 						className: SidebarRoot_module_css_default.logoRow,
+ 						"data-window-drag": true,
  						children: [wide && (() => {
  							const identity = (0, react_jsx_runtime.jsxs)("span", {
  								className: SidebarRoot_module_css_default.brandIdentity,
@@ -24,6 +34,27 @@ index de89863..86fbc97 100644
  									className: SidebarRoot_module_css_default.brandName,
  									children: renderSlot("sidebar.brand.name", {}, { fallback: buildVersion === void 0 ? (0, react_jsx_runtime.jsx)("span", {
  										className: SidebarRoot_module_css_default.fallbackBrandName,
+@@ -330,10 +333,7 @@ window.__ModuleLoader__.load({
+ 									}) })
+ 								})]
+ 							});
+-							return darwinDesktop ? (0, react_jsx_runtime.jsx)("span", {
+-								className: clsx(SidebarRoot_module_css_default.brand, SidebarRoot_module_css_default.wide),
+-								children: identity
+-							}) : (0, react_jsx_runtime.jsx)("button", {
++							return (0, react_jsx_runtime.jsx)("button", {
+ 								type: "button",
+ 								className: clsx(SidebarRoot_module_css_default.brand, SidebarRoot_module_css_default.wide),
+ 								"aria-label": t("session.new.label"),
+@@ -343,7 +343,7 @@ window.__ModuleLoader__.load({
+ 								},
+ 								children: identity
+ 							});
+-						})(), !darwinDesktop && toggle]
++						})(), toggle]
+ 					}),
+ 					(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
+ 						label: t("session.new.label"),
 @@ -375,6 +375,7 @@ window.__ModuleLoader__.load({
  							})]
  						})

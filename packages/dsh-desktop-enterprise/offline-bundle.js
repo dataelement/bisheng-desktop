@@ -6,16 +6,23 @@ import { join } from 'node:path'
 import { generationId, writeGenerationMeta } from 'dsh-desktop-market-installer/generations/registry'
 import { verifyGenerationPeers } from 'dsh-desktop-market-installer/generations/installer'
 
-export const MAX_ARCHIVE = 256 * 1024 * 1024
+export const MAX_ARCHIVE = 512 * 1024 * 1024
 const MAX_EXPANDED = 1024 * 1024 * 1024
 export const sha256 = data => createHash('sha256').update(data).digest('hex')
 export const safePath = value => typeof value === 'string' && value.length > 0 &&
   !/[\\:\0]/u.test(value) && value.split('/').every(part => part && part !== '.' && part !== '..' && !/[. ]$/u.test(part) && !/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$/iu.test(part))
 const fail = message => { throw new Error(message) }
 
+/** A missing host entry must fail before peer checks, or Electron module paths can treat the app copy as an ordinary dependency. */
+export function assertHostEntry(dshEntryPath) {
+  if (dshEntryPath !== undefined && (typeof dshEntryPath !== 'string' || !existsSync(dshEntryPath))) {
+    fail(`Enterprise host entry was not found: ${String(dshEntryPath)}`)
+  }
+}
+
 /** Read bounded ZIP entries without extracting paths or executing build scripts. */
 export function readBundleZip(bytes) {
-  if (bytes.length > MAX_ARCHIVE) fail('Bundle exceeds 256 MiB.')
+  if (bytes.length > MAX_ARCHIVE) fail('Bundle exceeds 512 MiB.')
   let end = -1
   for (let offset = bytes.length - 22; offset >= Math.max(0, bytes.length - 65557); offset--) {
     if (bytes.readUInt32LE(offset) === 0x06054b50 && offset + 22 + bytes.readUInt16LE(offset + 20) === bytes.length) { end = offset; break }
@@ -85,15 +92,14 @@ export function validateOfflineBundle(bytes, expected, target) {
 }
 
 export async function installOfflineBundle(home, bytes, expected, target, options = {}) {
-  const { files, manifest } = validateOfflineBundle(bytes, expected, target)
-  // Host singletons are checked against the running installation when its DSH
-  // entry is supplied. A missing entry must not fall through to an unanchored
-  // check: Electron's module paths can then report the application copy as an
-  // ordinary closure escape.
-  const dshEntryPath = options.dshEntryPath
-  if (dshEntryPath !== undefined && (typeof dshEntryPath !== 'string' || !existsSync(dshEntryPath))) {
-    fail(`Enterprise host entry was not found: ${String(dshEntryPath)}`)
+  assertHostEntry(options.dshEntryPath)
+  const { looksLikeCommunityArchive } = await import('./community-package.js')
+  if (looksLikeCommunityArchive(bytes)) {
+    const { installCommunityPackage } = await import('./community-install.js')
+    return installCommunityPackage(home, bytes, expected, target, options)
   }
+  const { files, manifest } = validateOfflineBundle(bytes, expected, target)
+  const dshEntryPath = options.dshEntryPath
   const layout = { staging: join(home, 'profiles', '.enterprise-staging'), generations: join(home, 'profiles', '.enterprise-generations') }
   await mkdir(layout.staging, { recursive: true })
   await mkdir(layout.generations, { recursive: true })
@@ -124,6 +130,10 @@ export async function installOfflineBundle(home, bytes, expected, target, option
 export async function verifyInstalledBundle(generation, target) {
   if (!(await lstat(generation.directory)).isDirectory() || (await lstat(generation.directory)).isSymbolicLink()) fail('Invalid generation directory.')
   const bytes = await readFile(join(generation.directory, 'enterprise-bundle.zip'))
+  if (generation.integrity) {
+    const { verifyCommunityPackage } = await import('./community-install.js')
+    return verifyCommunityPackage(generation, bytes, target)
+  }
   const { files, manifest } = validateOfflineBundle(bytes, generation, target)
   const observed = new Set()
   const walk = async relative => {

@@ -2985,6 +2985,21 @@ describe('workbench market screenshot and metadata display', () => {
     expect(code).toContain('.dshWbMarket{container-type:inline-size;container-name:workbench-market;overflow:auto;height:100%;width:100%;min-width:0;padding:30px 32px 52px;')
   })
 
+  it('marks the workbench market header as the macOS window drag row', async () => {
+    const { service } = await fixture()
+    const ui = interactiveMarket(service, 'market', { known: true, connected: true, allowThirdPartyWorkbenches: false })
+    const header = ui.find(ui.render(), node => node.type === 'header' && node.props.className === 'dshWbMarketHeader')[0]
+    expect(header.props['data-window-drag']).toBe(true)
+    expect(ui.button(header, '安装本地工作台').type.name).toBe('Button')
+    expect(ui.button(header, '制作我的工作台').type.name).toBe('Button')
+    expect(code).toContain('html[data-platform=darwin] .dshWbMarket{padding-top:0}html[data-platform=darwin] .dshWbMarketHeader{padding-top:30px}')
+    expect(code).toContain('html[data-platform=darwin] .dshWbMarketHeader{padding-top:24px}')
+    expect(code).toContain('html[data-platform=darwin] .dshWbMarketHeader{padding-top:20px}')
+    expect(code).toContain('.dshWbMarketHeader:empty{margin-bottom:0}')
+    expect(code).not.toContain('dshWbMarketHeader{padding-top:calc(')
+    expect(code).toContain("h('header', { className: 'dshWbMarketHeader', 'data-window-drag': true }),")
+  })
+
   it('offers local native uninstall but disables unknown failed Installed cards', async () => {
     const { service, ctx } = await fixture({ ...emptyState(), added: ['owner/local', 'o/helper'] })
     service.remoteCatalog = [listed()]

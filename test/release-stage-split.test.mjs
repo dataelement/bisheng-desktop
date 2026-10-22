@@ -14,7 +14,7 @@ it('gates Windows builds on shared checks while retaining native coverage', asyn
   expect(jobs['windows-preflight'].needs).toBe('validate-dispatch')
   expect(jobs['windows-x64'].needs).toBe('windows-preflight')
   expect(jobs['windows-preflight'].if).toBe(jobs['windows-x64'].if)
-  expect(jobs['windows-preflight']['runs-on']).toEqual(['self-hosted', 'macOS', 'ARM64'])
+  expect(jobs['windows-preflight']['runs-on']).toEqual(['self-hosted', 'macOS', 'bisheng-windows'])
   expect(jobs['windows-preflight'].steps.some(item => item.run === 'npm run typecheck')).toBe(true)
   expect(jobs['windows-x64'].steps.some(item => item.run === 'npm run typecheck')).toBe(false)
   const checks = step('windows-preflight', 'Check Windows release tooling').run

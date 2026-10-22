@@ -3,6 +3,7 @@ import type { EventEmitter } from 'node:events'
 import { createWriteStream, existsSync, mkdirSync, type WriteStream } from 'node:fs'
 import { mkdir, readFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
+import { homedir, userInfo } from 'node:os'
 import { dirname, join, posix, win32 } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import type { RuntimePhase, RuntimeSnapshot } from '../../shared/contracts'
@@ -43,6 +44,14 @@ export interface HarnessChildProcess extends EventEmitter {
 }
 
 export const DEFAULT_HARNESS_PORT = 43129
+
+/**
+ * Directories launchd gives a GUI process. A captured login shell that
+ * arrives without PATH must not replace this with an empty string: Node then
+ * reports `spawn sandbox-exec ENOENT` and `spawn bash ENOENT` even though
+ * both binaries exist.
+ */
+export const POSIX_SYSTEM_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
 
 /**
  * Resolve the user's interactive login shell environment.
@@ -126,10 +135,10 @@ export function resolveShellEnvironment(): NodeJS.ProcessEnv {
       timeout: capture.timeout,
       stdio: ['ignore', 'pipe', 'ignore']
     })
-    resolvedShellEnvironment = capture.parse(output)
+    resolvedShellEnvironment = acceptCapturedShellEnvironment(capture.parse(output), process.env)
   } catch {
     // Shell capture failed — stay silent and keep the inherited environment.
-    resolvedShellEnvironment = process.env
+    resolvedShellEnvironment = acceptCapturedShellEnvironment({}, process.env)
   }
 
   return resolvedShellEnvironment
@@ -153,7 +162,7 @@ export function prewarmShellEnvironment(): Promise<NodeJS.ProcessEnv> {
     try {
       capture = shellCapture()
     } catch {
-      resolvedShellEnvironment = process.env
+      resolvedShellEnvironment = acceptCapturedShellEnvironment({}, process.env)
       resolve(resolvedShellEnvironment)
       return
     }
@@ -164,7 +173,10 @@ export function prewarmShellEnvironment(): Promise<NodeJS.ProcessEnv> {
       (error, stdout) => {
         // A capture the synchronous path already finished wins; otherwise keep
         // the inherited environment on failure, exactly like that path.
-        resolvedShellEnvironment ??= error ? process.env : capture.parse(stdout)
+        resolvedShellEnvironment ??= acceptCapturedShellEnvironment(
+          error ? {} : capture.parse(stdout),
+          process.env
+        )
         resolve(resolvedShellEnvironment)
       }
     ).stdin?.end()
@@ -203,6 +215,75 @@ export function withoutUndecodableValues(
     if (fallback !== undefined) result[name] = fallback
   }
   return result
+}
+
+function isUsableEnvironmentValue(value: string | null | undefined): value is string {
+  return value != null && value.trim() !== ''
+}
+
+function isLaunchCriticalName(name: string): boolean {
+  return /^(PATH|HOME|SHELL)$/i.test(name)
+}
+
+/**
+ * Keep a login-shell capture from erasing the environment Electron already has.
+ *
+ * A capture that exits 0 with a truncated `env` listing used to replace
+ * `process.env` outright. Harness then started with only the variables this
+ * desktop adds (`DSH_HOME`, the enterprise broker) and `spawn bash` failed
+ * with ENOENT. Ordinary captured values, including intentional empty ones,
+ * still win. `PATH`, `HOME`, and `SHELL` are the exception: a missing or
+ * blank capture must not wipe the inherited value, because those three are
+ * what make system commands and the user home resolvable.
+ *
+ * When neither side has a usable value, POSIX gets the launchd system PATH
+ * and the current user's home and shell. Windows PATH casing stays with
+ * {@link resolveEnvironmentPath}; this function does not invent a POSIX PATH
+ * there.
+ * @param captured - variables parsed from the login shell, possibly incomplete.
+ * @param inherited - the environment of the process performing the capture.
+ * @param platform - target platform; tests pass this explicitly.
+ */
+export function mergeCapturedShellEnvironment(
+  captured: NodeJS.ProcessEnv,
+  inherited: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform
+): NodeJS.ProcessEnv {
+  const merged: NodeJS.ProcessEnv = { ...inherited }
+  for (const [name, value] of Object.entries(captured)) {
+    if (value === undefined) continue
+    if (isLaunchCriticalName(name) && !isUsableEnvironmentValue(value)) continue
+    merged[name] = value
+  }
+  if (platform !== 'win32' && !isUsableEnvironmentValue(merged.PATH)) {
+    merged.PATH = POSIX_SYSTEM_PATH
+  }
+  if (!isUsableEnvironmentValue(merged.HOME)) {
+    try {
+      const home = homedir()
+      if (isUsableEnvironmentValue(home)) merged.HOME = home
+    } catch {
+      // No home directory is available; leave HOME unset.
+    }
+  }
+  if (platform !== 'win32' && !isUsableEnvironmentValue(merged.SHELL)) {
+    let shell: string | undefined
+    try {
+      const reported = userInfo().shell
+      if (isUsableEnvironmentValue(reported)) shell = reported
+    } catch {
+      // No user record; the POSIX fallback below still names a shell.
+    }
+    merged.SHELL = shell ?? '/bin/sh'
+  }
+  return merged
+}
+
+function acceptCapturedShellEnvironment(
+  captured: NodeJS.ProcessEnv,
+  inherited: NodeJS.ProcessEnv
+): NodeJS.ProcessEnv {
+  return mergeCapturedShellEnvironment(captured, inherited)
 }
 
 function parseEnvOutput(output: string, lineSeparator: RegExp): NodeJS.ProcessEnv {
@@ -277,7 +358,14 @@ export function resolveEnvironmentPath(
   environment: NodeJS.ProcessEnv,
   platform: NodeJS.Platform = process.platform
 ): string {
-  if (platform !== 'win32') return environment.PATH ?? ''
+  if (platform !== 'win32') {
+    // An omitted or blank PATH used to be written through as `''`, which
+    // disables Node's executable search. The system directories are the
+    // floor; a real captured PATH, Homebrew included, is left intact.
+    const path = environment.PATH
+    if (isUsableEnvironmentValue(path)) return path
+    return POSIX_SYSTEM_PATH
+  }
   // Exact-case reads first; the scan is the last resort for other casings.
   // A real Windows block stores a single casing, so the order between them
   // is never observable outside synthetic inputs.

@@ -97,8 +97,7 @@ it('stages every signed and prerelease target before Windows signing', async () 
         ['windows-x64', 'Stage unsigned Windows assets in draft release'],
         ['sign-windows', 'Download unsigned Windows assets from draft release'],
         ['sign-windows', 'Stage signed Windows assets in draft release'],
-        ['macos-apple-silicon', 'Stage signed Apple Silicon assets in draft release'],
-        ['macos-intel', 'Stage signed Intel assets in draft release']
+        ['macos', 'Stage signed ${{ matrix.label }} assets in draft release']
       ]) {
         expect(evaluate(jobs[job].steps.find(step => step.name === name).if, mode, target)).toBe(mode !== 'development')
       }

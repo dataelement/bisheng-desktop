@@ -52,9 +52,9 @@ window.__ModuleLoader__.load({
       refresh_token_reused: '登录状态已失效，请重新登录。',
       session_expired: '登录会话已过期，请重新登录。',
       session_revoked: '本次登录会话已失效，请重新登录。',
-      seat_not_assigned: '你尚未获得客户端使用席位，请联系管理员分配后重新登录。',
-      seat_revoked: '你的客户端使用授权已失效，请联系管理员确认席位，重新授权后再登录。',
-      seat_limit_reached: '可用席位已满，请联系管理员处理。',
+      seat_not_assigned: '当前服务版本不支持直接登录，请联系管理员升级平台。',
+      seat_revoked: '当前登录已失效，请重新登录。',
+      seat_limit_reached: '当前平台仍启用了旧版接入限制，请联系管理员升级。',
       license_invalid: '平台客户端授权无效，请联系管理员。',
       license_expired: '平台客户端授权已过期，请联系管理员。',
       dsh_disabled: '管理员已关闭客户端功能，请联系管理员。',
@@ -110,9 +110,9 @@ window.__ModuleLoader__.load({
       refresh_token_reused: 'Your sign-in state is no longer valid. Sign in again.',
       session_expired: 'Your sign-in session has expired. Sign in again.',
       session_revoked: 'This sign-in session is no longer valid. Sign in again.',
-      seat_not_assigned: 'You do not have a client seat yet. Ask your administrator to assign one, then sign in again.',
-      seat_revoked: 'Your client access is no longer valid. Ask your administrator to confirm the seat, then sign in again after it is authorized.',
-      seat_limit_reached: 'No client seats are available. Contact your administrator.',
+      seat_not_assigned: 'This server uses a legacy sign-in policy. Ask your administrator to upgrade the platform.',
+      seat_revoked: 'Your sign-in is no longer valid. Sign in again.',
+      seat_limit_reached: 'This server still enforces a legacy access limit. Ask your administrator to upgrade.',
       license_invalid: 'The platform client license is invalid. Contact your administrator.',
       license_expired: 'The platform client license has expired. Contact your administrator.',
       dsh_disabled: 'An administrator has turned off the client. Contact your administrator.',
@@ -466,7 +466,9 @@ window.__ModuleLoader__.load({
     const marketZh = {
       tab: '来自企业', intro: '安装企业提供的插件，供当前企业账号使用。', refresh: '刷新',
       loading: '正在读取企业插件…', empty: '企业暂未提供插件，请联系管理员导入。',
-      failed: '暂时无法读取企业插件，请重试或联系管理员。', install: '安装', update: '更新',
+      failed: '暂时无法读取企业插件，请重试或联系管理员。',
+      protocolMismatch: '当前客户端需要更新后的企业市场，请联系管理员升级服务端。',
+      install: '安装', update: '更新',
       installed: '已安装', uninstall: '卸载', enable: '启用', disable: '停用', disabled: '已停用',
       version: '版本', incompatible: '当前系统或版本暂不支持',
       installing: '安装中…', updating: '更新中…', enabling: '启用中…', disabling: '停用中…', uninstalling: '卸载中…', unsupported: '暂不支持', setup: '企业市场暂未就绪，可联系管理员完成配置。'
@@ -474,14 +476,26 @@ window.__ModuleLoader__.load({
     const marketEn = {
       tab: 'From enterprise', intro: 'Install plugins provided for your current enterprise account.', refresh: 'Refresh',
       loading: 'Loading enterprise plugins…', empty: 'Your enterprise has no plugins yet. Contact your administrator.',
-      failed: 'Enterprise plugins are unavailable. Try again or contact your administrator.', install: 'Install', update: 'Update',
+      failed: 'Enterprise plugins are unavailable. Try again or contact your administrator.',
+      protocolMismatch: 'This Desktop requires a newer enterprise market. Ask an administrator to upgrade the server.',
+      install: 'Install', update: 'Update',
       installed: 'Installed', uninstall: 'Uninstall', enable: 'Enable', disable: 'Disable', disabled: 'Disabled',
       version: 'Version', incompatible: 'Unsupported system or Desktop version',
       installing: 'Installing…', updating: 'Updating…', enabling: 'Enabling…', disabling: 'Disabling…', uninstalling: 'Uninstalling…', unsupported: 'Unavailable', setup: 'The enterprise market is not ready. Contact your administrator.'
     }
 
     let marketTranslate
+    let accountTranslate
     function marketLabels() { return Object.fromEntries(Object.keys(marketEn).map(key => [key, marketTranslate(key)])) }
+    function marketStatusCopy(cause) {
+      const code = typeof cause?.errorCode === 'string' ? cause.errorCode : ''
+      if (code === 'protocol_mismatch') return marketLabels().protocolMismatch
+      if ((code === 'seat_revoked' || code === 'session_expired') && accountTranslate) {
+        const known = accountErrorCopy(code, accountTranslate)
+        if (known) return known
+      }
+      return ''
+    }
 
     function installMarketStyles() {
       if (document.getElementById('dsh-enterprise-market-style')) return
@@ -522,7 +536,7 @@ window.__ModuleLoader__.load({
           } while (all.length < next.total && next.data.length)
           if (mounted.current && !controller.signal.aborted) setCatalog({ ...next, data: all })
         } catch (cause) {
-          if (mounted.current && !controller.signal.aborted) { setCatalog(null); setError(marketCopy.failed) }
+          if (mounted.current && !controller.signal.aborted) { setCatalog(null); setError(marketStatusCopy(cause) || marketCopy.failed) }
         } finally { if (mounted.current && !controller.signal.aborted) setLoading(false) }
       }, [identity])
       useEffect(() => {
@@ -544,7 +558,7 @@ window.__ModuleLoader__.load({
               installed: [...current.installed.filter(item => item.plugin_id !== plugin.id), ...(local ? [local] : [])] }))
           }
         } catch (cause) {
-          if (mounted.current) setOperations(current => ({ ...current, [plugin.id]: { error: cause.message || marketCopy.failed } }))
+          if (mounted.current) setOperations(current => ({ ...current, [plugin.id]: { error: marketStatusCopy(cause) || cause.message || marketCopy.failed } }))
         } finally {
           pendingPlugins.current.delete(plugin.id)
           if (mounted.current) setOperations(current => {
@@ -1116,6 +1130,7 @@ window.__ModuleLoader__.load({
         'dsh-desktop-enterprise: copy dictionaries'
       )
       const t = ctx.locale.bind(NS)
+      accountTranslate = t
       ctx.effect(() => ctx.locale.register('settings.enterpriseMarket', { zh: marketZh, en: marketEn }), 'enterprise-market: translations')
       marketTranslate = ctx.locale.bind('settings.enterpriseMarket')
       ctx.effect(() => bindEnterpriseMarketTab(ctx), 'enterprise-market: account-bound plugins tab')

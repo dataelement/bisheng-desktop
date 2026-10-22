@@ -221,17 +221,23 @@ describe('BISHENG client slot occupants', () => {
       'utf8'
     )
 
+    const logoRowStart = source.indexOf('className: SidebarRoot_module_css_default.logoRow')
+    expect(logoRowStart).toBeGreaterThan(-1)
+    expect(source.slice(Math.max(0, logoRowStart - 120), logoRowStart)).toContain('!darwinDesktop &&')
+    expect(source).toContain('className: SidebarRoot_module_css_default.topStrip')
+
     const wideBrandStart = source.indexOf('children: [wide &&')
-    const wideBrandEnd = source.indexOf('})(), !darwinDesktop && toggle]', wideBrandStart)
+    const wideBrandEnd = source.indexOf('})(), toggle]', wideBrandStart)
     const wideBrand = source.slice(wideBrandStart, wideBrandEnd)
     expect(wideBrandStart).toBeGreaterThan(-1)
     expect(wideBrandEnd).toBeGreaterThan(wideBrandStart)
     expect(wideBrand).toContain('renderSlot("sidebar.brand.name"')
     expect(wideBrand).not.toContain('renderSlot("sidebar.brand.mark"')
+    expect(wideBrand).not.toContain('darwinDesktop ?')
     expect(wideBrand).toContain('"data-dsh-sidebar-brand-identity": true')
     const desktopClient = await readFile(path.join(projectRoot, 'packages/dsh-desktop-client-ui/client.js'), 'utf8')
     expect(desktopClient).toContain('[data-dsh-sidebar-brand-identity] { display:none !important; }')
-    expect(desktopClient).toContain('div[data-window-drag]:has([data-dsh-sidebar-brand-identity])')
+    expect(desktopClient).not.toContain('div[data-window-drag]:has([data-dsh-sidebar-brand-identity])')
 
     const railMarkStart = source.indexOf(
       'className: SidebarRoot_module_css_default.railMark'

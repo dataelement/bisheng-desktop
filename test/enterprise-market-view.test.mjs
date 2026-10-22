@@ -9,7 +9,7 @@ const source = await readFile(new URL('../packages/dsh-desktop-enterprise/client
 let cleanup
 afterEach(async () => { await cleanup?.(); vi.unstubAllGlobals() })
 
-async function mountMarket({ action, update = false, holdRefresh = false, plugins, installReady = true } = {}) {
+async function mountMarket({ action, update = false, holdRefresh = false, plugins, installReady = true, catalogFailure } = {}) {
   const dom = new JSDOM('<html lang="zh-CN"><div id="root"></div></html>', { url: 'http://localhost/' })
   vi.stubGlobal('window', dom.window)
   vi.stubGlobal('document', dom.window.document)
@@ -37,6 +37,9 @@ async function mountMarket({ action, update = false, holdRefresh = false, plugin
       else installedById.set(input.plugin_id, { plugin_id: input.plugin_id, version_id: plugin.current_version_id, version: '1.0.0', enabled: input.action !== 'disable' })
       const result = snapshot()
       return { ok: true, json: async () => result }
+    }
+    if (String(path).startsWith('/api/enterprise.market.catalog') && catalogFailure) {
+      return { ok: false, json: async () => catalogFailure }
     }
     const result = snapshot()
     if (holdRefresh && ++catalogReads > 1) await new Promise(resolve => pendingCatalogs.push(resolve))
@@ -95,6 +98,17 @@ it('shows only the empty notice when the enterprise has no plugins', async () =>
   expect(text()).toContain('企业暂未提供插件，请联系管理员导入。')
   expect(text()).not.toContain('安装企业提供的插件，供当前企业账号使用。')
   expect(text()).not.toContain('企业市场暂未就绪，可联系管理员完成配置。')
+})
+
+it.each([
+  ['protocol_mismatch', '当前客户端需要更新后的企业市场，请联系管理员升级服务端。'],
+  ['seat_revoked', '当前登录已失效，请重新登录。'],
+  ['session_expired', '登录会话已过期，请重新登录。']
+])('shows the specific market failure for %s', async (errorCode, copy) => {
+  const { text } = await mountMarket({ catalogFailure: { error: 'raw server text', errorCode } })
+  expect(text()).toContain(copy)
+  expect(text()).not.toContain('暂时无法读取企业插件，请重试或联系管理员。')
+  expect(text()).not.toContain('raw server text')
 })
 
 it('keeps the intro and setup notice when plugins exist but the market is not ready', async () => {
