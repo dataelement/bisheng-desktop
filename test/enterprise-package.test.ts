@@ -104,7 +104,7 @@ describe('DSH Desktop enterprise package', () => {
     expect(client).toContain('confirmation && !connected')
   })
 
-  it('keeps sign-in focused and shows model usage with hover percentages', async () => {
+  it('keeps sign-in focused and shows one shared credit balance', async () => {
     const client = await readFile(
       path.join(projectRoot, 'packages', 'dsh-desktop-enterprise', 'client.js'),
       'utf8'
@@ -144,28 +144,14 @@ describe('DSH Desktop enterprise package', () => {
     expect(client).toContain("const userLabel = state?.user?.display_name || state?.user?.username || state?.user?.id || '—'")
     expect(client).not.toContain('state.usage)')
     expect(client).not.toContain("h('div', { className: 'dshEnterpriseCard' }, status, accountContent, errorPanel)")
-    expect(client).toContain("state.modelUsage?.[model.id]")
-    expect(client).toContain('.dshEnterpriseModels li:hover .dshEnterpriseModelUsageValue {')
-    expect(client).toContain('.dshEnterpriseModels li:hover .dshEnterpriseModelUsagePercent {')
-    expect(client).toContain('display: none;')
-    expect(client).toContain('display: inline;')
-    expect(client).toContain("className: 'dshEnterpriseModelUsageValue'")
-    expect(client).toContain("className: 'dshEnterpriseModelUsagePercent'")
-    expect(client).toContain('maximumFractionDigits: 1')
-    const percentageBody = client.match(/function modelUsagePercentage\(usage, language, t\) \{([\s\S]*?)\n    \}/)?.[1]
-    expect(percentageBody).toBeDefined()
-    const formatPercentage = new Function('usage', 'language', 't', 'usageText', percentageBody!)
-    expect(formatPercentage({ used: 10000, limit: 8000 }, 'zh-CN')).toBe('100%')
-    expect(formatPercentage({ used: 4000, limit: 8000 }, 'zh-CN')).toBe('50%')
-    const amountBody = client.match(/function tokenAmount\(value, language\) \{([\s\S]*?)\n    \}/)?.[1]
-    expect(amountBody).toBeDefined()
-    const formatAmount = new Function('value', 'language', amountBody!)
-    expect(formatAmount(3326206, 'zh-CN')).toBe('332.62万')
-    expect(formatAmount(1000000, 'zh-CN')).toBe('100万')
-    expect(formatAmount(0, 'zh-CN')).toBe('0')
-    expect(formatAmount(1, 'zh-CN')).toBe('<0.01万')
-    expect(formatAmount(100, 'zh-CN')).toBe('0.01万')
-    expect(formatAmount(1000000, 'en')).toBe('1M')
+    expect(client).toContain('const usage = state.usage')
+    const usageBody = client.match(/function usageText\(usage, language, t\) \{([\s\S]*?)\n    \}/)?.[1]
+    expect(usageBody).toBeDefined()
+    const formatCredits = new Function('usage', 'language', 't', usageBody!)
+    expect(formatCredits({ source: 'live', quota_state: 'available', used: 1000001, limit: 500000000 }, 'en', (k: string) => k)).toBe('499.0')
+    expect(formatCredits({ source: 'live', quota_state: 'available', used: 0, limit: 101867802701 }, 'zh', (k: string) => k)).toBe('101,867.8')
+    expect(formatCredits({ source: 'live', quota_state: 'exhausted', used: null, limit: 0 }, 'en', (k: string) => k)).toBe('0.0')
+    expect(formatCredits({ source: 'unavailable' }, 'en', (k: string) => k)).toBe('usageUnavailable')
     expect(client).toContain("refresh: '刷新'")
     expect(client).toContain("learnMore: '了解企业版'")
     expect(client).toContain("learnMore: 'Learn about Enterprise'")

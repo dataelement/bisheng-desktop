@@ -14,7 +14,7 @@ it('admits only bounded MCP messages and rejects arbitrary host operations', () 
 it('keeps credentials in host headers, fixes the endpoint and drops stale responses', async () => {
   let current = true
   const fetchImpl = vi.fn(async (_input: string, _init?: RequestInit) => Response.json({ jsonrpc: '2.0', id: 1, result: { tools: [] } }))
-  const options = { request: parseWorkMcpRequest(input), credential: { base: 'http://127.0.0.1:9999', cookie: 'private-cookie', expiresAt: Date.now() + 300000, connectionKey: 'account' },
+  const options = { request: parseWorkMcpRequest(input), credential: { base: 'http://127.0.0.1:9999', cookie: 'private-cookie', cookieName: 'access_token_cookie', expiresAt: Date.now() + 300000, connectionKey: 'account' },
     assertCurrent: () => { if (!current) throw new Error('changed') }, allowInsecureLoopback: true, fetchImpl }
   expect(await sendWorkMcp(options)).toMatchObject({ result: { tools: [] } })
   expect(fetchImpl.mock.calls[0]?.[0]).toBe('http://127.0.0.1:9999/api/v1/dsh/work/mcp')
@@ -26,7 +26,7 @@ it('keeps credentials in host headers, fixes the endpoint and drops stale respon
 })
 
 it('preserves HTTP failure and rejects redirect and oversized results', async () => {
-  const options = { request: parseWorkMcpRequest(input), credential: { base: 'http://127.0.0.1:9999', cookie: 'private', expiresAt: 1, connectionKey: 'account' },
+  const options = { request: parseWorkMcpRequest(input), credential: { base: 'http://127.0.0.1:9999', cookie: 'private', cookieName: 'access_token_cookie', expiresAt: 1, connectionKey: 'account' },
     assertCurrent() {}, allowInsecureLoopback: true }
   await expect(sendWorkMcp({ ...options, fetchImpl: async () => new Response('private error', { status: 403 }) })).rejects.toThrow('(403)')
   await expect(sendWorkMcp({ ...options, fetchImpl: async () => new Response('x'.repeat(25 * 1024 * 1024), { headers: { 'content-type': 'application/json' } }) })).rejects.toThrow('size')

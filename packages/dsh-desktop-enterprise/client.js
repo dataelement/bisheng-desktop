@@ -15,6 +15,10 @@ window.__ModuleLoader__.load({
     const NS = 'settings.desktopEnterprise'
 
     const zh = {
+      seat_not_assigned: '当前服务版本不支持直接登录，请联系管理员升级平台。',
+      seat_revoked: '当前登录已失效，请重新登录。',
+      seat_limit_reached: '当前平台仍启用了旧版接入限制，请联系管理员升级。',
+
       nav: '账号与安全',
       title: '账号与安全',
       managedModels: '企业提供的模型',
@@ -26,7 +30,8 @@ window.__ModuleLoader__.load({
       learnMore: '了解企业版',
       vision: '视觉',
       visionHint: '企业已开启图片输入',
-      usageLabel: '已用 / 额度（Token）',
+      usageLabel: '剩余积分',
+      creditsHelp: 'Chat 和 Work 共用积分，每月重置。',
       ticket: '一次性登录码',
       submitTicket: '完成登录',
       refresh: '刷新',
@@ -35,7 +40,7 @@ window.__ModuleLoader__.load({
       modelAvailable: '可用',
       noModels: '暂无可用模型，请联系管理员授权。',
       usageUnavailable: '用量暂不可用',
-      limitZero: '额度为 0，模型调用已停用',
+      limitZero: '剩余 0 分',
       secureUnavailable: '系统安全存储不可用，企业登录已停用。',
       confirmTitle: '确认毕昇平台',
       confirmLead: '确认后会停用当前企业模型连接，并在该平台新建一次 PKCE 登录。',
@@ -53,9 +58,6 @@ window.__ModuleLoader__.load({
       refresh_token_reused: '登录状态已失效，请重新登录。',
       session_expired: '登录会话已过期，请重新登录。',
       session_revoked: '本次登录会话已失效，请重新登录。',
-      seat_not_assigned: '你尚未获得客户端使用席位，请联系管理员分配后重新登录。',
-      seat_revoked: '你的客户端使用授权已失效，请联系管理员确认席位，重新授权后再登录。',
-      seat_limit_reached: '可用席位已满，请联系管理员处理。',
       license_invalid: '平台客户端授权无效，请联系管理员。',
       license_expired: '平台客户端授权已过期，请联系管理员。',
       dsh_disabled: '管理员已关闭客户端功能，请联系管理员。',
@@ -74,6 +76,10 @@ window.__ModuleLoader__.load({
     }
 
     const en = {
+      seat_not_assigned: 'This server uses a legacy sign-in policy. Ask your administrator to upgrade the platform.',
+      seat_revoked: 'Your sign-in is no longer valid. Sign in again.',
+      seat_limit_reached: 'This server still enforces a legacy access limit. Ask your administrator to upgrade.',
+
       nav: 'Account and security',
       title: 'Account and security',
       managedModels: 'Models provided by your enterprise',
@@ -85,7 +91,8 @@ window.__ModuleLoader__.load({
       learnMore: 'Learn about Enterprise',
       vision: 'Vision',
       visionHint: 'Image input enabled by your enterprise',
-      usageLabel: 'Used / limit (tokens)',
+      usageLabel: 'Credits remaining',
+      creditsHelp: 'Chat and Work share credits, reset monthly.',
       ticket: 'One-time code',
       submitTicket: 'Complete sign-in',
       refresh: 'Refresh',
@@ -112,9 +119,6 @@ window.__ModuleLoader__.load({
       refresh_token_reused: 'Your sign-in state is no longer valid. Sign in again.',
       session_expired: 'Your sign-in session has expired. Sign in again.',
       session_revoked: 'This sign-in session is no longer valid. Sign in again.',
-      seat_not_assigned: 'You do not have a client seat yet. Ask your administrator to assign one, then sign in again.',
-      seat_revoked: 'Your client access is no longer valid. Ask your administrator to confirm the seat, then sign in again after it is authorized.',
-      seat_limit_reached: 'No client seats are available. Contact your administrator.',
       license_invalid: 'The platform client license is invalid. Contact your administrator.',
       license_expired: 'The platform client license has expired. Contact your administrator.',
       dsh_disabled: 'An administrator has turned off the client. Contact your administrator.',
@@ -343,20 +347,13 @@ window.__ModuleLoader__.load({
         }
         .dshEnterpriseModels li {
           box-sizing: border-box;
-          display: flex;
-          flex-wrap: wrap;
-          align-items: center;
-          justify-content: space-between;
-          gap: 8px 20px;
-          min-height: 64px;
-          padding: 14px 0;
+          padding: 6px 0;
           font-size: 14px;
           line-height: 22px;
         }
         .dshEnterpriseModelIdentity {
           display: grid;
-          gap: 4px;
-          flex: 1 1 180px;
+          gap: 2px;
           min-width: 0;
         }
         .dshEnterpriseModelTitle {
@@ -401,24 +398,6 @@ window.__ModuleLoader__.load({
         }
         .dshEnterpriseModelVision svg {
           flex: none;
-        }
-        .dshEnterpriseModelUsage {
-          margin-left: auto;
-          text-align: right;
-          color: var(--dsw-alias-label-secondary);
-          font-size: 13px;
-          line-height: 20px;
-          font-variant-numeric: tabular-nums;
-          white-space: nowrap;
-        }
-        .dshEnterpriseModelUsagePercent {
-          display: none;
-        }
-        .dshEnterpriseModels li:hover .dshEnterpriseModelUsageValue {
-          display: none;
-        }
-        .dshEnterpriseModels li:hover .dshEnterpriseModelUsagePercent {
-          display: inline;
         }
         .dshEnterpriseModels.paused {
           opacity: .5;
@@ -648,23 +627,14 @@ window.__ModuleLoader__.load({
       return payload
     }
 
-    function tokenAmount(value, language) {
-      const zhLocale = String(language || '').toLowerCase().startsWith('zh')
-      if (!zhLocale) {
-        return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(value)
-      }
-      if (value === 0) return '0'
-      if (value < 100) return '<0.01万'
-      return `${new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(value / 10_000)}万`
-    }
-
     function usageText(usage, language, t) {
       if (!usage || usage.source === 'unavailable' || usage.quota_state === 'unavailable') {
         return t('usageUnavailable')
       }
-      if (usage.limit === 0) return t('limitZero')
+      const formatter = new Intl.NumberFormat(language || 'en', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+      if (usage.limit === 0) return formatter.format(0)
       if (usage.used === null || usage.limit === null) return t('usageUnavailable')
-      return `${tokenAmount(usage.used, language)} / ${tokenAmount(usage.limit, language)}`
+      return formatter.format(Math.max(0, usage.limit - usage.used) / 1_000_000)
     }
 
     function readLastBase() {
@@ -692,9 +662,6 @@ window.__ModuleLoader__.load({
     }
 
     const LEGACY_ACCOUNT_PHRASES = {
-      'seat not assigned': 'seat_not_assigned',
-      'seat revoked': 'seat_revoked',
-      'dsh seat revoked': 'seat_revoked',
       'session revoked': 'session_revoked',
       'dsh session revoked': 'session_revoked',
       'session expired': 'session_expired',
@@ -707,6 +674,9 @@ window.__ModuleLoader__.load({
       'refresh token reuse detected; sign in again': 'refresh_token_reused',
       'authorization unavailable': 'authorization_unavailable',
       'dsh authorization is temporarily unavailable': 'authorization_unavailable',
+      'seat not assigned': 'seat_not_assigned',
+      'seat revoked': 'seat_revoked',
+      'dsh seat revoked': 'seat_revoked',
       'invalid grant': 'invalid_grant',
       'pkce verification failed': 'pkce_verification_failed',
       'authorization expired': 'authorization_expired',
@@ -757,15 +727,7 @@ window.__ModuleLoader__.load({
       return { message, code }
     }
 
-    function modelUsagePercentage(usage, language, t) {
-      if (!usage || typeof usage.used !== 'number' || typeof usage.limit !== 'number' || usage.limit <= 0) {
-        return usageText(usage, language, t)
-      }
-      const zhLocale = String(language || '').toLowerCase().startsWith('zh')
-      const percentage = Math.min(100, Math.max(0, usage.used / usage.limit * 100))
-      const formatted = new Intl.NumberFormat(zhLocale ? 'zh-CN' : 'en-US', { maximumFractionDigits: 1 }).format(percentage)
-      return `${formatted}%`
-    }
+
 
     function readUiLanguage() {
       return typeof document === 'object' && document.documentElement?.lang
@@ -826,17 +788,14 @@ window.__ModuleLoader__.load({
 
     function renderModelRow(model, state, language, t) {
       const display = modelDisplayParts(model.display_name)
-      const usage = state.modelUsage?.[model.id]
-      const value = usageText(usage, language, t)
-      const percentage = modelUsagePercentage(usage, language, t)
-      const usageTitle = `${t('usageLabel')}: ${value} · ${percentage}`
+      const usage = state.usage
       const vision = model.capabilities?.vision === true
         ? h('span', { className: 'dshEnterpriseModelVision', title: t('visionHint') },
           createVisionIcon(),
           t('vision'))
         : null
 
-      return h('li', { key: model.id, title: usageTitle },
+      return h('li', { key: model.id },
         h('span', { className: 'dshEnterpriseModelIdentity' },
           h('span', { className: 'dshEnterpriseModelTitle' },
             h('span', { className: 'dshEnterpriseModelName', title: model.display_name }, display.name),
@@ -846,10 +805,7 @@ window.__ModuleLoader__.load({
             }) : null),
           display.provider || vision ? h('span', { className: 'dshEnterpriseModelDetails' },
             display.provider ? h('span', { className: 'dshEnterpriseModelProvider' }, display.provider) : null,
-            vision) : null),
-        h('span', { className: 'dshEnterpriseModelUsage', 'aria-label': usageTitle },
-          h('span', { className: 'dshEnterpriseModelUsageValue' }, value),
-          h('span', { className: 'dshEnterpriseModelUsagePercent', 'aria-hidden': 'true' }, percentage)))
+            vision) : null))
     }
 
     function EnterpriseSection({ t, renderSlot }) {
@@ -1103,7 +1059,7 @@ window.__ModuleLoader__.load({
           h('h2', null, t('title')),
           renderLearnMoreButton(t)),
         status,
-        connected ? h('section', { className: 'dshEnterpriseManagedModels' }, accountContent) : accountContent,
+        connected ? h('section', { className: 'dshEnterpriseManagedModels' }, h('p', { title: t('creditsHelp') }, `${t('usageLabel')}: ${usageText(state.usage, document.documentElement.lang, t)}`), accountContent) : accountContent,
         manualFallback,
         errorPanel,
         confirmationPanel)

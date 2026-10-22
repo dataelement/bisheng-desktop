@@ -36,16 +36,16 @@ export const ACCOUNT_ERROR_COPY = Object.freeze({
     en: 'This sign-in session is no longer valid. Sign in again.'
   },
   seat_not_assigned: {
-    zh: '你尚未获得客户端使用席位，请联系管理员分配后重新登录。',
-    en: 'You do not have a client seat yet. Ask your administrator to assign one, then sign in again.'
+    zh: '当前服务版本不支持直接登录，请联系管理员升级平台。',
+    en: 'This server uses a legacy sign-in policy. Ask your administrator to upgrade the platform.'
   },
   seat_revoked: {
-    zh: '你的客户端使用授权已失效，请联系管理员确认席位，重新授权后再登录。',
-    en: 'Your client access is no longer valid. Ask your administrator to confirm the seat, then sign in again after it is authorized.'
+    zh: '当前登录已失效，请重新登录。',
+    en: 'Your sign-in is no longer valid. Sign in again.'
   },
   seat_limit_reached: {
-    zh: '可用席位已满，请联系管理员处理。',
-    en: 'No client seats are available. Contact your administrator.'
+    zh: '当前平台仍启用了旧版接入限制，请联系管理员升级。',
+    en: 'This server still enforces a legacy access limit. Ask your administrator to upgrade.'
   },
   license_invalid: {
     zh: '平台客户端授权无效，请联系管理员。',

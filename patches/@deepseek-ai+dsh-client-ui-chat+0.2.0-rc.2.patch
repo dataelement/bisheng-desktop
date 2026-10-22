@@ -1,5 +1,5 @@
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js b/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js
-index f997683..17f2b34 100644
+index f997683..5f4e912 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js
 @@ -115,6 +115,76 @@ window.__ModuleLoader__.load({
@@ -473,7 +473,15 @@ index f997683..17f2b34 100644
  			"message.turnError": "本轮运行失败",
  			"message.maxTokens": "已达到输出 token 上限",
  			"message.maxTokens.hint": "回答被截断，已有输出保留在对话中。发送“继续”可让模型接着输出。",
-@@ -5711,7 +5935,39 @@ window.__ModuleLoader__.load({
+@@ -5530,6 +5754,7 @@ window.__ModuleLoader__.load({
+ 			"message.turnUsage.title": "本轮用量",
+ 			"message.turnUsage.consumed": "用量 {total}",
+ 			"message.turnUsage.model": "提供方 / 模型",
++			"message.turnUsage.modelUnavailable": "模型名称暂不可用",
+ 			"message.turnUsage.cacheHit": "缓存命中",
+ 			"message.turnUsage.input": "未缓存输入",
+ 			"message.turnUsage.cacheRead": "缓存读取",
+@@ -5711,7 +5936,39 @@ window.__ModuleLoader__.load({
  			"message.accountStopped": "Task stopped",
  			"message.failure.accountSignedOut": "Stopped because you signed out of DeepSeek.",
  			"message.failure.accountSignInRequired": "Sign in to DeepSeek and ensure the request destination supports account authentication.",
@@ -514,7 +522,61 @@ index f997683..17f2b34 100644
  			"message.turnError": "This turn failed",
  			"message.maxTokens": "Output token limit reached",
  			"message.maxTokens.hint": "The reply was cut off; earlier output is preserved in the conversation. Send \"continue\" to let the model resume.",
-@@ -12265,7 +12521,8 @@ window.__ModuleLoader__.load({
+@@ -5719,6 +5976,7 @@ window.__ModuleLoader__.load({
+ 			"message.turnUsage.title": "Turn usage",
+ 			"message.turnUsage.consumed": "Usage {total}",
+ 			"message.turnUsage.model": "Provider / model",
++			"message.turnUsage.modelUnavailable": "Model name unavailable",
+ 			"message.turnUsage.cacheHit": "Cache hit",
+ 			"message.turnUsage.input": "Uncached input",
+ 			"message.turnUsage.cacheRead": "Cached input",
+@@ -6448,11 +6706,12 @@ window.__ModuleLoader__.load({
+ 		* @param props - Turn usage buckets and locale seat.
+ 		* @returns The trigger and, while open, its portaled dialog anchored above the trigger.
+ 		*/
+-		function TurnUsagePanel({ usage, t }) {
++		function TurnUsagePanel({ usage, modelCatalog, t }) {
++			(0, react.useSyncExternalStore)(modelCatalog.store.subscribe, modelCatalog.store.getSnapshot);
+ 			const { open, setOpen, rootRef, panelRef, pos } = useStatDialog();
+ 			const cacheHit = usage.cacheReadTokens === void 0 ? null : formatCacheHitPercent(usage.cacheReadTokens, usage.totalTokens - usage.outputTokens, 1);
+ 			const total = formatCompactCount(usage.totalTokens, t);
+-			const routes = usage.routes?.map((route) => `${route.provider}/${route.model}`).join(", ") ?? "";
++			const routes = usage.routes?.map((route) => modelCatalog.displayNameFor(route) ?? t("message.turnUsage.modelUnavailable")).join(", ") ?? "";
+ 			return (0, react_jsx_runtime.jsxs)("span", {
+ 				ref: rootRef,
+ 				className: TurnUsagePanel_module_css_default.root,
+@@ -6564,7 +6823,7 @@ window.__ModuleLoader__.load({
+ 			}
+ 		}
+ 		/** Turn-local actions and feature tail over the Location index, independent of Assistant placement. */
+-		const TurnTailNodeView = (0, react.memo)(function TurnTailNodeView({ node, openFile, forkAt, renderSlot, t, useChat, usePerformanceUsage }) {
++		const TurnTailNodeView = (0, react.memo)(function TurnTailNodeView({ node, openFile, forkAt, renderSlot, t, useChat, usePerformanceUsage, modelCatalog }) {
+ 			const detailed = usePerformanceUsage((mode) => mode) === "detailed";
+ 			const data = node.data;
+ 			const hasLaterChatNode = useChat((snapshot) => (lastContent(snapshot, data.turn, true)?.anchorSeq ?? -1) > (data.closing?.finalNode.seq ?? data.seq));
+@@ -6605,6 +6864,7 @@ window.__ModuleLoader__.load({
+ 					extraActions: assistantActions,
+ 					usageAction: detailed && data.tokenUsage !== void 0 ? (0, react_jsx_runtime.jsx)(TurnUsagePanel, {
+ 						usage: data.tokenUsage,
++						modelCatalog,
+ 						t
+ 					}) : null,
+ 					t
+@@ -6850,7 +7110,7 @@ window.__ModuleLoader__.load({
+ 				name: "conversation.chat.node",
+ 				key: "turn-tail",
+ 				locale: NS,
+-				inject: () => ({ hooks: { performanceUsage } }),
++				inject: () => ({ hooks: { performanceUsage }, modelCatalog: ctx.modelDirectories.catalog }),
+ 				children: {
+ 					"conversation.chat.turnTail": {
+ 						kind: "list",
+@@ -12261,11 +12521,13 @@ window.__ModuleLoader__.load({
+ 			"uiWorkspace",
+ 			"uiSession",
+ 			"uiConversation",
++			"modelDirectories",
+ 			"locale",
  			"configForms",
  			"remote",
  			"remote.session",
@@ -524,7 +586,7 @@ index f997683..17f2b34 100644
  		];
  		/**
  		* Mount all Chat-owned contributions.
-@@ -12355,6 +12612,14 @@ window.__ModuleLoader__.load({
+@@ -12355,6 +12617,14 @@ window.__ModuleLoader__.load({
  				}, LinkOpeningRow));
  			});
  			const transcriptView = new TranscriptViewPolicy(chatSettings, "dshDesktop" in globalThis ? "standard" : DEFAULT_TRANSCRIPT_VIEW_MODE);
@@ -539,7 +601,7 @@ index f997683..17f2b34 100644
  			const presentation = derivePresentationPolicy(transcriptView.mode);
  			const performancePolicy = new PerformanceUsagePolicy(chatSettings);
  			ctx.effect(() => () => {
-@@ -12403,6 +12668,10 @@ window.__ModuleLoader__.load({
+@@ -12403,6 +12673,10 @@ window.__ModuleLoader__.load({
  						"conversation.message.images": {
  							kind: "single",
  							scope: "session"
@@ -550,7 +612,7 @@ index f997683..17f2b34 100644
  						}
  					},
  					store: chatStore,
-@@ -12422,10 +12691,21 @@ window.__ModuleLoader__.load({
+@@ -12422,10 +12696,21 @@ window.__ModuleLoader__.load({
  							fileMentions: (owner) => ctx.get("chatFileMentions")?.forClosing(owner, sessionId),
  							openFile: async (path, options) => {
  								const cwd = ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd;
@@ -576,6 +638,45 @@ index f997683..17f2b34 100644
  							},
  							openSkill: (name) => {
  								const scope = ctx.sessions.scope(sessionId);
+diff --git a/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/types/client/chat/TurnTailNodeView.d.ts b/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/types/client/chat/TurnTailNodeView.d.ts
+index 4493a4b..4ef371e 100644
+--- a/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/types/client/chat/TurnTailNodeView.d.ts
++++ b/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/types/client/chat/TurnTailNodeView.d.ts
+@@ -1,7 +1,8 @@
++import type { ModelDirectoryResolver } from '@deepseek-ai/dsh-client-ui-model-selection/client';
+ import type { InjectFace, PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots';
+ import type { ChatNodeViewProps, PerformanceUsageInjected } from '../contract/slots.ts';
+-type TurnTailNodeViewProps = ChatNodeViewProps<'turn-tail'> & PropsRenderSlots<'conversation.chat.turnTail' | 'conversation.chat.assistant-actions'> & InjectFace<PerformanceUsageInjected>;
++type TurnTailNodeViewProps = ChatNodeViewProps<'turn-tail'> & PropsRenderSlots<'conversation.chat.turnTail' | 'conversation.chat.assistant-actions'> & InjectFace<PerformanceUsageInjected> & { modelCatalog: ModelDirectoryResolver['catalog'] };
+ /** Turn-local actions and feature tail over the Location index, independent of Assistant placement. */
+-export declare const TurnTailNodeView: import("react").MemoExoticComponent<({ node, openFile, forkAt, renderSlot, t, useChat, usePerformanceUsage, }: TurnTailNodeViewProps) => import("react").JSX.Element | null>;
++export declare const TurnTailNodeView: import("react").MemoExoticComponent<({ node, openFile, forkAt, renderSlot, t, useChat, usePerformanceUsage, modelCatalog, }: TurnTailNodeViewProps) => import("react").JSX.Element | null>;
+ export {};
+ //# sourceMappingURL=TurnTailNodeView.d.ts.map
+\ No newline at end of file
+diff --git a/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/types/client/chat/TurnUsagePanel.d.ts b/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/types/client/chat/TurnUsagePanel.d.ts
+index 09672d7..1baad71 100644
+--- a/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/types/client/chat/TurnUsagePanel.d.ts
++++ b/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/types/client/chat/TurnUsagePanel.d.ts
+@@ -1,8 +1,10 @@
+ /** Completed-Turn token usage action and its accounting details dialog. */
++import type { ModelDirectoryResolver } from '@deepseek-ai/dsh-client-ui-model-selection/client';
+ import type { TurnTokenUsage } from '../contract/chat-nodes.ts';
+ import type { ChatViewSlotProps } from '../contract/slots.ts';
+ export interface TurnUsagePanelProps {
+     usage: TurnTokenUsage;
++    modelCatalog: ModelDirectoryResolver['catalog'];
+     /** The owning view's locale seat, passed down as a plain prop. */
+     t: ChatViewSlotProps['t'];
+ }
+@@ -11,5 +13,5 @@ export interface TurnUsagePanelProps {
+  * @param props - Turn usage buckets and locale seat.
+  * @returns The trigger and, while open, its portaled dialog anchored above the trigger.
+  */
+-export declare function TurnUsagePanel({ usage, t }: TurnUsagePanelProps): import("react").JSX.Element;
++export declare function TurnUsagePanel({ usage, modelCatalog, t }: TurnUsagePanelProps): import("react").JSX.Element;
+ //# sourceMappingURL=TurnUsagePanel.d.ts.map
+\ No newline at end of file
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/types/client/contract/slots.d.ts b/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/types/client/contract/slots.d.ts
 index a3f4a42..576bab3 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/types/client/contract/slots.d.ts
@@ -632,3 +733,35 @@ index a3f4a42..576bab3 100644
          /**
           * Command row keyed by the command name. The component receives the folded
           * command lifecycle and linked compaction when present. Reusing a key
+diff --git a/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/types/client/locale.d.ts b/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/types/client/locale.d.ts
+index 843b463..b55967c 100644
+--- a/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/types/client/locale.d.ts
++++ b/node_modules/@deepseek-ai/dsh-client-ui-chat/lib/types/client/locale.d.ts
+@@ -170,6 +170,7 @@ export declare const zh: {
+     'message.turnUsage.title': string;
+     'message.turnUsage.consumed': string;
+     'message.turnUsage.model': string;
++    'message.turnUsage.modelUnavailable': string;
+     'message.turnUsage.cacheHit': string;
+     'message.turnUsage.input': string;
+     'message.turnUsage.cacheRead': string;
+@@ -361,6 +362,7 @@ export declare const en: {
+     'message.turnUsage.title': string;
+     'message.turnUsage.consumed': string;
+     'message.turnUsage.model': string;
++    'message.turnUsage.modelUnavailable': string;
+     'message.turnUsage.cacheHit': string;
+     'message.turnUsage.input': string;
+     'message.turnUsage.cacheRead': string;
+diff --git a/node_modules/@deepseek-ai/dsh-client-ui-chat/package.json b/node_modules/@deepseek-ai/dsh-client-ui-chat/package.json
+index c8b720d..3cb8fad 100644
+--- a/node_modules/@deepseek-ai/dsh-client-ui-chat/package.json
++++ b/node_modules/@deepseek-ai/dsh-client-ui-chat/package.json
+@@ -32,6 +32,7 @@
+         "@deepseek-ai/dsh-api-workspace-controller",
+         "@deepseek-ai/dsh-client-locale",
+         "@deepseek-ai/dsh-client-ui-conversation",
++        "@deepseek-ai/dsh-client-ui-model-selection",
+         "@deepseek-ai/dsh-client-ui-input-trigger",
+         "@deepseek-ai/dsh-client-ui-layout",
+         "@deepseek-ai/dsh-client-ui-renderer",

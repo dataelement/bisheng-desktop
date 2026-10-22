@@ -61,7 +61,7 @@ it.runIf(Boolean(backend && python))('runs approved enterprise tool and native s
         }, {
           state: () => ({ connected: true, connectionKey: 'account-a' }), refreshState: async () => {},
           request: (request: any, signal?: AbortSignal) => sendWorkMcp({ request, signal, fetchImpl,
-            credential: { base: 'http://127.0.0.1', cookie: 'fixture-host-cookie', connectionKey: 'account-a', expiresIn: 300 } as any,
+            credential: { base: 'http://127.0.0.1', cookie: 'fixture-host-cookie', cookieName: 'access_token_cookie', connectionKey: 'account-a', expiresIn: 300 } as any,
             assertCurrent() {}, allowInsecureLoopback: true })
         })
         applySkillTool(scoped)

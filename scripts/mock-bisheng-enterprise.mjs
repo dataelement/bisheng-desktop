@@ -245,7 +245,7 @@ export function createMockEnterpriseServer(options = {}) {
         }, id)
       }
 
-      if (request.method === 'POST' && url.pathname === '/api/dsh/authorizations') {
+      if (request.method === 'POST' && url.pathname === '/api/v1/dsh/authorizations') {
         const body = await readJson(request)
         if (!exactFields(body, ['client_id', 'redirect_uri', 'code_challenge', 'code_challenge_method', 'state'], ['device_name', 'client_version']) || body.client_version != null && (typeof body.client_version !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/u.test(body.client_version)) || body.client_id !== CLIENT_ID || body.code_challenge_method !== 'S256' || !validCallback(body.redirect_uri) || !/^[A-Za-z0-9_-]{43}$/u.test(body.code_challenge) || !/^[A-Za-z0-9_-]{43}$/u.test(body.state)) {
           return sendError(response, 400, 'invalid_authorization_request', 'Authorization request is invalid.', 'invalid_request_error', id)
@@ -286,7 +286,7 @@ export function createMockEnterpriseServer(options = {}) {
         return sendHtml(response, 200, ticketPage(callback.toString(), ticket))
       }
 
-      if (request.method === 'POST' && url.pathname === '/api/dsh/token') {
+      if (request.method === 'POST' && url.pathname === '/api/v1/dsh/token') {
         const body = await readJson(request)
         if (body.grant_type === 'identity_ticket') {
           if (!exactFields(body, ['grant_type', 'identity_ticket', 'auth_id', 'code_verifier'])) return sendError(response, 400, 'invalid_request', 'Token request fields are invalid.', 'invalid_request_error', id)
@@ -374,7 +374,7 @@ export function createMockEnterpriseServer(options = {}) {
         return
       }
 
-      if (request.method === 'POST' && url.pathname === '/api/dsh/logout') {
+      if (request.method === 'POST' && url.pathname === '/api/v1/dsh/logout') {
         let session = sessionFromAccess(state, request)
         if (!session) {
           const body = await readJson(request)

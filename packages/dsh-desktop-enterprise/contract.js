@@ -8,9 +8,9 @@ export const ACCESS_REFRESH_SKEW_MS = 60_000
 export const COMPATIBLE_CONTRACT_VERSIONS = Object.freeze(['0.4.0', CONTRACT_VERSION])
 export const API_PATHS = Object.freeze({
   config: '/api/v1/dsh/config',
-  authorizations: '/api/dsh/authorizations',
-  token: '/api/dsh/token',
-  logout: '/api/dsh/logout',
+  authorizations: '/api/v1/dsh/authorizations',
+  token: '/api/v1/dsh/token',
+  logout: '/api/v1/dsh/logout',
   models: '/api/v1/dsh/models',
   chat: '/api/v1/dsh/chat/completions',
   usage: '/api/v1/dsh/usage'

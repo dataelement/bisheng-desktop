@@ -34,7 +34,7 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
 function fixture() {
   let state = { connected: true, connectionKey: 'tenant-a' }
   let change: (state: any) => void = () => {}
-  const enterprise = { snapshot: () => state, subscribe: (listener: typeof change) => { change = listener; return vi.fn() }, webSession: vi.fn(async () => ({ base: 'https://enterprise.example', cookie: 'test-cookie', connectionKey: 'tenant-a', expiresAt: Date.now() + 300_000 })) }
+  const enterprise = { snapshot: () => state, subscribe: (listener: typeof change) => { change = listener; return vi.fn() }, webSession: vi.fn(async () => ({ base: 'https://enterprise.example', cookie: 'test-cookie', cookieName: 'bs_credits_3007', connectionKey: 'tenant-a', expiresAt: Date.now() + 300_000 })) }
   const owner: any = Object.assign(new EventEmitter(), { isDestroyed: () => false, getContentSize: () => [1100, 800], contentView: { addChildView: vi.fn(), removeChildView: vi.fn() }, webContents: Object.assign(new EventEmitter(), { send: vi.fn(), focus: vi.fn(), getZoomFactor: () => 1 }) })
   const host = new EnterpriseChatView(enterprise as any, vi.fn())
   return { host, owner, enterprise, change: (next: typeof state) => { state = next; change(next) } }
@@ -49,7 +49,7 @@ describe('enterprise Chat host boundary', () => {
       expect(f.host.snapshot().phase).toBe('ready')
       expect(fake.views[0].options.webPreferences).toMatchObject({ sandbox: true, nodeIntegration: false, contextIsolation: true, webSecurity: true })
       expect(fake.views[0].options.webPreferences.preload).toMatch(/enterprise-chat\.cjs$/u)
-      expect(fake.sessions[0].cookies.set).toHaveBeenCalledWith(expect.objectContaining({ httpOnly: true, sameSite: 'lax', secure: true, name: 'access_token_cookie' }))
+      expect(fake.sessions[0].cookies.set).toHaveBeenCalledWith(expect.objectContaining({ httpOnly: true, sameSite: 'lax', secure: true, name: 'bs_credits_3007' }))
       expect(fake.views[0].webContents.loadURL).toHaveBeenCalledWith('https://enterprise.example/workspace/?embed=dsh&dshTheme=dark')
       f.host.present(f.owner, { ...presentation, visible: false })
       expect(fake.views[0].setVisible).toHaveBeenLastCalledWith(false)
@@ -82,6 +82,15 @@ describe('enterprise Chat host boundary', () => {
     expect(() => parseWebSession({ cookie: 'a'.repeat(40), expires_in: 3600 }, 'https://enterprise.example', 'a')).toThrow()
     for (const locale of ['ja', 'zh-Hans', '', 0, null, { value: 'zh' }]) {
       expect(() => parseChatPresentation({ ...presentation, locale })).toThrow('locale')
+    }
+  })
+
+  it('validates the ingress cookie name and supports the existing server default', () => {
+    const body = { cookie: 'a'.repeat(40), expires_in: 300 }
+    expect(parseWebSession(body, 'https://enterprise.example', 'a').cookieName).toBe('access_token_cookie')
+    expect(parseWebSession({ ...body, cookie_name: 'bs_credits_3007' }, 'https://enterprise.example', 'a').cookieName).toBe('bs_credits_3007')
+    for (const cookie_name of ['', 'a=b', 'a; b', '\r\nCookie: x', null, 3, 'a'.repeat(65)]) {
+      expect(() => parseWebSession({ ...body, cookie_name }, 'https://enterprise.example', 'a')).toThrow('cookie name')
     }
   })
 })
