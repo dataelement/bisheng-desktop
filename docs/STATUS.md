@@ -407,3 +407,9 @@ Verification:
 - Desktop baseline: `V1.2.0@a2d2f43`, Harness `0.2.0-rc.2`, Electron `43.0.0`; working tree `bisheng-work-v120-credits`.
 - Chat reports its knowledge dialog lifecycle through a presentation-only bridge. The native view expands to the window while the chat content retains its region geometry; close/navigation restores the region. The backdrop uses Work's sampled mask token including alpha.
 - Type checking, production build and 29 targeted host/theme tests passed. macOS arm64 DMG/ZIP and packaged Office checks passed. 3006 client release `chat-window-dialog-20261022-1905` deployed; package stored in `outputs/bisheng-dev-3006-dialog-20261022`. Visual acceptance belongs to the user.
+
+
+## 2026-10-22 Account settings display simplification
+- Baseline: remote `V1.2.0@0b64190cf5c3c529acad3222c0eeb760d6e4a9c5`; worktree `bisheng-work-v120-credits`; installed Harness `0.2.0-rc.2`, Electron `43.0.0`. Includes the latest colleague enterprise skills integration.
+- The connected account page ends with the logout action after usage, managed models and storage. Removed the redundant enterprise account heading and service address display, together with their unused copy/styles. The sign-in address field remains available for connection setup.
+- JavaScript syntax check, production build and packaged Office authoring/conversion checks passed. User performs local visual acceptance.

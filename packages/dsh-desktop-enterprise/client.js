@@ -21,7 +21,6 @@ window.__ModuleLoader__.load({
 
       nav: '账号与用量',
       title: '账号与用量',
-      security: '企业账号',
       managedModels: '企业提供的模型',
       accountLabel: '当前账号',
       platform: '企业服务地址',
@@ -83,7 +82,6 @@ window.__ModuleLoader__.load({
 
       nav: 'Account and usage',
       title: 'Account and usage',
-      security: 'Enterprise account',
       managedModels: 'Models provided by your enterprise',
       accountLabel: 'Current account',
       platform: 'Enterprise service URL',
@@ -176,12 +174,6 @@ window.__ModuleLoader__.load({
         .dshEnterpriseHint {
           color: var(--ds-text-secondary, #6d7178);
           line-height: 1.55;
-        }
-        .dshEnterpriseServiceAddress {
-          color: var(--dsw-alias-label-secondary);
-          font-size: 12px;
-          line-height: 1.6;
-          overflow-wrap: anywhere;
         }
         .dshEnterpriseLabel {
           display: grid;
@@ -1079,11 +1071,7 @@ window.__ModuleLoader__.load({
         }, { fallback: h(React.Fragment, null,
           h('p', { title: t('creditsHelp') }, `${t('usageLabel')}: ${usageText(state.usage, document.documentElement.lang, t)}`),
           h('section', { className: 'dshEnterpriseManagedModels' }, accountContent)) }),
-        connected ? h(React.Fragment, null,
-          h('section', { className: 'dshEnterpriseSecurity' },
-            h('div', { className: 'dshEnterpriseSectionHeader' }, h('h3', null, t('security'))),
-            h('p', { className: 'dshEnterpriseServiceAddress' }, `${t('platform')}: ${state.base || base}`),
-            logoutButton)) : accountContent,
+        connected ? logoutButton : accountContent,
         manualFallback,
         errorPanel,
         confirmationPanel)
