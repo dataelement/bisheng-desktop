@@ -41,6 +41,27 @@ function fixture() {
 }
 
 describe('enterprise Chat host boundary', () => {
+  it('reads fixed self-service usage with the isolated session and discards logout races', async () => {
+    const f = fixture()
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      const totals = { message_count: 2, input_tokens: 10, output_tokens: 5, total_tokens: 15, missing_usage_count: 0 }
+      const summary = { start_at: '2026-10-22T00:00:00+08:00', end_at: '2026-10-22T12:00:00+08:00', timezone: 'Asia/Shanghai', granularity: 'day', totals, points: [] }
+      fake.sessions[0].fetch.mockImplementation(async (url: string) => new Response(JSON.stringify({ status_code: 200, data: url.endsWith('usage-summary') ? summary : [{ resource_type: 'knowledge_space_file', user_used: 0.1, effective: -1 }] })))
+      expect(await f.host.usage()).toMatchObject({ totals, storage: { used: 0.1, limit: -1 } })
+      expect(fake.sessions[0].fetch.mock.calls.map((call: unknown[]) => call[0])).toEqual(['https://enterprise.example/api/v1/dsh/me/usage-summary', 'https://enterprise.example/api/v1/quota/effective'])
+      const finishes: Array<(response: Response) => void> = []
+      fake.sessions[0].fetch.mockImplementation(() => new Promise<Response>(resolve => { finishes.push(resolve) }))
+      const pending = f.host.usage()
+      const rejected = expect(pending).rejects.toThrow('identity changed')
+      f.change({ connected: false, connectionKey: 'tenant-a' })
+      // Both requests must settle before the identity check.
+      for (const finish of finishes) finish(new Response(JSON.stringify({ status_code: 200, data: [] })))
+      await rejected
+    } finally { f.host.dispose() }
+  })
+
   it('sets a host-only cookie before loading Chat and keeps Work switches reversible', async () => {
     const f = fixture()
     try {

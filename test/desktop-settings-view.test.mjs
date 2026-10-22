@@ -26,6 +26,7 @@ async function fixture(language = 'zh', settingsProtocolVersion = 1, signedIn = 
     return { ok: true, json: async () => account }
   })
   const primitives = {
+    SegmentedControl: ({ id, value, options, onChange, label }) => React.createElement('div', { role: 'tablist', 'aria-label': label }, options.map(option => React.createElement('button', { key: option.value, role: 'tab', id: `${id}-${option.value}`, 'aria-selected': option.value === value, onClick: () => onChange(option.value) }, option.label))),
     Menu: ({ open, anchor, children, listClassName }) => React.createElement('div', null, anchor, open && React.createElement('div', { role: 'menu', className: listClassName }, children)),
     MenuItemButton: ({ children, onSelect, disabled }) => React.createElement('button', { type: 'button', role: 'menuitem', disabled, onClick: onSelect }, children),
     Modal: ({ open, onClose, title, description, children, footer }) => open ? React.createElement('div', { role: 'dialog', 'aria-label': title, onKeyDown: event => { if (event.key === 'Escape') onClose() } }, description, children, footer) : null,
@@ -40,7 +41,7 @@ async function fixture(language = 'zh', settingsProtocolVersion = 1, signedIn = 
   vm.runInNewContext(source, { window: dom.window, document: dom.window.document, AbortController, fetch: request, CustomEvent: dom.window.CustomEvent, ResizeObserver: class { observe = resize; disconnect = vi.fn() } })
   const plugin = definition.factory(id => { if (id === 'react') return React; if (id === '@deepseek-ai/dsh-client-ui-primitives') return primitives; throw new Error(id) })
   await act(async () => plugin.apply({
-    locale: { register: (ns, values) => { dictionaries.set(ns, values) }, bind: ns => key => dictionaries.get(ns)[language][key] },
+    locale: { register: (ns, values) => { dictionaries.set(ns, values) }, bind: ns => (key, params = {}) => dictionaries.get(ns)[language][key]?.replace(/\{(\w+)\}/g, (_, name) => String(params[name] ?? '')) },
     effect: fn => { const dispose = fn(); if (dispose) effects.push(dispose) },
     slots: {
       inject: (_slot, fn) => fn(),
@@ -65,6 +66,66 @@ async function fixture(language = 'zh', settingsProtocolVersion = 1, signedIn = 
   }
   return { mount, renderSlot, render, registrations, primitives, update: next => subscribers.forEach(listener => listener(next)), root, dom, unregister, request, subscribers, setAccount: next => { account = next } }
 }
+
+it.each(['zh', 'en'])('renders native usage with enterprise data, switching metrics and clearing identity (%s)', async language => {
+  const f = await fixture(language)
+  const totals = { total_tokens: 1200, input_tokens: 1000, output_tokens: 200, message_count: 12, missing_usage_count: 1 }
+  window.dshEnterpriseChat.usage = vi.fn(async () => ({ totals, storage: { used: 0.05, limit: -1 }, points: [{ ...totals, start_at: '2026-10-22T00:00:00+08:00', end_at: '2026-10-23T00:00:00+08:00' }] }))
+  const surface = vi.fn()
+  window.addEventListener('dsh-desktop:settings-surface', surface)
+  const entry = f.registrations.find(row => row.options.id === 'desktop-usage')
+  await f.mount(entry.Component, entry.options.inject())
+  expect(document.querySelector('[role=tablist]')).not.toBeNull()
+  const ownedStyle = document.querySelector('style[data-plugin-css="dsh-desktop-settings"]')
+  expect(ownedStyle.dataset.plugin).toBe('dsh-desktop-settings')
+  // Match the module loader's claim + HMR removal behavior for an unrelated lazy factory.
+  for (const style of document.querySelectorAll('style:not([data-plugin])')) style.dataset.plugin = 'unrelated-lazy-plugin'
+  document.querySelectorAll('style[data-plugin="unrelated-lazy-plugin"]').forEach(style => style.remove())
+  expect(ownedStyle.isConnected).toBe(true)
+  expect(document.querySelector('.dshUsageStorage').textContent).toContain('51.2 MB')
+  expect(document.querySelector('.dshUsageTotals dd').title).toBe('1200')
+  await click(document.querySelectorAll('[role=tab]')[1])
+  expect(document.querySelector('.dshUsageTotals dd').textContent).toBe('12')
+  expect(document.querySelector('[role=listitem]').title).toContain('12')
+  expect(surface).not.toHaveBeenCalled()
+  await act(async () => f.update({ epoch: 2, connected: false }))
+  expect(document.querySelector('.dshUsageTotals')).toBeNull()
+  expect(document.body.textContent).toContain(language === 'zh' ? '登录企业账号后可查看' : 'Sign in to view')
+})
+
+it.each(['zh', 'en'])('avoids overlapping month labels for a partial starting week (%s)', async language => {
+  const f = await fixture(language)
+  const totals = { total_tokens: 0, input_tokens: 0, output_tokens: 0, message_count: 0, missing_usage_count: 0 }
+  const start = Date.parse('2025-10-31T00:00:00Z')
+  const points = Array.from({ length: 365 }, (_, index) => ({ ...totals, start_at: new Date(start + index * 86400000).toISOString(), end_at: new Date(start + (index + 1) * 86400000).toISOString() }))
+  window.dshEnterpriseChat.usage = vi.fn(async () => ({ totals, storage: null, points }))
+  const entry = f.registrations.find(row => row.options.id === 'desktop-usage')
+  await f.mount(entry.Component, entry.options.inject())
+  const labels = [...document.querySelectorAll('.dshUsageMonths span')]
+  expect(labels[0].textContent).toBe(language === 'zh' ? '11月' : 'Nov')
+  const columns = labels.map(node => Number(node.style.gridColumn.split('/')[0]))
+  expect(columns.every((column, index) => index === 0 || column - columns[index - 1] >= 3)).toBe(true)
+  expect(labels.every(node => node.style.gridRow === '1')).toBe(true)
+  expect(document.querySelectorAll('.dshUsageDay')).toHaveLength(365)
+  expect(document.querySelector('.dshUsageGrid').style.gridTemplateColumns).toContain('minmax(0, 1fr)')
+})
+
+it('retries native usage failures and ignores results finishing after identity change', async () => {
+  const f = await fixture()
+  const usage = vi.fn().mockRejectedValueOnce(new Error('offline'))
+  window.dshEnterpriseChat.usage = usage
+  const entry = f.registrations.find(row => row.options.id === 'desktop-usage')
+  await f.mount(entry.Component, entry.options.inject())
+  expect(document.querySelector('[role=alert]').textContent).toContain('用量暂不可用')
+  let finish
+  usage.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+  await click(document.querySelector('.dshSettingsStatus button'))
+  expect(document.querySelector('.dshUsage').getAttribute('aria-busy')).toBe('true')
+  await act(async () => f.update({ epoch: 5, connected: false }))
+  await act(async () => finish({ totals: {}, points: [], storage: null }))
+  expect(document.body.textContent).toContain('登录企业账号后可查看')
+  expect(document.querySelector('.dshUsageGrid')).toBeNull()
+})
 
 /** Exercise the installed DSH owners and their real fallbacks without copying their layouts. */
 async function builtInComponents(packageName, names) {
@@ -188,13 +249,11 @@ it.each(['zh', 'en'])('does not present the previous enterprise page through an 
   const entry = f.registrations.find(row => row.options.id === 'desktop-usage')
   await f.mount(entry.Component, entry.options.inject())
   expect(document.body.textContent).toContain(language === 'zh' ? '请完全退出并重新启动客户端' : 'Quit and restart the desktop app')
-  expect(document.querySelector('.dshSettingsRemote').getAttribute('aria-busy')).toBe('false')
+  expect(document.querySelector('.dshSettingsRemote')).toBeNull()
   expect(surface).not.toHaveBeenCalled()
-  // A host that supports the protocol may request geometry, but still must await page readiness.
+  // Native usage never requests an embedded web surface, even on newer hosts.
   await act(async () => f.update({ connected: true, phase: 'ready', settingsProtocolVersion: 1 }))
-  expect(surface).toHaveBeenCalledOnce()
-  expect(surface.mock.calls[0][0].detail.section).toBe('desktop-usage')
-  expect(document.querySelector('.dshSettingsRemote').getAttribute('aria-busy')).toBe('true')
+  expect(surface).not.toHaveBeenCalled()
 })
 
 it('uses DSH plugin tabs for inventory and enterprise contributions without an Advanced group', async () => {

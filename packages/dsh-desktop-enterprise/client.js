@@ -727,8 +727,6 @@ window.__ModuleLoader__.load({
       return { message, code }
     }
 
-
-
     function readUiLanguage() {
       return typeof document === 'object' && document.documentElement?.lang
         ? document.documentElement.lang

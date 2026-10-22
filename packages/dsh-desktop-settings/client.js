@@ -3,15 +3,17 @@ window.__ModuleLoader__.load({
   factory: (require) => {
     const React = require('react')
     const { createElement: h, useEffect, useRef, useState } = React
-    const { Menu, MenuItemButton, Modal, IconSettingsOutlineRegular, IconChecklistOutlineRegular, IconChecklistOutlineMedium, IconPaperPlaneOutlineMedium, IconAlarmClockOutlineMedium, IconGaugeOutlineMedium, IconApiOutlineMedium, IconInfoOutlineMedium, IconUserOutlineMedium, IconChevronDownOutlineRegular, IconCloseOutlineRegular } = require('@deepseek-ai/dsh-client-ui-primitives')
+    const { SegmentedControl, Menu, MenuItemButton, Modal, IconSettingsOutlineRegular, IconChecklistOutlineRegular, IconChecklistOutlineMedium, IconPaperPlaneOutlineMedium, IconAlarmClockOutlineMedium, IconGaugeOutlineMedium, IconApiOutlineMedium, IconInfoOutlineMedium, IconUserOutlineMedium, IconChevronDownOutlineRegular, IconCloseOutlineRegular } = require('@deepseek-ai/dsh-client-ui-primitives')
     const NS = 'desktop.settings'
     const COPY = {
       zh: {
         accountMenu: '账号菜单', enterpriseAccount: '企业账号', signedOut: '未登录', deviceOnly: '本机模式', signInHint: '登录后可使用企业功能', identityLoading: '正在读取账号…', identityError: '暂时无法读取账号', settings: '设置', accountSettings: '账号设置', approvals: '消息', approvalsPending: '待处理审批', phone: '连接手机', login: '登录企业账号', logout: '退出登录', logoutBody: '退出后需要重新登录企业账号。本机设置、已安装插件和本地数据保留。', logoutFailed: '退出登录未完成，请重试。', cancel: '取消', again: '重试', close: '关闭', loggingOut: '正在退出登录…',
+        numberLocale: 'zh-CN', modelUsage: '模型用量', tokens: 'Token 用量', messages: '消息数', storage: '个人存储空间', unlimited: '不限', storageValue: '已使用 {used} / {limit}', breakdown: '输入 {input} Token · 输出 {output} Token', missingUsage: '{count} 条记录缺少 Token 用量', usageError: '用量暂不可用，请重试。', noUsage: '暂无用量记录', unavailable: '—',
         openContent: '进入设置内容', usage: '用量与存储', about: '关于与帮助', tasks: '我的审批', requests: '我的申请', notifications: '通知', ai: 'AI 助手接入', loading: '正在加载企业设置…', error: '暂时无法加载企业设置，请检查连接后重试。', restart: '请完全退出并重新启动客户端，以启用统一设置。', unsupported: '平台暂不支持统一设置，请联系管理员更新平台。', retry: '重新连接', signIn: '登录企业账号后可查看', openAccount: '前往账号设置', desktopVersion: 'BISHENG 版本', harnessVersion: 'Harness 版本', infoError: '无法读取版本信息', update: '检查更新', logs: '查看日志', recovery: '安全模式与插件恢复', localHint: '本机设置仍可正常使用。', actionError: '操作未完成，请重试。',
       },
       en: {
         accountMenu: 'Account menu', enterpriseAccount: 'Enterprise account', signedOut: 'Not signed in', deviceOnly: 'Device only', signInHint: 'Sign in to use enterprise features', identityLoading: 'Loading account…', identityError: 'Account unavailable', settings: 'Settings', accountSettings: 'Account settings', approvals: 'Messages', approvalsPending: 'Pending approvals', phone: 'Connect phone', login: 'Sign in', logout: 'Log out', logoutBody: 'You will need to sign in again. Device settings, installed plugins and local data are kept.', logoutFailed: 'Logout did not complete. Try again.', cancel: 'Cancel', again: 'Retry', close: 'Close', loggingOut: 'Logging out…',
+        numberLocale: 'en-US', modelUsage: 'Model usage', tokens: 'Token usage', messages: 'Messages', storage: 'Personal storage', unlimited: 'Unlimited', storageValue: 'Used {used} / {limit}', breakdown: 'Input {input} tokens · Output {output} tokens', missingUsage: '{count} records are missing token usage', usageError: 'Usage unavailable. Please retry.', noUsage: 'No usage recorded', unavailable: '—',
         openContent: 'Enter settings content', usage: 'Usage and storage', about: 'About and help', tasks: 'My approvals', requests: 'My requests', notifications: 'Notifications', ai: 'AI assistant access', loading: 'Loading enterprise settings…', error: 'Enterprise settings could not load. Check the connection and try again.', restart: 'Quit and restart the desktop app to enable unified settings.', unsupported: 'This platform does not support unified settings yet. Ask your administrator to update it.', retry: 'Reconnect', signIn: 'Sign in to view enterprise settings', openAccount: 'Open account settings', desktopVersion: 'BISHENG version', harnessVersion: 'Harness version', infoError: 'Could not read version information', update: 'Check for updates', logs: 'Show logs', recovery: 'Safe Mode and plugin recovery', localHint: 'Device settings remain available.', actionError: 'The action did not complete. Try again.',
       }
     }
@@ -91,7 +93,81 @@ window.__ModuleLoader__.load({
             failure && h('button', { type: 'button', onClick: () => { setFailed(false); setState(previous => ({ ...previous, phase: 'loading', settingsFailure: undefined, settingsReady: false })); void window.dshEnterpriseChat.retry().catch(() => { if (alive.current) setFailed(true) }) } }, t('retry'))))
     }
 
-    function Usage({ t }) { return h('section', { className: 'dshSettingsSection' }, h('h2', null, t('usage')), h(RemoteSettings, { section: 'desktop-usage', t })) }
+    function Usage({ t }) {
+      const [state, setState] = useState({ phase: 'loading' })
+      const [metric, setMetric] = useState('tokens')
+      const [attempt, setAttempt] = useState(0)
+      const id = React.useId()
+      useEffect(() => {
+        let disposed = false, revision = 0, identity
+        const bridge = window.dshEnterpriseChat
+        const receive = next => {
+          if (!bridge?.usage) { setState({ phase: 'unsupported' }); return }
+          const key = `${next.epoch}:${next.connected}`
+          if (key === identity) return
+          identity = key
+          const request = ++revision
+          setState({ phase: next.connected ? 'loading' : 'signedOut' })
+          if (next.connected && next.phase === 'error') { setState({ phase: 'error' }); return }
+          if (next.connected) void bridge.usage().then(data => {
+            if (!disposed && request === revision) setState({ phase: 'ready', data })
+          }).catch(() => { if (!disposed && request === revision) setState({ phase: 'error' }) })
+        }
+        const unsubscribe = bridge?.subscribe(next => { if (!disposed) receive(next) })
+        const initial = revision
+        if (bridge?.usage) void bridge.state().then(next => { if (!disposed && initial === revision) receive(next) }).catch(() => { if (!disposed && initial === revision) setState({ phase: 'error' }) })
+        else setState({ phase: 'unsupported' })
+        return () => { disposed = true; revision++; unsubscribe?.() }
+      }, [attempt])
+      const locale = t('numberLocale')
+      const amount = value => value == null ? t('unavailable') : new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 2 }).format(value)
+      const size = (value, unit) => `${Number((unit === 'MB' ? value * 1024 : value).toFixed(2))} ${unit}`
+      const data = state.data
+      let content
+      if (state.phase === 'signedOut') content = h('div', { className: 'dshSettingsStatus' }, h('p', null, t('signIn')), h('button', { type: 'button', onClick: openAccount }, t('openAccount')))
+      else if (state.phase !== 'ready') content = h('div', { className: 'dshSettingsStatus', role: state.phase === 'error' ? 'alert' : 'status' }, h('p', null, t(state.phase === 'unsupported' ? 'restart' : state.phase === 'error' ? 'usageError' : 'loading')), state.phase === 'error' && h('button', { type: 'button', onClick: () => setAttempt(value => value + 1) }, t('again')))
+      else {
+        const quota = data.storage
+        const unit = (quota?.limit === -1 ? quota.used : quota?.limit) < 1 ? 'MB' : 'GB'
+        const value = point => metric === 'tokens' ? point.total_tokens : point.message_count
+        const max = Math.max(1, ...data.points.map(point => value(point) || 0))
+        // Sunday-first calendar columns, matching the enterprise daily buckets in Shanghai.
+        const first = data.points[0]
+        const offset = first ? new Date(`${first.start_at.slice(0, 10)}T00:00:00Z`).getUTCDay() : 0
+        const months = []
+        let previousMonth
+        data.points.forEach((point, index) => {
+          const date = point.start_at.slice(0, 10), month = date.slice(0, 7)
+          if (month !== previousMonth) {
+            months.push({ date: new Date(`${date}T00:00:00Z`), column: Math.floor((index + offset) / 7) + 1 })
+            previousMonth = month
+          }
+        })
+        // A partial starting month can share a week with the next month. Prefer
+        // the complete month label and reserve three columns per visible label.
+        const visibleMonths = months.filter((month, index) => !months[index + 1] || months[index + 1].column - month.column >= 3)
+        const columns = Math.max(1, Math.ceil((data.points.length + offset) / 7))
+        content = h(React.Fragment, null,
+          h('div', { className: 'dshUsageStorage' }, h('span', null, t('storage')), h('span', null, quota ? t('storageValue', { used: size(quota.used, unit), limit: quota.limit === -1 ? t('unlimited') : size(quota.limit, unit) }) : t('unavailable'))),
+          quota && quota.limit !== -1 && h('progress', { className: 'dshUsageProgress', value: quota.limit > 0 ? Math.min(1, quota.used / quota.limit) : 1, max: 1, 'aria-label': t('storage') }),
+          h('section', { className: 'dshUsageModel' },
+            h('header', { className: 'dshUsageHeader' }, h('h3', null, t('modelUsage')), h(SegmentedControl, { id, value: metric, label: t('modelUsage'), options: [{ value: 'tokens', label: t('tokens') }, { value: 'messages', label: t('messages') }], onChange: setMetric })),
+            h('div', { id: `${id}-${metric}-panel`, role: 'tabpanel', 'aria-labelledby': `${id}-${metric}`, tabIndex: 0 },
+              h('div', { className: 'dshUsageCalendarScroll' },
+                h('div', { className: 'dshUsageMonths', style: { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }, 'aria-hidden': true }, ...visibleMonths.map(({ date, column }) => h('span', { key: date.toISOString(), style: { gridColumn: `${column} / span ${Math.min(3, columns - column + 1)}`, gridRow: 1 } }, new Intl.DateTimeFormat(locale, { month: 'short', timeZone: 'UTC' }).format(date)))),
+                h('div', { className: 'dshUsageGrid', role: 'list', 'aria-label': t(metric), style: { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` } }, ...data.points.map((point, index) => {
+                  const count = value(point)
+                  const label = `${point.start_at.slice(0, 10)} · ${t(metric)}: ${count == null ? t('unavailable') : count.toLocaleString(locale)}`
+                  return h('div', { key: point.start_at, role: 'listitem', title: label, 'aria-label': label, className: 'dshUsageDay', 'data-level': count == null ? 'unknown' : count === 0 ? 0 : Math.max(1, Math.ceil(count / max * 4)), style: { gridColumn: Math.floor((index + offset) / 7) + 1, gridRow: (index + offset) % 7 + 1 } })
+                }))),
+              !data.points.some(point => (value(point) || 0) > 0) && h('p', { className: 'dshSettingsHint' }, t('noUsage')),
+              h('dl', { className: 'dshUsageTotals', 'aria-live': 'polite' }, h('dt', null, t(metric)), h('dd', { title: String(metric === 'tokens' ? data.totals.total_tokens ?? t('unavailable') : data.totals.message_count) }, amount(metric === 'tokens' ? data.totals.total_tokens : data.totals.message_count))),
+              metric === 'tokens' && h('p', { className: 'dshSettingsHint' }, t('breakdown', { input: amount(data.totals.input_tokens), output: amount(data.totals.output_tokens) })),
+              data.totals.missing_usage_count > 0 && h('p', { role: 'status', className: 'dshSettingsHint' }, t('missingUsage', { count: data.totals.missing_usage_count }))))
+        )
+      }
+      return h('section', { className: 'dshSettingsSection dshUsage', 'aria-busy': state.phase === 'loading' }, h('h2', null, t('usage')), content)
+    }
     function AiAccess({ t }) { return h('section', { className: 'dshSettingsSection' }, h('h2', null, t('ai')), h(RemoteSettings, { section: 'ai-access', t })) }
     const APPROVAL_SECTIONS = [['my-tasks', 'tasks'], ['my-requests', 'requests'], ['notifications', 'notifications']]
 
@@ -346,12 +422,18 @@ window.__ModuleLoader__.load({
       const t = ctx.locale.bind(NS)
       ctx.effect(() => {
         const style = document.createElement('style')
+        // Claim ownership immediately: a different lazy factory must not adopt
+        // this effect-created stylesheet and remove it during its own HMR.
+        style.dataset.plugin = 'dsh-desktop-settings'
         style.dataset.pluginCss = 'dsh-desktop-settings'
         style.textContent = `
+          .dshUsage{min-width:0}.dshUsageStorage{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;font-size:14px}.dshUsageStorage>span:last-child,.dshUsage .dshSettingsHint{color:var(--dsw-alias-label-secondary)}.dshUsageProgress{width:100%;height:6px;margin-top:10px;accent-color:var(--dsw-alias-state-business-primary)}
+          .dshUsageModel{margin-top:28px}.dshUsageHeader{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px}.dshUsageHeader h3{margin:0;font-size:16px;font-weight:600}.dshUsageCalendarScroll{overflow-x:auto;padding-bottom:4px}.dshUsageMonths{display:grid;min-width:440px;gap:3px;margin-bottom:8px;color:var(--dsw-alias-label-secondary);font-size:12px}.dshUsageMonths span{white-space:nowrap;min-width:0;overflow:hidden;text-overflow:clip}.dshUsageMonths span:last-child{text-align:right}.dshUsageGrid{display:grid;grid-template-rows:repeat(7,1fr);min-width:440px;gap:3px}.dshUsageDay{aspect-ratio:1;border-radius:2px;background:var(--dsw-alias-interactive-bg-hover)}.dshUsageDay[data-level='1']{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 25%,var(--dsw-alias-interactive-bg-hover))}.dshUsageDay[data-level='2']{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 45%,var(--dsw-alias-interactive-bg-hover))}.dshUsageDay[data-level='3']{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 70%,var(--dsw-alias-interactive-bg-hover))}.dshUsageDay[data-level='4']{background:var(--dsw-alias-state-business-primary)}.dshUsageDay[data-level='unknown']{outline:1px dashed var(--dsw-alias-border-l2);outline-offset:-1px;background:transparent}.dshUsageTotals{margin:26px 0 12px}.dshUsageTotals dt{font-size:14px;color:var(--dsw-alias-label-secondary)}.dshUsageTotals dd{margin:8px 0 0;font-size:24px;font-weight:600;font-variant-numeric:tabular-nums}.dshUsage .dshSettingsHint{font-size:12px;line-height:1.6}
+
           .dshSettingsSection{color:var(--dsw-alias-label-primary)}.dshSettingsSection h2{font-size:18px;font-weight:600;margin:0 0 20px}.dshSettingsRemote{height:max(360px,calc(min(800px,100vh - 80px) - 220px));position:relative;min-width:0}
           .dshSettingsStatus{padding:24px 0;font-size:14px}.dshSettingsTabs{display:flex;gap:8px;border-bottom:1px solid var(--dsw-alias-border-l2);padding-bottom:12px;margin-bottom:8px}
-          .dshSettingsSection button,.dshSettingsStatus button{font:inherit;color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);border-radius:var(--dsw-radius-md);padding:7px 12px;cursor:pointer}
-          .dshSettingsSection button:hover,.dshSettingsStatus button:hover{background:var(--dsw-alias-interactive-bg-hover)}.dshSettingsSection button[aria-selected=true]{background:var(--dsw-alias-interactive-bg-hover);font-weight:600}.dshSettingsSection button:disabled{opacity:.5;cursor:default}
+          .dshSettingsSection button:not([role=tab]),.dshSettingsStatus button{font:inherit;color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);border-radius:var(--dsw-radius-md);padding:7px 12px;cursor:pointer}
+          .dshSettingsSection button:not([role=tab]):hover,.dshSettingsStatus button:hover{background:var(--dsw-alias-interactive-bg-hover)}.dshSettingsSection button:not([role=tab])[aria-selected=true]{background:var(--dsw-alias-interactive-bg-hover);font-weight:600}.dshSettingsSection button:not([role=tab]):disabled{opacity:.5;cursor:default}
           .dshSettingsVersions{display:grid;grid-template-columns:1fr auto;gap:20px;padding:20px 0;border-bottom:1px solid var(--dsw-alias-border-l2);font-size:14px}.dshSettingsVersions dd{margin:0;color:var(--dsw-alias-label-secondary)}.dshSettingsButtons{display:flex;gap:12px;padding:20px 0;flex-wrap:wrap}
           .dshAccountLauncher,.dshAccountMenuAnchor{display:block;width:100%;min-width:0}.dshAccountTrigger{anchor-name:--dsh-desktop-account-trigger;display:flex;align-items:center;gap:10px;width:100%;min-width:0;height:48px;box-sizing:border-box;padding:6px 10px;border:0;border-radius:var(--dsw-radius-md);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;text-align:left;cursor:pointer}.dshAccountTrigger:hover,.dshAccountTrigger[aria-expanded=true]{background:var(--dsw-alias-interactive-bg-hover)}.dshAccountTrigger:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}.dshAccountTrigger:disabled{cursor:default}.dshAccountTriggerRail{width:36px;height:36px;padding:4px;margin:auto;justify-content:center}.dshAccountTrigger>svg{flex:none;color:var(--dsw-alias-label-tertiary)}
           .dshAccountAvatar{display:flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;border-radius:50%;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-size:11px;font-weight:600}.dshAccountAvatarWrap{position:relative;display:flex;flex:none}.dshAccountBadge{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--dsw-alias-state-error-primary);color:#fff;font-size:10px;font-weight:600;line-height:1}.dshAccountAvatarWrap>.dshAccountBadge{position:absolute;top:-4px;right:-6px}.dshAccountMenuRow{display:flex;align-items:center;gap:8px;min-width:0}.dshAccountTriggerCopy{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;font-size:13px}.dshAccountTriggerCopy>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dshAccountTriggerCopy small,.dshAccountMenuIdentity small{color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:400}

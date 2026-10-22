@@ -611,6 +611,7 @@ window.__ModuleLoader__.load({
       ctx.effect(() => ctx.locale.register(MODES_NS, MODES_COPY), 'desktop: Chat and Work locale')
       ctx.effect(() => {
         const style = document.createElement('style')
+        style.dataset.plugin = 'dsh-desktop-client-ui'
         style.textContent = `
           .dshPrimaryNavigation{display:flex;flex-direction:column;flex:none;gap:4px;padding:0 0 12px}
           .dshPrimaryNavigation[data-wide=false]{gap:12px}
@@ -804,6 +805,7 @@ window.__ModuleLoader__.load({
       ctx.effect(() => {
         if (document.getElementById('desktop-work-resources-style')) return
         const style = document.createElement('style')
+        style.dataset.plugin = 'dsh-desktop-client-ui'
         style.id = 'desktop-work-resources-style'
         style.textContent = `.dshWorkKnowledgeRow svg{width:16px;height:16px;flex:none}.dshWorkKnowledgeDialog{width:min(680px,90vw)}.dshWorkKnowledgeSearch{box-sizing:border-box;width:100%;padding:10px 12px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit}.dshWorkKnowledgeList{min-height:180px;max-height:50vh;overflow:auto;margin-top:12px}.dshWorkKnowledgeList h3{font-size:12px;font-weight:400;color:var(--dsw-alias-label-secondary);padding:8px}.dshWorkKnowledgeRow{display:flex;align-items:center;gap:8px;padding:12px 8px;border-radius:8px;cursor:pointer;min-width:0}.dshWorkKnowledgeRow:hover{background:var(--dsw-alias-interactive-bg-hover)}.dshWorkResourceName{flex:0 1 auto;overflow-wrap:anywhere;color:var(--dsw-alias-label-primary)}.dshWorkResourceDescription{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:var(--dsw-alias-label-secondary)}.dshWorkSelectionCount{margin-right:auto;color:var(--dsw-alias-label-secondary)}.dshWorkResourceError{padding:8px 12px;color:var(--dsw-alias-state-error-primary);font-size:12px}`
         document.head.appendChild(style)
@@ -824,6 +826,7 @@ window.__ModuleLoader__.load({
         const id = 'dsh-desktop-preset-toolbar-style'
         if (document.getElementById(id)) return
         const style = document.createElement('style')
+        style.dataset.plugin = 'dsh-desktop-client-ui'
         style.id = id
         style.textContent = `
           [data-dsh-sidebar-brand-identity] { display:none !important; }

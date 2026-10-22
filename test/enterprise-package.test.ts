@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { createRequire } from 'node:module'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -46,6 +47,34 @@ describe('DSH Desktop enterprise package', () => {
     for (const update of [{ quota_state: 'unavailable' }, { quota_state: 'exhausted' }, { limit: 0 }, { used: 10 }, { used: 11 }, { used: null }]) {
       expect(available({ modelsAvailable: true }, { ...usage, ...update })).toBe(false)
     }
+  })
+
+  it('keeps model information without per-model quotas and uses shared credits for availability', async () => {
+    const client = await readFile(path.join(projectRoot, 'packages/dsh-desktop-enterprise/client.js'), 'utf8')
+    const names = ['modelDisplayParts', 'isModelAvailable', 'renderModelRow']
+    const functions = names.map(name => client.match(new RegExp(`    function ${name}\\([^]*?\\n    \\}`))?.[0])
+    expect(functions.every(Boolean)).toBe(true)
+    const require = createRequire(import.meta.url)
+    const React = require('react') as { createElement: (...args: unknown[]) => unknown }
+    const { renderToStaticMarkup } = require('react-dom/server') as { renderToStaticMarkup: (node: unknown) => string }
+    const render = new Function('h', `${functions.join('\n')}; return renderModelRow`)(React.createElement)
+    const model = { id: 'model', display_name: 'Provider / Model' }
+    for (const remaining of [true, false]) {
+      const html = renderToStaticMarkup(render(model, {
+        modelsAvailable: true,
+        usage: { used: remaining ? 25 : 100, limit: 100, quota_state: 'available' },
+        modelUsage: { model: { used: 0, limit: 100, quota_state: 'available' } }
+      }, 'en', (key: string) => key))
+      expect(html).toContain('>Model</span>')
+      expect(html).toContain('>Provider</span>')
+      expect(html.includes('dshEnterpriseModelStatus')).toBe(remaining)
+      expect(html).not.toContain('progressbar')
+      expect(html).not.toContain('dshEnterpriseModelUsage')
+      expect(html).not.toContain('%')
+    }
+    expect(client).not.toContain('modelUsageProgress')
+    expect(client).not.toContain('modelUsagePercentage')
+    expect(client).not.toContain('.dshEnterpriseModelUsage')
   })
 
   it('exports the declared Client bundle for the Harness module loader', async () => {
@@ -104,7 +133,7 @@ describe('DSH Desktop enterprise package', () => {
     expect(client).toContain('confirmation && !connected')
   })
 
-  it('keeps sign-in focused and shows one shared credit balance', async () => {
+it('keeps sign-in focused and shows unified credits without model quotas', async () => {
     const client = await readFile(
       path.join(projectRoot, 'packages', 'dsh-desktop-enterprise', 'client.js'),
       'utf8'
@@ -145,13 +174,9 @@ describe('DSH Desktop enterprise package', () => {
     expect(client).not.toContain('state.usage)')
     expect(client).not.toContain("h('div', { className: 'dshEnterpriseCard' }, status, accountContent, errorPanel)")
     expect(client).toContain('const usage = state.usage')
-    const usageBody = client.match(/function usageText\(usage, language, t\) \{([\s\S]*?)\n    \}/)?.[1]
-    expect(usageBody).toBeDefined()
-    const formatCredits = new Function('usage', 'language', 't', usageBody!)
-    expect(formatCredits({ source: 'live', quota_state: 'available', used: 1000001, limit: 500000000 }, 'en', (k: string) => k)).toBe('499.0')
-    expect(formatCredits({ source: 'live', quota_state: 'available', used: 0, limit: 101867802701 }, 'zh', (k: string) => k)).toBe('101,867.8')
-    expect(formatCredits({ source: 'live', quota_state: 'exhausted', used: null, limit: 0 }, 'en', (k: string) => k)).toBe('0.0')
-    expect(formatCredits({ source: 'unavailable' }, 'en', (k: string) => k)).toBe('usageUnavailable')
+    expect(client).not.toContain('state.modelUsage?.[model.id]')
+    expect(client).toContain("usageLabel: '剩余积分'")
+    expect(client).toContain("usageLabel: 'Credits remaining'")
     expect(client).toContain("refresh: '刷新'")
     expect(client).toContain("learnMore: '了解企业版'")
     expect(client).toContain("learnMore: 'Learn about Enterprise'")

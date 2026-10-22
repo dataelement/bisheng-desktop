@@ -5,6 +5,7 @@ import { parseEnterpriseNavigation, parseEnterpriseSettingsSection, parseChatPag
 import type { EnterpriseDesktopRuntime } from './enterprise-desktop'
 import { MODULE_ROUTE_PATTERN, MODULE_THEME_CSS, moduleThemeScript } from './chat-module-theme'
 import { chatLocaleScript } from './chat-locale'
+import { parseUsageSummary, parseUsageStorage, type EnterpriseUsage } from '../../shared/enterprise-usage'
 
 /** Remote Chat gets its own in-memory browser session and a presentation-only preload. */
 const DOCUMENT_LOAD_TIMEOUT_MS = 45_000
@@ -42,8 +43,8 @@ export class EnterpriseChatView {
 
   constructor(private enterprise: EnterpriseDesktopRuntime, private note: (line: string) => void) {
     this.unsubscribe = enterprise.subscribe((state) => {
-      if (!state.connected || state.connectionKey !== this.key) { this.clear(); this.notify() }
-      if (state.connected && this.presentation?.visible && this.owner && !this.owner.isDestroyed()) {
+      if (!state.connected || (this.key !== undefined && state.connectionKey !== this.key)) { this.clear(); this.notify() }
+      if (state.connected && this.state.phase !== 'error' && this.presentation?.visible && this.owner && !this.owner.isDestroyed()) {
         void this.connect()
       }
     })
@@ -68,7 +69,7 @@ export class EnterpriseChatView {
       })
     }
     this.layout()
-    if (this.presentation.visible && this.enterprise.snapshot().connected && !this.view) void this.connect()
+    if (this.presentation.visible && this.state.phase !== 'error' && this.enterprise.snapshot().connected && !this.view) void this.connect()
     if (this.view) void this.syncSettings()
     return this.snapshot()
   }
@@ -83,6 +84,40 @@ export class EnterpriseChatView {
 
   focusSettings(): void {
     if (this.presentation?.visible && this.presentation.settings === this.settingsSection && this.isSettingsReady()) this.view?.webContents.focus()
+  }
+
+  /** Fixed self-service reads reuse the identity-owned cookie session, never renderer URLs. */
+  async usage(): Promise<EnterpriseUsage> {
+    const epoch = this.generation
+    if (this.state.phase !== 'ready') await this.connect()
+    if (epoch !== this.generation || !this.isolated || !this.origin || !this.enterprise.snapshot().connected) throw new Error('Usage identity changed.')
+    const isolated = this.isolated, origin = this.origin
+    const read = async (path: string): Promise<unknown> => {
+      const response = await isolated.fetch(new URL(path, origin).href, { redirect: 'error', signal: AbortSignal.timeout(15_000) })
+      if (!response.ok) {
+        await response.body?.cancel()
+        throw new Error(`Usage request failed (${response.status}).`)
+      }
+      const reader = response.body?.getReader()
+      if (!reader) throw new Error('Usage response is empty.')
+      const chunks: Uint8Array[] = []
+      let length = 0
+      try {
+        while (true) {
+          const next = await reader.read()
+          if (next.done) break
+          length += next.value.byteLength
+          if (length > 512 * 1024) throw new Error('Usage response is too large.')
+          chunks.push(next.value)
+        }
+      } finally { await reader.cancel(); reader.releaseLock() }
+      const result: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      if (!result || typeof result !== 'object' || !('status_code' in result) || result.status_code !== 200 || !('data' in result)) throw new Error('Usage unavailable.')
+      return result.data
+    }
+    const [summary, storage] = await Promise.all([read('/api/v1/dsh/me/usage-summary'), read('/api/v1/quota/effective')])
+    if (epoch !== this.generation || isolated !== this.isolated || !this.enterprise.snapshot().connected) throw new Error('Usage identity changed.')
+    return { ...parseUsageSummary(summary), storage: parseUsageStorage(storage) }
   }
 
   /** Fixed read-only endpoint. The isolated cookie stays in the host session. */
@@ -369,6 +404,7 @@ export class EnterpriseChatView {
     } catch (error) {
       if (generation !== this.generation) return
       this.clear()
+      this.key = key
       this.state = { phase: 'error' }
       const status = error && typeof error === 'object' && 'status' in error && (typeof error.status === 'number' || typeof error.status === 'string') ? error.status : 'transport'
       this.note(`[enterprise-chat] session_failed status=${status}`)
