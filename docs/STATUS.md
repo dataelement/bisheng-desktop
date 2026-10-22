@@ -1,3 +1,11 @@
+## 2026-10-22 — 统一积分与原生登录迁移到 V1.2.0
+
+- 基线：`origin/V1.2.0@a1ce7bf83c1d3f98dda0802f197e906669de167f`；独立分支 `codex/v120-unified-credits`；安装依赖 Harness `0.2.0-rc.2`。
+- 本地积分分支 `d9a2cc0` 的功能已移入：Chat/Work 共用个人余额、余额在账号与安全显示、一位小数、企业模型紧凑排列、独立环境 cookie 名称。同步 V1.1.0 已发布的原生授权/换证/退出接口、模型撤权后恢复选择和可读模型名称。
+- 保留 V1.2.0 的知识空间内联引用与发送前权限检查；合并同版本 conversation/model-selection/chat 补丁。新增模型目录恢复在模型真正可用且选中后才继续发送，历史用量采用目录公布的显示名称。所有补丁仍对应 Harness `0.2.0-rc.2`，上游提供相同行为后迁回正式接口。
+- 自动验证：完整测试 233 文件，2011 通过、1 跳过；类型检查、构建、patch-package 重放通过。测试包含原生登录 mock HTTP、共享余额、知识空间引用、模型撤权恢复和历史用量名称。
+- 交付边界：本次迁移源码并建立评审入口；3006/3007 部署和已安装客户端保持现状。真实原生登录、Chat/Work 扣分、模型撤权与知识检索留待目标后端部署后整体联调。
+
 ## 2026-10-22 — Work 知识库使用原生内联引用
 
 - 基线：`bisheng-work-chat-work` / `codex/chat-work-integration`，整合 `origin/V1.2.0@adaa781`，Harness / conversation `0.2.0-rc.2`；远端 `dsh-desktop` 的 `v0.9.0` 标签为 `7a9ed7f94257ff82daf76f2ec5e9defe16bb8661`。延续企业集成工作区与原 `bisheng-dev` Profile。

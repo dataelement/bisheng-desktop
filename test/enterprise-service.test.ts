@@ -82,7 +82,7 @@ describe('enterprise service login loop', () => {
     cleanups.push(async () => platform.close())
     const requests: Record<string, unknown>[] = []
     const fetchImpl: EnterpriseFetch = async (input, init) => {
-      if (String(input).endsWith('/api/dsh/authorizations')) requests.push(JSON.parse(String(init?.body)))
+      if (String(input).endsWith('/api/v1/dsh/authorizations')) requests.push(JSON.parse(String(init?.body)))
       return globalThis.fetch(input, init)
     }
     const activateDesktop = vi.fn(() => {
@@ -114,8 +114,8 @@ describe('enterprise service login loop', () => {
     cleanups.push(async () => platform.close())
     const requests: Record<string, unknown>[] = []
     const fetchImpl: EnterpriseFetch = async (input, init) => {
-      if (String(input).endsWith('/api/dsh/authorizations')) requests.push(JSON.parse(String(init?.body)))
-      if (String(input).endsWith('/api/dsh/token')) {
+      if (String(input).endsWith('/api/v1/dsh/authorizations')) requests.push(JSON.parse(String(init?.body)))
+      if (String(input).endsWith('/api/v1/dsh/token')) {
         return Response.json({ error: { message: 'Invalid ticket', code: 'invalid_ticket' } }, { status: 401 })
       }
       return globalThis.fetch(input, init)
@@ -175,7 +175,7 @@ describe('enterprise service login loop', () => {
     cleanups.push(async () => platform.close())
     let failRefresh = false
     const fetchImpl: EnterpriseFetch = async (input, init) => {
-      if (failRefresh && String(input).includes('/api/dsh/token') && String(init?.body).includes('refresh_token')) {
+      if (failRefresh && String(input).includes('/api/v1/dsh/token') && String(init?.body).includes('refresh_token')) {
         throw new TypeError('fetch failed')
       }
       return globalThis.fetch(input, init)
@@ -200,7 +200,7 @@ describe('enterprise service login loop', () => {
     cleanups.push(async () => platform.close())
     let rejectRefresh = false
     const fetchImpl: EnterpriseFetch = async (input, init) => {
-      if (rejectRefresh && String(input).includes('/api/dsh/token') && String(init?.body).includes('refresh_token')) {
+      if (rejectRefresh && String(input).includes('/api/v1/dsh/token') && String(init?.body).includes('refresh_token')) {
         return new Response(JSON.stringify({
           error: { message: 'Refresh token is invalid.', type: 'authentication_error', code: 'invalid_refresh_token' }
         }), {
@@ -232,7 +232,7 @@ describe('enterprise service login loop', () => {
     cleanups.push(async () => platform.close())
     let rejectRefresh = false
     const fetchImpl: EnterpriseFetch = async (input, init) => {
-      if (rejectRefresh && String(input).includes('/api/dsh/token') && String(init?.body).includes('refresh_token')) {
+      if (rejectRefresh && String(input).includes('/api/v1/dsh/token') && String(init?.body).includes('refresh_token')) {
         return new Response(JSON.stringify({
           error: { message: 'session expired', type: 'authentication_error', code: 'session_expired' }
         }), {
@@ -291,7 +291,7 @@ describe('enterprise service login loop', () => {
     const origin = await platform.listen()
     cleanups.push(async () => platform.close())
     const fetchImpl: EnterpriseFetch = async (input, init) => {
-      if (String(input).includes('/api/dsh/token') && String(init?.body).includes('identity_ticket')) {
+      if (String(input).includes('/api/v1/dsh/token') && String(init?.body).includes('identity_ticket')) {
         return new Response(JSON.stringify({
           error: { message, code },
           request_id: 'req-seat-1'
@@ -321,7 +321,7 @@ describe('enterprise service login loop', () => {
     const origin = await platform.listen()
     cleanups.push(async () => platform.close())
     const fetchImpl: EnterpriseFetch = async (input, init) => {
-      if (String(input).includes('/api/dsh/logout')) {
+      if (String(input).includes('/api/v1/dsh/logout')) {
         return new Response(JSON.stringify({
           error: { message: 'upstream unavailable', code: 'server_error' }
         }), { status: 503, headers: { 'content-type': 'application/json' } })
@@ -539,7 +539,7 @@ describe('enterprise market credential boundary', () => {
     let alignedTimeout = 0
     const fetchImpl: EnterpriseFetch = async (input, init) => {
       const response = await globalThis.fetch(input, init)
-      if (!String(input).endsWith('/api/dsh/authorizations')) return response
+      if (!String(input).endsWith('/api/v1/dsh/authorizations')) return response
       const body = await response.json() as { expires_in?: number }
       body.expires_in = 45
       return Response.json(body)

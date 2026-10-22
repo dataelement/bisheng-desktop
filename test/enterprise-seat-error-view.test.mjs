@@ -5,7 +5,7 @@ import { createRoot } from 'react-dom/client'
 import { JSDOM } from 'jsdom'
 import { expect, it, vi } from 'vitest'
 const source = await readFile(new URL('../packages/dsh-desktop-enterprise/client.js', import.meta.url), 'utf8')
-it.each(['zh', 'en'])('renders unassigned-seat guidance without a request id in %s', async language => {
+it.each(['zh', 'en'])('renders legacy-server upgrade guidance without a request id in %s', async language => {
   const dom = new JSDOM('<html><div id="root"></div></html>', { url: 'http://localhost/' })
   vi.stubGlobal('window', dom.window)
   vi.stubGlobal('document', dom.window.document)
@@ -29,8 +29,8 @@ it.each(['zh', 'en'])('renders unassigned-seat guidance without a request id in 
     })
     const alert = dom.window.document.querySelector('[role="alert"]')
     expect(alert?.textContent).toBe(language === 'zh'
-      ? '你尚未获得客户端使用席位，请联系管理员分配后重新登录。'
-      : 'You do not have a client seat yet. Ask your administrator to assign one, then sign in again.')
+      ? '当前服务版本不支持直接登录，请联系管理员升级平台。'
+      : 'This server uses a legacy sign-in policy. Ask your administrator to upgrade the platform.')
     expect(alert?.textContent).not.toContain('req-no-seat')
   } finally {
     await act(async () => { disposers.reverse().forEach(dispose => dispose()); root.unmount() })

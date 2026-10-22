@@ -655,6 +655,8 @@ export class EnterpriseService {
       }))
       this.modelsAvailable = this.models.length > 0
       if (this.phase === 'degraded') this.phase = 'connected'
+      await this.refreshUsageCatalog(epoch)
+      if (this.epoch !== epoch) return
       this.modelsAttempt = 0
       this.clearError()
       this.publish()
@@ -736,7 +738,7 @@ export class EnterpriseService {
       return
     }
     await this.pipeSse(upstream, response, signal)
-    if (this.epoch === epoch) void this.syncUsage(epoch, parsed.model)
+    if (this.epoch === epoch) void this.syncUsage(epoch)
   }
 
   private connectionKey(): string {
@@ -811,7 +813,7 @@ export class EnterpriseService {
       const response = await createEnterpriseFetch(this.options.fetchImpl)(endpoint.toString(), {
         method: body === undefined ? 'GET' : 'POST',
         signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
-        headers: { cookie: `access_token_cookie=${credential.cookie}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+        headers: { cookie: `${credential.cookieName}=${credential.cookie}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) })
       })
       const data = await readResourceJson(response)
@@ -897,7 +899,7 @@ export class EnterpriseService {
       void this.syncCatalog(epoch, { includeUsage: false })
     }
     if (status === 429) {
-      void this.syncUsage(epoch, model)
+      void this.syncUsage(epoch)
     }
     this.note('chat_upstream', { status })
   }
@@ -919,50 +921,19 @@ export class EnterpriseService {
   private async refreshUsageCatalog(expectedEpoch: number): Promise<void> {
     if (this.epoch !== expectedEpoch || !this.session?.base || !this.session.access_token) return
     const contract = await loadEnterpriseContract()
+    let nextUsage: EnterprisePublicUsage
     try {
-      this.usage = await this.readUsage(contract.API_PATHS.usage)
+      nextUsage = await this.readUsage(contract.API_PATHS.usage)
     } catch {
-      this.usage = contract.unavailableUsage()
+      nextUsage = contract.unavailableUsage()
     }
     if (this.epoch !== expectedEpoch) return
-    const nextModelUsage = { ...this.modelUsage }
-    await Promise.all(this.models.map(async (model) => {
-      try {
-        const next = await this.readUsage(
-          `${contract.API_PATHS.usage}?model=${encodeURIComponent(model.id)}`
-        )
-        if (next.used !== null || next.limit !== null || !nextModelUsage[model.id]) {
-          nextModelUsage[model.id] = next
-        }
-      } catch {
-        if (!nextModelUsage[model.id]) nextModelUsage[model.id] = contract.unavailableUsage()
-      }
-    }))
-    if (this.epoch !== expectedEpoch) return
-    this.modelUsage = nextModelUsage
+    this.usage = nextUsage
+    this.modelUsage = Object.fromEntries(this.models.map(model => [model.id, this.usage ?? contract.unavailableUsage()]))
   }
 
-  private async syncUsage(expectedEpoch: number, modelId?: string): Promise<void> {
-    if (this.epoch !== expectedEpoch || !this.session?.base || !this.session.access_token) return
-    const contract = await loadEnterpriseContract()
-    try {
-      this.usage = await this.readUsage(contract.API_PATHS.usage)
-    } catch {
-      this.usage = contract.unavailableUsage()
-    }
-    if (this.epoch !== expectedEpoch) return
-    if (modelId) {
-      try {
-        this.modelUsage = {
-          ...this.modelUsage,
-          [modelId]: await this.readUsage(
-            `${contract.API_PATHS.usage}?model=${encodeURIComponent(modelId)}`
-          )
-        }
-      } catch {
-        // Keep the last known per-model usage.
-      }
-    }
+  private async syncUsage(expectedEpoch: number): Promise<void> {
+    await this.refreshUsageCatalog(expectedEpoch)
     if (this.epoch === expectedEpoch) this.publish()
   }
 

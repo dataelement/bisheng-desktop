@@ -148,3 +148,9 @@ Work 从 sessions.binding(id).session 订阅当前主视图的 pendingSubmission
 `conversation.hero.brand.title` 为 root/single、空 owner 的标题接缝，位于原生 titleGroup 内；无贡献项沿用原生标题和徽标。桌面贡献项读取当前企业文档上报的公开 branding，与现有 mark 接缝共同呈现工作台欢迎语和图标；本地无企业配置时使用毕昇默认欢迎区。branding 只携带欢迎语及图标 enabled/HTTP URL，由导航报告的同源、主 frame、路径、身份代际校验保护，参数有长度和协议边界；身份变化沿用 navigation 清空流程。后台管理仍为构建→工作台既有配置。
 
 `data-dsh-hero-controls` 标记原生 Work 首页控件行，样式由桌面插件拥有。鼠标切入 Work 采用 180ms 从左向右揭示，结束后清除裁切；键盘切换与 reduced-motion 即时呈现。标记不改变控件 slot、布局或挂载次数。上游提供等价标题 slot 和控件标记后迁移并移除本地接缝。
+
+## V1.2.0 模型授权与积分组合
+
+`conversation/input-before-submit` 保留知识空间引用快照及取消信号；随后模型目录完成撤权恢复和可路由检查，再提交消息。目录恢复与模型名称补丁共同适用于 Harness 0.2.0-rc.2。目录不可用时返回可恢复错误并保留草稿；配置模型名称只用于展示，调用仍使用原稳定路由 ID。上游支持这些行为后删除相应补丁并迁入正式 API。
+
+本次检查同时覆盖知识空间引用、撤权后的默认模型恢复、历史用量名称及企业插件；patch-package 重放、完整测试和构建通过。实际安装版与新后端的联合验收单列在 STATUS 中。
