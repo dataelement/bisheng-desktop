@@ -588,6 +588,7 @@ window.__ModuleLoader__.load({
       knowledge: 'M5 3h14v18H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm0 14h14M7 6h8',
       channel: 'M5 3h14v18l-7-4-7 4V3Zm7 3v8m-4-4h8',
       apps: 'M8 5V3h8v2M3 7h18v14H3V7Zm0 5h18M9 10v5h6v-5',
+      tools: 'M14.7 6.3a5.5 5.5 0 0 0-7 7L3 18a2.1 2.1 0 0 0 3 3l4.7-4.7a5.5 5.5 0 0 0 7-7l-3.5 3.5-3-3 3.5-3.5Z',
       skills: 'M5 3h14v18H5V3Zm3 4h8M8 11h8M8 15h5',
       square: 'M3 4h6v6H3V4Zm12 0h6v6h-6V4ZM3 14h6v6H3v-6Zm12 0h6v6h-6v-6',
       more: 'M5 12h.01M12 12h.01M19 12h.01'
@@ -672,8 +673,8 @@ window.__ModuleLoader__.load({
 
     const RESOURCE_NS = 'desktop-work-resources'
     const RESOURCE_COPY = {
-      zh: { skills: '技能', skillsHint: '选择本次任务使用的技能', knowledge: '知识空间', knowledgeHint: '选择本次任务检索的知识空间', search: '搜索知识空间', empty: '暂无可用知识空间', noMatch: '没有匹配的知识空间', loading: '正在加载知识空间…', retry: '重试', cancel: '取消', confirm: '确认添加', close: '关闭', remove: '移除', department: '部门知识空间', mine: '我创建的', joined: '我加入的', selectKnowledge: '选择知识空间', modified: '修改时间', selected: '已选 {count} 个知识空间', limit: '最多选择 50 个空间' },
-      en: { skills: 'Skills', skillsHint: 'Choose a skill for this task', knowledge: 'Knowledge spaces', knowledgeHint: 'Choose knowledge spaces to search in this task', search: 'Search knowledge spaces', empty: 'No knowledge spaces available', noMatch: 'No matching knowledge spaces', loading: 'Loading knowledge spaces…', retry: 'Retry', cancel: 'Cancel', confirm: 'Add selected', close: 'Close', remove: 'Remove', department: 'Department spaces', mine: 'Created by me', joined: 'Joined spaces', selectKnowledge: 'Select knowledge spaces', modified: 'Modified', selected: '{count} knowledge spaces selected', limit: 'Select up to 50 spaces' }
+      zh: { tools: '工具', toolsHint: '选择本次任务使用的工具', skills: '技能', skillsHint: '选择本次任务使用的技能', knowledge: '知识空间', knowledgeHint: '选择本次任务检索的知识空间', search: '搜索知识空间', empty: '暂无可用知识空间', noMatch: '没有匹配的知识空间', loading: '正在加载知识空间…', retry: '重试', cancel: '取消', confirm: '确认添加', close: '关闭', remove: '移除', department: '部门知识空间', mine: '我创建的', joined: '我加入的', selectKnowledge: '选择知识空间', modified: '修改时间', selected: '已选 {count} 个知识空间', limit: '最多选择 50 个空间' },
+      en: { tools: 'Tools', toolsHint: 'Choose tools for this task', skills: 'Skills', skillsHint: 'Choose a skill for this task', knowledge: 'Knowledge spaces', knowledgeHint: 'Choose knowledge spaces to search in this task', search: 'Search knowledge spaces', empty: 'No knowledge spaces available', noMatch: 'No matching knowledge spaces', loading: 'Loading knowledge spaces…', retry: 'Retry', cancel: 'Cancel', confirm: 'Add selected', close: 'Close', remove: 'Remove', department: 'Department spaces', mine: 'Created by me', joined: 'Joined spaces', selectKnowledge: 'Select knowledge spaces', modified: 'Modified', selected: '{count} knowledge spaces selected', limit: 'Select up to 50 spaces' }
     }
     async function workResourceRequest(operation, sessionId, spaceIds, signal) {
       const response = await fetch('/api/enterprise.work-resources', {
@@ -691,6 +692,31 @@ window.__ModuleLoader__.load({
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Skill request failed.')
       return data
+    }
+    async function workToolRequest(body, signal) {
+      const response = await fetch('/api/enterprise.work-tools', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, signal, body: JSON.stringify(body)
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error || 'Tool request failed.')
+      return result
+    }
+    const TOOL_REFERENCE_SOURCE = 'desktop-tool'
+    const decodeToolReference = ref => {
+      const tool = JSON.parse(ref)
+      if (!/^mcp__bisheng__bisheng_tool_[1-9][0-9]*$/.test(tool.name) || typeof tool.label !== 'string' || typeof tool.connectionKey !== 'string' || !tool.connectionKey) throw new Error('Invalid tool reference.')
+      return tool
+    }
+    const toolReferenceSource = {
+      trigger: '/', name: TOOL_REFERENCE_SOURCE, candidates: async () => [], onPick: () => undefined, openReference: () => false,
+      codec: {
+        clipboardText: ref => `/${decodeToolReference(ref).label}`,
+        serialize: async (ref, signal) => {
+          const tool = decodeToolReference(ref)
+          await workToolRequest({ operation: 'validate', names: [tool.name], connectionKey: tool.connectionKey }, signal)
+          return ` [Selected tool: ${tool.name}] `
+        }
+      }
     }
     const SKILL_REFERENCE_SOURCE = 'desktop-skill'
     const decodeSkillReference = ref => {
@@ -846,6 +872,7 @@ window.__ModuleLoader__.load({
       } })
       ctx.effect(() => ctx.inputTriggers.registerSource(knowledge.source), 'desktop knowledge references')
       ctx.effect(() => ctx.inputTriggers.registerSource(skillReferenceSource), 'desktop skill references')
+      ctx.effect(() => ctx.inputTriggers.registerSource(toolReferenceSource), 'desktop tool references')
       ctx.on('conversation/input-before-submit', knowledge.prepare)
       ctx.effect(() => ctx.locale.register(RESOURCE_NS, RESOURCE_COPY), 'desktop Work resources locale')
       const t = ctx.locale.bind(RESOURCE_NS)
@@ -872,6 +899,22 @@ window.__ModuleLoader__.load({
             const state = input.state.getSnapshot()
             const applied = input.insertReference({ source: SKILL_REFERENCE_SOURCE, ref: option.id, label: option.label, clipboardText: `/${option.label}` }, { start: 0, end: 0, draftRev: state.draftRev })
             if (!applied) throw new Error('Finish editing the current command, then choose a skill.')
+          }
+        } })
+      ctx.commandUi.register({ name: 'tools', label: () => t('tools'), description: () => t('toolsHint'), icon: props => React.createElement(NavigationIcon, { ...props, id: 'tools' }), available,
+        ui: { kind: 'popupSelect', searchMode: 'fuzzy-label',
+          options: async (_session, signal) => {
+            const catalog = await workToolRequest({ operation: 'catalog' }, signal)
+            return catalog.tools.map(tool => ({ id: JSON.stringify({ name: tool.name, label: tool.label, connectionKey: catalog.connectionKey }), label: tool.label, detail: tool.description }))
+          },
+          onSelect: (option, { sessionId }) => {
+            const scope = ctx.sessions.scope(sessionId)
+            if (!scope) throw new Error('Work task changed.')
+            const input = ctx.conversation.input.for(scope)
+            scope.bail(scope, 'slash/input-consume-token', { guard: { kind: 'bare-token', token: '/tools' } })
+            const state = input.state.getSnapshot()
+            if (state.occurrences.some(item => item.source === TOOL_REFERENCE_SOURCE && decodeToolReference(item.ref).name === decodeToolReference(option.id).name)) return
+            if (!input.insertReference({ source: TOOL_REFERENCE_SOURCE, ref: option.id, label: option.label, clipboardText: `/${option.label}` }, { start: 0, end: 0, draftRev: state.draftRev })) throw new Error('Finish editing the current command, then choose a tool.')
           }
         } })
       ctx.commandUi.register({ name: 'knowledge', label: () => t('knowledge'), description: () => t('knowledgeHint'), icon: props => React.createElement(NavigationIcon, { ...props, id: 'knowledge' }), available,
@@ -1060,6 +1103,7 @@ window.__ModuleLoader__.load({
 
     exports.createWorkKnowledgeComposer = createWorkKnowledgeComposer
     exports.skillReferenceSource = skillReferenceSource
+    exports.toolReferenceSource = toolReferenceSource
     exports.apply = apply
     exports.inject = inject
     return module.exports

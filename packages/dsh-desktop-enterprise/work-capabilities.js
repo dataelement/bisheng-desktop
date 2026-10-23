@@ -6,7 +6,7 @@ const PREFIX = 'mcp__bisheng__'
 /** Account-bound enterprise tools; no credential reaches Agent context. */
 export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
   let generation = 0, connectionKey, timer, stopped = false, syncing
-  let signature = '', disposeTools = []
+  let signature = '', disposeTools = [], pickerTools = []
   let lifetime = new AbortController()
   const assertAccount = key => {
     const account = state()
@@ -21,7 +21,7 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
     lifetime.abort()
     lifetime = new AbortController()
     for (const dispose of disposeTools) dispose()
-    disposeTools = []; signature = ''; connectionKey = undefined
+    disposeTools = []; pickerTools = []; signature = ''; connectionKey = undefined
   }
   const rpc = async (key, signal, use) => {
     assertAccount(key)
@@ -57,9 +57,37 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
     disposeTools = []
     try { for (const definition of definitions) disposeTools.push(ctx.tools.register(definition)) }
     catch (error) { clear(); throw error }
+    pickerTools = catalog.tools.map(tool => ({ name: PREFIX + tool.name, label: tool.title || tool.name, description: tool.description || '' }))
     connectionKey = key; signature = nextSignature
   }
   const sync = () => syncing ??= synchronize().finally(() => { syncing = undefined })
+
+  // The picker and submission validator use the same fresh permission-filtered
+  // catalog as native registration. References contain an account fingerprint,
+  // keeping a draft owned by the account that selected its tools.
+  ctx.connection.fetch.register({
+    path: '/api/enterprise.work-tools', methods: ['POST'], requestBody: 'buffered',
+    async fetch(request) {
+      try {
+        const text = await request.text()
+        if (text.length > 16384) throw new Error('Tool selection is too large.')
+        const body = JSON.parse(text)
+        if (!body || typeof body !== 'object' || Object.keys(body).some(key => !['operation', 'names', 'connectionKey'].includes(key))) throw new Error('Invalid tool request.')
+        if (!['catalog', 'validate'].includes(body.operation)) throw new Error('Unknown tool operation.')
+        // Finish a background sync before requesting a fresh snapshot for a submit.
+        if (syncing) await syncing
+        await sync()
+        assertAccount(connectionKey)
+        if (!connectionKey) throw new Error('Connect your enterprise account in Settings.')
+        if (body.operation === 'validate') {
+          if (body.connectionKey !== connectionKey) throw new Error('Enterprise account changed. Select tools again.')
+          if (!Array.isArray(body.names) || body.names.length > 50 || body.names.some(name => typeof name !== 'string' || !pickerTools.some(tool => tool.name === name))) throw new Error('A selected tool is unavailable. Enable it in Tools & Skills or update your selection.')
+          return Response.json({ ok: true }, { headers: { 'cache-control': 'no-store' } })
+        }
+        return Response.json({ tools: pickerTools, connectionKey }, { headers: { 'cache-control': 'no-store' } })
+      } catch (error) { return Response.json({ error: error.message }, { status: 400 }) }
+    }
+  })
 
   ctx.tools.guard(exec => exec.name.startsWith(PREFIX) && !mainSession(exec) ? 'Enterprise tools require an active main Work task.' : undefined)
   ctx.on('tools/pre-execute', async (exec, next) => {

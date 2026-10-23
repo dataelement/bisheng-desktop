@@ -52,6 +52,7 @@ it('registers native tools, enforces approval, isolates children and clears iden
   const session = { id: 'main', header: { delegationDepth: 0 } }
   let account = { connected: true, connectionKey: 'account-a' }, provider, guard
   const ctx = {
+    connection: { fetch: { register: vi.fn() } },
     logger: { warn: vi.fn() }, sessions: { get: id => id === 'main' ? session : undefined },
     tools: { register: tool => { tools.set(tool.name, tool); return () => tools.delete(tool.name) }, guard: fn => { guard = fn } },
     skills: { registerProvider: factory => { provider = factory({ invalidate: vi.fn(), signal: new AbortController().signal }); return vi.fn() } },
@@ -72,4 +73,31 @@ it('registers native tools, enforces approval, isolates children and clears iden
   await expect(tool.execute({ query: 'customer' }, exec)).rejects.toThrow('account changed')
   api.clear()
   expect(tools.size).toBe(0)
+})
+
+it('serves fresh picker entries and rejects disabled tools and old-account drafts', async () => {
+  const f = fixture(), tools = new Map()
+  let route, account = { connected: true, connectionKey: 'account-a' }
+  const ctx = {
+    connection: { fetch: { register: value => { route = value } } },
+    logger: { warn: vi.fn() }, sessions: { get: () => undefined },
+    tools: { register: tool => { tools.set(tool.name, tool); return () => tools.delete(tool.name) }, guard: vi.fn() },
+    on: vi.fn(), effect: fn => cleanups.push(fn())
+  }
+  const api = applyWorkCapabilities(ctx, { request: f.request, state: () => account, refreshState: async () => {} })
+  await api.sync()
+  const send = body => route.fetch(new Request('http://localhost/api/enterprise.work-tools', { method: 'POST', body: JSON.stringify(body) }))
+  const catalog = await (await send({ operation: 'catalog' })).json()
+  expect(catalog.connectionKey).toBe('account-a')
+  expect(catalog.tools).toEqual([{ name: 'mcp__bisheng__bisheng_tool_7', label: 'bisheng_tool_7', description: 'Search customers' }])
+  const selection = { operation: 'validate', connectionKey: 'account-a', names: [catalog.tools[0].name] }
+  expect((await send(selection)).status).toBe(200)
+  expect((await send({ ...selection, connectionKey: 'old-account' })).status).toBe(400)
+  f.catalog.tools = []
+  expect((await send(selection)).status).toBe(400)
+  expect(tools.size).toBe(0)
+  expect((await (await send({ operation: 'catalog' })).json()).tools).toEqual([])
+  expect((await send({ ...selection, names: 'all' })).status).toBe(400)
+  account = { connected: false }
+  expect((await send({ operation: 'catalog' })).status).toBe(400)
 })
