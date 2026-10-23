@@ -3,8 +3,10 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdateStatus } from '../shared/contracts'
 import { setupDesktopStoragePersistence } from './desktop-storage'
 import {
+  isRetryableDownloadError,
   isUpdateDismissed,
   shouldShowUpdate,
+  updateCardActions,
   updateHeadline,
   type UpdateLocale
 } from './update-view'
@@ -46,6 +48,8 @@ let dismissedVersion: string | null = null
 let dismissedTransientPhase: UpdateStatus['phase'] | null = null
 let installing = false
 let accepting = false
+let retrying = false
+let retryAttempt = 0
 
 const ABOUT_ROOT_ID = 'dsh-desktop-about-root'
 interface AboutInfo {
@@ -706,6 +710,7 @@ function applyStatus(status: UpdateStatus): void {
   }
   if (status.phase === 'error') installing = false
   if (status.phase !== 'available') accepting = false
+  retrying = false
   render()
 }
 
@@ -740,11 +745,16 @@ function render(): void {
   title.textContent = headline.title
   body.appendChild(title)
 
-  // The failure's own words beat ours, when it has any.
+  // A failed download uses the card's own copy. Other failures may carry a
+  // message that is more specific than the generic headline.
   const description = element('p', 'description')
   description.textContent =
-    status.phase === 'error' && status.message ? status.message : headline.description
+    !isRetryableDownloadError(status) && status.phase === 'error' && status.message
+      ? status.message
+      : headline.description
   if (description.textContent) body.appendChild(description)
+
+  const actionsState = updateCardActions(status, { accepting, retrying })
 
   if (status.phase === 'downloading') {
     const progress = element('div', 'progress')
@@ -771,13 +781,9 @@ function render(): void {
         render()
       })
     })
-    actions.append(accept, skipButton(status))
-    body.appendChild(actions)
-  }
-
-  if (status.phase === 'downloading') {
-    const actions = element('div', 'actions')
-    actions.appendChild(skipButton(status))
+    const actionButtons: HTMLButtonElement[] = [accept]
+    if (actionsState.showSkip) actionButtons.push(skipButton(status, actionsState.disableSkip))
+    actions.append(...actionButtons)
     body.appendChild(actions)
   }
 
@@ -803,7 +809,29 @@ function render(): void {
         render()
       })
     })
-    actions.append(install, skipButton(status))
+    const actionButtons: HTMLButtonElement[] = [install]
+    if (actionsState.showSkip) actionButtons.push(skipButton(status, actionsState.disableSkip))
+    actions.append(...actionButtons)
+    body.appendChild(actions)
+  }
+
+  if (actionsState.showRetryDownload) {
+    const actions = element('div', 'actions')
+    const retry = button(locale === 'zh' ? '重新下载' : 'Retry download', 'primary')
+    retry.disabled = actionsState.disableRetryDownload
+    retry.addEventListener('click', () => {
+      const attempt = ++retryAttempt
+      retrying = true
+      render()
+      void ipcRenderer.invoke('updates:download').catch((error: unknown) => {
+        console.error('[updater] unable to download update', error)
+      }).finally(() => {
+        if (attempt !== retryAttempt) return
+        retrying = false
+        render()
+      })
+    })
+    actions.appendChild(retry)
     body.appendChild(actions)
   }
 
@@ -811,6 +839,7 @@ function render(): void {
 
   const close = button('×', 'close')
   close.setAttribute('aria-label', locale === 'zh' ? '关闭' : 'Close')
+  close.disabled = actionsState.disableClose
   close.addEventListener('click', dismissCurrent)
   row.appendChild(close)
 
@@ -824,8 +853,9 @@ function render(): void {
  * comes back every launch; this one is remembered. A later release still asks,
  * and a manual check offers the skipped one again.
  */
-function skipButton(status: UpdateStatus): HTMLButtonElement {
+function skipButton(status: UpdateStatus, disabled: boolean): HTMLButtonElement {
   const skip = button(locale === 'zh' ? '跳过此版本' : 'Skip this version', 'secondary')
+  skip.disabled = disabled
   skip.addEventListener('click', () => {
     const version = status.availableVersion
     if (!version) return
@@ -1038,7 +1068,7 @@ const styles = `
     background: transparent;
     border: 1px solid var(--dsw-alias-border-l2, rgba(32, 33, 36, 0.16));
   }
-  .secondary:hover {
+  .secondary:hover:not(:disabled) {
     color: var(--dsw-alias-label-primary, #202124);
     background: var(--dsw-alias-interactive-bg-hover, rgba(32, 33, 36, 0.06));
   }
@@ -1053,7 +1083,7 @@ const styles = `
     font-size: 20px;
     line-height: 20px;
   }
-  .close:hover { color: var(--dsw-alias-label-primary, #202124); background: rgba(127, 127, 127, 0.1); }
+  .close:hover:not(:disabled) { color: var(--dsw-alias-label-primary, #202124); background: rgba(127, 127, 127, 0.1); }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-color-scheme: dark) {
     .card {
@@ -1069,7 +1099,7 @@ const styles = `
       color: var(--dsw-alias-label-secondary, #a9adb5);
       border-color: var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.18));
     }
-    .secondary:hover { color: var(--dsw-alias-label-primary, #f3f4f6); background: rgba(255, 255, 255, 0.08); }
+    .secondary:hover:not(:disabled) { color: var(--dsw-alias-label-primary, #f3f4f6); background: rgba(255, 255, 255, 0.08); }
   }
   @media (prefers-reduced-motion: reduce) {
     .spinner { animation: none; }

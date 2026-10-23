@@ -34,6 +34,7 @@ let checkPromise: Promise<unknown> | undefined
 let lastCheckedAt = 0
 let installing = false
 let downloading = false
+let downloadFailureReported = false
 let started = false
 let handlersRegistered = false
 let skippedVersion: string | undefined
@@ -71,9 +72,17 @@ function currentSkippedVersion(): string | undefined {
  * the next launch, and a later release is a new question that still gets
  * asked. A manual check overrides this, which is how the user takes back a
  * version they skipped.
+ *
+ * Only the version currently offered or already downloaded can be skipped.
+ * A download in flight, a stale click, or a mismatched version must not
+ * clear that state or hide the install prompt.
  */
 export function skipUpdate(version: unknown): UpdateStatus {
   if (typeof version !== 'string' || !version) return getUpdateStatus()
+  // Progress has not necessarily moved the phase to `downloading` yet.
+  if (downloading) return getUpdateStatus()
+  if (status.phase !== 'available' && status.phase !== 'downloaded') return getUpdateStatus()
+  if (version !== status.availableVersion) return getUpdateStatus()
   skippedVersion = version
   skipLoaded = true
   writeSkippedVersion(skipFile(), version)
@@ -141,24 +150,48 @@ export async function checkForUpdates(manual = false): Promise<UpdateStatus> {
   return getUpdateStatus()
 }
 
+function canDownloadUpdate(): boolean {
+  return status.phase === 'available' || isRetryableDownloadStatus()
+}
+
+function isRetryableDownloadStatus(): boolean {
+  return status.phase === 'error' && status.retryAction === 'download'
+}
+
 /**
  * Start the download the user just accepted. Consent and download are one
- * action — an update sits at `available` until it is taken.
+ * action — an update sits at `available` until it is taken, and a failed
+ * download can be started again from the same card.
  */
 export async function downloadAvailableUpdate(): Promise<UpdateStatus> {
-  if (status.phase !== 'available' || downloading) return getUpdateStatus()
+  if (!canDownloadUpdate() || downloading) return getUpdateStatus()
   downloading = true
+  downloadFailureReported = false
 
   try {
     await autoUpdater.downloadUpdate()
   } catch (error) {
-    transition({ type: 'error', message: errorMessage(error) })
-    if (status.manual) scheduleReset()
+    // electron-updater also emits `error` for the same failure. Recording it
+    // here covers a rejection that never produced that event.
+    if (!downloadFailureReported) reportDownloadFailure(error)
   } finally {
     downloading = false
   }
 
   return getUpdateStatus()
+}
+
+/**
+ * Keep the accepted version on a visible card. The underlying error stays in
+ * the log; the card uses its own copy and does not auto-dismiss.
+ */
+function reportDownloadFailure(error: unknown): void {
+  downloadFailureReported = true
+  console.error('[updater] unable to download update', error)
+  // Publish even when the card is already on this failure. A retry that dies
+  // before any progress does not change phase, but the renderer still needs
+  // the event to unlock its buttons.
+  transition({ type: 'error', retryAction: 'download' })
 }
 
 export async function installDownloadedUpdate(): Promise<void> {
@@ -223,6 +256,10 @@ function configureUpdater(): void {
     transition({ type: 'downloaded', version: info.version })
   )
   autoUpdater.on('error', (error) => {
+    if (downloading || status.phase === 'downloading' || isRetryableDownloadStatus()) {
+      reportDownloadFailure(error)
+      return
+    }
     transition({ type: 'error', message: errorMessage(error) })
     if (status.manual) scheduleReset()
   })

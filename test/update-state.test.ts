@@ -37,6 +37,31 @@ describe('desktop update state', () => {
     expect(status.manual).toBe(true)
   })
 
+  it('keeps the accepted version when a download fails and drops it from later progress', () => {
+    let status = initialUpdateStatus('1.0.0')
+    status = reduceUpdateStatus(status, { type: 'available', version: '1.1.0' })
+    status = reduceUpdateStatus(status, { type: 'progress', percent: 10 })
+    status = reduceUpdateStatus(status, { type: 'error', retryAction: 'download', message: 'socket hang up' })
+
+    expect(status).toEqual({
+      phase: 'error',
+      currentVersion: '1.0.0',
+      availableVersion: '1.1.0',
+      manual: false,
+      retryAction: 'download'
+    })
+    expect(status.message).toBeUndefined()
+
+    status = reduceUpdateStatus(status, { type: 'progress', percent: 25 })
+    expect(status).toEqual({
+      phase: 'downloading',
+      currentVersion: '1.0.0',
+      availableVersion: '1.1.0',
+      percent: 25,
+      manual: false
+    })
+  })
+
   it('clamps invalid download percentages', () => {
     const status = {
       ...initialUpdateStatus('1.0.0'),

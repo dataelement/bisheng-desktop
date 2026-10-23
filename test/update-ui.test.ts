@@ -3,6 +3,7 @@ import type { UpdateStatus } from '../src/shared/contracts'
 import {
   isUpdateDismissed,
   shouldShowUpdate,
+  updateCardActions,
   updateHeadline,
   updateMessage
 } from '../src/preload/update-view'
@@ -64,6 +65,29 @@ describe('accepting an update is what starts the download', () => {
     expect(updateMessage(available, 'en')).toBe('BISHENG 0.4.4 is available. Update now?')
   })
 
+  it('shows a failed download without the underlying error', () => {
+    const failed: UpdateStatus = {
+      phase: 'error',
+      currentVersion: '1.0.0',
+      availableVersion: '1.1.0',
+      manual: false,
+      retryAction: 'download',
+      message: 'socket hang up'
+    }
+    expect(shouldShowUpdate(failed)).toBe(true)
+    expect(updateHeadline(failed, 'zh')).toEqual({
+      title: '更新失败',
+      description: '下载失败，请重试'
+    })
+    expect(updateHeadline(failed, 'en')).toEqual({
+      title: 'Update failed',
+      description: 'Download failed. Please retry.'
+    })
+    expect(
+      shouldShowUpdate({ phase: 'error', currentVersion: '1.0.0', manual: false, message: 'nope' })
+    ).toBe(false)
+  })
+
   it('explains when the current build does not support updates', () => {
     const unsupported: UpdateStatus = {
       phase: 'unsupported',
@@ -81,5 +105,75 @@ describe('accepting an update is what starts the download', () => {
     })
     expect(updateMessage(unsupported, 'zh')).toBe('当前构建不支持在线更新。')
     expect(updateMessage(unsupported, 'en')).toBe('Online updates are unavailable in this build.')
+  })
+})
+
+describe('update card actions', () => {
+  const base = { currentVersion: '1.0.0', availableVersion: '1.1.0', manual: false }
+
+  it('leaves skip available until the user accepts', () => {
+    expect(updateCardActions({ ...base, phase: 'available' }, { accepting: false, retrying: false })).toEqual({
+      showSkip: true,
+      disableSkip: false,
+      disableClose: false,
+      showRetryDownload: false,
+      disableRetryDownload: false
+    })
+  })
+
+  it('locks skip and close once the user accepts', () => {
+    expect(updateCardActions({ ...base, phase: 'available' }, { accepting: true, retrying: false })).toEqual({
+      showSkip: true,
+      disableSkip: true,
+      disableClose: true,
+      showRetryDownload: false,
+      disableRetryDownload: false
+    })
+  })
+
+  it('hides skip and locks close while the download is running', () => {
+    expect(updateCardActions({ ...base, phase: 'downloading', percent: 10 }, { accepting: false, retrying: false })).toEqual({
+      showSkip: false,
+      disableSkip: true,
+      disableClose: true,
+      showRetryDownload: false,
+      disableRetryDownload: false
+    })
+  })
+
+  it('offers install, skip, and close once the download is ready', () => {
+    expect(updateCardActions({ ...base, phase: 'downloaded' }, { accepting: false, retrying: false })).toEqual({
+      showSkip: true,
+      disableSkip: false,
+      disableClose: false,
+      showRetryDownload: false,
+      disableRetryDownload: false
+    })
+  })
+
+  it('offers retry after a download failure and locks it while retrying', () => {
+    const failed: UpdateStatus = { ...base, phase: 'error', retryAction: 'download' }
+    expect(updateCardActions(failed, { accepting: false, retrying: false })).toEqual({
+      showSkip: false,
+      disableSkip: true,
+      disableClose: false,
+      showRetryDownload: true,
+      disableRetryDownload: false
+    })
+    expect(updateCardActions(failed, { accepting: false, retrying: true }).disableClose).toBe(true)
+    expect(updateCardActions(failed, { accepting: false, retrying: true }).disableRetryDownload).toBe(true)
+  })
+
+  it('keeps a generic error closable and without a retry action', () => {
+    expect(updateCardActions(
+      { phase: 'error', currentVersion: '1.0.0', manual: true, message: 'metadata request failed' },
+      { accepting: false, retrying: false }
+    )).toEqual({
+      showSkip: false,
+      disableSkip: true,
+      disableClose: false,
+      showRetryDownload: false,
+      disableRetryDownload: false
+    })
   })
 })

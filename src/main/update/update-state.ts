@@ -6,7 +6,7 @@ export type UpdateStateEvent =
   | { type: 'progress'; percent: number }
   | { type: 'downloaded'; version: string }
   | { type: 'not-available' }
-  | { type: 'error'; message: string }
+  | { type: 'error'; message?: string; retryAction?: 'download' }
   | { type: 'unsupported'; message: string }
   | { type: 'reset' }
 
@@ -29,13 +29,33 @@ export function reduceUpdateStatus(
     case 'available':
       return { ...base, phase: 'available', availableVersion: event.version }
     case 'progress':
-      return { ...current, phase: 'downloading', percent: clampPercent(event.percent) }
+      return {
+        phase: 'downloading',
+        currentVersion: current.currentVersion,
+        manual: current.manual,
+        ...(current.availableVersion ? { availableVersion: current.availableVersion } : {}),
+        percent: clampPercent(event.percent)
+      }
     case 'downloaded':
       return { ...base, phase: 'downloaded', availableVersion: event.version }
     case 'not-available':
       return { ...base, phase: 'up-to-date' }
     case 'error':
-      return { ...base, phase: 'error', message: event.message }
+      // A failed download stays attached to the version the user accepted.
+      // The raw cause is logged by the manager and is not part of the card.
+      if (event.retryAction === 'download') {
+        return {
+          ...base,
+          phase: 'error',
+          ...(current.availableVersion ? { availableVersion: current.availableVersion } : {}),
+          retryAction: 'download'
+        }
+      }
+      return {
+        ...base,
+        phase: 'error',
+        ...(event.message ? { message: event.message } : {})
+      }
     case 'unsupported':
       return { ...base, phase: 'unsupported', message: event.message }
     case 'reset':

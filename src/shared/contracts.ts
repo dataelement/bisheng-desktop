@@ -36,5 +36,10 @@ export interface UpdateStatus {
   availableVersion?: string
   percent?: number
   message?: string
+  /**
+   * Set when a user-accepted download failed and can be started again
+   * without another update check. Absent for every other status.
+   */
+  retryAction?: 'download'
   manual: boolean
 }

@@ -2,9 +2,76 @@ import type { UpdateStatus } from '../shared/contracts'
 
 export type UpdateLocale = 'en' | 'zh'
 
+export function isRetryableDownloadError(status: UpdateStatus): boolean {
+  return status.phase === 'error' && status.retryAction === 'download'
+}
+
 export function shouldShowUpdate(status: UpdateStatus): boolean {
   if (['available', 'downloading', 'downloaded'].includes(status.phase)) return true
+  if (isRetryableDownloadError(status)) return true
   return status.manual && ['checking', 'up-to-date', 'error', 'unsupported'].includes(status.phase)
+}
+
+export interface UpdateCardActions {
+  showSkip: boolean
+  disableSkip: boolean
+  disableClose: boolean
+  showRetryDownload: boolean
+  disableRetryDownload: boolean
+}
+
+/**
+ * What the card may do right now. Accepting a download and the download
+ * itself lock every way out, so the install prompt cannot be skipped or
+ * dismissed before it appears. A failed download offers retry instead.
+ */
+export function updateCardActions(
+  status: UpdateStatus,
+  pending: { accepting: boolean; retrying: boolean }
+): UpdateCardActions {
+  if (status.phase === 'available') {
+    return {
+      showSkip: true,
+      disableSkip: pending.accepting,
+      disableClose: pending.accepting,
+      showRetryDownload: false,
+      disableRetryDownload: false
+    }
+  }
+  if (status.phase === 'downloading') {
+    return {
+      showSkip: false,
+      disableSkip: true,
+      disableClose: true,
+      showRetryDownload: false,
+      disableRetryDownload: false
+    }
+  }
+  if (status.phase === 'downloaded') {
+    return {
+      showSkip: true,
+      disableSkip: false,
+      disableClose: false,
+      showRetryDownload: false,
+      disableRetryDownload: false
+    }
+  }
+  if (isRetryableDownloadError(status)) {
+    return {
+      showSkip: false,
+      disableSkip: true,
+      disableClose: pending.retrying,
+      showRetryDownload: true,
+      disableRetryDownload: pending.retrying
+    }
+  }
+  return {
+    showSkip: false,
+    disableSkip: true,
+    disableClose: false,
+    showRetryDownload: false,
+    disableRetryDownload: false
+  }
 }
 
 export function isUpdateDismissed(
@@ -70,6 +137,12 @@ export function updateHeadline(status: UpdateStatus, locale: UpdateLocale): Upda
           : 'Online updates are unavailable in this build.'
       }
     case 'error':
+      if (isRetryableDownloadError(status)) {
+        return {
+          title: zh ? '更新失败' : 'Update failed',
+          description: zh ? '下载失败，请重试' : 'Download failed. Please retry.'
+        }
+      }
       return {
         title: zh ? '更新失败' : 'Update failed',
         description: zh ? '无法检查或下载更新。' : 'Unable to check for or download updates.'
