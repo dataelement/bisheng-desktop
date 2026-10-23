@@ -10,14 +10,14 @@ window.__ModuleLoader__.load({
         accountMenu: '账号菜单', enterpriseAccount: '企业账号', signedOut: '未登录', deviceOnly: '本机模式', signInHint: '登录后可使用企业功能', identityLoading: '正在读取账号…', identityError: '暂时无法读取账号', settings: '设置', accountSettings: '账号设置', approvals: '消息', approvalsPending: '待处理审批', phone: '连接手机', login: '登录企业账号', logout: '退出登录', logoutBody: '退出后需要重新登录企业账号。本机设置、已安装插件和本地数据保留。', logoutFailed: '退出登录未完成，请重试。', cancel: '取消', again: '重试', close: '关闭', loggingOut: '正在退出登录…',
         creditsRemaining: '剩余积分', creditsUnavailable: '积分暂不可用',
         activity: '用量活动', period: '统计范围：{start} — {end}', less: '少', more: '多', totalTokens: '累计 Token', totalMessages: '累计消息',
-        numberLocale: 'zh-CN', modelUsage: '模型用量', tokens: 'Token 用量', messages: '消息数', storage: '个人存储空间', unlimited: '不限', storageValue: '已使用 {used} / {limit}', breakdown: '输入 {input} Token · 输出 {output} Token', missingUsage: '{count} 条记录缺少 Token 用量', usageError: '用量暂不可用，请重试。', noUsage: '暂无用量记录', unavailable: '—',
+        tokenWan: '{value}万', tokenYi: '{value}亿', numberLocale: 'zh-CN', modelUsage: '模型用量', tokens: 'Token 用量', messages: '消息数', storage: '个人存储空间', unlimited: '不限', storageValue: '已使用 {used} / {limit}', breakdown: '输入 {input} Token · 输出 {output} Token', missingUsage: '{count} 条记录缺少 Token 用量', usageError: '用量暂不可用，请重试。', noUsage: '暂无用量记录', unavailable: '—',
         openContent: '进入设置内容', usage: '用量与存储', about: '关于与帮助', tasks: '我的审批', requests: '我的申请', notifications: '通知', ai: 'AI 助手接入', loading: '正在加载企业设置…', error: '暂时无法加载企业设置，请检查连接后重试。', restart: '请完全退出并重新启动客户端，以启用统一设置。', unsupported: '平台暂不支持统一设置，请联系管理员更新平台。', retry: '重新连接', signIn: '登录企业账号后可查看', openAccount: '前往账号设置', desktopVersion: 'BISHENG 版本', harnessVersion: 'Harness 版本', infoError: '无法读取版本信息', update: '检查更新', logs: '查看日志', recovery: '安全模式与插件恢复', localHint: '本机设置仍可正常使用。', actionError: '操作未完成，请重试。',
       },
       en: {
         accountMenu: 'Account menu', enterpriseAccount: 'Enterprise account', signedOut: 'Not signed in', deviceOnly: 'Device only', signInHint: 'Sign in to use enterprise features', identityLoading: 'Loading account…', identityError: 'Account unavailable', settings: 'Settings', accountSettings: 'Account settings', approvals: 'Messages', approvalsPending: 'Pending approvals', phone: 'Connect phone', login: 'Sign in', logout: 'Log out', logoutBody: 'You will need to sign in again. Device settings, installed plugins and local data are kept.', logoutFailed: 'Logout did not complete. Try again.', cancel: 'Cancel', again: 'Retry', close: 'Close', loggingOut: 'Logging out…',
         creditsRemaining: 'Credits remaining', creditsUnavailable: 'Credits unavailable',
         activity: 'Usage activity', period: 'Reporting period: {start} — {end}', less: 'Less', more: 'More', totalTokens: 'Total tokens', totalMessages: 'Total messages',
-        numberLocale: 'en-US', modelUsage: 'Model usage', tokens: 'Token usage', messages: 'Messages', storage: 'Personal storage', unlimited: 'Unlimited', storageValue: 'Used {used} / {limit}', breakdown: 'Input {input} tokens · Output {output} tokens', missingUsage: '{count} records are missing token usage', usageError: 'Usage unavailable. Please retry.', noUsage: 'No usage recorded', unavailable: '—',
+        tokenWan: '{value} ten thousand', tokenYi: '{value} hundred million', numberLocale: 'en-US', modelUsage: 'Model usage', tokens: 'Token usage', messages: 'Messages', storage: 'Personal storage', unlimited: 'Unlimited', storageValue: 'Used {used} / {limit}', breakdown: 'Input {input} tokens · Output {output} tokens', missingUsage: '{count} records are missing token usage', usageError: 'Usage unavailable. Please retry.', noUsage: 'No usage recorded', unavailable: '—',
         openContent: 'Enter settings content', usage: 'Usage and storage', about: 'About and help', tasks: 'My approvals', requests: 'My requests', notifications: 'Notifications', ai: 'AI assistant access', loading: 'Loading enterprise settings…', error: 'Enterprise settings could not load. Check the connection and try again.', restart: 'Quit and restart the desktop app to enable unified settings.', unsupported: 'This platform does not support unified settings yet. Ask your administrator to update it.', retry: 'Reconnect', signIn: 'Sign in to view enterprise settings', openAccount: 'Open account settings', desktopVersion: 'BISHENG version', harnessVersion: 'Harness version', infoError: 'Could not read version information', update: 'Check for updates', logs: 'Show logs', recovery: 'Safe Mode and plugin recovery', localHint: 'Device settings remain available.', actionError: 'The action did not complete. Try again.',
       }
     }
@@ -125,6 +125,14 @@ window.__ModuleLoader__.load({
       }, [attempt])
       const locale = t('numberLocale')
       const amount = value => value == null ? t('unavailable') : new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 2 }).format(value)
+      const tokenAmount = value => {
+        if (value == null) return t('unavailable')
+        if (locale.startsWith('zh')) {
+          const hundredMillion = value >= 100_000_000
+          return t(hundredMillion ? 'tokenYi' : 'tokenWan', { value: (value / (hundredMillion ? 100_000_000 : 10_000)).toFixed(1) })
+        }
+        return new Intl.NumberFormat(locale, { notation: 'compact', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value)
+      }
       const size = (value, unit) => `${Number((unit === 'MB' ? value * 1024 : value).toFixed(2))} ${unit}`
       const data = state.data
       let content
@@ -153,7 +161,7 @@ window.__ModuleLoader__.load({
         const columns = Math.max(1, Math.ceil((data.points.length + offset) / 7))
         content = h(React.Fragment, null,
           h('dl', { className: 'dshUsageOverview' },
-            ...[[creditsLabel, credits, creditsHelp], [t('totalTokens'), amount(data.totals.total_tokens)], [t('totalMessages'), amount(data.totals.message_count)]].map(([label, count, help], index) => h('div', { key: index, title: help }, h('dt', null, label), h('dd', null, count ?? t('unavailable'))))),
+            ...[[creditsLabel, credits, creditsHelp], [t('totalTokens'), tokenAmount(data.totals.total_tokens)], [t('totalMessages'), amount(data.totals.message_count)]].map(([label, count, help], index) => h('div', { key: index, title: help }, h('dt', null, label), h('dd', null, count ?? t('unavailable'))))),
           first && h('p', { className: 'dshSettingsHint dshUsagePeriod' }, t('period', { start: first.start_at.slice(0, 10), end: data.points[data.points.length - 1].start_at.slice(0, 10) })),
           h('section', { className: 'dshUsageModel' },
             h('header', { className: 'dshUsageHeader' }, h('h3', null, t('activity')), h(SegmentedControl, { id, value: metric, label: t('modelUsage'), options: [{ value: 'tokens', label: t('tokens') }, { value: 'messages', label: t('messages') }], onChange: setMetric })),
@@ -162,13 +170,13 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'dshUsageMonths', style: { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }, 'aria-hidden': true }, ...visibleMonths.map(({ date, column }) => h('span', { key: date.toISOString(), style: { gridColumn: `${column} / span ${Math.min(3, columns - column + 1)}`, gridRow: 1 } }, new Intl.DateTimeFormat(locale, { month: 'short', timeZone: 'UTC' }).format(date)))),
                 h('div', { className: 'dshUsageGrid', role: 'list', 'aria-label': t(metric), style: { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` } }, ...data.points.map((point, index) => {
                   const count = value(point)
-                  const label = `${point.start_at.slice(0, 10)} · ${t(metric)}: ${count == null ? t('unavailable') : count.toLocaleString(locale)}`
+                  const label = `${point.start_at.slice(0, 10)} · ${t(metric)}: ${metric === 'tokens' ? tokenAmount(count) : count == null ? t('unavailable') : count.toLocaleString(locale)}`
                   return h(Tooltip, { key: point.start_at, label, side: 'top', portal: true },
                     h('div', { role: 'listitem', tabIndex: 0, 'aria-label': label, className: 'dshUsageDay', 'data-level': count == null ? 'unknown' : count === 0 ? 0 : Math.max(1, Math.ceil(count / max * 4)), style: { gridColumn: Math.floor((index + offset) / 7) + 1, gridRow: (index + offset) % 7 + 1 } }))
                 }))),
               !data.points.some(point => (value(point) || 0) > 0) && h('p', { className: 'dshSettingsHint' }, t('noUsage')),
               h('div', { className: 'dshUsageLegend', 'aria-hidden': true }, t('less'), ...[0, 1, 2, 3, 4].map(level => h('span', { key: level, className: 'dshUsageDay', 'data-level': level })), t('more')),
-              metric === 'tokens' && h('p', { className: 'dshSettingsHint' }, t('breakdown', { input: amount(data.totals.input_tokens), output: amount(data.totals.output_tokens) })),
+              metric === 'tokens' && h('p', { className: 'dshSettingsHint' }, t('breakdown', { input: tokenAmount(data.totals.input_tokens), output: tokenAmount(data.totals.output_tokens) })),
               data.totals.missing_usage_count > 0 && h('p', { role: 'status', className: 'dshSettingsHint' }, t('missingUsage', { count: data.totals.missing_usage_count })))),
           models,
           h('div', { className: 'dshUsageStorage' }, h('span', null, t('storage')), h('span', null, quota ? t('storageValue', { used: size(quota.used, unit), limit: quota.limit === -1 ? t('unlimited') : size(quota.limit, unit) }) : t('unavailable'))),
