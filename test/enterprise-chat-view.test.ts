@@ -68,6 +68,7 @@ describe('enterprise Chat host boundary', () => {
       f.host.present(f.owner, presentation)
       await flush()
       expect(f.host.snapshot().phase).toBe('ready')
+      expect(fake.views[0].webContents.insertCSS).toHaveBeenCalledWith(expect.stringContaining('.dsh-chat-header .dsh-chat-section-row { display: none !important; }'))
       expect(fake.views[0].options.webPreferences).toMatchObject({ sandbox: true, nodeIntegration: false, contextIsolation: true, webSecurity: true })
       expect(fake.views[0].options.webPreferences.preload).toMatch(/enterprise-chat\.cjs$/u)
       expect(fake.sessions[0].cookies.set).toHaveBeenCalledWith(expect.objectContaining({ httpOnly: true, sameSite: 'lax', secure: true, name: 'bs_credits_3007' }))

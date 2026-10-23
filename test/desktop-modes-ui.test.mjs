@@ -27,7 +27,7 @@ async function mount(connected = false, collection = {}) {
     openPage: vi.fn(async () => {}),
     open: vi.fn(async () => {})
   }
-  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   let plugin, navigate
   let sessionList = { phase: 'ready', byId: { draft: { id: 'draft', blank: true, retainedBy: { mainView: 1 } } } }
   let liveState = { blank: true, pendingSubmissions: [], running: false, awaitingFirstTurn: false }
@@ -312,6 +312,39 @@ it('starts a new conversation without forwarding the click event as a workspace 
   expect(ui.picker()).not.toBeNull()
 })
 
+
+it('reserves the native opener after collapse on an active Chat and restores full bounds on expansion', async () => {
+  const original = HTMLElement.prototype.getBoundingClientRect
+  HTMLElement.prototype.getBoundingClientRect = function () {
+    if (this.hasAttribute('data-shell-leading')) return { left: 80, right: 156, bottom: 48 }
+    return { x: 0, y: 0, right: 960, width: 960, height: 748 }
+  }
+  try {
+    const ui = await mount(true)
+    await ui.cloudSession('existing')
+    expect(ui.picker()).toBeNull()
+    const present = window.dshEnterpriseChat.present
+    expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ bounds: { x: 0, y: 0, width: 960, height: 748 } }))
+    const leading = document.createElement('div')
+    leading.dataset.shellLeading = 'true'
+    const opener = document.createElement('button')
+    opener.textContent = 'Open sidebar'
+    opener.onclick = () => leading.remove()
+    leading.append(opener)
+    await act(async () => container.append(leading))
+    expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ bounds: { x: 156, y: 0, width: 804, height: 748 } }))
+    // The retained host chrome invokes the original action; no duplicate controls.
+    await act(async () => opener.click())
+    expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ bounds: { x: 0, y: 0, width: 960, height: 748 } }))
+    await act(async () => root.unmount())
+    root = undefined
+    const calls = present.mock.calls.length
+    await act(async () => container.append(leading))
+    expect(present).toHaveBeenCalledTimes(calls)
+  } finally {
+    HTMLElement.prototype.getBoundingClientRect = original
+  }
+})
 
 it('keeps the native sidebar visible when the embedded pane spans the frame', async () => {
   const sidebar = document.createElement('div')
