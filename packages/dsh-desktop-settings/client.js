@@ -381,6 +381,13 @@ window.__ModuleLoader__.load({
         ? new Intl.NumberFormat(t('numberLocale'), { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(Math.max(0, quota.limit - quota.used) / 1_000_000)
         : null
       const busy = actionBusy || identity.busy
+      useEffect(() => {
+        if (!menuOpen || busy) return undefined
+        // Clicking the native Chat WebContents does not emit pointerdown in this document.
+        const close = () => setMenuOpen(false)
+        window.addEventListener('blur', close)
+        return () => window.removeEventListener('blur', close)
+      }, [menuOpen, busy])
       // A failed read and a failed action share one retry row; the action takes precedence.
       const failure = actionError ? 'actionError' : identity.error ? 'identityError' : undefined
       const pairPhone = async () => {

@@ -2,6 +2,7 @@ window.__ModuleLoader__.load({
   id: 'dsh-desktop-workbenches',
   factory: (require) => {
     const React = require('react')
+    const { Switch } = require('@deepseek-ai/dsh-client-ui-primitives')
     const { Service } = require('@deepseek-ai/cordis')
     const h = React.createElement
     const PANEL = 'desktop-workbenches'
@@ -1944,9 +1945,13 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
       const enterprise = React.useSyncExternalStore(enterpriseCapability.subscribe.bind(enterpriseCapability), enterpriseCapability.getSnapshot.bind(enterpriseCapability))
       return h('section', { className: 'dshWb dshWbMarket' },
         h('h2', null, '工作台'),
-        h('label', null,
-          h('input', { type: 'checkbox', role: 'switch', checked: enabled, onChange: (event) => workbenchPreference.set(event.target.checked) }),
-          '在左侧显示工作台'),
+        h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: '8px' } },
+          h('span', null, '在左侧显示工作台'),
+          h(Switch, {
+            checked: enabled,
+            label: '在左侧显示工作台',
+            onChange: workbenchPreference.set.bind(workbenchPreference)
+          })),
         h('p', { className: 'dshWbMuted' }, !enabled
           ? '开启后，可以在左侧会话旁进入工作台。'
           : enterprise.allowThirdPartyWorkbenches

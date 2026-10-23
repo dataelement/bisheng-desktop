@@ -127,6 +127,12 @@ Work 从 sessions.binding(id).session 订阅当前主视图的 pendingSubmission
 
 企业网页在 MainLayout 中上报实际可见菜单（权限、预览开关、名称、顺序和选中项均由网页决定）。远程 preload 仅上报展示数据；主进程校验视图、主 frame、企业来源、当前路径和身份代际，逐项校验菜单 ID 与固定路由。宿主 openPage 只接受当前账号已上报的菜单 ID。身份切换清空菜单及页面状态。网页的路由和主题桥接覆盖整个 MainLayout，功能页复用现有页面。Work 本地项目与会话继续由 Harness 管理。
 
+### 收起侧栏后的原生操作区（2026-10-23）
+
+macOS 收起侧栏后，Harness 将展开与新会话控件挂载到既有 `[data-shell-leading]` 操作区。普通 Chat 的模式选择器在进入会话后释放顶部空间，原生 WebContentsView 若仍占据该区域，会盖住 DOM 控件，CSS z-index 无法修复。桌面内容贡献项因此在操作区与 Chat 顶部重叠时，按实际操作区右边界为 Chat 留出左侧空间，保持原有顶部坐标与内容高度，避免标题另起一行；展开侧栏、操作区卸载后恢复完整内容宽度。WebContentsView 为矩形边界，此留白作用于整个嵌入视图，而非仅标题文字。沿用原有按钮、slot 和快捷键，不新增上游补丁或另一份操作控件。
+
+仅观察内容贡献项的直接 frame 子节点/收起属性及操作区尺寸变化，不观察流式正文；卸载时释放 observer。设置页的独立 bounds 不受影响。行为回归在 `test/desktop-modes-ui.test.mjs`，覆盖活动会话收起、展开后恢复和卸载清理；真实 Electron 的点击与视图遮挡仍需独立验收。
+
 ### 模块页深浅色与加载超时（2026-10-19）
 
 毕昇客户端的 ThemeProvider 把 `<html>` 固定为 `light`，而 `@bisheng/ui` 的 tokens.css 已定义完整 `.dark` 变量块。宿主因此接管模块页的深色：`src/main/enterprise/chat-module-theme.ts` 的 `moduleThemeScript` 在每次呈现、完整加载和页面内路由变化后向嵌入文档执行，写 `dshHostTheme` 与 `data-dsh-page`、派发 `dsh:appearance`，并且仅当路径匹配 `MODULE_ROUTE_PATTERN`（knowledge / channel / apps / skills / square，与宿主导航可达的模块一致）且宿主为深色时给 `<html>` 加 `dark` 与 `dsh-module-dark`。脚本在页内安装一次性 MutationObserver 守卫，在 ThemeProvider 挂载后重写 `light` 时重新断言；守卫只撤销宿主自己加过的 `dark`（`owned` 标记），不碰网页在聊天路由上自行维护的 `html.dark`，否则两边互相覆盖会把网页主线程卡死。聊天路由不加 `dark`，继续使用网页的 `data-dsh-chat-theme`。

@@ -350,6 +350,25 @@ it.each([true, false])('keeps Chat visible while the sidebar account menu opens 
   expect(surface).not.toHaveBeenCalled()
 })
 
+it.each([true, false])('dismisses the account menu when focus moves to native Chat and cleans up (wide=%s)', async wide => {
+  const f = await fixture()
+  const remove = vi.spyOn(window, 'removeEventListener')
+  await f.render('settings.launcher', { wide })
+  const trigger = document.querySelector('.dshAccountTrigger')
+  await click(trigger)
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+  await act(async () => window.dispatchEvent(new window.Event('blur')))
+  expect(document.querySelector('[role=menu]')).toBeNull()
+  expect(trigger.getAttribute('aria-expanded')).toBe('false')
+  expect(remove.mock.calls.some(([name]) => name === 'blur')).toBe(true)
+  await click(trigger)
+  expect(document.querySelector('[role=menu]')).not.toBeNull()
+  const removed = remove.mock.calls.filter(([name]) => name === 'blur').length
+  await cleanup(); cleanup = undefined
+  expect(remove.mock.calls.filter(([name]) => name === 'blur').length).toBe(removed + 1)
+  remove.mockRestore()
+})
+
 it('matches the expanded account menu to its trigger without shrinking the collapsed menu', async () => {
   const f = await fixture()
   await f.render('settings.launcher', { wide: true })

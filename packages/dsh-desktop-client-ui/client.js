@@ -517,27 +517,46 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         const bridge = window.dshEnterpriseChat
         if (!bridge) return
+        let observedLeading
         const present = () => {
           const rect = panel.current?.getBoundingClientRect()
           if (!rect) return
           const sidebarRight = document.querySelector('[data-dsh-sidebar-root]')?.getBoundingClientRect().right || 0
-          const x = Math.max(rect.x, sidebarRight)
+          const contentLeft = Math.max(rect.x, sidebarRight)
+          // Native WebContentsView paints above DOM chrome regardless of z-index.
+          // macOS moves the sidebar opener into this seat when the rail disappears.
+          const leading = document.querySelector('[data-shell-leading]')
+          if (leading !== observedLeading) {
+            if (observedLeading) resize.unobserve(observedLeading)
+            observedLeading = leading
+            if (leading) resize.observe(leading)
+          }
+          const chrome = leading?.getBoundingClientRect()
+          // Keep the title beside the native controls instead of adding a row.
+          const x = chrome && chrome.bottom > rect.y && chrome.left < rect.right
+            ? Math.max(contentLeft, chrome.right) : contentLeft
+          const y = rect.y
           const surfaceOpen = settingsOpen || state.approvalsOpen || state.accountDialogOpen
           const remote = surfaceOpen && state.settingsProtocolVersion === 1 && settingsSurface
           const palette = hostPalette()
-          void bridge.present({ visible: (remote ? state.connected && remote.bounds.width > 0 && remote.bounds.height > 0 : mode === 'chat' && !surfaceOpen), ...(remote ? { settings: remote.section } : {}), ...(palette ? { palette } : {}), bounds: remote ? remote.bounds : { x, y: rect.y, width: Math.max(0, rect.right - x), height: rect.height }, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light', locale: locale.getSnapshot().active === 'zh' ? 'zh' : 'en' }).catch(() => {})
+          void bridge.present({ visible: (remote ? state.connected && remote.bounds.width > 0 && remote.bounds.height > 0 : mode === 'chat' && !surfaceOpen), ...(remote ? { settings: remote.section } : {}), ...(palette ? { palette } : {}), bounds: remote ? remote.bounds : { x, y, width: Math.max(0, rect.right - x), height: Math.max(0, rect.y + rect.height - y) }, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light', locale: locale.getSnapshot().active === 'zh' ? 'zh' : 'en' }).catch(() => {})
         }
         const resize = new ResizeObserver(present)
         if (panel.current) resize.observe(panel.current)
         const sidebar = document.querySelector('[data-dsh-sidebar-root]')
         if (sidebar) resize.observe(sidebar)
+        // The leading seat mounts/unmounts as a direct frame child on collapse.
+        // Observe only that boundary, not streaming conversation descendants.
+        const chromeLayout = new MutationObserver(present)
+        const frame = panel.current?.closest('.dshModes')?.parentElement
+        if (frame) chromeLayout.observe(frame, { childList: true, attributes: true, attributeFilter: ['data-sidebar-collapsed'] })
         const theme = new MutationObserver(present)
         theme.observe(document.body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] })
         const unsubscribeLocale = locale.subscribe(present)
         window.addEventListener('resize', present)
         present()
         return () => {
-          resize.disconnect(); theme.disconnect(); unsubscribeLocale(); window.removeEventListener('resize', present)
+          resize.disconnect(); chromeLayout.disconnect(); theme.disconnect(); unsubscribeLocale(); window.removeEventListener('resize', present)
         }
       }, [mode, settingsOpen, state.approvalsOpen, state.accountDialogOpen, settingsSurface, state.connected, state.settingsProtocolVersion, locale])
       React.useEffect(() => () => {
