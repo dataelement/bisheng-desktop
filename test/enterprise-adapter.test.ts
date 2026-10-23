@@ -1,3 +1,4 @@
+// Coverage AC: AC-03, AC-30, AC-31, AC-56.
 import { createServer, type Server } from 'node:http'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -30,6 +31,8 @@ function createPluginContext(
   const routes: RegisteredRoute[] = []
   applyEnterprise({
     provide() {},
+    // Locale event behavior is covered through the real Connection in its dedicated suite.
+    on() { return () => undefined },
     effect(callback: () => (() => unknown) | undefined) {
       const dispose = callback()
       if (dispose) adapterCleanups.push(async () => { await dispose() })
@@ -349,7 +352,7 @@ describe('enterprise chat failure copy', () => {
   async function loadFormatEnterpriseChatFailure() {
     const source = await readFile(join(import.meta.dirname, '../packages/dsh-desktop-enterprise/openai.js'), 'utf8')
     const start = source.indexOf('const LOCAL_CHAT_FAILURES')
-    const end = source.indexOf('\nfunction requestFailure')
+    const end = source.indexOf('\nexport function requestFailure')
     expect(start).toBeGreaterThanOrEqual(0)
     expect(end).toBeGreaterThan(start)
     return new Function(`${source.slice(start, end)}; return formatEnterpriseChatFailure`)() as (
@@ -372,7 +375,7 @@ describe('enterprise chat failure copy', () => {
   it('classifies a desktop header timeout without replacing an upstream error code', async () => {
     const source = await readFile(join(import.meta.dirname, '../packages/dsh-desktop-enterprise/openai.js'), 'utf8')
     const start = source.indexOf('const LOCAL_CHAT_FAILURES')
-    const end = source.indexOf('\nfunction requestFailure')
+    const end = source.indexOf('\nexport function requestFailure')
     const classify = new Function(`${source.slice(start, end)}; return (payload, status) => classifyChatFailure(platformChatCode(payload), status)`)() as (
       payload: unknown,
       status: number

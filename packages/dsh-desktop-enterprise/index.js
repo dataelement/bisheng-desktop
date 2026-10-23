@@ -1,3 +1,6 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { CONTENT_SAFETY_ERROR_COPY } from './error-copy.js'
+import { createContentSafetyLocaleScope } from './content-safety-locale.js'
 import { requestImageDimensions } from '@deepseek-ai/dsh-attachment'
 import { applyEnterpriseMarket } from './market.js'
 import { applyEnterpriseWorkbenchMarket } from './workbench-market.js'
@@ -382,7 +385,39 @@ export function apply(ctx) {
   }
 }
 
+function contentSafetyLocale(request) {
+  const authority = request.headers.host
+  const cookie = request.headers.cookie
+  if (typeof authority !== 'string' || typeof cookie !== 'string') return undefined
+  const name = 'dshEnterpriseSafetyLocale_' + encodeURIComponent(authority.toLowerCase())
+  const values = cookie.split(';').map(part => part.trim()).filter(part => part.startsWith(name + '='))
+  if (values.length !== 1) return undefined
+  const value = values[0].slice(name.length + 1)
+  if (value.length > 2048) return undefined
+  try {
+    const payload = JSON.parse(decodeURIComponent(value))
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || Object.keys(payload).length !== 2 || !Object.hasOwn(payload, 'messages')
+      || typeof payload.owner !== 'string'
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(payload.owner)) return undefined
+    const messages = payload.messages
+    const codes = Object.keys(CONTENT_SAFETY_ERROR_COPY)
+    if (!messages || typeof messages !== 'object' || Array.isArray(messages)
+      || Object.keys(messages).length !== codes.length
+      || !codes.every(code => typeof messages[code] === 'string'
+        && Object.values(CONTENT_SAFETY_ERROR_COPY[code]).includes(messages[code]))) return undefined
+    return Object.freeze(messages)
+  } catch {
+    // Locale is an optional display hint, never an authentication or model input.
+    return undefined
+  }
+}
+
 function startEnterpriseLlm(ctx, llm, broker) {
+  const safetyLocale = new AsyncLocalStorage()
+  const disposeSafetyLocale = ctx.on('connection/request', (request, _response, next) =>
+    safetyLocale.run(contentSafetyLocale(request), next))
+  const safetyLocaleScope = createContentSafetyLocaleScope(ctx, () => safetyLocale.getStore())
   let latest = disabledState()
   let models = []
   let modelsAvailable = false
@@ -426,6 +461,7 @@ function startEnterpriseLlm(ctx, llm, broker) {
     request: (body, signal, headers) => brokerChat(broker, body, signal, pickAttributionHeaders(headers)),
     requestResponses: (body, signal, headers, connectionKey) => brokerChat(broker, body, signal, pickAttributionHeaders(headers), connectionKey),
     connectionKey: () => latest.connectionKey,
+    contentSafetyFormatterFor: options => safetyLocaleScope.formatterFor(options),
     onReplayDegrade: (reason) => ctx.logger?.info?.(`Enterprise Responses replay degraded: ${reason}`),
     readImage: (ref, signal) => ctx.get?.('attachments')?.readImageRequest?.(ref, {
       ...requestImageDimensions(ref.width, ref.height, 4_194_304),
@@ -476,6 +512,9 @@ function startEnterpriseLlm(ctx, llm, broker) {
     },
     dispose() {
       stopped = true
+      disposeSafetyLocale()
+      safetyLocaleScope.dispose()
+      safetyLocale.disable()
       titles.dispose()
       if (timer) clearTimeout(timer)
       registration?.()
