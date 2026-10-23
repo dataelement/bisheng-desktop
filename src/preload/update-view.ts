@@ -64,10 +64,10 @@ export function updateHeadline(status: UpdateStatus, locale: UpdateLocale): Upda
       }
     case 'unsupported':
       return {
-        title: zh ? '暂未提供在线更新' : 'Online updates are not available',
+        title: zh ? '当前构建不支持在线更新' : 'Online updates are not available',
         description: zh
-          ? 'BISHENG 暂未提供在线更新。'
-          : 'BISHENG does not offer online updates yet.'
+          ? '当前构建不支持在线更新。'
+          : 'Online updates are unavailable in this build.'
       }
     case 'error':
       return {
@@ -99,7 +99,7 @@ export function updateMessage(status: UpdateStatus, locale: UpdateLocale): strin
     case 'up-to-date':
       return zh ? 'BISHENG 已是最新版本' : 'BISHENG is up to date'
     case 'unsupported':
-      return zh ? 'BISHENG 暂未提供在线更新。' : 'BISHENG does not offer online updates yet.'
+      return zh ? '当前构建不支持在线更新。' : 'Online updates are unavailable in this build.'
     case 'error':
       return zh ? '无法检查或下载更新' : 'Unable to check for or download updates'
     case 'idle':

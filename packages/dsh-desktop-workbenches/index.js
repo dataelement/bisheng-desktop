@@ -5,7 +5,7 @@ import { readSubmissionStatus, SubmissionStatusError } from './submission-status
 import { createStateStore, MAX_STATE_BYTES, StateError } from './state.mjs'
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { consumeLocalWorkbenchCapability, localCapabilityMatches, LOCAL_WORKBENCH_CAPABILITY_HEADER, readLocalWorkbenchPackage } from './local-install.mjs'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const name = 'dsh-desktop-workbenches'
@@ -281,6 +281,48 @@ export function apply(ctx, config) {
           await marketInstalls.forget(id)
           return Response.json({ restartRequired: true }, { headers: { 'cache-control': 'no-store' } })
         } catch (error) { return installFailure(error, 'Could not uninstall the workbench.') }
+      }
+    })
+  })
+  ctx.inject(['desktopPnpm', 'enterpriseWorkbenchPackages'], (scoped) => {
+    scoped.connection.fetch.register({
+      path: '/api/desktop-workbenches/enterprise-install',
+      methods: ['POST'],
+      requestBody: 'buffered',
+      async fetch(request) {
+        let opened
+        try {
+          const payload = await readPayload(request, 4096, 'Request is too large.')
+          if (typeof payload?.id !== 'string' || !/^[a-f0-9]{32}$/u.test(payload.id)) {
+            throw new MarketInstallError('An enterprise workbench is required.')
+          }
+          opened = await scoped.enterpriseWorkbenchPackages.open(payload.id)
+          if (!opened || typeof opened.path !== 'string' || !isAbsolute(opened.path) || typeof opened.packageName !== 'string' || typeof opened.version !== 'string') {
+            throw new MarketInstallError('The enterprise workbench package could not be prepared.')
+          }
+          const handle = scoped.desktopPnpm.installWorkbenchGeneration({
+            source: 'enterprise',
+            path: opened.path,
+            pluginSpec: opened.path,
+            expectedPluginName: opened.packageName,
+            expectedVersion: opened.version
+          }, config.root)
+          await awaitHandle(handle)
+          return Response.json({
+            install: {
+              id: payload.id,
+              pluginName: opened.packageName,
+              version: opened.version,
+              source: 'enterprise',
+              installedAt: new Date().toISOString()
+            },
+            restartRequired: true
+          }, { headers: { 'cache-control': 'no-store' } })
+        } catch (error) {
+          return installFailure(error, 'Could not install the enterprise workbench.')
+        } finally {
+          await opened?.release?.()
+        }
       }
     })
   })

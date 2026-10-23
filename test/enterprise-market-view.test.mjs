@@ -9,7 +9,7 @@ const source = await readFile(new URL('../packages/dsh-desktop-enterprise/client
 let cleanup
 afterEach(async () => { await cleanup?.(); vi.unstubAllGlobals() })
 
-async function mountMarket({ action, update = false, holdRefresh = false, plugins, installReady = true } = {}) {
+async function mountMarket({ action, update = false, holdRefresh = false, plugins, installReady = true, catalogFailure } = {}) {
   const dom = new JSDOM('<html lang="zh-CN"><div id="root"></div></html>', { url: 'http://localhost/' })
   vi.stubGlobal('window', dom.window)
   vi.stubGlobal('document', dom.window.document)
@@ -38,6 +38,9 @@ async function mountMarket({ action, update = false, holdRefresh = false, plugin
       const result = snapshot()
       return { ok: true, json: async () => result }
     }
+    if (String(path).startsWith('/api/enterprise.market.catalog') && catalogFailure) {
+      return { ok: false, json: async () => catalogFailure }
+    }
     const result = snapshot()
     if (holdRefresh && ++catalogReads > 1) await new Promise(resolve => pendingCatalogs.push(resolve))
     return { ok: true, json: async () => result }
@@ -64,6 +67,8 @@ async function mountMarket({ action, update = false, holdRefresh = false, plugin
   return {
     text, click, requests, plugin, rename: name => { company = name },
     card,
+    setRuntimeError: error => { installedById.set(plugin.id, { ...installedById.get(plugin.id), error }) },
+    syncRuntime: async () => { await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus'))) },
     finish: async (error, name = 'JSON 格式化') => { await act(async () => pendingActions.get(name === other.display_name ? other.id : plugin.id)(error)) },
     finishRefresh: async () => { await act(async () => pendingCatalogs.splice(0).forEach(resolve => resolve())) }
   }
@@ -95,6 +100,17 @@ it('shows only the empty notice when the enterprise has no plugins', async () =>
   expect(text()).toContain('企业暂未提供插件，请联系管理员导入。')
   expect(text()).not.toContain('安装企业提供的插件，供当前企业账号使用。')
   expect(text()).not.toContain('企业市场暂未就绪，可联系管理员完成配置。')
+})
+
+it.each([
+  ['protocol_mismatch', '当前客户端需要更新后的企业市场，请联系管理员升级服务端。'],
+  ['seat_revoked', '当前登录已失效，请重新登录。'],
+  ['session_expired', '登录会话已过期，请重新登录。']
+])('shows the specific market failure for %s', async (errorCode, copy) => {
+  const { text } = await mountMarket({ catalogFailure: { error: 'raw server text', errorCode } })
+  expect(text()).toContain(copy)
+  expect(text()).not.toContain('暂时无法读取企业插件，请重试或联系管理员。')
+  expect(text()).not.toContain('raw server text')
 })
 
 it('keeps the intro and setup notice when plugins exist but the market is not ready', async () => {
@@ -144,6 +160,28 @@ it('clears only the failed operation and restores the install controls for retry
   expect(document.querySelectorAll('button[aria-busy="true"]')).toHaveLength(0)
 })
 
+
+it('removes a recovered runtime error without reinstalling or toggling the plugin', async () => {
+  const { card, setRuntimeError, syncRuntime, requests } = await mountMarket({ action: 'disable' })
+  setRuntimeError('The operation was aborted due to timeout')
+  await syncRuntime()
+  expect(card('JSON 格式化').querySelector('[role="alert"]').textContent).toContain('timeout')
+  setRuntimeError(undefined)
+  await syncRuntime()
+  expect(card('JSON 格式化').querySelector('[role="alert"]')).toBeNull()
+  expect(requests.some(item => item.path === '/api/enterprise.market.action')).toBe(false)
+})
+
+it('removes the failed request notice after a successful retry', async () => {
+  const { card, click, finish } = await mountMarket({ action: 'install' })
+  await click('安装', 'JSON 格式化')
+  await finish('The operation was aborted due to timeout')
+  expect(card('JSON 格式化').querySelector('[role="alert"]')).not.toBeNull()
+  await click('安装', 'JSON 格式化')
+  await finish()
+  expect(card('JSON 格式化').textContent).toContain('已安装')
+  expect(card('JSON 格式化').querySelector('[role="alert"]')).toBeNull()
+})
 
 it('lets another plugin start and finish independently while the first operation is pending', async () => {
   const { card, click, finish, requests } = await mountMarket({ action: 'install' })

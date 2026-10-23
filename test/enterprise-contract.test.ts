@@ -115,6 +115,9 @@ describe('BiSheng compatible client API mock', () => {
       '/api/enterprise.market.state',
       '/api/enterprise.market.catalog',
       '/api/enterprise.market.action',
+      '/api/enterprise.workbenches/catalog',
+      '/api/enterprise.workbenches/detail',
+      '/api/enterprise.workbenches/verify',
       '/api/enterprise.state',
       '/api/enterprise.base.inspect',
       '/api/enterprise.login.start',
@@ -148,6 +151,28 @@ describe('BiSheng compatible client API mock', () => {
       client_id: 'other-client',
       contract_version: '0.5.0'
     })).toThrow('contract version is incompatible')
+  })
+
+  it('serves audit negotiation alongside third-party capabilities and the workbench catalog', async () => {
+    const auditContext = { fields: ['conversation_id', 'request_kind'] }
+    service = createMockEnterpriseServer({ port: 0, auditContext })
+    const origin = await service.listen()
+    const config = await fetch(`${origin}${API_PATHS.config}`).then(response => response.json())
+    expect(config.audit_context).toEqual(auditContext)
+    expect(service.state.configRequests).toBe(1)
+
+    const capabilities = await fetch(`${origin}/api/v1/dsh/market/capabilities`).then(response => response.json())
+    expect(capabilities).toMatchObject({ status_code: 200, data: {
+      allow_third_party_plugins: expect.any(Boolean),
+      allow_third_party_workbenches: expect.any(Boolean)
+    } })
+    const issued = await issueSession(origin)
+    const session = parseToken(issued.raw, origin, 0)
+    const catalog = await fetch(`${origin}/api/v1/dsh/market/workbenches`, {
+      headers: { authorization: `Bearer ${session.access_token}` }
+    }).then(response => response.json())
+    expect(catalog).toMatchObject({ status_code: 200, data: { total: 2 } })
+    expect(service.state.configRequests).toBe(1)
   })
 
   it('runs config, PKCE login, models, usage, model streaming, refresh, and logout', async () => {
@@ -275,6 +300,20 @@ describe('BiSheng compatible client API mock', () => {
       extra: true
     })
     expect(response.status).toBe(400)
+  })
+
+  it('preserves reasoning capabilities and rejects malformed declarations per model', () => {
+    const base = { id: 'reasoner', capabilities: { streaming: true, tools: true, reasoning_content: false } }
+    const reasoning = { efforts: [{ id: 'high', name: 'High' }], defaultEffort: 'high' }
+    expect(parseModels({ object: 'list', data: [{ ...base, reasoning }] })[0]?.reasoning).toEqual(reasoning)
+    for (const invalid of [null, {}, { efforts: [] }, { efforts: [null] },
+      { efforts: [{ id: '', name: 'Empty' }] },
+      { efforts: [{ id: 'high', name: 'High' }, { id: 'high', name: 'Duplicate' }] },
+      { ...reasoning, defaultEffort: 'unknown' }]) {
+      const response = { object: 'list', data: [{ ...base, reasoning: invalid }, { ...base, id: 'legacy' }] }
+      expect(parseModelsLenient(response).map((model) => model.id)).toEqual(['legacy'])
+      expect(() => parseModels(response)).toThrow('invalid model')
+    }
   })
 
   it('skips invalid models without failing the whole list', () => {

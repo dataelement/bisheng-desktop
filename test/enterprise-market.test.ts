@@ -2,7 +2,6 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { isolatePackage } from './helpers/isolated-package-tree.mjs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { generateKeyPairSync, sign } from 'node:crypto'
 import { lstat, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,9 +9,9 @@ import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import { Loader } from '@deepseek-ai/cordis-plugin-loader'
 import { createMarketRuntime } from '../packages/dsh-desktop-enterprise/market-runtime.js'
-import { createMarketController, hostDshEntryPath, isMarketVersionCompatible } from '../packages/dsh-desktop-enterprise/market.js'
+import { applyEnterpriseMarket, createMarketController, hostDshEntryPath, isMarketVersionCompatible } from '../packages/dsh-desktop-enterprise/market.js'
 import { installOfflineBundle, readBundleZip, sha256, validateOfflineBundle, verifyInstalledBundle } from '../packages/dsh-desktop-enterprise/offline-bundle.js'
-import { verifyMarketLease } from '../packages/dsh-desktop-enterprise/market-policy.js'
+import { acceptMarketSnapshot } from '../packages/dsh-desktop-enterprise/market-policy.js'
 import { sweepRegistry } from 'dsh-desktop-market-installer/generations/registry'
 import { zipEntries } from '../scripts/pack-enterprise-plugin.mjs'
 
@@ -20,9 +19,6 @@ const paths: string[] = [], controllers: Array<{ stop: () => Promise<void> }> = 
 afterEach(async () => { for (const controller of controllers.splice(0)) await controller.stop(); for (const path of paths.splice(0)) await rm(path, { recursive: true, force: true }); vi.useRealTimers() })
 const pluginId = 'a'.repeat(32), versionId = 'b'.repeat(32), target = `${process.platform}-${process.arch}`
 const account = { connected: true, desktopVersion: '0.9.2', base: 'https://enterprise.example/bisheng', user: { id: '20' }, tenant: { id: '2', name: 'Company' }, sessionExpiresAt: new Date(Date.now() + 86400000).toISOString() }
-const { privateKey, publicKey } = generateKeyPairSync('ed25519')
-const pem = publicKey.export({ type: 'spki', format: 'pem' }).toString()
-function receipt(payload: object) { const bytes = Buffer.from(JSON.stringify(payload)); return { payload: bytes.toString('base64url'), signature: sign(null, bytes, privateKey).toString('base64url') } }
 function bundle(version = '1.0.0', source = 'export function apply(ctx) { ctx.effect(() => () => {}, "test plugin") }') {
   const files = { 'node_modules/company-demo/package.json': Buffer.from(JSON.stringify({ name: 'company-demo', version, type: 'module', main: 'index.js' })), 'node_modules/company-demo/index.js': Buffer.from(source) }
   const manifest = { schema_version: 1, plugin: { name: 'company-demo', version, display_name: 'Company Demo', description: 'Internal reporting', publisher: 'Company', license: 'MIT', desktop_min: '0.9.1', permissions: [], services: [] }, targets: { [target]: Object.fromEntries(Object.entries(files).map(([path, value]) => [path, sha256(value)])) } }
@@ -90,7 +86,7 @@ describe('offline bundles', () => {
     const ownerId = await context.loader.create({ name: 'cordis:enterpriseTest' })
     await context.loader.await()
     try {
-      const mounted = await runtime!({ ...generation, ...data.expected })
+      const mounted = await runtime!({ ...generation, ...data.expected, plugin_id: 'fixture-plugin' })
       expect([...context.loader.entries()].some(entry => entry.options.name.includes('company-demo/index.js'))).toBe(true)
       expect(mounted.state).toBe(2)
       await mounted.dispose()
@@ -130,6 +126,26 @@ describe('offline bundles', () => {
     await expect(lstat(join(root, 'profiles/node_modules/react-dom'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('verifies absent Profile host peers from a separate current installation without accepting ordinary dependencies', async () => {
+    const root = await home(), installation = await home()
+    const entry = await installHost(installation)
+    const host = join(installation, 'node_modules/@deepseek-ai/test-peer')
+    await mkdir(host, { recursive: true })
+    await writeFile(join(host, 'package.json'), JSON.stringify({ name: '@deepseek-ai/test-peer', main: 'index.js' }))
+    await writeFile(join(host, 'index.js'), 'module.exports = {}')
+    const data = namedBundle('company-host-peer', { peerDependencies: { '@deepseek-ai/test-peer': '*' } })
+    await expect(installOfflineBundle(root, data.bytes, data.expected, target, { dshEntryPath: entry })).resolves.toHaveProperty('directory')
+    await expect(lstat(join(root, 'profiles/node_modules/@deepseek-ai/test-peer'))).rejects.toMatchObject({ code: 'ENOENT' })
+    const ordinary = join(installation, 'node_modules/ordinary-only-in-host')
+    await mkdir(ordinary, { recursive: true })
+    await writeFile(join(ordinary, 'package.json'), JSON.stringify({ name: 'ordinary-only-in-host', main: 'index.js' }))
+    await writeFile(join(ordinary, 'index.js'), 'module.exports = {}')
+    const missing = namedBundle('company-missing-dependency', { dependencies: { 'ordinary-only-in-host': '*' } })
+    await expect(installOfflineBundle(root, missing.bytes, missing.expected, target, { dshEntryPath: entry })).rejects.toThrow('ordinary-only-in-host')
+    const missingPeer = namedBundle('company-missing-host', { peerDependencies: { '@deepseek-ai/unavailable-peer': '*' } })
+    await expect(installOfflineBundle(root, missingPeer.bytes, missingPeer.expected, target, { dshEntryPath: entry })).rejects.toThrow('@deepseek-ai/unavailable-peer')
+  })
+
   it('keeps the missing host entry path when installation cannot be anchored', async () => {
     const root = await home()
     await installHost(root)
@@ -160,19 +176,19 @@ describe('offline bundles', () => {
 })
 
 describe('enterprise policy', () => {
-  it('binds signed leases to tenant, user, device and expiration', () => {
-    const policy = { tenant_id: '2', user_id: '20', device_id: 'device', issued_at: Math.floor(Date.now() / 1000), expires_at: Math.floor(Date.now() / 1000) + 60, policies: [] }
-    const signed = receipt(policy)
-    expect(verifyMarketLease(signed, account, 'device', pem)).toMatchObject({ tenant_id: '2' })
-    expect(() => verifyMarketLease(signed, { ...account, tenant: { id: '3' } }, 'device', pem)).toThrow()
-    expect(() => verifyMarketLease(signed, account, 'other', pem)).toThrow()
-    expect(() => verifyMarketLease(signed, account, 'device', pem, Date.now() + 61000)).toThrow()
-    expect(() => verifyMarketLease({ ...signed, payload: receipt({ ...policy, tenant_id: '3' }).payload }, account, 'device', pem)).toThrow(/signature/)
+  it('binds unsigned snapshots to tenant, user, device and freshness', () => {
+    const now = Date.now()
+    const snapshot = { tenant_id: '2', user_id: '20', device_id: 'device', synced_at: Math.floor(now / 1000), policies: [] }
+    expect(acceptMarketSnapshot(snapshot, account, 'device', now)).toMatchObject({ tenant_id: '2' })
+    expect(() => acceptMarketSnapshot(snapshot, { ...account, tenant: { id: '3' } }, 'device', now)).toThrow()
+    expect(() => acceptMarketSnapshot(snapshot, account, 'other', now)).toThrow()
+    expect(() => acceptMarketSnapshot(snapshot, account, 'device', now + 6 * 60_000)).toThrow(/stale/)
+    expect(() => acceptMarketSnapshot({ ...snapshot, policies: [{ plugin_id: pluginId, name: 'company-demo', disabled: false, revision: 1, current_version_id: versionId, versions: [{ id: versionId, digest: 'not-a-digest' }] }] }, account, 'device', now)).toThrow(/digest/)
   })
 
 })
 
-async function fixture(pinned = true) {
+async function fixture() {
   const root = await home(), ctx = new Context()
   let current = bundle(), currentId = versionId, disabled = false, online = true, revision = 2, connected = true
   let identity = account
@@ -181,15 +197,15 @@ async function fixture(pinned = true) {
     if (!online) throw new Error('Network unavailable')
     if (path.endsWith('/artifact')) return current.bytes
     let data: unknown
-    if (path.endsWith('/capabilities')) data = { enabled: true, contract_version: 1, tenant_id: '2', public_key: pem }
-    else if (path.endsWith('/sync')) data = receipt({ tenant_id: '2', user_id: '20', device_id: body!.device_id, issued_at: Math.floor(Date.now() / 1000), expires_at: Math.floor(Date.now() / 1000) + 3600,
-      policies: [{ plugin_id: pluginId, name: 'company-demo', disabled, revision, current_version_id: disabled ? null : currentId, versions: [...approved].map(([id, digest]) => ({ id, digest })) }] })
+    if (path.endsWith('/capabilities')) data = { enabled: true, contract_version: 2, tenant_id: '2', sync_seconds: 60 }
+    else if (path.endsWith('/sync')) data = { tenant_id: '2', user_id: '20', device_id: body!.device_id, synced_at: Math.floor(Date.now() / 1000),
+      policies: [{ plugin_id: pluginId, name: 'company-demo', disabled, revision, current_version_id: disabled ? null : currentId, versions: [...approved].map(([id, digest]) => ({ id, digest })) }] }
     else data = { total: disabled ? 0 : 1, data: disabled ? [] : [{ id: pluginId, name: 'company-demo', display_name: 'Company Demo', current_version_id: currentId, revision,
       versions: [{ id: currentId, version: current.expected.version, digest: current.expected.digest, manifest: current.manifest }] }] }
     return { status_code: 200, data }
   })
   const active = new Set<string>()
-  const market = createMarketController(ctx, { state: () => ({ ...identity, connected }), marketRequest: request }, { home: root, ...(pinned ? { publicKey: pem } : {}), target,
+  const market = createMarketController(ctx, { state: () => ({ ...identity, connected }), marketRequest: request }, { home: root, target,
     load: async (record: { directory: string; version: string; config?: Record<string, unknown> }) => {
       const module = await import(pathToFileURL(join(record.directory, 'node_modules/company-demo/index.js')).href)
       const fiber = ctx.plugin(module, record.config)
@@ -198,23 +214,23 @@ async function fixture(pinned = true) {
       return { dispose: async () => { active.delete(record.version); await fiber.dispose() } }
     } })
   controllers.push(market)
-  return { root, market, request, active, setDesktopVersion: (value: string) => { identity = { ...identity, desktopVersion: value } }, swap: () => { identity = { ...account, user: { id: '21' } } }, disconnect: () => { connected = false }, offline: () => { online = false }, disable: () => { disabled = true; revision++ }, update: (source?: string) => {
+  return { root, market, request, active, setDesktopVersion: (value: string) => { identity = { ...identity, desktopVersion: value } }, swap: () => { identity = { ...account, user: { id: '21' } } }, disconnect: () => { connected = false }, offline: () => { online = false }, reconnect: () => { online = true }, disable: () => { disabled = true; revision++ }, update: (source?: string) => {
     current = bundle('1.1.0', source); currentId = 'c'.repeat(32); approved.set(currentId, current.expected.digest); revision++
   } }
 }
 
 describe('account-bound lifecycle', () => {
-  it('discovers the signing key from the logged-in server and installs without enterprise deployment flags', async () => {
-    const { market, active } = await fixture(false)
+  it('installs from an unsigned enterprise market without a deployment signing key', async () => {
+    const { market, active } = await fixture()
     expect(await market.catalog()).toMatchObject({ connected: true, installReady: true, total: 1, user: { id: '20' } })
     await market.act({ action: 'install', plugin_id: pluginId })
     expect(active.size).toBe(1)
   })
   it('returns an empty catalog after logout and rejects a previous account response', async () => {
-    const { market, request, swap, disconnect } = await fixture(false)
+    const { market, request, swap, disconnect } = await fixture()
     let release!: () => void
     const waiting = new Promise<void>(resolve => { release = resolve })
-    request.mockImplementationOnce(async () => { await waiting; return { status_code: 200, data: { enabled: true, contract_version: 1, tenant_id: '2', public_key: pem } } })
+    request.mockImplementationOnce(async () => { await waiting; return { status_code: 200, data: { enabled: true, contract_version: 2, tenant_id: '2', sync_seconds: 60 } } })
     const result = market.catalog()
     await vi.waitFor(() => expect(request).toHaveBeenCalled())
     swap(); release()
@@ -223,8 +239,8 @@ describe('account-bound lifecycle', () => {
     expect(await market.catalog()).toMatchObject({ connected: false, total: 0, data: [] })
   })
   it('blocks cross-tenant capability responses before fetching a catalog', async () => {
-    const { market, request } = await fixture(false)
-    request.mockImplementationOnce(async () => ({ status_code: 200, data: { enabled: true, contract_version: 1, tenant_id: 'other', public_key: pem } }))
+    const { market, request } = await fixture()
+    request.mockImplementationOnce(async () => ({ status_code: 200, data: { enabled: true, contract_version: 2, tenant_id: 'other', sync_seconds: 60 } }))
     await expect(market.catalog()).rejects.toThrow(/tenant mismatch/)
     expect(request).toHaveBeenCalledTimes(1)
   })
@@ -253,17 +269,23 @@ describe('account-bound lifecycle', () => {
     await expect(market.act({ action: 'enable', plugin_id: pluginId })).rejects.toThrow(/authorization/)
     await market.stop(); expect(active.size).toBe(0)
   })
-  it('restores account-scoped configuration after an offline restart', async () => {
-    const { market, update, offline, active } = await fixture()
+  it('keeps the enable preference across a brief outage and restores it after reconnect', async () => {
+    const { market, update, offline, reconnect, active } = await fixture()
     update('export function apply(ctx, config) { if (config.service !== "intranet") throw new Error("service required") }')
     await expect(market.act({ action: 'install', plugin_id: pluginId })).rejects.toThrow(/service required/)
     await market.act({ action: 'install', plugin_id: pluginId, config: { service: 'intranet' } })
     await expect(market.act({ action: 'configure', plugin_id: pluginId, config: { service: 'wrong' } })).rejects.toThrow(/service required/)
     expect(active.has('1.1.0')).toBe(true)
-    await market.stop(false); expect(active.size).toBe(0)
+    await market.stop(); expect(active.size).toBe(0)
     offline(); await market.synchronize()
+    expect(active.size).toBe(0)
+    expect(market.state().installed[0]).toMatchObject({ enabled: true, status: 'failed' })
+    expect(market.state().installed[0]?.error).toBe('Network unavailable')
+    reconnect(); await market.synchronize()
     expect(active.has('1.1.0')).toBe(true)
     expect(market.state().installed[0]?.status).toBe('enabled')
+    expect(market.state().installed[0]).not.toHaveProperty('error')
+    expect((await market.catalog()).installed[0]).not.toHaveProperty('error')
   })
   it('clears visible installations immediately on account change and unloads on disconnect', async () => {
     const { market, swap, disconnect, active } = await fixture()
@@ -272,18 +294,18 @@ describe('account-bound lifecycle', () => {
     disconnect(); await market.tick()
     expect(active.size).toBe(0)
   })
-  it('expires an offline runtime at the signed policy deadline', async () => {
+  it('stops a running plugin when synchronization fails and keeps the user switch', async () => {
     const { market, offline, active } = await fixture()
     await market.act({ action: 'install', plugin_id: pluginId })
-    vi.useFakeTimers(); offline(); await market.synchronize()
-    await vi.advanceTimersByTimeAsync(3600001)
+    offline(); await market.synchronize()
     expect(active.size).toBe(0)
-    expect(market.state().installed[0]?.status).toBe('disabled')
+    expect(market.state().installed[0]).toMatchObject({ enabled: true, status: 'failed' })
   })
-  it('keeps authorized running plugins offline and blocks new activation', async () => {
+  it('stops plugins while offline and blocks new activation', async () => {
     const { market, offline, active } = await fixture()
     await market.act({ action: 'install', plugin_id: pluginId }); offline(); await market.synchronize()
-    expect(active.size).toBe(1)
+    expect(active.size).toBe(0)
+    expect(market.state().installed[0]?.enabled).toBe(true)
     await market.act({ action: 'disable', plugin_id: pluginId })
     await expect(market.act({ action: 'enable', plugin_id: pluginId })).rejects.toThrow(/Network unavailable/)
     expect(active.size).toBe(0)
@@ -301,16 +323,49 @@ describe('review regressions', () => {
     expect(isMarketVersionCompatible('0.9.2', 'invalid')).toBe(false)
   })
 
-  it('pins first-use keys across synchronization and restart', async () => {
-    const { market, request, root } = await fixture(false)
+  it('returns a market failure code to the settings page', async () => {
+    const root = await home()
+    const previousHome = process.env.DSH_HOME
+    process.env.DSH_HOME = root
+    const ctx = new Context()
+    const registrations = new Map<string, (request: { url: string }) => Promise<Response>>()
+    ctx.provide('connection', {
+      fetch: {
+        register(config: { path: string; fetch: (request: { url: string }) => Promise<Response> }) {
+          registrations.set(config.path, config.fetch)
+          return () => undefined
+        }
+      }
+    })
+    const accountController = {
+      state: () => account,
+      refreshState: async () => {},
+      marketRequest: async () => { throw Object.assign(new Error('The seat was revoked.'), { code: 'seat_revoked' }) }
+    }
+    try {
+      applyEnterpriseMarket(ctx, accountController)
+      const fetchCatalog = registrations.get('/api/enterprise.market.catalog')
+      if (!fetchCatalog) throw new Error('Catalog route was not registered.')
+      const response = await fetchCatalog({ url: 'http://127.0.0.1/api/enterprise.market.catalog?page=1' })
+      expect(response.status).toBe(400)
+      await expect(response.json()).resolves.toEqual({ error: 'The seat was revoked.', errorCode: 'seat_revoked' })
+    } finally {
+      await ctx.fiber.dispose()
+      if (previousHome === undefined) delete process.env.DSH_HOME
+      else process.env.DSH_HOME = previousHome
+    }
+  })
+
+  it('reports a protocol mismatch and does not persist a signing key', async () => {
+    const { market, request, root } = await fixture()
     await market.synchronize()
-    const other = generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'pem' }).toString()
-    await market.stop(false)
-    request.mockImplementationOnce(async () => ({ status_code: 200, data: { enabled: true, contract_version: 1, tenant_id: '2', public_key: other } }))
+    request.mockImplementationOnce(async () => ({ status_code: 200, data: { enabled: true, contract_version: 1, tenant_id: '2', public_key: 'retired' } }))
     await market.synchronize()
-    expect(market.state()).toMatchObject({ online: false, error: expect.stringContaining('signing key changed') })
+    expect(market.state()).toMatchObject({ online: false, failureCode: 'protocol_mismatch' })
     const saved = JSON.parse(await readFile(join(root, 'enterprise-market', `${sha256(`${account.base}|2|20`)}.json`), 'utf8'))
-    expect(saved.public_key).toBe(pem)
+    expect(saved.public_key).toBeUndefined()
+    expect(saved.lease).toBeUndefined()
+    expect(saved.device_id).toEqual(expect.any(String))
   })
 
   it('cancels an in-flight install before serialized logout clears the account', async () => {

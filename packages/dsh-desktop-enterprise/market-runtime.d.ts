@@ -1,4 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
-export interface MarketRuntimeRecord { name: string; directory: string; config?: Record<string, unknown> }
+import type { EnterpriseAuthHost } from './enterprise-auth.js'
+export interface MarketRuntimeRecord { name: string; plugin_id?: string; directory: string; config?: Record<string, unknown> }
 export interface MarketRuntimeFiber { dispose(): Promise<void>; readonly state?: number }
-export declare function createMarketRuntime(ctx: Context): (record: MarketRuntimeRecord) => Promise<MarketRuntimeFiber>
+export declare function createMarketRuntime(ctx: Context, auth?: EnterpriseAuthHost, onRequestSettled?: (record: MarketRuntimeRecord, error?: unknown) => void): (record: MarketRuntimeRecord) => Promise<MarketRuntimeFiber>

@@ -1,5 +1,5 @@
 diff --git a/node_modules/@deepseek-ai/dsh-api-session-controller/lib/client.js b/node_modules/@deepseek-ai/dsh-api-session-controller/lib/client.js
-index 1ae21e3..b65b36b 100644
+index 1ae21e3..54c4c89 100644
 --- a/node_modules/@deepseek-ai/dsh-api-session-controller/lib/client.js
 +++ b/node_modules/@deepseek-ai/dsh-api-session-controller/lib/client.js
 @@ -1786,6 +1786,63 @@ window.__ModuleLoader__.load({
@@ -66,7 +66,43 @@ index 1ae21e3..b65b36b 100644
  			/** Apply one operation to a still-pending queue occurrence. */
  			async updateQueue(itemId, action) {
  				return this.remote.session.updateQueue({
-@@ -2711,6 +2768,15 @@ window.__ModuleLoader__.load({
+@@ -2150,8 +2207,24 @@ window.__ModuleLoader__.load({
+ 				if (event.type === "turn/start") this.firstPromptPendingTurn = false;
+ 				this.eventSource.append(entry);
+ 				this.observeSubmissionEvent(event);
++				this.reportLiveRunningEvidence(event);
+ 				return awaitingFirstTurn !== this.firstPromptPendingTurn;
+ 			}
++			/**
++			* A live turn boundary is running evidence when `api-session/status` is
++			* dropped, for example after the browser goes offline. History replace and
++			* prepend must not call this: an older failed turn must not clear a turn
++			* the host still reports as running. `turn/start` restores running after a
++			* lost status event. Only an error end clears it, because a completed turn
++			* can continue straight into the next one.
++			* @param event - durable event just appended to the live tail.
++			*/
++			reportLiveRunningEvidence(event) {
++				const running = event?.type === "turn/start" ? true : event?.type === "turn/end" && event.data?.reason?.kind === "error" ? false : void 0;
++				if (running === void 0) return;
++				this.handleRunning(running);
++				this.options.onRunningEvidence?.(running);
++			}
+ 			/** Observe durable acceptance even when insertion and claim share one projection notification. */
+ 			observeSubmissionEvent(event) {
+ 				if (this.submissionSettlements.size === 0) return;
+@@ -2495,6 +2568,10 @@ window.__ModuleLoader__.load({
+ 						}
+ 						this.sessions.get(engaged.sessionId)?.handleBlank(false);
+ 					},
++					onRunningEvidence: (running) => {
++						if (this.disposed) return;
++						this.handleSessionStatus(sessionId, running);
++					},
+ 					projections: this.projectionStore(sessionId)
+ 				});
+ 			}
+@@ -2711,6 +2788,15 @@ window.__ModuleLoader__.load({
  				}
  				return result;
  			}
@@ -82,7 +118,27 @@ index 1ae21e3..b65b36b 100644
  			/**
  			* Contract session.fork; on success merge the child into summaries
  			* immediately (same synchronous-addressability guarantee as create).
-@@ -3045,6 +3111,17 @@ window.__ModuleLoader__.load({
+@@ -2895,6 +2981,19 @@ window.__ModuleLoader__.load({
+ 				this.sessions.get(sessionId)?.handleRunning(running);
+ 			}
+ 			/**
++			* Drop every running bit while the browser is offline. `setNetworkAvailable`
++			* aborts the localhost stream before `turn/end` or `api-session/status`
++			* can arrive, and the chat timer is purely local. The next list refresh
++			* restores the host's real running bit.
++			*/
++			suspendRunning() {
++				if (this.disposed) return;
++				const runningIds = /* @__PURE__ */ new Set();
++				for (const summary of this.summaries) if (summary?.running) runningIds.add(summary.sessionId);
++				for (const [sessionId, session] of this.sessions) if (session?.running) runningIds.add(sessionId);
++				for (const sessionId of runningIds) this.handleSessionStatus(sessionId, false);
++			}
++			/**
+ 			* Advance Session-list activity from one user-authored durable message.
+ 			* @param sessionId - Session whose activity changed.
+ 			* @param updatedAt - durable message timestamp.
+@@ -3045,6 +3144,17 @@ window.__ModuleLoader__.load({
  				this.sourceSessionId = sourceSessionId;
  			}
  		};
@@ -100,7 +156,18 @@ index 1ae21e3..b65b36b 100644
  		/**
  		* Display title projection: durable title, project directory basename, then
  		* the raw id.
-@@ -3328,6 +3405,15 @@ window.__ModuleLoader__.load({
+@@ -3314,6 +3424,10 @@ window.__ModuleLoader__.load({
+ 			handleConnected() {
+ 				this.manager.handleConnected();
+ 			}
++			/** Clear client running bits while the browser reports no network. */
++			suspendRunning() {
++				this.manager.suspendRunning();
++			}
+ 			/**
+ 			* Create a Host Session and publish its catalog row before resolving.
+ 			* Callers retain the returned identity before borrowing its binding.
+@@ -3328,6 +3442,15 @@ window.__ModuleLoader__.load({
  				return result.value.sessionId;
  			}
  			/**
@@ -116,6 +183,27 @@ index 1ae21e3..b65b36b 100644
  			* Fork a session from an exact inclusive prefix of the source (same
  			* synchronous-addressability guarantee as {@link ClientSessions.create}:
  			* on resolution the child is catalogued and may be explicitly retained).
+@@ -3642,6 +3765,12 @@ window.__ModuleLoader__.load({
+ 				control.start();
+ 			};
+ 			ctx.effect(() => connection.generation.subscribe(connected), "session-controller.client.generation");
++			const suspendWhileOffline = () => {
++				if (connection.state?.getSnapshot() !== "disconnected") return;
++				sessions.suspendRunning();
++			};
++			ctx.effect(() => connection.state?.subscribe(suspendWhileOffline) ?? (() => {}), "session-controller.client.offline-running");
++			suspendWhileOffline();
+ 			connected();
+ 			ctx.typert.contexts.registerClient("agent", {
+ 				identity: (candidate) => sessions.sessionOf(candidate)?.sessionId,
+@@ -3658,6 +3787,7 @@ window.__ModuleLoader__.load({
+ 		}
+ 		//#endregion
+ 		exports.MutableSessionEventSource = MutableSessionEventSource;
++		exports.SessionManager = SessionManager;
+ 		exports.SESSION_SEARCH_RESULT_LIMIT = SESSION_SEARCH_RESULT_LIMIT;
+ 		exports.SESSION_SEARCH_SNIPPET_MAX_CODE_POINTS = SESSION_SEARCH_SNIPPET_MAX_CODE_POINTS;
+ 		exports.SessionCreateError = SessionCreateError;
 diff --git a/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js b/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js
 index 3b8507e..f798567 100644
 --- a/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js
@@ -1100,6 +1188,22 @@ index 1620c4d..4ce5659 100644
      /**
       * Fork a session from an exact inclusive prefix of the source (same
       * synchronous-addressability guarantee as {@link ClientSessions.create}:
+diff --git a/node_modules/@deepseek-ai/dsh-api-session-controller/lib/types/client/sessions/session.d.ts b/node_modules/@deepseek-ai/dsh-api-session-controller/lib/types/client/sessions/session.d.ts
+index 73c66fa..d5ca453 100644
+--- a/node_modules/@deepseek-ai/dsh-api-session-controller/lib/types/client/sessions/session.d.ts
++++ b/node_modules/@deepseek-ai/dsh-api-session-controller/lib/types/client/sessions/session.d.ts
+@@ -26,6 +26,11 @@ export interface SessionOptions {
+      * establish that a turn started or reached durable history.
+      */
+     onEngaged?(session: Session): void;
++    /**
++     * Live turn evidence used when `api-session/status` does not arrive.
++     * `true` is a live `turn/start`; `false` is a live `turn/end` whose reason is `error`.
++     */
++    onRunningEvidence?(running: boolean): void;
+     /**
+      * Manager-owned projection value store to adopt (frames route through the
+      * manager and values outlive instantiation); omitted, the Session owns a
 diff --git a/node_modules/@deepseek-ai/dsh-api-session-controller/lib/types/commands.d.ts b/node_modules/@deepseek-ai/dsh-api-session-controller/lib/types/commands.d.ts
 index fcb93a6..5779c7c 100644
 --- a/node_modules/@deepseek-ai/dsh-api-session-controller/lib/types/commands.d.ts

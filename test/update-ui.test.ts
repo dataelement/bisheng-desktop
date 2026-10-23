@@ -64,22 +64,22 @@ describe('accepting an update is what starts the download', () => {
     expect(updateMessage(available, 'en')).toBe('BISHENG 0.4.4 is available. Update now?')
   })
 
-  it('says online updates are not offered yet', () => {
+  it('explains when the current build does not support updates', () => {
     const unsupported: UpdateStatus = {
       phase: 'unsupported',
       currentVersion: '1.0.0',
       manual: true,
-      message: 'BISHENG does not offer online updates yet.'
+      message: 'Online updates are unavailable in this build.'
     }
     expect(updateHeadline(unsupported, 'zh')).toEqual({
-      title: '暂未提供在线更新',
-      description: 'BISHENG 暂未提供在线更新。'
+      title: '当前构建不支持在线更新',
+      description: '当前构建不支持在线更新。'
     })
     expect(updateHeadline(unsupported, 'en')).toEqual({
       title: 'Online updates are not available',
-      description: 'BISHENG does not offer online updates yet.'
+      description: 'Online updates are unavailable in this build.'
     })
-    expect(updateMessage(unsupported, 'zh')).toBe('BISHENG 暂未提供在线更新。')
-    expect(updateMessage(unsupported, 'en')).toBe('BISHENG does not offer online updates yet.')
+    expect(updateMessage(unsupported, 'zh')).toBe('当前构建不支持在线更新。')
+    expect(updateMessage(unsupported, 'en')).toBe('Online updates are unavailable in this build.')
   })
 })

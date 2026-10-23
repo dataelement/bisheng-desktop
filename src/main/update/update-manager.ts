@@ -23,10 +23,7 @@ import {
 
 const { autoUpdater } = electronUpdater
 const TRANSIENT_STATUS_MS = 8_000
-// BISHENG releases are currently private and cannot be read anonymously
-// by installed clients. Keep online updates disabled until a public feed exists.
-const ONLINE_UPDATES_ENABLED = false
-const UPDATES_UNAVAILABLE_MESSAGE = 'BISHENG does not offer online updates yet.'
+const UPDATES_UNAVAILABLE_MESSAGE = 'Online updates are unavailable in this build.'
 
 let status = initialUpdateStatus(app.getVersion())
 let prepareToInstall: (() => Promise<void>) | undefined
@@ -107,7 +104,9 @@ export function startUpdateManager(options: { prepareToInstall: () => Promise<vo
 }
 
 export async function checkForUpdates(manual = false): Promise<UpdateStatus> {
-  if (!supportsUpdates()) {
+  // Development builds never start this manager. Their menu/IPC entry points
+  // must not initialize an updater against the production feed.
+  if (!started || !supportsUpdates()) {
     transition(
       {
         type: 'unsupported',
@@ -255,7 +254,7 @@ function checkAfterResume(): void {
 }
 
 function supportsUpdates(): boolean {
-  return ONLINE_UPDATES_ENABLED && supportsAutoUpdates(app.isPackaged, process.platform)
+  return supportsAutoUpdates(app.isPackaged, process.platform)
 }
 
 function errorMessage(error: unknown): string {

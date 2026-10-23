@@ -16,13 +16,14 @@ on:
           - windows
           - macos
       mode:
-        description: development=unsigned Dev; signed=ModelScope test channel; prerelease=GitHub and ModelScope
+        description: development=unsigned Dev; signed=ModelScope test channel; resign=sign existing unsigned Windows; prerelease=GitHub and ModelScope
         required: false
         default: development
         type: choice
         options:
           - development
           - signed
+          - resign
           - prerelease
       prerelease_tag:
         description: Non-v semver tag for prerelease mode (e.g. 2.1.0-rc.1)
@@ -48,6 +49,7 @@ permissions:
 
 env:
   RELEASE_NOTES_MODEL: gpt-6-luna
+  DEV_RELEASE_TAG: dev-${{ github.run_id }}-${{ github.run_attempt }}
 
 concurrency:
   group: desktop-release-${{ github.ref }}
@@ -82,7 +84,7 @@ jobs:
                 echo "::notice::target=$TARGET with prerelease mode will sign only and skip GitHub/ModelScope publish"
               fi
               ;;
-            signed)
+            signed|resign)
               if [ -z "${SIGNED_VERSION:-}" ]; then
                 echo "::error::signed mode requires signed_version"
                 exit 1
@@ -126,7 +128,7 @@ jobs:
         run: |
           test -n "$FEISHU_RELEASE_WEBHOOK" || { echo "::error::Missing secret FEISHU_RELEASE_WEBHOOK"; exit 1; }
       - name: Prepare draft release for verified publication
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || (inputs.mode == 'prerelease' && inputs.target == 'all')))
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
           MODE: ${{ inputs.mode }}
@@ -142,6 +144,10 @@ jobs:
             release_tag="$SIGNED_VERSION"
             tag_args=(--target "$GITHUB_SHA")
             note_args=(--notes 'Signed test build in progress.')
+          elif [ "${MODE:-}" = "development" ]; then
+            release_tag="$DEV_RELEASE_TAG"
+            tag_args=(--target "$GITHUB_SHA")
+            note_args=(--notes "Development build and diagnostics: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Draft assets are retained until this draft is deleted.")
           else
             release_tag="$PRERELEASE_TAG"
             tag_args=(--target "$GITHUB_SHA")
@@ -158,205 +164,50 @@ jobs:
               "${note_args[@]}" \
               --repo "$GITHUB_REPOSITORY"
           fi
+          release_url="$(gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" --json url --jq .url)"
+          echo "Draft assets: [$release_tag]($release_url)" >> "$GITHUB_STEP_SUMMARY"
 
-  macos-apple-silicon:
-    name: macOS Apple Silicon
+  macos:
+    name: macOS ${{ matrix.label }}
     needs: validate-dispatch
     if: >-
       startsWith(github.ref, 'refs/tags/v') ||
       (github.event_name == 'workflow_dispatch' && (inputs.target == 'all' || inputs.target == 'macos'))
-    runs-on: [self-hosted, macOS, ARM64]
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      # Persistent runners retain npm downloads locally; restoring the remote
-      # cache duplicates disk usage and can stall release setup for 20 minutes.
-      - uses: actions/setup-node@v4
-        timeout-minutes: 5
-        with:
-          node-version: 22
-          architecture: arm64
-      - name: Set app version from release tag
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: npm version --no-git-tag-version --allow-same-version "${{ github.ref_name }}"
-      - name: Set app version from pre-release tag
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'prerelease' && inputs.prerelease_tag != ''
-        run: npm version --no-git-tag-version --allow-same-version "${{ inputs.prerelease_tag }}"
-      - name: Set app version from signed version
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'signed' && inputs.signed_version != ''
-        run: npm version --no-git-tag-version --allow-same-version "${{ inputs.signed_version }}"
-      - run: npm ci
-      - run: npm test
-      - run: npm run typecheck
-      - name: Validate Apple release secrets
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
-        env:
-          CSC_LINK: ${{ secrets.DESKTOP_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.DESKTOP_CSC_KEY_PASSWORD }}
-          APPLE_API_KEY_CONTENT: ${{ secrets.DESKTOP_APPLE_API_KEY }}
-          APPLE_API_KEY_ID: ${{ secrets.DESKTOP_APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.DESKTOP_APPLE_API_ISSUER }}
-          APPLE_TEAM_ID: ${{ secrets.DESKTOP_APPLE_TEAM_ID }}
-        run: |
-          required=(CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY_CONTENT APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_TEAM_ID)
-          for name in "${required[@]}"; do
-            test -n "${!name}" || { echo "::error::Missing required secret: $name"; exit 1; }
-          done
-      - name: Prepare Apple notarization key
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
-        env:
-          APPLE_API_KEY_CONTENT: ${{ secrets.DESKTOP_APPLE_API_KEY }}
-          APPLE_API_KEY_ID: ${{ secrets.DESKTOP_APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.DESKTOP_APPLE_API_ISSUER }}
-          APPLE_TEAM_ID: ${{ secrets.DESKTOP_APPLE_TEAM_ID }}
-        run: |
-          key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
-          printf '%s' "$APPLE_API_KEY_CONTENT" > "$key_path"
-          chmod 600 "$key_path"
-          echo "APPLE_API_KEY=$key_path" >> "$GITHUB_ENV"
-          echo "APPLE_API_KEY_ID=$APPLE_API_KEY_ID" >> "$GITHUB_ENV"
-          echo "APPLE_API_ISSUER=$APPLE_API_ISSUER" >> "$GITHUB_ENV"
-          echo "APPLE_TEAM_ID=$APPLE_TEAM_ID" >> "$GITHUB_ENV"
-      - name: Lock shared macOS signing state
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
-        id: signing_lock
-        run: node scripts/macos-signing-lock.mjs acquire
-      - name: Prepare macOS signing keychain
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
-        id: signing_keychain
-        env:
-          CSC_LINK: ${{ secrets.DESKTOP_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.DESKTOP_CSC_KEY_PASSWORD }}
-        run: node scripts/prepare-macos-signing-keychain.mjs
-      - name: Build signed Apple Silicon package
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
-        env:
-          CSC_KEYCHAIN: ${{ steps.signing_keychain.outputs.keychain }}
-        run: npm run package:mac:arm64
-      - name: Build isolated Apple Silicon development package
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') && (github.event_name != 'workflow_dispatch' || inputs.mode == 'development') }}
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npm run package:dev:mac:arm64
-      - name: Preserve Apple Silicon update metadata
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
-        run: mv dist/latest-mac.yml dist/latest-mac-arm64.yml
-      - name: Sign, notarize, and staple Apple Silicon DMG
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
-        env:
-          CSC_KEYCHAIN: ${{ steps.signing_keychain.outputs.keychain }}
-        run: |
-          dmg_path="dist/bisheng-mac-arm64.dmg"
-          identity="$(security find-identity -v -p codesigning "$CSC_KEYCHAIN" | awk '/Developer ID Application/ { print $2; exit }')"
-          test -n "$identity" || { echo "::error::Developer ID Application identity not found"; exit 1; }
-          codesign --keychain "$CSC_KEYCHAIN" --sign "$identity" --timestamp --force "$dmg_path"
-          xcrun notarytool submit "$dmg_path" \
-            --key "$APPLE_API_KEY" \
-            --key-id "$APPLE_API_KEY_ID" \
-            --issuer "$APPLE_API_ISSUER" \
-            --wait \
-            --no-s3-acceleration
-          xcrun stapler staple "$dmg_path"
-      - name: Remove temporary signing keychain
-        if: always() && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease')))
-        env:
-          SIGNING_KEYCHAIN: ${{ steps.signing_keychain.outputs.keychain }}
-          SIGNING_CERTIFICATE: ${{ steps.signing_keychain.outputs.certificate }}
-          SIGNING_KEYCHAIN_LIST: ${{ steps.signing_keychain.outputs.keychain_list }}
-        run: |
-          if [ -n "$SIGNING_KEYCHAIN_LIST" ] && [ -f "$SIGNING_KEYCHAIN_LIST" ]; then
-            keychains=()
-            while IFS= read -r keychain; do
-              test -z "$keychain" || keychains+=("$keychain")
-            done < "$SIGNING_KEYCHAIN_LIST"
-            security list-keychains -d user -s "${keychains[@]}"
-            rm -f "$SIGNING_KEYCHAIN_LIST"
-          fi
-          test -z "$SIGNING_KEYCHAIN" || security delete-keychain "$SIGNING_KEYCHAIN" || rm -f "$SIGNING_KEYCHAIN"
-          test -z "$SIGNING_CERTIFICATE" || rm -f "$SIGNING_CERTIFICATE"
-          test -z "$APPLE_API_KEY" || rm -f "$APPLE_API_KEY"
-      - name: Unlock shared macOS signing state
-        if: always()
-        env:
-          SIGNING_LOCK_LEASE: ${{ steps.signing_lock.outputs.lease }}
-        run: node scripts/macos-signing-lock.mjs release
-      - name: Verify signed and notarized Apple Silicon app
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
-        run: |
-          app_path="dist/mac-arm64/BISHENG.app"
-          codesign --verify --deep --strict --verbose=2 "$app_path"
-          spctl --assess --type execute --verbose=4 "$app_path"
-          xcrun stapler validate "$app_path"
-          codesign --verify --verbose=2 dist/bisheng-mac-arm64.dmg
-          spctl --assess --type open --context context:primary-signature --verbose=4 dist/bisheng-mac-arm64.dmg
-          xcrun stapler validate dist/bisheng-mac-arm64.dmg
-      - name: Stage signed Apple Silicon assets in draft release
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || (inputs.mode == 'prerelease' && inputs.target == 'all')))
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (inputs.mode == 'signed' && inputs.signed_version || inputs.prerelease_tag) }}
-        run: |
-          gh release upload "$RELEASE_TAG" \
-            dist/bisheng-mac-arm64.dmg \
-            dist/bisheng-mac-arm64.zip \
-            dist/bisheng-mac-arm64.zip.blockmap \
-            dist/latest-mac-arm64.yml \
-            --clobber --repo "$GITHUB_REPOSITORY"
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'prerelease' && inputs.target != 'all'
-        with:
-          name: macos-apple-silicon
-          retention-days: 7
-          path: |
-            dist/bisheng-mac-arm64.dmg
-            dist/bisheng-mac-arm64.zip
-            dist/bisheng-mac-arm64.zip.blockmap
-            dist/latest-mac-arm64.yml
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'development'
-        with:
-          name: macos-apple-silicon-dev
-          retention-days: 3
-          path: |
-            dist-dev/bisheng-dev-mac-arm64.dmg
-            dist-dev/bisheng-dev-mac-arm64.zip
-            dist-dev/bisheng-dev-mac-arm64.zip.blockmap
-          if-no-files-found: error
-
-  macos-intel:
-    name: macOS Intel
-    needs: validate-dispatch
-    if: >-
-      startsWith(github.ref, 'refs/tags/v') ||
-      (github.event_name == 'workflow_dispatch' && (inputs.target == 'all' || inputs.target == 'macos'))
-    # Run Intel tooling under Rosetta on the self-hosted ARM64 Mac.
-    # A dedicated repo runner provides a separate concurrent worker.
-    # Electron's install.js rewrites a darwin-x64 download to arm64 when it
-    # detects Rosetta and npm_config_arch is unset. npm still selects the x64
-    # native binding from process.arch, so pin the arch for the whole job.
-    # ELECTRON_INSTALL_ARCH alone does not skip that rewrite.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            label: Apple Silicon
+            runner: [self-hosted, macOS, ARM64]
+            app-directory: mac-arm64
+          - arch: x64
+            label: Intel
+            runner: [self-hosted, macOS, bisheng-intel]
+            app-directory: mac
+    runs-on: ${{ matrix.runner }}
     env:
-      npm_config_arch: x64
-    runs-on: [self-hosted, macOS, bisheng-intel]
-    defaults:
-      run:
-        shell: arch -x86_64 /bin/bash --noprofile --norc -e -o pipefail {0}
+      npm_config_arch: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - name: Require Rosetta for Intel packaging
+        if: matrix.arch == 'x64'
         run: arch -x86_64 /usr/bin/true
-      # Persistent runners retain npm downloads locally; restoring the remote
-      # cache duplicates disk usage and can stall release setup for 20 minutes.
       - uses: actions/setup-node@v4
+        if: matrix.arch == 'arm64'
+        timeout-minutes: 5
+        with:
+          node-version: 22
+      - uses: actions/setup-node@v4
+        if: matrix.arch == 'x64'
         timeout-minutes: 5
         with:
           node-version: 22
           architecture: x64
       - name: Verify Intel Node runtime
+        if: matrix.arch == 'x64'
         run: test "$(node -p 'process.arch')" = x64
       - name: Set app version from release tag
         if: startsWith(github.ref, 'refs/tags/v')
@@ -367,8 +218,13 @@ jobs:
       - name: Set app version from signed version
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'signed' && inputs.signed_version != ''
         run: npm version --no-git-tag-version --allow-same-version "${{ inputs.signed_version }}"
+      - run: npm ci --prefer-offline
+        if: matrix.arch == 'arm64'
       - run: npm ci
+        if: matrix.arch == 'x64'
+      - run: npm run build
       - run: npm test
+        if: matrix.arch == 'arm64'
       - run: npm run typecheck
       - name: Validate Apple release secrets
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
@@ -399,10 +255,6 @@ jobs:
           echo "APPLE_API_KEY_ID=$APPLE_API_KEY_ID" >> "$GITHUB_ENV"
           echo "APPLE_API_ISSUER=$APPLE_API_ISSUER" >> "$GITHUB_ENV"
           echo "APPLE_TEAM_ID=$APPLE_TEAM_ID" >> "$GITHUB_ENV"
-      - name: Lock shared macOS signing state
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
-        id: signing_lock
-        run: node scripts/macos-signing-lock.mjs acquire
       - name: Prepare macOS signing keychain
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         id: signing_keychain
@@ -410,35 +262,28 @@ jobs:
           CSC_LINK: ${{ secrets.DESKTOP_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.DESKTOP_CSC_KEY_PASSWORD }}
         run: node scripts/prepare-macos-signing-keychain.mjs
-      - name: Build signed Intel package
+      - name: Build signed ${{ matrix.label }} package
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         env:
           CSC_KEYCHAIN: ${{ steps.signing_keychain.outputs.keychain }}
-        run: npm run package:mac:x64
-      - name: Build isolated Intel development package
+        run: node scripts/verify-target.mjs darwin ${{ matrix.arch }} && npx --no-install electron-builder --mac --${{ matrix.arch }} --publish never
+      - name: Build isolated ${{ matrix.label }} development package
         if: ${{ !startsWith(github.ref, 'refs/tags/v') && (github.event_name != 'workflow_dispatch' || inputs.mode == 'development') }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npm run package:dev:mac:x64
-      - name: Preserve Intel update metadata
+        run: node scripts/verify-target.mjs darwin ${{ matrix.arch }} && npx --no-install electron-builder --mac --${{ matrix.arch }} --publish never --config electron-builder.dev.cjs
+      - name: Preserve ${{ matrix.label }} update metadata
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
-        run: mv dist/latest-mac.yml dist/latest-mac-x64.yml
-      - name: Sign, notarize, and staple Intel DMG
+        run: mv dist/latest-mac.yml dist/latest-mac-${{ matrix.arch }}.yml
+      - name: Sign ${{ matrix.label }} DMG
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         env:
           CSC_KEYCHAIN: ${{ steps.signing_keychain.outputs.keychain }}
         run: |
-          dmg_path="dist/bisheng-mac-x64.dmg"
+          dmg_path="dist/bisheng-mac-${{ matrix.arch }}.dmg"
           identity="$(security find-identity -v -p codesigning "$CSC_KEYCHAIN" | awk '/Developer ID Application/ { print $2; exit }')"
           test -n "$identity" || { echo "::error::Developer ID Application identity not found"; exit 1; }
           codesign --keychain "$CSC_KEYCHAIN" --sign "$identity" --timestamp --force "$dmg_path"
-          xcrun notarytool submit "$dmg_path" \
-            --key "$APPLE_API_KEY" \
-            --key-id "$APPLE_API_KEY_ID" \
-            --issuer "$APPLE_API_ISSUER" \
-            --wait \
-            --no-s3-acceleration
-          xcrun stapler staple "$dmg_path"
       - name: Remove temporary signing keychain
         if: always() && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease')))
         env:
@@ -456,72 +301,120 @@ jobs:
           fi
           test -z "$SIGNING_KEYCHAIN" || security delete-keychain "$SIGNING_KEYCHAIN" || rm -f "$SIGNING_KEYCHAIN"
           test -z "$SIGNING_CERTIFICATE" || rm -f "$SIGNING_CERTIFICATE"
-          test -z "$APPLE_API_KEY" || rm -f "$APPLE_API_KEY"
-      - name: Unlock shared macOS signing state
-        if: always()
-        env:
-          SIGNING_LOCK_LEASE: ${{ steps.signing_lock.outputs.lease }}
-        run: node scripts/macos-signing-lock.mjs release
-      - name: Verify signed and notarized Intel app
+      - name: Notarize and staple ${{ matrix.label }} DMG
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         run: |
-          app_path="dist/mac/BISHENG.app"
+          dmg_path="dist/bisheng-mac-${{ matrix.arch }}.dmg"
+          app_path="dist/${{ matrix.app-directory }}/BISHENG.app"
+          arch -arm64 /usr/bin/xcrun notarytool submit "$dmg_path" \
+            --key "$APPLE_API_KEY" \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+          for attempt in 1 2 3 4 5; do
+            if arch -arm64 /usr/bin/xcrun stapler staple "$app_path" && arch -arm64 /usr/bin/xcrun stapler staple "$dmg_path"; then break; fi
+            if [ "$attempt" -eq 5 ]; then exit 1; fi
+            echo "stapler staple failed, waiting for Apple ticket propagation in 10s (attempt $attempt/5)..."
+            sleep 10
+          done
+      - name: Clean up Apple notarization key
+        if: always()
+        run: test -z "$APPLE_API_KEY" || rm -f "$APPLE_API_KEY"
+      - name: Verify signed and notarized ${{ matrix.label }} app
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
+        run: |
+          app_path="dist/${{ matrix.app-directory }}/BISHENG.app"
           codesign --verify --deep --strict --verbose=2 "$app_path"
           spctl --assess --type execute --verbose=4 "$app_path"
-          xcrun stapler validate "$app_path"
-          codesign --verify --verbose=2 dist/bisheng-mac-x64.dmg
-          spctl --assess --type open --context context:primary-signature --verbose=4 dist/bisheng-mac-x64.dmg
-          xcrun stapler validate dist/bisheng-mac-x64.dmg
-      - name: Stage signed Intel assets in draft release
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || (inputs.mode == 'prerelease' && inputs.target == 'all')))
+          for attempt in 1 2 3 4 5; do
+            if arch -arm64 /usr/bin/xcrun stapler validate "$app_path"; then break; fi
+            if [ "$attempt" -eq 5 ]; then exit 1; fi
+            echo "stapler validate failed on app_path, retrying in $((attempt * 5))s (attempt $attempt/5)..."
+            sleep $((attempt * 5))
+          done
+          codesign --verify --verbose=2 dist/bisheng-mac-${{ matrix.arch }}.dmg
+          spctl --assess --type open --context context:primary-signature --verbose=4 dist/bisheng-mac-${{ matrix.arch }}.dmg
+          for attempt in 1 2 3 4 5; do
+            if arch -arm64 /usr/bin/xcrun stapler validate dist/bisheng-mac-${{ matrix.arch }}.dmg; then break; fi
+            if [ "$attempt" -eq 5 ]; then exit 1; fi
+            echo "stapler validate failed on dmg, retrying in $((attempt * 5))s (attempt $attempt/5)..."
+            sleep $((attempt * 5))
+          done
+      - name: Stage signed ${{ matrix.label }} assets in draft release
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (inputs.mode == 'signed' && inputs.signed_version || inputs.prerelease_tag) }}
         run: |
           gh release upload "$RELEASE_TAG" \
-            dist/bisheng-mac-x64.dmg \
-            dist/bisheng-mac-x64.zip \
-            dist/bisheng-mac-x64.zip.blockmap \
-            dist/latest-mac-x64.yml \
+            dist/bisheng-mac-${{ matrix.arch }}.dmg \
+            dist/bisheng-mac-${{ matrix.arch }}.zip \
+            dist/bisheng-mac-${{ matrix.arch }}.zip.blockmap \
+            dist/latest-mac-${{ matrix.arch }}.yml \
             --clobber --repo "$GITHUB_REPOSITORY"
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'prerelease' && inputs.target != 'all'
-        with:
-          name: macos-intel
-          retention-days: 7
-          path: |
-            dist/bisheng-mac-x64.dmg
-            dist/bisheng-mac-x64.zip
-            dist/bisheng-mac-x64.zip.blockmap
-            dist/latest-mac-x64.yml
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'development'
-        with:
-          name: macos-intel-dev
-          retention-days: 3
-          path: |
-            dist-dev/bisheng-dev-mac-x64.dmg
-            dist-dev/bisheng-dev-mac-x64.zip
-            dist-dev/bisheng-dev-mac-x64.zip.blockmap
-          if-no-files-found: error
-
-  windows-x64:
-    name: Windows x64
+      - name: Store macos-${{ matrix.arch }}-dev in draft release
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') && (github.event_name != 'workflow_dispatch' || inputs.mode == 'development') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/stage-development-assets.mjs ${{ matrix.arch }}
+  windows-preflight:
+    name: Windows shared checks on self-hosted Mac
     needs: validate-dispatch
     if: >-
       startsWith(github.ref, 'refs/tags/v') ||
       (github.event_name == 'workflow_dispatch' &&
+        inputs.mode != 'resign' &&
+        (inputs.target == 'all' || inputs.target == 'windows'))
+    runs-on: [self-hosted, macOS, bisheng-windows]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        timeout-minutes: 5
+        with:
+          node-version: 22
+          architecture: arm64
+      - run: npm ci --prefer-offline
+      - run: npm run typecheck
+      - name: Check Windows release tooling
+        run: >-
+          npx --no-install vitest run
+          test/release.test.ts
+          test/formal-release-handoff.test.mjs
+          test/sign-windows-unpacked.test.ts
+          test/finalize-windows-release.test.ts
+          test/release-stage-split.test.mjs
+
+  windows-x64:
+    name: Windows x64
+    needs: windows-preflight
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' &&
+        inputs.mode != 'resign' &&
         (inputs.target == 'all' || inputs.target == 'windows'))
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Configure Windows packaging cache
+        shell: pwsh
+        run: |
+          "ELECTRON_CACHE=$env:RUNNER_TEMP/electron-cache" >> $env:GITHUB_ENV
+          "ELECTRON_BUILDER_CACHE=$env:RUNNER_TEMP/electron-builder-cache" >> $env:GITHUB_ENV
+      - name: Cache Windows packaging downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.ELECTRON_CACHE }}
+            ${{ env.ELECTRON_BUILDER_CACHE }}
+            .build/office-downloads
+          key: windows-x64-packaging-v1-${{ hashFiles('package-lock.json', 'scripts/office-runtime/lock.json') }}
+          restore-keys: |
+            windows-x64-packaging-v1-
       - name: Set app version from release tag
         if: startsWith(github.ref, 'refs/tags/v')
         run: npm version --no-git-tag-version --allow-same-version "${{ github.ref_name }}"
@@ -531,29 +424,34 @@ jobs:
       - name: Set app version from signed version
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'signed' && inputs.signed_version != ''
         run: npm version --no-git-tag-version --allow-same-version "${{ inputs.signed_version }}"
-      - run: npm ci
+      - run: npm ci --prefer-offline
       - name: Run focused Windows regressions
         if: inputs.windows_full_tests != true
         run: npm run test:windows
       - name: Run complete Windows test suite
         if: inputs.windows_full_tests == true
         run: npm test
-      - run: npm run typecheck
       - name: Check recovery UI on native Windows at three display scales
         if: github.event_name == 'workflow_dispatch' && inputs.windows_recovery_ui == true
         run: node scripts/check-recovery-ui.mjs
-      - uses: actions/upload-artifact@v4
+      - name: Store Windows recovery diagnostics in draft release
         if: always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'development' && inputs.windows_recovery_ui == true
-        with:
-          name: windows-recovery-ui
-          retention-days: 7
-          path: |
-            artifacts/recovery-ui/scale-*/*.png
-            artifacts/recovery-ui/scale-*/results.json
-          if-no-files-found: warn
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if (-not (Test-Path artifacts/recovery-ui)) {
+            Write-Output '::warning::No recovery UI diagnostics were produced.'
+            exit 0
+          }
+          $archive = Join-Path $env:RUNNER_TEMP 'windows-recovery-ui.tar.gz'
+          tar -czf "$archive" -C artifacts recovery-ui
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gh release upload "$env:DEV_RELEASE_TAG" "$archive" --clobber --repo "$env:GITHUB_REPOSITORY"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build Windows release package
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
-        run: npm run package:win
+        run: npm run package:win:unpacked
       - name: Build isolated Windows development package
         if: ${{ !startsWith(github.ref, 'refs/tags/v') && (github.event_name != 'workflow_dispatch' || inputs.mode == 'development') }}
         run: npm run package:dev:win
@@ -698,49 +596,36 @@ jobs:
         run: |
           tar -czf dist/win-unpacked.tar.gz -C dist win-unpacked
       - name: Stage unsigned Windows assets in draft release
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || (inputs.mode == 'prerelease' && inputs.target == 'all')))
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (inputs.mode == 'signed' && inputs.signed_version || inputs.prerelease_tag) }}
         run: |
           gh release upload "$env:RELEASE_TAG" `
-            dist/bisheng-windows-x64-setup.exe `
             dist/win-unpacked.tar.gz `
-            dist/bisheng-windows-x64-setup.exe.blockmap `
-            dist/latest.yml `
             --clobber --repo "$env:GITHUB_REPOSITORY"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'prerelease' && inputs.target != 'all'
-        with:
-          name: windows-x64-unsigned
-          path: |
-            dist/bisheng-windows-x64-setup.exe
-            dist/win-unpacked.tar.gz
-            dist/bisheng-windows-x64-setup.exe.blockmap
-            dist/latest.yml
-          if-no-files-found: error
-          retention-days: 1
-      - uses: actions/upload-artifact@v4
+      - name: Store windows-x64-dev in draft release
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'development'
-        with:
-          name: windows-x64-dev
-          retention-days: 3
-          path: |
-            dist-dev/bisheng-dev-windows-x64-setup.exe
-            dist-dev/bisheng-dev-windows-x64-setup.exe.blockmap
-            dist-dev/latest.yml
-          if-no-files-found: error
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/stage-development-assets.mjs windows
 
   sign-windows:
     name: Sign Windows package locally with UKey
-    needs: windows-x64
+    needs:
+      - validate-dispatch
+      - windows-x64
     if: >-
       always() &&
-      (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))) &&
-      needs.windows-x64.result == 'success'
-    runs-on: [self-hosted, macOS, ARM64]
+      needs.validate-dispatch.result == 'success' &&
+      (
+        ((startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))) && needs.windows-x64.result == 'success') ||
+        (github.event_name == 'workflow_dispatch' && inputs.mode == 'resign' && needs.windows-x64.result == 'skipped')
+      )
+    runs-on: [self-hosted, macOS, bisheng-windows]
     env:
       CI: 'true'
       JSIGN_VERSION: '7.5'
@@ -758,7 +643,7 @@ jobs:
           distribution: temurin
           java-version: '21'
       - name: Install release tooling
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --prefer-offline
       - name: Set app version from release tag
         if: startsWith(github.ref, 'refs/tags/v')
         run: npm version --no-git-tag-version --allow-same-version "${{ github.ref_name }}"
@@ -774,28 +659,18 @@ jobs:
           mkdir -p "$work_dir/release"
           echo "WINDOWS_SIGNING_WORK_DIR=$work_dir" >> "$GITHUB_ENV"
       - name: Download unsigned Windows assets from draft release
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || (inputs.mode == 'prerelease' && inputs.target == 'all')))
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (inputs.mode == 'signed' && inputs.signed_version || inputs.prerelease_tag) }}
         run: |
           set -euo pipefail
           gh release download "$RELEASE_TAG" \
-            --pattern 'bisheng-windows-x64-setup.exe' \
-            --pattern 'bisheng-windows-x64-setup.exe.blockmap' \
             --pattern 'win-unpacked.tar.gz' \
-            --pattern 'latest.yml' \
             --dir "$WINDOWS_SIGNING_WORK_DIR/release" \
             --repo "$GITHUB_REPOSITORY"
           node scripts/verify-release-staging.mjs "$RELEASE_TAG" "$WINDOWS_SIGNING_WORK_DIR/release" \
-            bisheng-windows-x64-setup.exe \
-            bisheng-windows-x64-setup.exe.blockmap \
-            win-unpacked.tar.gz latest.yml
-      - uses: actions/download-artifact@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'prerelease' && inputs.target != 'all'
-        with:
-          name: windows-x64-unsigned
-          path: ${{ runner.temp }}/dsh-windows-${{ github.run_id }}/release
+            win-unpacked.tar.gz
       - name: Download and verify Jsign
         run: |
           set -euo pipefail
@@ -873,7 +748,7 @@ jobs:
           test -f "$WINDOWS_SIGNING_WORK_DIR/release/latest.yml"
           test -f "$WINDOWS_SIGNING_WORK_DIR"/release/*.exe.blockmap
       - name: Stage signed Windows assets in draft release
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || (inputs.mode == 'prerelease' && inputs.target == 'all')))
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (inputs.mode == 'signed' && inputs.signed_version || inputs.prerelease_tag) }}
@@ -883,16 +758,6 @@ jobs:
             "$WINDOWS_SIGNING_WORK_DIR/release/bisheng-windows-x64-setup.exe.blockmap" \
             "$WINDOWS_SIGNING_WORK_DIR/release/latest.yml" \
             --clobber --repo "$GITHUB_REPOSITORY"
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'prerelease' && inputs.target != 'all'
-        with:
-          name: windows-x64
-          retention-days: 7
-          path: |
-            ${{ runner.temp }}/dsh-windows-${{ github.run_id }}/release/bisheng-windows-x64-setup.exe
-            ${{ runner.temp }}/dsh-windows-${{ github.run_id }}/release/bisheng-windows-x64-setup.exe.blockmap
-            ${{ runner.temp }}/dsh-windows-${{ github.run_id }}/release/latest.yml
-          if-no-files-found: error
       - name: Remove local signing files
         if: always()
         run: |
@@ -908,12 +773,10 @@ jobs:
       always() &&
       startsWith(github.ref, 'refs/tags/v') &&
       inputs.prerelease_tag == '' &&
-      needs.macos-apple-silicon.result == 'success' &&
-      needs.macos-intel.result == 'success' &&
+      needs.macos.result == 'success' &&
       needs.sign-windows.result == 'success'
     needs:
-      - macos-apple-silicon
-      - macos-intel
+      - macos
       - sign-windows
     runs-on: ubuntu-24.04
     steps:
@@ -1124,12 +987,10 @@ jobs:
       inputs.mode == 'prerelease' &&
       inputs.target == 'all' &&
       inputs.prerelease_tag != '' &&
-      needs.macos-apple-silicon.result == 'success' &&
-      needs.macos-intel.result == 'success' &&
+      needs.macos.result == 'success' &&
       needs.sign-windows.result == 'success'
     needs:
-      - macos-apple-silicon
-      - macos-intel
+      - macos
       - sign-windows
     runs-on: ubuntu-24.04
     steps:
@@ -1313,13 +1174,12 @@ jobs:
       inputs.mode == 'signed' &&
       inputs.signed_version != '' &&
       (
-        (inputs.target == 'all' && needs.macos-apple-silicon.result == 'success' && needs.macos-intel.result == 'success' && needs.sign-windows.result == 'success') ||
-        (inputs.target == 'macos' && needs.macos-apple-silicon.result == 'success' && needs.macos-intel.result == 'success') ||
+        (inputs.target == 'all' && needs.macos.result == 'success' && needs.sign-windows.result == 'success') ||
+        (inputs.target == 'macos' && needs.macos.result == 'success') ||
         (inputs.target == 'windows' && needs.sign-windows.result == 'success')
       )
     needs:
-      - macos-apple-silicon
-      - macos-intel
+      - macos
       - sign-windows
     runs-on: ubuntu-24.04
     steps:
@@ -1469,10 +1329,18 @@ jobs:
               echo "[Windows x64 installer]($base/bisheng-windows-x64-setup.exe)" >> "$GITHUB_STEP_SUMMARY"
               ;;
           esac
+      - name: Prepare Chinese test summary tooling
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.MODELS_TOKEN }}
+        run: |
+          if [ -n "${COPILOT_GITHUB_TOKEN:-}" ]; then
+            npm install -g @github/copilot@latest || echo "::warning::提测总结工具安装失败，将发送明确的降级说明。"
+          fi
       - name: Verify signed test downloads and send Feishu notification
         if: success()
         env:
           FEISHU_RELEASE_WEBHOOK: ${{ secrets.FEISHU_RELEASE_WEBHOOK }}
+          COPILOT_GITHUB_TOKEN: ${{ secrets.MODELS_TOKEN }}
           MODELSCOPE_REPO_ID: alexyaojin/bisheng-work
           RELEASE_TAG: ${{ inputs.signed_version }}
           TARGET: ${{ inputs.target }}

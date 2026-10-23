@@ -456,7 +456,9 @@ window.__ModuleLoader__.load({
     const marketZh = {
       tab: '来自企业', intro: '安装企业提供的插件，供当前企业账号使用。', refresh: '刷新',
       loading: '正在读取企业插件…', empty: '企业暂未提供插件，请联系管理员导入。',
-      failed: '暂时无法读取企业插件，请重试或联系管理员。', install: '安装', update: '更新',
+      failed: '暂时无法读取企业插件，请重试或联系管理员。',
+      protocolMismatch: '当前客户端需要更新后的企业市场，请联系管理员升级服务端。',
+      install: '安装', update: '更新',
       installed: '已安装', uninstall: '卸载', enable: '启用', disable: '停用', disabled: '已停用',
       version: '版本', incompatible: '当前系统或版本暂不支持',
       installing: '安装中…', updating: '更新中…', enabling: '启用中…', disabling: '停用中…', uninstalling: '卸载中…', unsupported: '暂不支持', setup: '企业市场暂未就绪，可联系管理员完成配置。'
@@ -464,14 +466,26 @@ window.__ModuleLoader__.load({
     const marketEn = {
       tab: 'From enterprise', intro: 'Install plugins provided for your current enterprise account.', refresh: 'Refresh',
       loading: 'Loading enterprise plugins…', empty: 'Your enterprise has no plugins yet. Contact your administrator.',
-      failed: 'Enterprise plugins are unavailable. Try again or contact your administrator.', install: 'Install', update: 'Update',
+      failed: 'Enterprise plugins are unavailable. Try again or contact your administrator.',
+      protocolMismatch: 'This Desktop requires a newer enterprise market. Ask an administrator to upgrade the server.',
+      install: 'Install', update: 'Update',
       installed: 'Installed', uninstall: 'Uninstall', enable: 'Enable', disable: 'Disable', disabled: 'Disabled',
       version: 'Version', incompatible: 'Unsupported system or Desktop version',
       installing: 'Installing…', updating: 'Updating…', enabling: 'Enabling…', disabling: 'Disabling…', uninstalling: 'Uninstalling…', unsupported: 'Unavailable', setup: 'The enterprise market is not ready. Contact your administrator.'
     }
 
     let marketTranslate
+    let accountTranslate
     function marketLabels() { return Object.fromEntries(Object.keys(marketEn).map(key => [key, marketTranslate(key)])) }
+    function marketStatusCopy(cause) {
+      const code = typeof cause?.errorCode === 'string' ? cause.errorCode : ''
+      if (code === 'protocol_mismatch') return marketLabels().protocolMismatch
+      if ((code === 'seat_revoked' || code === 'session_expired') && accountTranslate) {
+        const known = accountErrorCopy(code, accountTranslate)
+        if (known) return known
+      }
+      return ''
+    }
 
     function installMarketStyles() {
       if (document.getElementById('dsh-enterprise-market-style')) return
@@ -496,9 +510,10 @@ window.__ModuleLoader__.load({
       const [error, setError] = useState('')
       const request = React.useRef(null)
       const mounted = React.useRef(true)
+      const stateRequest = React.useRef(null)
       const identity = `${account.base}|${account.tenant.id}|${account.user.id}`
       const refresh = useCallback(async () => {
-        request.current?.abort()
+        request.current?.abort(); stateRequest.current?.abort()
         const controller = new AbortController(); request.current = controller
         setLoading(true); setError('')
         try {
@@ -512,13 +527,35 @@ window.__ModuleLoader__.load({
           } while (all.length < next.total && next.data.length)
           if (mounted.current && !controller.signal.aborted) setCatalog({ ...next, data: all })
         } catch (cause) {
-          if (mounted.current && !controller.signal.aborted) { setCatalog(null); setError(marketCopy.failed) }
+          if (mounted.current && !controller.signal.aborted) { setCatalog(null); setError(marketStatusCopy(cause) || marketCopy.failed) }
         } finally { if (mounted.current && !controller.signal.aborted) setLoading(false) }
       }, [identity])
       useEffect(() => {
         mounted.current = true; void refresh()
-        return () => { mounted.current = false; request.current?.abort() }
+        return () => { mounted.current = false; request.current?.abort(); stateRequest.current?.abort() }
       }, [refresh])
+      useEffect(() => {
+        const updateRuntimeState = async () => {
+          if (pendingPlugins.current.size || stateRequest.current) return
+          const controller = new AbortController(); stateRequest.current = controller
+          try {
+            const next = await api('/api/enterprise.market.state', undefined, controller.signal)
+            if (mounted.current && !controller.signal.aborted && !pendingPlugins.current.size && next.connected && Array.isArray(next.installed) &&
+                `${next.base}|${next.tenant?.id}|${next.user?.id}` === identity) {
+              setCatalog(current => current && ({ ...current, installed: next.installed }))
+            }
+          } catch {
+            // Keep the last plugin state until a later poll or explicit refresh succeeds.
+          } finally { if (stateRequest.current === controller) stateRequest.current = null }
+        }
+        const timer = window.setInterval(() => { void updateRuntimeState() }, 3000)
+        const onFocus = () => { void updateRuntimeState() }
+        window.addEventListener('focus', onFocus)
+        return () => {
+          window.clearInterval(timer); window.removeEventListener('focus', onFocus)
+          stateRequest.current?.abort(); stateRequest.current = null
+        }
+      }, [identity])
       async function operate(action, plugin, version) {
         if (pendingPlugins.current.has(plugin.id)) return
         pendingPlugins.current.add(plugin.id)
@@ -528,13 +565,13 @@ window.__ModuleLoader__.load({
           if (!result.connected || `${result.base}|${result.tenant?.id}|${result.user?.id}` !== identity) throw new Error(marketCopy.failed)
           if (mounted.current) {
             // A completed operation supersedes catalog requests started earlier.
-            request.current?.abort(); setLoading(false)
+            request.current?.abort(); stateRequest.current?.abort(); setLoading(false)
             const local = result.installed.find(item => item.plugin_id === plugin.id)
             setCatalog(current => current && ({ ...current, tenant: result.tenant, user: result.user,
               installed: [...current.installed.filter(item => item.plugin_id !== plugin.id), ...(local ? [local] : [])] }))
           }
         } catch (cause) {
-          if (mounted.current) setOperations(current => ({ ...current, [plugin.id]: { error: cause.message || marketCopy.failed } }))
+          if (mounted.current) setOperations(current => ({ ...current, [plugin.id]: { error: marketStatusCopy(cause) || cause.message || marketCopy.failed } }))
         } finally {
           pendingPlugins.current.delete(plugin.id)
           if (mounted.current) setOperations(current => {
@@ -1087,6 +1124,7 @@ window.__ModuleLoader__.load({
         'dsh-desktop-enterprise: copy dictionaries'
       )
       const t = ctx.locale.bind(NS)
+      accountTranslate = t
       ctx.effect(() => ctx.locale.register('settings.enterpriseMarket', { zh: marketZh, en: marketEn }), 'enterprise-market: translations')
       marketTranslate = ctx.locale.bind('settings.enterpriseMarket')
       ctx.effect(() => bindEnterpriseMarketTab(ctx), 'enterprise-market: account-bound plugins tab')

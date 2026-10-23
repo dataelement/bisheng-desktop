@@ -689,9 +689,9 @@ export function createDesktopPnpmService(options) {
   // or pinned GitHub sources. Keep its existing handle contract while using
   // the same generation backend and rollback path as the official market.
   const installWorkbenchGeneration = (request, invokingDir, signal) => {
-    const source = request?.source === 'local' ? 'local' : 'market'
+    const source = request?.source === 'local' ? 'local' : request?.source === 'enterprise' ? 'enterprise' : 'market'
     const { pluginSpec, expectedPluginName, expectedVersion, npmIntegrity, path: localPath } = request ?? {}
-    validatePluginOperation(['add', pluginSpec], invokingDir)
+    validatePluginOperation(['add', source === 'enterprise' ? localPath : pluginSpec], invokingDir)
     if (typeof expectedPluginName !== 'string' || !expectedPluginName || expectedPluginName === MARKET_PACKAGE) {
       throw new Error('A workbench install needs the package name it provides.')
     }
@@ -705,8 +705,11 @@ export function createDesktopPnpmService(options) {
       if (source === 'local' && (typeof localPath !== 'string' || !isAbsolute(localPath))) {
         return { exitCode: 1, message: 'A local workbench install needs an absolute directory chosen by the desktop.' }
       }
+      if (source === 'enterprise' && (typeof localPath !== 'string' || !isAbsolute(localPath))) {
+        return { exitCode: 1, message: 'An enterprise workbench install needs the verified package on this computer.' }
+      }
       const registry = await resolveMarketRegistry({ profileDir: profileDirectory(home), args: [], environment })
-      if (npmIntegrity !== undefined) {
+      if (source === 'market' && npmIntegrity !== undefined) {
         const base = (registry ?? DEFAULT_NPM_REGISTRY).replace(/\/+$/u, '')
         const response = await (options.fetchImpl ?? fetch)(`${base}/${expectedPluginName.replace('/', '%2F')}/${encodeURIComponent(expectedVersion)}`, {
           headers: { accept: 'application/json' }, signal: AbortSignal.timeout(30_000)
@@ -726,6 +729,15 @@ export function createDesktopPnpmService(options) {
         path: localPath,
         expectedName: expectedPluginName,
         expectedVersion,
+        signal: control.signal,
+        onOutput: chunk => write(chunk.replace(/\r?\n$/u, ''))
+      } : source === 'enterprise' ? {
+        kind: 'tarball',
+        path: localPath,
+        spec: localPath,
+        expectedName: expectedPluginName,
+        expectedVersion,
+        minimumReleaseAge: 0,
         signal: control.signal,
         onOutput: chunk => write(chunk.replace(/\r?\n$/u, ''))
       } : {

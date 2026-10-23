@@ -1,6 +1,7 @@
 import type { EnterpriseWebSession } from './web-session'
 import { join } from 'node:path'
 import { parseThirdPartyPolicy } from 'dsh-desktop-enterprise/contract'
+import { sweepWorkbenchVerifyDirectory } from './workbench-artifact'
 import {
   startEnterpriseCredentialBroker,
   type EnterpriseCredentialBroker
@@ -32,6 +33,7 @@ export async function startEnterpriseDesktop(options: {
   allowInsecureLoopback: boolean
   note?: (line: string) => void
 }): Promise<EnterpriseDesktopRuntime> {
+  await sweepWorkbenchVerifyDirectory().catch(() => undefined)
   const vault = new SecureEnterpriseCredentialVault(
     join(options.userDataPath, ENTERPRISE_VAULT_FILENAME),
     options.safeStorage
@@ -54,6 +56,9 @@ export async function startEnterpriseDesktop(options: {
       if (entry.status) parts.push(`status=${entry.status}`)
       if (entry.requestId) parts.push(`requestId=${entry.requestId}`)
       if (entry.originHash) parts.push(`origin=${entry.originHash}`)
+      if (entry.pluginId) parts.push(`plugin=${JSON.stringify(entry.pluginId)}`)
+      if (entry.path) parts.push(`path=${JSON.stringify(entry.path)}`)
+      if (entry.duration !== undefined) parts.push(`durationMs=${entry.duration}`)
       options.note?.(parts.join(' '))
     }
   })

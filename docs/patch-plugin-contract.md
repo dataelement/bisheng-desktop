@@ -92,7 +92,6 @@ PR #357 展示了两种应区别处理的变化：
 
 这些是设计选择示例，不表示所提新扩展 API 已存在。本文是开发与评审约束；当前尚无自动 slot 契约门禁。
 
-
 ## Chat / Work 接缝（Harness 0.2.0-rc.2）
 
 `dsh-client-ui-layout` 声明 root/single 的 `desktop.mode.content`，owner 为 `work: ReactNode`、`columns: string`、`resizeHandle: ReactNode`。位置只覆盖第二、三列；贡献项占据这两列并保持 Work 挂载一次。默认 fallback 使用原内容和 frame 坐标的拖拽柄；桌面贡献项使用内容区域坐标的拖拽柄。左侧原生 SidebarRoot 始终挂载。
@@ -166,3 +165,23 @@ macOS 收起侧栏后，Harness 将展开与新会话控件挂载到既有 `[dat
 `conversation/input-before-submit` 保留知识空间引用快照及取消信号；随后模型目录完成撤权恢复和可路由检查，再提交消息。目录恢复与模型名称补丁共同适用于 Harness 0.2.0-rc.2。目录不可用时返回可恢复错误并保留草稿；配置模型名称只用于展示，调用仍使用原稳定路由 ID。上游支持这些行为后删除相应补丁并迁入正式 API。
 
 本次检查同时覆盖知识空间引用、撤权后的默认模型恢复、历史用量名称及企业插件；patch-package 重放、完整测试和构建通过。实际安装版与新后端的联合验收单列在 STATUS 中。
+
+### Model authorization changes (Harness 0.2.0-rc.2, 2026-10-21)
+
+The shared `ModelDirectory` reconciles its durable session selection with each successfully loaded catalog. It retains an available selection; a withdrawn selection switches through `session.selectModel` to the available configured default, then a model from the same provider, then the first available provider. The replacement uses its own reasoning default. Provider discovery failures preserve the saved selection for recovery. Attempts are shared per catalog and selection, and the existing selection generation protects later manual choices and session disposal.
+
+`conversation.input.model` keeps its existing ownership and layout. Its caption uses the advertised name, an actionable selection label, or “暂无可用模型”. The ordinary composer awaits directory recovery before sending; empty and unresolved catalogs return a localized failure through the existing draft/attachment restoration path. Addressed subagents retain their own transport. Cancellation is checked after recovery.
+
+The official DeepSeek catalog uses the request path's credential resolver, so automatic selection considers configured official providers. This reuses the credential discovery fix from PR #60 for V1.1.0.
+
+These changes belong to `dsh-client-ui-model-selection`, `dsh-client-ui-conversation`, and `dsh-llm-deepseek-api-key` at `0.2.0-rc.2`. Existing slots expose rendering contributions; shared selection reconciliation and the composer send boundary live inside the upstream implementations, so these corrections are recorded as replayable dependency changes. Remove the corresponding hunks when Harness supplies equivalent behavior. Regressions: `test/model-revocation.test.mjs`, `test/deepseek-model-credentials.test.mjs`, and `test/deepseek-model-credentials-runtime.test.ts`.
+
+The conversation model trigger, menu/search labels, tooltips, and `/model` rows share an enterprise display-name formatter. A missing, blank, or internal-ID display name becomes localized “企业模型 {index}” / “Enterprise model {index}”; configured names remain intact. The catalog and selection requests retain their original IDs. Model-label regression cases cover both locales and distinguish multiple unnamed models.
+
+### Turn usage model labels (Harness 0.2.0-rc.2, 2026-10-21)
+
+`TurnUsagePanel` resolves each recorded provider/model route through the same model catalog that supplies the composer selector. The catalog retains advertised names for the current Host generation, allowing completed turns to keep their labels after authorization changes. Connection reset clears those names and rejects late catalog responses from the previous generation. Missing names use localized copy. Route attribution and token accounting retain their existing values.
+
+The chat package explicitly declares its model-selection client dependency and receives the shared catalog through the existing turn-tail registration. The rendering slot keeps its ownership and layout. The bundled `dsh-client-ui-chat` renderer owns the usage row and exposes no label formatter slot; `dsh-client-ui-model-selection` owns the catalog. Both dependency changes are replayable against `0.2.0-rc.2`, with matching type declarations. Remove these changes when Harness supplies the same label resolution and lifecycle contract.
+
+`test/turn-usage-model-names.test.mjs` renders the actual usage component with React and exercises catalog arrival, authorization withdrawal, multiple routes, localized missing/empty names, connection reset, late responses, and dialog closing. Geometry hooks are fixture stubs. Saved logs that predate this change and reference a model absent from the current connection have no recoverable name; they show the localized fallback.

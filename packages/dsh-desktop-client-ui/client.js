@@ -933,16 +933,14 @@ window.__ModuleLoader__.load({
       ctx.effect(() => locale.register(LOCAL_OPEN_NS, LOCAL_OPEN_COPY), 'desktop local open locale')
       ctx.effect(() => {
         const id = 'dsh-desktop-preset-toolbar-style'
-        if (document.getElementById(id)) return
-        const style = document.createElement('style')
-        style.dataset.plugin = 'dsh-desktop-client-ui'
-        style.id = id
+        let style = document.getElementById(id)
+        if (!style || style.tagName !== 'STYLE') {
+          style = document.createElement('style')
+          style.dataset.plugin = 'dsh-desktop-client-ui'
+          style.id = id
+        }
         style.textContent = `
           [data-dsh-sidebar-brand-identity] { display:none !important; }
-          html[data-platform='darwin'] [data-dsh-sidebar-root][data-dsh-sidebar-wide='true']
-            div[data-window-drag]:has(> span > [data-dsh-sidebar-brand-identity]) {
-              height:0 !important; min-height:0 !important; margin:0 !important; padding:0 !important;
-            }
           [data-dsh-preset-heading] { display:flex; align-items:center; flex-wrap:wrap; gap:12px 16px; }
           [data-dsh-preset-heading] h2 { margin:0; }
           [data-dsh-preset-actions] { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-left:auto; }
