@@ -593,8 +593,8 @@ window.__ModuleLoader__.load({
       square: 'M3 4h6v6H3V4Zm12 0h6v6h-6V4ZM3 14h6v6H3v-6Zm12 0h6v6h-6v-6',
       more: 'M5 12h.01M12 12h.01M19 12h.01'
     }
-    function NavigationIcon({ id }) {
-      return React.createElement('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: id === 'more' ? 3 : 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
+    function NavigationIcon({ id, size = 16 }) {
+      return React.createElement('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: id === 'more' ? 3 : 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
         React.createElement('path', { d: NAV_ICON_PATHS[id === 'capabilities' ? 'skills' : id] || NAV_ICON_PATHS.apps }))
     }
     function PrimaryNavigation({ wide, renderAction, expandSidebar, panels, selectPanel, renderPanelIcon, navigation, t }) {
@@ -890,7 +890,7 @@ window.__ModuleLoader__.load({
             return result.value.skills.map(skill => ({
               id: JSON.stringify({ name: skill.name, label: labels.get(skill.name) || skill.name, enterprise: labels.has(skill.name) }),
               label: labels.get(skill.name) || skill.name,
-              badge: labels.has(skill.name) ? '🏢' : undefined,
+              badgeIcon: labels.has(skill.name) ? props => React.createElement(NavigationIcon, { ...props, id: 'skills', size: 12 }) : undefined,
               detail: skill.description
             }))
           }),
