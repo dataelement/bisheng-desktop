@@ -1,3 +1,11 @@
+## 2026-10-23 — 最新共享分支测试交付基线
+
+- 用户确认 Work 继续按任务自动调用平台工具；本次整理桌面和平台功能影响范围，准备同事回归文档与安装包。
+- 已核对并快进至远端 `dataelement/bisheng-work:V1.2.0@1325bfa6fc78f3e33658676c2f8d4b7138ec0470`，包含同事最新离线恢复、用量刷新、企业接入和审计合并。工作树 `bisheng-work-capabilities-v120-integration`；Harness `0.2.0-rc.2`，Electron `43.0.0`；应用元数据版本仍为 `1.0.1`。
+- 修正取消请求测试的观察方式：像实际 fetch 一样订阅组合信号，再验证首个取消原因和单次通知。当前 Node 对无人订阅组合信号的延迟求值与实际请求不同；生产取消逻辑保持现有实现。
+- 全新 npm ci 与补丁重放、类型检查通过；完整桌面回归 2,290 项通过、5 项条件跳过。macOS arm64 打包和新进程验收进行中，完成后补充证据；Windows 和真实多账号业务验收另行进行。
+- 证据：主工作区 `outputs/test-handoff-20261023/` 及 `/private/tmp/test-handoff-desktop-tests-final.log`。
+
 ## 2026-10-23 — 技能列表与 Token 数量展示细节
 
 - 移除技能列表个人行的更新时间；网页工具与技能入口复用原技能中心 Newspaper 图标，桌面 capabilities 入口映射至已有 skills 图标。内置工具启停范围保持现状。
