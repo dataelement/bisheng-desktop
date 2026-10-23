@@ -15,3 +15,11 @@ describe('workbench welcome presentation', () => {
     expect(parseEnterpriseNavigation({ entries: [] })).toEqual({ entries: [], homeLabel: '' })
   })
 })
+
+
+it('accepts the complete capability navigation and keeps existing module entries', () => {
+  const entries = ['capabilities', 'knowledge', 'channel', 'apps', 'skills', 'square'].map(id => ({ id, path: `/${id}`, label: id, active: false, primary: true }));
+  expect(parseEnterpriseNavigation({ entries }).entries.map(row => row.id)).toEqual(entries.map(row => row.id));
+  expect(() => parseEnterpriseNavigation({ entries: [{ ...entries[0], path: '/admin' }] })).toThrow();
+  expect(() => parseEnterpriseNavigation({ entries: [...entries, entries[0]] })).toThrow();
+});

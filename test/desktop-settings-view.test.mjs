@@ -27,6 +27,14 @@ async function fixture(language = 'zh', settingsProtocolVersion = 1, signedIn = 
     return { ok: true, json: async () => account }
   })
   const primitives = {
+    // Exercise the usage-to-primitive contract; the packaged app verifies the native bubble.
+    Tooltip: ({ label, portal, children }) => {
+      const [open, setOpen] = React.useState(false)
+      expect(portal).toBe(true)
+      return React.createElement(React.Fragment, null,
+        React.cloneElement(children, { onMouseEnter: () => setOpen(true), onMouseLeave: () => setOpen(false), onFocus: () => setOpen(true), onBlur: () => setOpen(false) }),
+        open && React.createElement('span', { role: 'tooltip' }, label))
+    },
     SegmentedControl: ({ id, value, options, onChange, label }) => React.createElement('div', { role: 'tablist', 'aria-label': label }, options.map(option => React.createElement('button', { key: option.value, role: 'tab', id: `${id}-${option.value}`, 'aria-selected': option.value === value, onClick: () => onChange(option.value) }, option.label))),
     Menu: ({ open, anchor, children, listClassName }) => React.createElement('div', null, anchor, open && React.createElement('div', { role: 'menu', className: listClassName }, children)),
     MenuItemButton: ({ children, onSelect, disabled }) => React.createElement('button', { type: 'button', role: 'menuitem', disabled, onClick: onSelect }, children),
@@ -84,12 +92,26 @@ it.each(['zh', 'en'])('renders native usage with enterprise data, switching metr
   document.querySelectorAll('style[data-plugin="unrelated-lazy-plugin"]').forEach(style => style.remove())
   expect(ownedStyle.isConnected).toBe(true)
   expect(document.querySelector('.dshUsageStorage').textContent).toContain('51.2 MB')
-  expect(document.querySelectorAll('.dshUsageOverview dd')[1].textContent).toBe(language === 'zh' ? '1200' : '1.2K')
+  expect(document.querySelectorAll('.dshUsageOverview dd')[1].textContent).toBe(language === 'zh' ? '0.1万' : '1.2K')
    expect(entry.options.name).toBe('desktop.account.usage')
    expect(f.registrations.some(row => row.options.name === 'settings.section' && row.options.id === 'desktop-usage')).toBe(false)
+  const day = document.querySelector('[role=listitem]')
+  await act(async () => day.dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true })))
+  expect(document.querySelector('[role=tooltip]').textContent).toContain('2026-10-22')
+  expect(document.querySelector('[role=tooltip]').textContent).toContain(language === 'zh' ? '0.1万' : '1.2K')
+  await act(async () => day.dispatchEvent(new window.MouseEvent('mouseout', { bubbles: true })))
+  expect(document.querySelector('[role=tooltip]')).toBeNull()
+  const breakdown = document.querySelector('.dshUsageFooter > p')
+  expect(breakdown.style.visibility).toBe('visible')
   await click(document.querySelectorAll('[role=tab]')[1])
+  expect(document.querySelector('.dshUsageFooter > p')).toBe(breakdown)
+  expect(breakdown.style.visibility).toBe('hidden')
+  expect(breakdown.getAttribute('aria-hidden')).toBe('true')
   expect(document.querySelectorAll('.dshUsageOverview dd')[2].textContent).toBe('12')
-  expect(document.querySelector('[role=listitem]').title).toContain('12')
+  expect(document.querySelector('[role=listitem]').getAttribute('aria-label')).toContain('12')
+  await act(async () => document.querySelector('[role=listitem]').focus())
+  expect(document.querySelector('[role=tooltip]').textContent).toContain('12')
+  expect(document.querySelector('[role=tooltip]').textContent).toContain(language === 'zh' ? '消息数' : 'Messages')
   expect(surface).not.toHaveBeenCalled()
   await act(async () => f.update({ epoch: 2, connected: false }))
   expect(document.querySelector('.dshUsageOverview')).toBeNull()
@@ -253,7 +275,7 @@ it('shows enterprise models natively and embeds no account page in Account and s
   expect(renderSlot).toHaveBeenCalledOnce()
   expect(renderSlot.mock.calls[0][0]).toBe('desktop.account.usage')
   expect(document.querySelectorAll('.dshUsage')).toHaveLength(1)
-  expect(document.querySelectorAll('.dshUsageOverview dd')[1].textContent).toBe('900')
+  expect(document.querySelectorAll('.dshUsageOverview dd')[1].textContent).toBe('0.1万')
   expect(window.dshEnterpriseChat.usage).toHaveBeenCalledOnce()
   expect(document.querySelector('.dshUsageProgress').value).toBe(0.05)
   expect(document.querySelector('.dshEnterpriseIdentity').textContent).toContain('employee')
@@ -588,4 +610,17 @@ it('retries the failed account read and the failed action from the menu', async 
   await click(menuItem('重试'))
   expect(f.request.mock.calls.filter(([path]) => path === '/api/enterprise.state').length).toBeGreaterThan(reads)
   expect(document.querySelector('.dshAccountMenuError')).toBeNull()
+})
+
+
+it.each([[0, '0.0万'], [12057, '1.2万'], [1152049, '115.2万'], [99900000, '9990.0万'], [100000000, '1.0亿'], [230000000, '2.3亿']])('formats daily Token usage %s as %s', async (count, expected) => {
+  const f = await fixture('zh')
+  const totals = { total_tokens: count, input_tokens: count, output_tokens: 0, message_count: 3, missing_usage_count: 0 }
+  window.dshEnterpriseChat.usage = vi.fn(async () => ({ totals, storage: null, points: [{ ...totals, start_at: '2026-10-22T00:00:00+08:00', end_at: '2026-10-23T00:00:00+08:00' }] }))
+  const entry = f.registrations.find(row => row.options.id === 'desktop-usage')
+  await f.mount(entry.Component, entry.options.inject())
+  const day = document.querySelector('[role=listitem]')
+  await act(async () => day.dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true })))
+  expect(document.querySelector('[role=tooltip]').textContent).toBe(`2026-10-22 · Token 用量: ${expected}`)
+  expect(document.querySelectorAll('.dshUsageOverview dd')[1].textContent).toBe(expected)
 })

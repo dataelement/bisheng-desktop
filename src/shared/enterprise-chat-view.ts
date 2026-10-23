@@ -137,13 +137,14 @@ export interface EnterpriseNavigation {
 }
 const MAX_PENDING_APPROVALS = 9999
 const modulePaths: Record<string, RegExp> = {
+  capabilities: /^\/capabilities$/u,
   knowledge: /^\/knowledge$/u,
   channel: /^\/channel$/u,
   apps: /^\/apps(?:\/[a-zA-Z0-9_-]+)*$/u,
   skills: /^\/skills$/u,
   square: /^\/square$/u
 }
-const moduleGrants: Record<string, string> = { knowledge: 'knowledge_space', channel: 'subscription', apps: 'apps', skills: 'home' }
+const moduleGrants: Record<string, string> = { capabilities: 'home', knowledge: 'knowledge_space', channel: 'subscription', apps: 'apps', skills: 'home' }
 /** A reported approval backlog is advisory presentation data, never an authorization signal. */
 function parseEnterpriseApprovals(value: unknown): { pending: number } | undefined {
   if (value === undefined) return undefined
@@ -172,7 +173,7 @@ export function parseWorkbenchBranding(value: unknown): WorkbenchBranding {
 export function parseEnterpriseNavigation(value: unknown): EnterpriseNavigation {
   if (!value || typeof value !== 'object') throw new Error('Invalid enterprise navigation.')
   const input = value as Record<string, unknown>
-  if (!Array.isArray(input.entries) || input.entries.length > 5) throw new Error('Invalid enterprise entries.')
+  if (!Array.isArray(input.entries) || input.entries.length > Object.keys(modulePaths).length) throw new Error('Invalid enterprise entries.')
   const seen = new Set<string>()
   const entries = input.entries.map((entry: unknown): EnterpriseNavigationEntry => {
     if (!entry || typeof entry !== 'object') throw new Error('Invalid enterprise entry.')

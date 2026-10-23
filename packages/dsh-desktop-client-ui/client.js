@@ -594,7 +594,7 @@ window.__ModuleLoader__.load({
     }
     function NavigationIcon({ id }) {
       return React.createElement('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: id === 'more' ? 3 : 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
-        React.createElement('path', { d: NAV_ICON_PATHS[id] || NAV_ICON_PATHS.apps }))
+        React.createElement('path', { d: NAV_ICON_PATHS[id === 'capabilities' ? 'skills' : id] || NAV_ICON_PATHS.apps }))
     }
     function PrimaryNavigation({ wide, renderAction, expandSidebar, panels, selectPanel, renderPanelIcon, navigation, t }) {
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
