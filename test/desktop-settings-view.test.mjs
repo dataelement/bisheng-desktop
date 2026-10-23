@@ -27,6 +27,14 @@ async function fixture(language = 'zh', settingsProtocolVersion = 1, signedIn = 
     return { ok: true, json: async () => account }
   })
   const primitives = {
+    // Exercise the usage-to-primitive contract; the packaged app verifies the native bubble.
+    Tooltip: ({ label, portal, children }) => {
+      const [open, setOpen] = React.useState(false)
+      expect(portal).toBe(true)
+      return React.createElement(React.Fragment, null,
+        React.cloneElement(children, { onMouseEnter: () => setOpen(true), onMouseLeave: () => setOpen(false), onFocus: () => setOpen(true), onBlur: () => setOpen(false) }),
+        open && React.createElement('span', { role: 'tooltip' }, label))
+    },
     SegmentedControl: ({ id, value, options, onChange, label }) => React.createElement('div', { role: 'tablist', 'aria-label': label }, options.map(option => React.createElement('button', { key: option.value, role: 'tab', id: `${id}-${option.value}`, 'aria-selected': option.value === value, onClick: () => onChange(option.value) }, option.label))),
     Menu: ({ open, anchor, children, listClassName }) => React.createElement('div', null, anchor, open && React.createElement('div', { role: 'menu', className: listClassName }, children)),
     MenuItemButton: ({ children, onSelect, disabled }) => React.createElement('button', { type: 'button', role: 'menuitem', disabled, onClick: onSelect }, children),
@@ -87,9 +95,18 @@ it.each(['zh', 'en'])('renders native usage with enterprise data, switching metr
   expect(document.querySelectorAll('.dshUsageOverview dd')[1].textContent).toBe(language === 'zh' ? '1200' : '1.2K')
    expect(entry.options.name).toBe('desktop.account.usage')
    expect(f.registrations.some(row => row.options.name === 'settings.section' && row.options.id === 'desktop-usage')).toBe(false)
+  const day = document.querySelector('[role=listitem]')
+  await act(async () => day.dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true })))
+  expect(document.querySelector('[role=tooltip]').textContent).toContain('2026-10-22')
+  expect(document.querySelector('[role=tooltip]').textContent).toContain('1,200')
+  await act(async () => day.dispatchEvent(new window.MouseEvent('mouseout', { bubbles: true })))
+  expect(document.querySelector('[role=tooltip]')).toBeNull()
   await click(document.querySelectorAll('[role=tab]')[1])
   expect(document.querySelectorAll('.dshUsageOverview dd')[2].textContent).toBe('12')
-  expect(document.querySelector('[role=listitem]').title).toContain('12')
+  expect(document.querySelector('[role=listitem]').getAttribute('aria-label')).toContain('12')
+  await act(async () => document.querySelector('[role=listitem]').focus())
+  expect(document.querySelector('[role=tooltip]').textContent).toContain('12')
+  expect(document.querySelector('[role=tooltip]').textContent).toContain(language === 'zh' ? '消息数' : 'Messages')
   expect(surface).not.toHaveBeenCalled()
   await act(async () => f.update({ epoch: 2, connected: false }))
   expect(document.querySelector('.dshUsageOverview')).toBeNull()
