@@ -1,5 +1,5 @@
 diff --git a/node_modules/undici/lib/dispatcher/dispatcher1-wrapper.js b/node_modules/undici/lib/dispatcher/dispatcher1-wrapper.js
-index e206984..5319312 100644
+index e206984..0351c60 100644
 --- a/node_modules/undici/lib/dispatcher/dispatcher1-wrapper.js
 +++ b/node_modules/undici/lib/dispatcher/dispatcher1-wrapper.js
 @@ -17,12 +17,16 @@ class LegacyHandlerWrapper {
@@ -21,7 +21,7 @@ index e206984..5319312 100644
 
      if (this.#handler.onHeaders?.(statusCode, rawHeaders, () => controller.resume(), statusMessage) === false) {
        controller.pause()
-@@ -36,6 +40,8 @@ class LegacyHandlerWrapper {
+@@ -36,7 +40,9 @@ class LegacyHandlerWrapper {
    }
 
    onResponseEnd (controller, trailers) {
@@ -31,3 +31,51 @@ index e206984..5319312 100644
 +      : toRawHeaders(controller?.rawTrailers ?? trailers ?? {})
      this.#handler.onComplete?.(rawTrailers)
    }
+
+@@ -95,7 +101,7 @@ class Dispatcher1Wrapper extends Dispatcher {
+       opts = { ...opts, allowH2: false }
+     }
+
+-    return this.#dispatcher.dispatch(opts, Dispatcher1Wrapper.wrapHandler(handler))
++    return this.#dispatcher.dispatch(opts, adaptObjectRawHeaders(Dispatcher1Wrapper.wrapHandler(handler)))
+   }
+
+   close (...args) {
+@@ -107,4 +113,37 @@ class Dispatcher1Wrapper extends Dispatcher {
+   }
+ }
+
++function withRawList (controller, field, fallback) {
++  if (controller == null || Array.isArray(controller[field])) return controller
++  return Object.assign(Object.create(Object.getPrototypeOf(controller)), controller, {
++    [field]: toRawHeaders(controller[field] ?? fallback ?? {})
++  })
++}
++
++// Node's fetch handler already implements onRequestStart, so wrapHandler leaves
++// it untouched. It still reads controller.rawHeaders itself and drops a plain
++// object, which is the shape older Dispatcher callers pass.
++function adaptObjectRawHeaders (handler) {
++  if (typeof handler?.onResponseStart !== 'function' && typeof handler?.onResponseEnd !== 'function' && typeof handler?.onRequestUpgrade !== 'function') {
++    return handler
++  }
++  const adapted = Object.create(handler)
++  if (typeof handler.onRequestUpgrade === 'function') {
++    adapted.onRequestUpgrade = function (controller, statusCode, headers, socket) {
++      return handler.onRequestUpgrade(withRawList(controller, 'rawHeaders', headers), statusCode, headers, socket)
++    }
++  }
++  if (typeof handler.onResponseStart === 'function') {
++    adapted.onResponseStart = function (controller, statusCode, headers, statusMessage) {
++      return handler.onResponseStart(withRawList(controller, 'rawHeaders', headers), statusCode, headers, statusMessage)
++    }
++  }
++  if (typeof handler.onResponseEnd === 'function') {
++    adapted.onResponseEnd = function (controller, trailers) {
++      return handler.onResponseEnd(withRawList(controller, 'rawTrailers', trailers), trailers)
++    }
++  }
++  return adapted
++}
++
+ module.exports = Dispatcher1Wrapper

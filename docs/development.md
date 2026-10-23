@@ -8,7 +8,7 @@ This guide covers local development, validation, patch maintenance, and target-n
 - npm
 - macOS on Apple Silicon or Intel, or Windows x64
 
-This baseline pins `@deepseek-ai/dsh@0.2.0-rc.2`. Windows packages run Harness in Electron Node mode, while macOS uses an Electron UtilityProcess. Both are independent of the Node.js version used to run development commands.
+This baseline pins `@deepseek-ai/dsh@0.2.1-rc.2`. Windows packages run Harness in Electron Node mode, while macOS uses an Electron UtilityProcess. Both are independent of the Node.js version used to run development commands.
 
 ## Local setup
 
@@ -22,6 +22,14 @@ npm run dev
 `npm ci` runs the repository's `postinstall` hook. It reapplies the tracked `patch-package` patches, installs DSH brand assets into the pinned Harness frontend, and installs Electron.
 
 Development builds use the separate application name `DSH Desktop Dev` and the separate user-data directory `dsh-desktop-dev`, so they do not reuse production DSH Desktop data. Multiple development worktrees still share that development profile by default; avoid running them at the same time when testing profile, plugin, migration, or recovery changes.
+
+To run another worktree concurrently, set a distinct `DSH_DEV_PROFILE` directory name and unused loopback ports using `DSH_DEV_HARNESS_PORT` and `DSH_DEV_MOBILE_PORT`. For example, on macOS:
+
+```bash
+DSH_DEV_PROFILE=dsh-desktop-dev-workbench DSH_DEV_HARNESS_PORT=43132 DSH_DEV_MOBILE_PORT=43133 npm run dev
+```
+
+On PowerShell, set the same names through `$env:DSH_DEV_PROFILE`, `$env:DSH_DEV_HARNESS_PORT` and `$env:DSH_DEV_MOBILE_PORT` before `npm run dev`. The profile must be a directory name, separate from `dsh-desktop`; ports must be distinct integers from 1024 to 65535. These overrides are ignored by production builds. Defaults remain `dsh-desktop-dev`, Harness port 43130 and mobile port 43128.
 
 ## Validation
 

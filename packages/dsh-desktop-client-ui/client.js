@@ -254,6 +254,12 @@ window.__ModuleLoader__.load({
         }
         style.textContent = `
           [data-dsh-sidebar-brand-identity] { display:none !important; }
+          :root { --dsh-page-title-top-spacing:56px; }
+          /* Top-level page titles align with the sidebar brand row. Keep
+             conversation chrome and detail/dialog headers in their own layout. */
+          [data-plugin-panel] > header[data-window-drag] {
+            padding-top:var(--dsh-page-title-top-spacing);
+          }
           [data-dsh-preset-heading] { display:flex; align-items:center; flex-wrap:wrap; gap:12px 16px; }
           [data-dsh-preset-heading] h2 { margin:0; }
           [data-dsh-preset-actions] { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-left:auto; }

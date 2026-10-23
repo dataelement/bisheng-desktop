@@ -1,3 +1,5 @@
+import { desktopFileUrl, navigateDesktopWindow } from './desktop-navigation'
+import { recoverStartupConfiguration } from './startup-config-recovery'
 import { initializeDesktopService, desktopDiagnostics } from './desktop-service'
 import { applyMacosWindowBackdrop } from './macos-window-backdrop'
 import { checkBlockingPluginUpdates, communityUpgradeBlocked, enterpriseRecoveryChecks, selectPluginRecoveryTarget, PluginRecoveryEvidence, planPluginRecovery, runPluginRecoveryPlan, type PluginRecoveryCheck } from './plugin-recovery-market'
@@ -29,6 +31,7 @@ import {
   extractFailureCause,
   extractPluginFailureReferences,
   HarnessRuntime,
+  resolveShellEnvironment,
   prewarmShellEnvironment
 } from './runtime/harness-runtime'
 import { launchDisclaimedUtilityProcess } from './runtime/disclaimed-utility-process'
@@ -155,6 +158,7 @@ import {
   DesktopStorageManager,
   type DesktopStorageAction
 } from './state/desktop-storage'
+import { registerDesktopNotificationBridge } from './desktop-notification'
 import {
   raiseWindowWithoutStealingFocus,
   type WindowFocusIntent
@@ -254,6 +258,8 @@ const HARNESS_CURRENT_SESSION_KEY = 'dsh.sessions.current'
 let lastCrashEvidence: CrashEvidence | undefined
 let launchDirectory: string
 let quitting = false
+let nativeRecoveryActive = false
+let configurationRecoveryOperation: Promise<'retry' | 'continue'> | undefined
 let failureRecoveryVisible = false
 let harnessLaunchOperation: Promise<void> | undefined
 let pluginRecoveryActionResolver: ((action: PluginRecoveryAction) => void) | undefined
@@ -429,7 +435,7 @@ function recordMainWindowRendererLoss(
 }
 
 function reloadMainWindowAfterRendererLoss(window: BrowserWindow): void {
-  if (window.isDestroyed() || window.webContents.isDestroyed()) return
+  if (quitting || gpuFallbackRelaunching || window.isDestroyed() || window.webContents.isDestroyed()) return
   const now = Date.now()
   if (!shouldReloadAfterMainWindowRendererLoss({
     now,
@@ -440,16 +446,7 @@ function reloadMainWindowAfterRendererLoss(window: BrowserWindow): void {
       'render-process-gone',
       'reload throttled; surfacing harness failure instead'
     )
-    const snapshot = runtime?.snapshot()
-    if (snapshot && runtime?.snapshot().phase === 'ready') {
-      // Reloading is failing on its own. Step the runtime back to 'failed' so
-      // the plugin-recovery page is shown and the user can recover without a
-      // hard restart.
-      void showPluginRecovery({
-        message: 'Harness web view stopped responding. Reload it to continue.',
-        logs: snapshot.logs
-      }).catch(showUnexpectedError)
-    }
+    showUnexpectedError(new Error('Harness web view stopped responding after repeated renderer failures.'))
     return
   }
   mainWindowRecoveryReloadAt = now
@@ -472,6 +469,7 @@ function reloadMainWindowAfterRendererLoss(window: BrowserWindow): void {
 function installMainWindowRendererRecovery(window: BrowserWindow): void {
   const webContents = window.webContents
   webContents.on('render-process-gone', (event, details) => {
+    if (quitting || gpuFallbackRelaunching || window.isDestroyed() || details.reason === 'clean-exit') return
     clearProfileBootConfirmation()
     // Take control: by default the window stays drawn but blank, which is
     // exactly the black screen this recovery is meant to prevent.
@@ -504,7 +502,7 @@ function installMainWindowRendererRecovery(window: BrowserWindow): void {
     reloadMainWindowAfterRendererLoss(window)
   })
   webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-    if (!isMainFrame) return
+    if (!isMainFrame || errorCode === -3 || quitting || gpuFallbackRelaunching || window.isDestroyed()) return
     clearProfileBootConfirmation()
     // The harness web server is local; a failure to reach it is almost
     // always the renderer dropping, not a real network error. Surface the
@@ -628,28 +626,37 @@ function harnessNodeEntryPath(): string {
     : join(app.getAppPath(), 'build', 'harness-node-entry.mjs')
 }
 
+let notedMissingConsoleBootstrap = false
+
+/** Windows `--import` bootstrap. Absent on other platforms and when packaging omitted it. */
+function hideConsoleBootstrapPath(): string | undefined {
+  if (process.platform !== 'win32') return undefined
+  const path = app.isPackaged
+    ? join(process.resourcesPath, 'windows-hide-console-import.mjs')
+    : join(app.getAppPath(), 'build', 'windows-hide-console-import.mjs')
+  if (existsSync(path)) return path
+  if (!notedMissingConsoleBootstrap) {
+    notedMissingConsoleBootstrap = true
+    console.warn('[desktop] Windows console hide bootstrap is missing; child consoles are not suppressed')
+  }
+  return undefined
+}
+
 function desktopResourcePath(name: string): string {
   return app.isPackaged ? join(process.resourcesPath, name) : join(app.getAppPath(), 'build', name)
 }
 
 async function loadDesktopResource(
   target: {
+    isDestroyed: () => boolean
     loadURL: (url: string) => Promise<void>
-    loadFile: (file: string, options?: { query?: Record<string, string> }) => Promise<void>
   },
   filePath: string,
   options?: { query?: Record<string, string> }
-): Promise<void> {
-  const query = options?.query ?? {}
-  try {
-    const fileUrl = pathToFileURL(filePath)
-    for (const [key, value] of Object.entries(query)) {
-      fileUrl.searchParams.set(key, value)
-    }
-    await target.loadURL(fileUrl.href)
-  } catch {
-    await target.loadFile(filePath, options)
-  }
+): Promise<boolean> {
+  const version = mainWindowNavigationVersion
+  return navigateDesktopWindow(target, desktopFileUrl(filePath, options?.query),
+    () => quitting || gpuFallbackRelaunching || version !== mainWindowNavigationVersion)
 }
 
 function desktopIconPath(): string {
@@ -1084,6 +1091,7 @@ async function openHarness(
   url: string,
   focusIntent: WindowFocusIntent = 'automatic'
 ): Promise<void> {
+  if (quitting || gpuFallbackRelaunching) return
   const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : createWindow()
   const rendererUrl = desktopHarnessUrl(url, process.platform, runtime.snapshot().authToken)
   if (shouldLoadHarnessUrl(window.webContents.getURL(), url)) {
@@ -1119,7 +1127,9 @@ async function openHarness(
       runtime.note(`[desktop] cleared ${clearedCookies} stale Harness authentication cookie(s)`)
     }
     try {
-      await window.loadURL(rendererUrl)
+      const loaded = await navigateDesktopWindow(window, rendererUrl,
+        () => quitting || gpuFallbackRelaunching || navigationVersion !== mainWindowNavigationVersion)
+      if (!loaded) return
     } catch (error) {
       if (navigationVersion !== mainWindowNavigationVersion) return
       if (isAbortedNavigationError(error)) return
@@ -1139,17 +1149,20 @@ async function openHarness(
     focusIntent
   )
   deliverPendingEnterpriseLogin()
+
 }
 
 async function showSplash(): Promise<void> {
+  if (quitting || gpuFallbackRelaunching) return
   clearProfileBootConfirmation()
   const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : createWindow()
   const navigationVersion = ++mainWindowNavigationVersion
   window.webContents.stop()
-  await loadDesktopResource(window, desktopResourcePath('splash.html'), {
+  const loaded = await loadDesktopResource(window, desktopResourcePath('splash.html'), {
     query: { theme: nativeTheme.shouldUseDarkColors ? 'dark' : 'light' }
   })
-  if (window.isDestroyed() || navigationVersion !== mainWindowNavigationVersion) return
+  if (!loaded) return
+  if (quitting || gpuFallbackRelaunching || window.isDestroyed() || navigationVersion !== mainWindowNavigationVersion) return
   raiseWindowWithoutStealingFocus(window, process.platform, () => app.isActive())
 }
 
@@ -1380,6 +1393,7 @@ function launchHarness(): Promise<void> {
           nodeExecutablePath: bundledNodePath(),
           pnpmEntryPath: bundledPnpmEntryPath(),
           pnpmRunnerPath: bundledPnpmRunnerPath(),
+          hideConsoleBootstrapPath: hideConsoleBootstrapPath(),
           dshEntryPath: dshEntryPath(),
           note: (line) => runtime.note(line),
           reinstallSharedTree: async () => {
@@ -1389,7 +1403,8 @@ function launchHarness(): Promise<void> {
               dshEntryPath: dshEntryPath(),
               nodeExecutablePath: bundledNodePath(),
               pnpmEntryPath: bundledPnpmEntryPath(),
-              pnpmRunnerPath: bundledPnpmRunnerPath()
+              pnpmRunnerPath: bundledPnpmRunnerPath(),
+              hideConsoleBootstrapPath: hideConsoleBootstrapPath()
             })
             if (result.ok) await markProfileInstallComplete(dshHome)
             return result
@@ -1402,6 +1417,7 @@ function launchHarness(): Promise<void> {
         nodeExecutablePath: bundledNodePath(),
         pnpmEntryPath: bundledPnpmEntryPath(),
         pnpmRunnerPath: bundledPnpmRunnerPath(),
+        hideConsoleBootstrapPath: hideConsoleBootstrapPath(),
         note: (line) => runtime.note(line)
       }),
       marketUsableWithoutBaseline: () => marketUsableWithoutBaseline(dshHome),
@@ -1624,7 +1640,8 @@ async function removeMarket(dshHome: string): Promise<{ ok: boolean; detail?: st
         dshEntryPath: dshEntryPath(),
         nodeExecutablePath: bundledNodePath(),
         pnpmEntryPath: bundledPnpmEntryPath(),
-        pnpmRunnerPath: bundledPnpmRunnerPath()
+        pnpmRunnerPath: bundledPnpmRunnerPath(),
+        hideConsoleBootstrapPath: hideConsoleBootstrapPath()
       },
       'dshmarket',
       true
@@ -1660,6 +1677,7 @@ async function uninstallMarketAndRestart(): Promise<{ ok: boolean }> {
 }
 
 function registerHarnessHandlers(): void {
+  registerDesktopNotificationBridge(() => mainWindow, desktopIconPath)
   ipcMain.removeAllListeners('dsh:storage-load-sync')
   ipcMain.on('dsh:storage-load-sync', (event) => {
     event.returnValue = desktopStorageManager?.getAll() ?? {}
@@ -1922,6 +1940,7 @@ async function waitForPluginRecoveryAction(options: {
   pluginChecks?: PluginRecoveryCheck[]
   market?: Parameters<typeof buildPluginRecoveryViewModel>[0]['market']
 }): Promise<PluginRecoveryAction> {
+  if (quitting || gpuFallbackRelaunching) return 'quit'
   const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : createWindow()
   const state = buildPluginRecoveryViewModel({
     ...options,
@@ -1934,13 +1953,14 @@ async function waitForPluginRecoveryAction(options: {
   window.webContents.stop()
 
   try {
-    await loadDesktopResource(window, desktopResourcePath('plugin-recovery.html'), {
+    const loaded = await loadDesktopResource(window, desktopResourcePath('plugin-recovery.html'), {
       query: {
         state: JSON.stringify(state),
         icon: app.isPackaged ? 'icon.png' : 'app-icon.png',
         theme: harnessThemePreference()
       }
     })
+    if (!loaded) { pluginRecoveryActionResolver = undefined; return 'quit' }
   } catch (error) {
     pluginRecoveryActionResolver = undefined
     throw error
@@ -1955,7 +1975,47 @@ function showUnexpectedError(error: unknown): void {
   const message = error instanceof Error ? error.stack ?? error.message : String(error)
   runtime?.note(`[desktop] unexpected error: ${message}`)
   console.error('[desktop] unexpected error:', message)
-  dialog.showErrorBox('BISHENG encountered an error', message)
+  if (nativeRecoveryActive || quitting || gpuFallbackRelaunching) return
+  nativeRecoveryActive = true
+  const zh = harnessLocale() === 'zh'
+  void (async () => {
+    while (!quitting && !gpuFallbackRelaunching) {
+      const { response } = await dialog.showMessageBox({
+        type: 'error', title: 'BISHENG',
+        message: zh ? '应用窗口无法继续加载' : 'The application window could not load',
+        detail: message, buttons: zh ? ['退出', '重新启动', '恢复配置'] : ['Quit', 'Restart', 'Recover Configuration'],
+        defaultId: 0, cancelId: 0, noLink: true
+      })
+      if (response === 2) {
+        if (await recoverCoreConfiguration() === 'retry') { app.relaunch(); app.quit(); return }
+        continue
+      }
+      if (response === 1) app.relaunch()
+      app.quit()
+      return
+    }
+  })().catch((failure: unknown) => {
+    console.error('[desktop] native recovery failed', failure)
+    dialog.showErrorBox('BISHENG', message)
+  }).finally(() => { nativeRecoveryActive = false })
+}
+
+function recoverCoreConfiguration(): Promise<'retry' | 'continue'> {
+  configurationRecoveryOperation ??= recoverStartupConfiguration({
+    dshHome: join(app.getPath('userData'), 'harness'),
+    get profile() { return safeModeVisible ? SAFE_MODE_PROFILE : 'web' },
+    environment: resolveShellEnvironment(),
+    launchDirectory,
+    chinese: harnessLocale() === 'zh',
+    beforeInspect: async () => { await harnessLaunchOperation },
+    cancelled: () => quitting || gpuFallbackRelaunching,
+    stop: async () => { await runtime.stop(); await mobileBridge?.stop() },
+    show: options => dialog.showMessageBox(options),
+    selectFile: options => dialog.showOpenDialog(options),
+    reveal: path => shell.showItemInFolder(path),
+    note: line => runtime.note(line)
+  }).finally(() => { configurationRecoveryOperation = undefined })
+  return configurationRecoveryOperation
 }
 
 async function showPluginRecovery(options?: {
@@ -2005,6 +2065,15 @@ async function showPluginRecovery(options?: {
   try {
     while (!quitting) {
       const snapshot = runtime.snapshot()
+      if (snapshot.phase === 'failed') {
+        const configAction = await recoverCoreConfiguration()
+        if (quitting || gpuFallbackRelaunching || (!followRendererLogs && runtime.snapshot().phase === 'ready')) return
+        if (configAction === 'retry') {
+          await (safeModeVisible ? launchSafeHarness() : launchWithFreshEvidence())
+          if (runtime.snapshot().phase === 'ready') return
+          continue
+        }
+      }
       const message = recoveryMessage ?? snapshot.message
       const detection = await detectPluginRecovery({
         dshHome,
@@ -2151,6 +2220,7 @@ async function showPluginRecovery(options?: {
             nodeExecutablePath: bundledNodePath(),
             pnpmEntryPath: bundledPnpmEntryPath(),
             pnpmRunnerPath: bundledPnpmRunnerPath(),
+            hideConsoleBootstrapPath: hideConsoleBootstrapPath(),
             note: (line) => runtime.note(line)
           })).catch((error: unknown) => ({ ok: false, detail: error instanceof Error ? error.message : String(error) }))
         runtime.note(`[plugin-recovery] ${action} ${result.ok ? 'succeeded' : 'failed'}${result.detail ? `: ${result.detail}` : ''}`)
@@ -2229,6 +2299,7 @@ async function showPluginRecovery(options?: {
             dshHome, pluginName: candidate.packageName, targetVersion: candidate.targetVersion,
             nodeExecutablePath: bundledNodePath(), pnpmEntryPath: bundledPnpmEntryPath(),
             pnpmRunnerPath: bundledPnpmRunnerPath(),
+            hideConsoleBootstrapPath: hideConsoleBootstrapPath(),
             note: line => runtime.note(line)
           }),
           remove: plugin => removeProfilePluginCompletely(dshHome, plugin, 'plugin-recovery')
@@ -2531,7 +2602,8 @@ async function repairSafeModeCompatibilityIssues(
       dshEntryPath: dshEntryPath(),
       nodeExecutablePath: bundledNodePath(),
       pnpmEntryPath: bundledPnpmEntryPath(),
-      pnpmRunnerPath: bundledPnpmRunnerPath()
+      pnpmRunnerPath: bundledPnpmRunnerPath(),
+      hideConsoleBootstrapPath: hideConsoleBootstrapPath()
     })
     if (!result.ok) return { repaired, failed, installFailed: result.detail ?? 'unknown error' }
     await markProfileInstallComplete(dshHome)
@@ -2569,7 +2641,8 @@ async function removeProfilePluginCompletely(
         dshEntryPath: dshEntryPath(),
         nodeExecutablePath: bundledNodePath(),
         pnpmEntryPath: bundledPnpmEntryPath(),
-        pnpmRunnerPath: bundledPnpmRunnerPath()
+        pnpmRunnerPath: bundledPnpmRunnerPath(),
+        hideConsoleBootstrapPath: hideConsoleBootstrapPath()
       })
       if (!rebuild.ok) {
         runtime.note(
@@ -2958,6 +3031,7 @@ async function showSafeModeManager(initial?: {
             nodeExecutablePath: bundledNodePath(),
             pnpmEntryPath: bundledPnpmEntryPath(),
             pnpmRunnerPath: bundledPnpmRunnerPath(),
+            hideConsoleBootstrapPath: hideConsoleBootstrapPath(),
             note: (line) => runtime.note(line)
           })
           if (res.ok) {
@@ -3259,7 +3333,7 @@ async function bootstrap(): Promise<void> {
   installDesktopProtocol(desktopResourcePath)
   if (process.platform === 'darwin') app.dock?.setIcon(desktopIconPath())
   launchDirectory = await ensureLaunchRoot(app.getPath('userData'))
-  registerUpdateHandlers()
+  registerUpdateHandlers({ locale: harnessLocale })
   nativeTheme.themeSource = harnessThemePreference()
   ensureTray()
   const dshHome = join(app.getPath('userData'), 'harness')
@@ -3280,6 +3354,9 @@ async function bootstrap(): Promise<void> {
     dshMarketPatchPath: desktopResourcePath('dsh-desktop-market.patch.yml'),
     dshHome: join(app.getPath('userData'), 'harness'),
     logPath: join(app.getPath('logs'), 'harness.log'),
+    pnpmEntryPath: bundledPnpmEntryPath(),
+    pnpmRunnerPath: bundledPnpmRunnerPath(),
+    hideConsoleBootstrapPath: hideConsoleBootstrapPath(),
     // Keep the Harness origin stable across launches, on a port DSH Desktop
     // does not use. The mobile bridge listens on a different port.
     preferredPort: harnessPreferredPort(developmentBuild),
@@ -3311,7 +3388,7 @@ async function bootstrap(): Promise<void> {
       if (snapshot.phase === 'ready' && snapshot.url) {
         void openHarness(snapshot.url).catch(showUnexpectedError)
       } else if (snapshot.phase === 'failed') {
-        void showRuntimeFailure(snapshot)
+        void showRuntimeFailure(snapshot).catch(showUnexpectedError)
       }
     }
   })
