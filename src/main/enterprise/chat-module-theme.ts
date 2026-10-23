@@ -6,7 +6,7 @@ import type { EnterpriseChatPresentation, EnterprisePalette } from '../../shared
  * complete `.dark` ramp. The host therefore owns the class on module routes only, so the
  * Chat routes keep their deployed `data-dsh-chat-theme` handling untouched.
  */
-export const MODULE_ROUTE_PATTERN = '^/workspace/(knowledge|channel|apps|skills|square|settings)(?:[/?#]|$)'
+export const MODULE_ROUTE_PATTERN = '^/workspace/(capabilities|knowledge|channel|apps|skills|square|settings)(?:[/?#]|$)'
 
 /**
  * The BISHENG ThemeProvider rewrites the html class to `light` when React mounts, which
