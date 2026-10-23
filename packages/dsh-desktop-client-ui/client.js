@@ -750,7 +750,7 @@ window.__ModuleLoader__.load({
         .filter(item => item.source === KNOWLEDGE_REFERENCE_SOURCE).map(item => decode(item.ref))
       const update = (sessionId, spaces, captureInsertion) => {
         const { input, scope } = inputFor(sessionId)
-        if (input.state.getSnapshot().phase !== 'plain') throw new Error('Finish editing the current command, then choose knowledge spaces.')
+        if (!['plain', 'claimed'].includes(input.state.getSnapshot().phase)) throw new Error('Wait for the current submission to finish, then choose knowledge spaces.')
         const wanted = new Set(spaces.map(space => space.id))
         const snapshot = input.state.getSnapshot()
         let shift = 0
@@ -779,7 +779,10 @@ window.__ModuleLoader__.load({
         openReference: () => false,
         codec: { clipboardText: ref => `@${decode(ref).name}`, serialize: async ref => `@${decode(ref).name}` },
       }
-      const prepare = async ({ sessionId, references, signal }) => {
+      const prepare = async ({ sessionId, references, signal, command }) => {
+        // Goal control commands keep the active objective's retrieval scope.
+        if (command && (command.name !== 'goal' || !command.args.trim() || /^(?:clear|pause|resume|edit)$/i.test(command.args.trim()))) return
+        signal.throwIfAborted()
         const ids = [...new Set(references.filter(item => item.source === KNOWLEDGE_REFERENCE_SOURCE).map(item => decode(item.ref).id))]
         if (!ids.length && !used.has(inputFor(sessionId).input)) return
         await ensureSession(sessionId, signal)

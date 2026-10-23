@@ -185,3 +185,14 @@ The conversation model trigger, menu/search labels, tooltips, and `/model` rows 
 The chat package explicitly declares its model-selection client dependency and receives the shared catalog through the existing turn-tail registration. The rendering slot keeps its ownership and layout. The bundled `dsh-client-ui-chat` renderer owns the usage row and exposes no label formatter slot; `dsh-client-ui-model-selection` owns the catalog. Both dependency changes are replayable against `0.2.0-rc.2`, with matching type declarations. Remove these changes when Harness supplies the same label resolution and lifecycle contract.
 
 `test/turn-usage-model-names.test.mjs` renders the actual usage component with React and exercises catalog arrival, authorization withdrawal, multiple routes, localized missing/empty names, connection reset, late responses, and dialog closing. Geometry hooks are fixture stubs. Saved logs that predate this change and reference a model absent from the current connection have no recoverable name; they show the localized fallback.
+
+
+### 目标指令的知识空间提交（Harness 0.2.1-rc.2，2026-10-23）
+
+Work 知识空间引用在原生输入的 `plain` 和 `claimed` 两个可编辑阶段更新，提交阶段冻结选择。目标属于原生 command claim，复用编辑器提供的引用节点和插入坐标，知识空间选择与目标文本共用同一草稿。
+
+原生 `SessionInputShell.beginSubmit` 通过可选 `beforeCommandSubmit` 在执行 claim 前等待宿主校验；InputHub 把提交时捕获的引用快照、命令名称/参数和取消信号发送到现有 `conversation/input-before-submit` 串行事件。普通消息继续沿用该事件，旧贡献项可忽略新增的可选 command 元数据。失败沿用原生命令错误处理，保留草稿和附件。
+
+宿主知识空间贡献项只对目标创建和编辑提交范围；目标查看、暂停、恢复、清除、缺少编辑内容及其他指令保留已有范围。范围通过企业账号和空间权限校验后才允许目标执行；后续目标轮次复用 session 选择，输入框发送后的清空保持该选择。普通新消息沿用现有明确替换范围的规则。
+
+扩展点放在已有 conversation 兼容文件中，由 patch-package 在安装时重放，运行时声明与事件类型同步。该文件承载原生输入语义，现有 slots 只提供渲染入口，无法覆盖 command 提交边界。上游提供同等 command 提交前扩展点后迁移并移除对应变更。行为验证见 `test/work-knowledge-composer.test.mjs`，包括命令原生提交方法、权限撤销、取消、范围快照和真实工具注册的检索请求。
