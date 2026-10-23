@@ -672,8 +672,8 @@ window.__ModuleLoader__.load({
 
     const RESOURCE_NS = 'desktop-work-resources'
     const RESOURCE_COPY = {
-      zh: { skills: '技能', skillsHint: '选择本次任务使用的技能', skillAttribution: '来自 BISHENG', knowledge: '知识空间', knowledgeHint: '选择本次任务检索的知识空间', search: '搜索知识空间', empty: '暂无可用知识空间', noMatch: '没有匹配的知识空间', loading: '正在加载知识空间…', retry: '重试', cancel: '取消', confirm: '确认添加', close: '关闭', remove: '移除', department: '部门知识空间', mine: '我创建的', joined: '我加入的', selectKnowledge: '选择知识空间', modified: '修改时间', selected: '已选 {count} 个知识空间', limit: '最多选择 50 个空间' },
-      en: { skills: 'Skills', skillsHint: 'Choose a skill for this task', skillAttribution: 'From BISHENG', knowledge: 'Knowledge spaces', knowledgeHint: 'Choose knowledge spaces to search in this task', search: 'Search knowledge spaces', empty: 'No knowledge spaces available', noMatch: 'No matching knowledge spaces', loading: 'Loading knowledge spaces…', retry: 'Retry', cancel: 'Cancel', confirm: 'Add selected', close: 'Close', remove: 'Remove', department: 'Department spaces', mine: 'Created by me', joined: 'Joined spaces', selectKnowledge: 'Select knowledge spaces', modified: 'Modified', selected: '{count} knowledge spaces selected', limit: 'Select up to 50 spaces' }
+      zh: { skills: '技能', skillsHint: '选择本次任务使用的技能', knowledge: '知识空间', knowledgeHint: '选择本次任务检索的知识空间', search: '搜索知识空间', empty: '暂无可用知识空间', noMatch: '没有匹配的知识空间', loading: '正在加载知识空间…', retry: '重试', cancel: '取消', confirm: '确认添加', close: '关闭', remove: '移除', department: '部门知识空间', mine: '我创建的', joined: '我加入的', selectKnowledge: '选择知识空间', modified: '修改时间', selected: '已选 {count} 个知识空间', limit: '最多选择 50 个空间' },
+      en: { skills: 'Skills', skillsHint: 'Choose a skill for this task', knowledge: 'Knowledge spaces', knowledgeHint: 'Choose knowledge spaces to search in this task', search: 'Search knowledge spaces', empty: 'No knowledge spaces available', noMatch: 'No matching knowledge spaces', loading: 'Loading knowledge spaces…', retry: 'Retry', cancel: 'Cancel', confirm: 'Add selected', close: 'Close', remove: 'Remove', department: 'Department spaces', mine: 'Created by me', joined: 'Joined spaces', selectKnowledge: 'Select knowledge spaces', modified: 'Modified', selected: '{count} knowledge spaces selected', limit: 'Select up to 50 spaces' }
     }
     async function workResourceRequest(operation, sessionId, spaceIds, signal) {
       const response = await fetch('/api/enterprise.work-resources', {
@@ -859,9 +859,9 @@ window.__ModuleLoader__.load({
             if (!result.ok) throw new Error(result.error.message)
             return result.value.skills.map(skill => ({
               id: JSON.stringify({ name: skill.name, label: labels.get(skill.name) || skill.name, enterprise: labels.has(skill.name) }),
-              label: labels.get(skill.name) || skill.name, detail: labels.has(skill.name)
-                ? [t('skillAttribution'), skill.description].filter(Boolean).join(' · ')
-                : skill.description
+              label: labels.get(skill.name) || skill.name,
+              badge: labels.has(skill.name) ? '🏢' : undefined,
+              detail: skill.description
             }))
           }),
           onSelect: (option, { sessionId }) => {
