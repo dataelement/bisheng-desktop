@@ -121,6 +121,7 @@ function attachWorkbenchRouting(uiWorkspace, sessionState, workspaceState) {
   let revision = 0
   const cleanups = []
   const ctx = {
+    locale: { register: vi.fn(() => () => {}) },
     sessions: { ...uiWorkspace.sessions, refresh: vi.fn(async () => {}) },
     fiber: { name: 'dsh-media-workbench', entry: { options: { name: 'dsh-media-workbench' } } },
     workspaces: uiWorkspace.workspaces,

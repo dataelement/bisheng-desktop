@@ -12,3 +12,12 @@ const root = existsSync(archive) ? archive : dirname(import.meta.dirname)
 const requireHost = createRequire(join(root, 'package.json'))
 registerOfficeEngineResolution(requireHost.resolve('@deepseek-ai/dsh/lib/bin.js'))
 await import(pathToFileURL(requireHost.resolve('@deepseek-ai/libreoffice-kit/cli')).href)
+
+if (process.platform === 'win32' && (process.exitCode ?? 0) === 0) {
+  // The upstream CLI has already disposed its converter and published its
+  // result. Electron's Node mode can otherwise revisit a completed Windows
+  // child-process handle during event-loop teardown and fail after success.
+  const flush = stream => new Promise((resolve, reject) => stream.write('', error => error ? reject(error) : resolve()))
+  await Promise.all([flush(process.stdout), flush(process.stderr)])
+  process.exit(0)
+}

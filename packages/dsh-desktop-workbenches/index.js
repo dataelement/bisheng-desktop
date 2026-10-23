@@ -1,5 +1,7 @@
+import { readInstallEvidence } from './install-evidence.mjs'
 import Schema from '@deepseek-ai/schemastery'
 import { CatalogError, createCatalogReader } from './catalog.mjs'
+import { selectMarketFetch } from './market-fetch.mjs'
 import { awaitHandle, createMarketInstallStore, MarketInstallError, resolveInstallTarget } from './market-install.mjs'
 import { readSubmissionStatus, SubmissionStatusError } from './submission-status.mjs'
 import { createStateStore, MAX_STATE_BYTES, StateError } from './state.mjs'
@@ -15,9 +17,14 @@ export const Config = Schema.object({ root: Schema.string().required() })
 export function catalogReadOptions(request) {
   const params = new URL(request.url).searchParams
   for (const key of params.keys()) {
-    if (key !== 'force') throw new CatalogError('Unsupported workbench catalog query.', 400)
+    if (key !== 'force' && key !== 'cache') throw new CatalogError('Unsupported workbench catalog query.', 400)
   }
   const force = params.getAll('force')
+  const cache = params.getAll('cache')
+  if (cache.length) {
+    if (cache.length !== 1 || cache[0] !== '1' || force.length) throw new CatalogError('Invalid workbench catalog cache request.', 400)
+    return { cachedOnly: true }
+  }
   if (force.length === 0) return { force: false }
   if (force.length !== 1 || force[0] !== '1') throw new CatalogError('Invalid workbench catalog refresh request.', 400)
   return { force: true }
@@ -71,7 +78,11 @@ async function recordLocalInstall(root, install) {
 
 export function apply(ctx, config) {
   const store = createStateStore(config.root)
-  const readCatalog = createCatalogReader()
+  const readCatalog = createCatalogReader({
+    fetch: selectMarketFetch(),
+    cachePath: join(config.root, 'workbench-catalog-cache.json'),
+    onWarning: error => ctx.logger?.warn?.(error)
+  })
   const marketInstalls = createMarketInstallStore(config.root)
   // Providers must use the same persisted ownership as Desktop, never a second
   // settings namespace that could accidentally authorize an ordinary session.
@@ -96,9 +107,27 @@ export function apply(ctx, config) {
       }
     }
   })
+  // A fixed packaged asset keeps the market header available offline without
+  // exposing a filesystem path or allowing arbitrary file reads.
+  ctx.connection.fetch.register({
+    path: '/api/desktop-workbenches/assets/market-header.png',
+    methods: ['GET'],
+    requestBody: 'buffered',
+    async fetch() {
+      try {
+        const image = await readFile(new URL('./assets/market-header.png', import.meta.url))
+        return new Response(image, { headers: { 'content-type': 'image/png', 'cache-control': 'no-cache' } })
+      } catch {
+        return Response.json({ error: 'Could not read the workbench header image.' }, { status: 500 })
+      }
+    }
+  })
   ctx.connection.fetch.register(documentRoute('/api/desktop-workbenches/development-guide', 'development-guide.zh.md'))
   ctx.connection.fetch.register(documentRoute('/api/desktop-workbenches/author-guide', 'development-guide.zh.md'))
   ctx.connection.fetch.register(documentRoute('/api/desktop-workbenches/market-acceptance', 'market-acceptance.zh.md'))
+  ctx.connection.fetch.register(documentRoute('/api/desktop-workbenches/development-guide-en', 'development-guide.en.md'))
+  ctx.connection.fetch.register(documentRoute('/api/desktop-workbenches/author-guide-en', 'development-guide.en.md'))
+  ctx.connection.fetch.register(documentRoute('/api/desktop-workbenches/market-acceptance-en', 'market-acceptance.en.md'))
   ctx.connection.fetch.register({
     path: '/api/desktop-workbenches/catalog',
     methods: ['GET'],
@@ -174,22 +203,29 @@ export function apply(ctx, config) {
     }
   })
   const known = (error) => error instanceof MarketInstallError || error instanceof CatalogError || error instanceof StateError
-  const installFailure = (error, fallback) => Response.json({ error: known(error) ? error.message : fallback }, {
+  const installFailure = (error, fallback) => Response.json({ error: known(error) ? error.message : fallback,
+    ...(error instanceof MarketInstallError && error.code ? { code: error.code, params: error.params } : {})
+  }, {
     status: known(error) ? error.status : 500,
     headers: { 'cache-control': 'no-store' }
   })
   // Market entries are identified by their Awesome repository identity.
-  const catalogIdFrom = async (request) => {
+  const catalogPayloadFrom = async (request) => {
     const payload = await readPayload(request, 4096, 'Request is too large.')
     if (typeof payload?.id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/(?!\.\.?$)[A-Za-z0-9_.-]{1,100}$/.test(payload.id)) throw new MarketInstallError('A workbench market entry is required.')
-    return payload.id
+    return payload
   }
   ctx.connection.fetch.register({
     path: '/api/desktop-workbenches/market-installs',
     methods: ['GET'],
     requestBody: 'buffered',
-    async fetch() {
-      try { return Response.json({ installs: await marketInstalls.read() }, { headers: { 'cache-control': 'no-store' } }) }
+    async fetch(request) {
+      try {
+        const installs = await marketInstalls.read()
+        const requested = new URL(request.url).searchParams.getAll('package').slice(0, 64)
+        const listed = await readCatalog({ cachedOnly: true }).then(value => value.catalog?.workbenches.map(item => item.distribution?.name).filter(Boolean) || [], () => [])
+        return Response.json({ installs, packages: await readInstallEvidence(installs, undefined, [...requested, ...listed]) }, { headers: { 'cache-control': 'no-store' } })
+      }
       catch (error) { return installFailure(error, 'Could not read workbench market installs.') }
     }
   })
@@ -206,12 +242,25 @@ export function apply(ctx, config) {
             const message = error instanceof Error ? error.message : String(error)
             throw new MarketInstallError(message.startsWith('POLICY_DISABLED') ? 'POLICY_DISABLED' : message, 403)
           }
-          const id = await catalogIdFrom(request)
+          const { id, confirmedReplacement } = await catalogPayloadFrom(request)
           // The install source always comes from the Awesome catalog, never from the request.
           const entry = (await readCatalog()).catalog.workbenches.find((item) => item.id === id)
           if (!entry) throw new MarketInstallError('This workbench is no longer listed in the workbench market.', 404)
+          const installs = await marketInstalls.read()
+          const requireReplacement = async (names) => {
+            if (confirmedReplacement === true) return
+            const packages = await readInstallEvidence(installs, undefined, names)
+            const risk = names.map(name => packages[name]).find(item => item && (item.origin === 'local' || ['local', 'modified'].includes(item.updateRisk)))
+            if (risk) {
+              const updateRisk = risk.origin === 'local' || risk.updateRisk === 'local' ? 'local' : 'modified'
+              throw new MarketInstallError('Confirm updating the installed workbench code; local changes may be overwritten.', 409, 'confirmation_required', { updateRisk })
+            }
+          }
+          // Check known package identities before resolving or downloading the target.
+          await requireReplacement([entry.distribution.name, installs[id]?.pluginName].filter(Boolean))
           const target = await resolveInstallTarget(entry)
           try {
+            await requireReplacement([target.expectedPluginName])
             let handle
             try {
               handle = ctx.desktopPnpm.installWorkbenchGeneration({
@@ -225,6 +274,8 @@ export function apply(ctx, config) {
             await awaitHandle(handle)
           } finally { await target.cleanup() }
           const install = { catalogId: entry.id, pluginName: target.expectedPluginName, version: entry.version, source: entry.distribution.type, installedAt: new Date().toISOString() }
+          const evidence = (await readInstallEvidence({}, undefined, [install.pluginName]))[install.pluginName]
+          if (evidence?.fingerprint) install.fingerprint = evidence.fingerprint
           await marketInstalls.record(id, install)
           return Response.json({ install, restartRequired: true }, { headers: { 'cache-control': 'no-store' } })
         } catch (error) { return installFailure(error, 'Could not install the workbench.') }
@@ -271,7 +322,7 @@ export function apply(ctx, config) {
       requestBody: 'buffered',
       async fetch(request) {
         try {
-          const id = await catalogIdFrom(request)
+          const { id } = await catalogPayloadFrom(request)
           const install = (await marketInstalls.read())[id]
           if (!install) throw new MarketInstallError('This workbench was not installed from the workbench market.', 404)
           let handle

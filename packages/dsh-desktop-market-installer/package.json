@@ -40,6 +40,10 @@
       "types": "./community-quarantine.d.ts",
       "default": "./community-quarantine.mjs"
     },
+    "./windows-hide-console": {
+      "types": "./windows-hide-console.d.ts",
+      "default": "./windows-hide-console.mjs"
+    },
     "./package.json": "./package.json"
   },
   "dsh": {
@@ -55,8 +59,8 @@
   "license": "MIT",
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-app-boot": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-host-webserver": "^0.1.5-rc.1 || ^0.1.6-alpha.1 || ^0.1.7-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.1"
+    "@deepseek-ai/dsh-app-boot": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-host-webserver": "^0.1.5-rc.1 || ^0.1.6-alpha.1 || ^0.1.7-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.1 || ^0.2.1-rc.1 || ^0.2.1-rc.2"
   },
   "dependencies": {
     "pnpm": "10.34.5"

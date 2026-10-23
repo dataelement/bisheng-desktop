@@ -5,15 +5,16 @@ import { expect, it } from 'vitest'
 // Execute the installed Harness projection and collection seam, including its fallback.
 const source = await readFile('node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js', 'utf8')
 const pure = source.slice(source.indexOf('function isWindowsStylePath('), source.indexOf('//#region lib/types/client/stores.js'))
-const collapse = source.slice(source.indexOf('const COLLAPSED_SESSION_LIMIT ='), source.indexOf('\n\t\tfunction', source.indexOf('function collapsedSessionRows(') + 1))
+const helpers = source.slice(source.indexOf('const SESSION_WATERMARK_BASE ='), source.indexOf('function SessionTree('))
 const tree = source.slice(source.indexOf('function SessionTree('), source.indexOf('\n\t\t/** The flat', source.indexOf('function SessionTree(')))
 const jsx = (type, props, key) => ({ type, props, key })
-const SessionTree = vm.runInNewContext(`(() => { ${pure}\n${collapse}\n${tree}\nreturn SessionTree })()`, {
+const SessionTree = vm.runInNewContext(`(() => { ${pure}\n${helpers}\n${tree}\nreturn SessionTree })()`, {
   react: { useMemo: fn => fn(), useEffect() {}, useState: value => [value, () => {}], useRef: value => ({ current: value }) },
   react_jsx_runtime: { jsx, jsxs: jsx }, clsx: (...args) => args.filter(Boolean).join(' '),
   WorkspaceBrowser_module_css_default: new Proxy({}, { get: (_, key) => key }),
+  _deepseek_ai_dsh_client_ui_primitives: { HoverCardGroup: 'HoverCardGroup' },
   SessionNodeItem: 'NativeSession', ProjectRowItem: 'NativeProject', AnimatedRows: 'NativeRows', EmptySessions: 'Empty',
-  useNativeDragAcceptance() {}
+  console
 })
 function fixture() {
   const session = (id, time) => ({ id, title: id, updatedAt: time, blank: false, retainedBy: {}, running: false })

@@ -240,7 +240,7 @@ describe('BISHENG client slot occupants', () => {
       path.join(
         projectRoot,
         'patches',
-        '@deepseek-ai+dsh-client-ui-conversation+0.2.0-rc.2.patch'
+        '@deepseek-ai+dsh-client-ui-conversation+0.2.1-rc.2.patch'
       ),
       'utf8'
     )
