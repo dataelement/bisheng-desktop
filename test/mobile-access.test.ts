@@ -94,6 +94,65 @@ describe('remote channel', () => {
     expect(denied.status).toBe(403)
   })
 
+  it('loads workspaces for the signed-in app without a browser session', async () => {
+    const harness = createServer((_request, response) => {
+      response.statusCode = 404
+      response.end()
+    })
+    const mux = new WebSocketServer({ noServer: true })
+    harness.on('upgrade', (request, socket, head) => {
+      const path = request.url?.split('?', 1)[0]
+      if (path !== '/api/remote.mux') {
+        socket.destroy()
+        return
+      }
+      mux.handleUpgrade(request, socket, head, (client) => {
+        client.send(JSON.stringify({
+          type: 'item',
+          streamId: 'mobile-workspaces',
+          value: {
+            type: 'baseline',
+            value: {
+              items: [
+                { workspaceId: 'w1', title: 'harness', sessionIds: [] },
+                { workspaceId: 'w2', title: '默认工作区', sessionIds: [] }
+              ],
+              archivedSessionIds: []
+            }
+          }
+        }))
+      })
+    })
+    await new Promise<void>((resolve) => harness.listen(0, '127.0.0.1', resolve))
+    const address = harness.address()
+    if (!address || typeof address === 'string') throw new Error('harness failed')
+    const bridge = new LanMobileBridge({
+      harnessUrl: () => `http://127.0.0.1:${address.port}`,
+      port: 0,
+      currentAccount: () => ({ userId: 'user-1', tenantId: 'tenant-1' })
+    })
+    bridges.push(bridge)
+    const snapshot = await bridge.start()
+    const response = await Promise.race([
+      fetch(`http://127.0.0.1:${snapshot.port}/api/v1/rpc`, {
+        method: 'POST',
+        headers: remoteHeaders(bridge, 'user-1', 'tenant-1'),
+        body: JSON.stringify({ method: 'workspace.list', payload: {} })
+      }),
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(() => reject(new Error('workspace.list did not answer')), 8_000)
+      })
+    ])
+    expect(response.status).toBe(200)
+    const body = await response.json() as { ok?: boolean, error?: string, value?: { items?: unknown[] } }
+    expect(body.ok, JSON.stringify(body)).toBe(true)
+    expect(body.value?.items).toHaveLength(2)
+    for (const client of mux.clients) client.terminate()
+    await bridge.stop()
+    await new Promise<void>((resolve) => mux.close(() => resolve()))
+    await new Promise<void>((resolve) => harness.close(() => resolve()))
+  })
+
   it('does not start a third-party tunnel when remote mode is requested', async () => {
     let started = false
     const bridge = new LanMobileBridge({

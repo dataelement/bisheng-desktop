@@ -212,6 +212,9 @@ export class LanMobileBridge {
   private muxTask?: Promise<void>
   private readonly sessionStreamAborts = new Set<AbortController>()
   private lastConnected = false
+  /** Keep the workspace follow alive after an app RPC, without marking a browser session connected. */
+  private remoteMuxUntil = 0
+  private remoteMuxTimer?: ReturnType<typeof setTimeout>
   private readonly desktopSessionToken = randomBytes(32).toString('base64url')
   private readonly accessChannelToken = randomBytes(32).toString('base64url')
   private desktopBootstrapToken?: string
@@ -283,6 +286,9 @@ export class LanMobileBridge {
     this.tunnelExpiresAt = undefined
     for (const abort of this.sessionStreamAborts) abort.abort()
     this.sessionStreamAborts.clear()
+    this.remoteMuxUntil = 0
+    if (this.remoteMuxTimer) clearTimeout(this.remoteMuxTimer)
+    this.remoteMuxTimer = undefined
     this.syncConnected()
     this.muxAbort?.abort()
     const muxTask = this.muxTask
@@ -1055,6 +1061,10 @@ export class LanMobileBridge {
     if (!accountsMatch(account, presented)) {
       return this.json(response, 401, { ok: false, error: 'account_switched' })
     }
+    // The signed-in app is a client too. The follow stream used to start only
+    // for a browser session, so workspace.list from the app answered before
+    // any baseline existed.
+    this.noteRemoteClient()
     if (request.method === 'GET' && url.pathname === '/api/v1/status') {
       return this.json(response, 200, { ok: true, accepted: true })
     }
@@ -1356,7 +1366,15 @@ export class LanMobileBridge {
       // The Host kept no unary workspace read: `workspace/follow` is a stream,
       // and its opening `baseline` frame is exactly the projection this call
       // used to return. The mux consumer keeps that baseline, so the answer is
-      // whatever the carrier last observed.
+      // whatever the carrier last observed. An app request has to wait for
+      // that first frame instead of failing while the socket is still opening.
+      if (this.workspaceSnapshot === undefined) {
+        this.noteRemoteClient()
+        const deadline = this.now() + 5_000
+        while (this.workspaceSnapshot === undefined && this.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
+      }
       const snapshot = this.workspaceSnapshot
       if (snapshot === undefined) return { ok: false, error: 'Harness workspaces are not loaded yet.' }
       return { ok: true, value: snapshot }
@@ -1438,16 +1456,28 @@ export class LanMobileBridge {
    * running it with no client meant reconnecting twice a second, forever, on
    * every desktop that never used the feature.
    */
+  private noteRemoteClient(): void {
+    const holdMs = 120_000
+    this.remoteMuxUntil = this.now() + holdMs
+    if (this.remoteMuxTimer) clearTimeout(this.remoteMuxTimer)
+    this.remoteMuxTimer = setTimeout(() => {
+      this.remoteMuxTimer = undefined
+      this.syncConnected()
+    }, holdMs)
+    this.remoteMuxTimer.unref?.()
+    this.syncConnected()
+  }
+
   private syncConnected(): void {
-    const connected = this.sessions.size > 0
-    if (connected) this.startMuxMonitor()
+    const browserConnected = this.sessions.size > 0
+    if (browserConnected || this.now() < this.remoteMuxUntil) this.startMuxMonitor()
     else this.muxAbort?.abort()
-    if (connected === this.lastConnected) return
-    this.lastConnected = connected
+    if (browserConnected === this.lastConnected) return
+    this.lastConnected = browserConnected
     // Reconciliation runs off the request path, so a throwing observer must not
     // turn into an unhandled rejection that fails the request behind it.
     try {
-      this.options.onConnectedChange?.(connected)
+      this.options.onConnectedChange?.(browserConnected)
     } catch {
       // A renderer that went away mid-broadcast is not the bridge's problem.
     }
