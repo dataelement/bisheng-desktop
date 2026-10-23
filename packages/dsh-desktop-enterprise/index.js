@@ -235,7 +235,6 @@ export function apply(ctx) {
   if (typeof ctx.inject === 'function') ctx.inject(['skills'], scoped => { workSkills = applyEnterpriseSkills(scoped, {
     state: () => account, refreshState: readBrokerState,
     request: async (body, signal) => {
-      const broker = brokerConfig()
       if (!broker) unavailable()
       const response = await fetch(new URL('/v1/work-skills', broker.origin), {
         method: 'POST', redirect: 'error', signal,
