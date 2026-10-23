@@ -171,6 +171,6 @@ it('declares the model service in the client loader graph and the turn-tail inje
   const renderers = Object.fromEntries([...source.matchAll(/}, (\w+)\)\)/g)].map(match => [match[1], () => null]))
   const register = vm.runInNewContext(`${source}; registerChatNodeRenderers`, { ...renderers, NS: 'chat' })
   const f = fixture()
-  register({ modelDirectories: { catalog: f.catalog }, slots: { inject: (_slot, fn) => fn(), register: config => registrations.push(config) } }, {}, {})
+  register({ modelDirectories: { catalog: f.catalog }, effect() {}, slots: { inject: (_slot, fn) => fn(), register: config => registrations.push(config) } }, {}, {})
   expect(registrations.find(config => config.key === 'turn-tail').inject().modelCatalog).toBe(f.catalog)
 })

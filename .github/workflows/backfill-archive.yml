@@ -1,9 +1,8 @@
 name: Backfill release archive
 
 # One-shot: copy an existing GitHub Release into the ModelScope rollback
-# archive (releases/archive/<version>/) and rebuild releases/versions.json,
-# so a version published before the versioned-update pipeline landed can be
-# offered as a rollback target. Mirrors the archive+index step of `publish`.
+# archive (releases/archive/<version>/). Desktop no longer publishes a
+# version catalog, so this job does not rebuild releases/versions.json.
 
 on:
   workflow_dispatch:
@@ -42,7 +41,7 @@ jobs:
             --dir release-assets \
             --pattern '*'
           ls -l release-assets
-      - name: Archive to ModelScope and rebuild the version index
+      - name: Archive to ModelScope
         env:
           MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
           MODELSCOPE_REPO_ID: alexyaojin/dsh-desktop
@@ -53,7 +52,7 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/ms-env"
           "$RUNNER_TEMP/ms-env/bin/pip" install -q modelscope
           "$RUNNER_TEMP/ms-env/bin/python3" <<'PY'
-          import json, os, pathlib, subprocess, tempfile, urllib.request
+          import os, pathlib, sys
           from modelscope.hub.api import HubApi
 
           api = HubApi()
@@ -71,33 +70,4 @@ jobs:
               token=token,
           )
           print(f"✅ Archived {src} -> {repo_id}/releases/archive/{version}")
-
-          known = {version}
-          try:
-              with urllib.request.urlopen(
-                  "https://dshdesktop.com/updates/versions.json", timeout=15
-              ) as response:
-                  for entry in json.load(response).get("versions", []):
-                      name = entry.get("version")
-                      if isinstance(name, str) and name:
-                          known.add(name)
-          except Exception as error:
-              print(f"⚠️ Could not read existing version index: {error}")
-
-          with tempfile.TemporaryDirectory() as work:
-              names_file = pathlib.Path(work) / "names.json"
-              index_file = pathlib.Path(work) / "versions.json"
-              names_file.write_text(json.dumps(sorted(known)))
-              subprocess.run(
-                  ["node", "scripts/build-version-index.mjs", str(names_file), str(index_file)],
-                  check=True,
-              )
-              api.upload_file(
-                  path_or_fileobj=str(index_file),
-                  path_in_repo="releases/versions.json",
-                  repo_id=repo_id,
-                  commit_message=f"Version index after backfilling {tag}",
-                  token=token,
-              )
-          print("✅ Rebuilt releases/versions.json")
           PY

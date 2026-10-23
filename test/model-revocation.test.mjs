@@ -58,7 +58,7 @@ function fixture(value = initial, selected = old, available = true) {
 
 function caption(directory, locale = 'zh') {
   const dictionary = modelClient[locale]
-  const tree = modelClient.ModelSelect({ locked: false, available: true, directory: directory.store, load() {}, select() {}, t: (key, args = {}) => dictionary[key].replace(/\{(\w+)\}/g, (_match, name) => args[name]) })
+  const tree = modelClient.ModelSelect({ locked: false, available: true, directory: directory.store, load() {}, select() {}, renderSlot: (_name, _props, options) => options?.fallback ?? null, t: (key, args = {}) => dictionary[key].replace(/\{(\w+)\}/g, (_match, name) => args[name]) })
   const flatten = node => typeof node === 'string' ? [node] : Array.isArray(node) ? node.flatMap(flatten) : node?.props ? flatten(node.props.children) : []
   return flatten(tree).join(' ')
 }

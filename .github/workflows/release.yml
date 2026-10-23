@@ -167,9 +167,43 @@ jobs:
           release_url="$(gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" --json url --jq .url)"
           echo "Draft assets: [$release_tag]($release_url)" >> "$GITHUB_STEP_SUMMARY"
 
+  prepare-shared-runtime-assets:
+    name: Prepare shared runtime assets
+    needs: validate-dispatch
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'workflow_dispatch' &&
+        inputs.mode != 'resign' &&
+        (inputs.target == 'all' || inputs.target == 'macos' || inputs.target == 'windows'))
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Cache shared runtime assets
+        id: shared-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build/office-downloads
+            .build/office-template-cache
+            .build/ppt-runtime
+          key: shared-runtime-assets-${{ hashFiles('scripts/office-runtime/**', 'packages/dsh-desktop-office/**', 'packages/ppt-runtime/**', 'scripts/ppt/**', 'package-lock.json') }}
+          restore-keys: |
+            shared-runtime-assets-
+      - name: Build PPT runtime
+        run: npm run ppt:build
+      - name: Build Office templates
+        run: npm run office:prepare
   macos:
     name: macOS ${{ matrix.label }}
-    needs: validate-dispatch
+    needs: [validate-dispatch, prepare-shared-runtime-assets]
     if: >-
       startsWith(github.ref, 'refs/tags/v') ||
       (github.event_name == 'workflow_dispatch' && (inputs.target == 'all' || inputs.target == 'macos'))

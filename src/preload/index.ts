@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdateStatus } from '../shared/contracts'
 import { setupDesktopStoragePersistence } from './desktop-storage'
+import { setupDesktopNotificationBridge } from './desktop-notification'
 import {
   isUpdateDismissed,
   shouldShowUpdate,
@@ -29,8 +30,8 @@ if (process.platform === 'win32') markWindowsTitlebar(document)
 
 // Intercept and persist localStorage to disk storage before any page script executes
 setupDesktopStoragePersistence()
+setupDesktopNotificationBridge()
 
-const ROOT_ID = 'dsh-desktop-update-root'
 const MOBILE_BUTTON_ID = 'dsh-desktop-mobile-button'
 const SAFE_MODE_BANNER_ID = 'dsh-desktop-safe-mode-banner'
 const locale: UpdateLocale = navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en'
@@ -43,6 +44,7 @@ let dismissedTransientPhase: UpdateStatus['phase'] | null = null
 let installing = false
 let accepting = false
 
+const ROOT_ID = 'dsh-desktop-update-root'
 const ABOUT_ROOT_ID = 'dsh-desktop-about-root'
 interface AboutInfo {
   desktopVersion: string

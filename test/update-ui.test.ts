@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest'
 import type { UpdateStatus } from '../src/shared/contracts'
 import {
   isUpdateDismissed,
+  rollbackReleases,
+  rollbackEmptyMessage,
+  isNewManualPresentation,
   shouldShowUpdate,
   updateHeadline,
   updateMessage

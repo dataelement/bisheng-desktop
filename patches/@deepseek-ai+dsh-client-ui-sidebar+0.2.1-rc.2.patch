@@ -1,0 +1,132 @@
+diff --git a/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js b/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js
+index 5d98612..56300ea 100644
+--- a/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js
++++ b/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js
+@@ -288,6 +288,8 @@ window.__ModuleLoader__.load({
+ 			});
+ 			return (0, react_jsx_runtime.jsxs)("div", {
+ 				ref: column,
++				"data-dsh-sidebar-root": "",
++				"data-dsh-sidebar-wide": wide ? "true" : "false",
+ 				className: clsx(SidebarRoot_module_css_default.root, !wide && SidebarRoot_module_css_default.collapsed, !wide && everWide.current && SidebarRoot_module_css_default.railIn, collapsed && wide && SidebarRoot_module_css_default.fading, !pointerInside && SidebarRoot_module_css_default.quietBars),
+ 				style: wide ? { width: collapsed ? lastWideWidth.current : width } : void 0,
+ 				onPointerEnter: () => {
+@@ -303,17 +305,18 @@ window.__ModuleLoader__.load({
+ 						"data-window-drag": true,
+ 						children: toggle
+ 					}),
+-					(0, react_jsx_runtime.jsxs)("div", {
++					// The wide logo row is a fixed 60px band. On macOS the toggle
++					// already lives in the traffic-light strip, and the brand mark
++					// is gone, so keeping the row only pushes New Session down.
++					!darwinDesktop && (0, react_jsx_runtime.jsxs)("div", {
+ 						className: SidebarRoot_module_css_default.logoRow,
+ 						"data-window-drag": true,
+ 						children: [wide && (() => {
+ 							const identity = (0, react_jsx_runtime.jsxs)("span", {
+ 								className: SidebarRoot_module_css_default.brandIdentity,
++								"data-dsh-sidebar-brand-identity": true,
+ 								"aria-hidden": "true",
+ 								children: [(0, react_jsx_runtime.jsx)("span", {
+-									className: SidebarRoot_module_css_default.brandMark,
+-									children: renderSlot("sidebar.brand.mark", { size: 24 }, { fallback: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.FishLogo, { size: 24 }) })
+-								}), (0, react_jsx_runtime.jsx)("span", {
+ 									className: SidebarRoot_module_css_default.brandName,
+ 									children: renderSlot("sidebar.brand.name", {}, { fallback: buildVersion === void 0 ? (0, react_jsx_runtime.jsx)("span", {
+ 										className: SidebarRoot_module_css_default.fallbackBrandName,
+@@ -330,10 +333,7 @@ window.__ModuleLoader__.load({
+ 									}) })
+ 								})]
+ 							});
+-							return darwinDesktop ? (0, react_jsx_runtime.jsx)("span", {
+-								className: clsx(SidebarRoot_module_css_default.brand, SidebarRoot_module_css_default.wide),
+-								children: identity
+-							}) : (0, react_jsx_runtime.jsx)("button", {
++							return (0, react_jsx_runtime.jsx)("button", {
+ 								type: "button",
+ 								className: clsx(SidebarRoot_module_css_default.brand, SidebarRoot_module_css_default.wide),
+ 								"aria-label": t("session.new.label"),
+@@ -343,7 +343,7 @@ window.__ModuleLoader__.load({
+ 								},
+ 								children: identity
+ 							});
+-						})(), !darwinDesktop && toggle]
++						})(), toggle]
+ 					}),
+ 					(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
+ 						label: t("session.new.label"),
+@@ -375,6 +375,7 @@ window.__ModuleLoader__.load({
+ 							})]
+ 						})
+ 					}),
++					renderSlot("sidebar.quickSwitcher", { wide, startSession }),
+ 					panels.length > 0 && (0, react_jsx_runtime.jsx)("nav", {
+ 						className: SidebarRoot_module_css_default.panelList,
+ 						"aria-label": t("panels.label"),
+@@ -402,6 +403,7 @@ window.__ModuleLoader__.load({
+ 							className: SidebarRoot_module_css_default.footerActions,
+ 							children: renderSlot("sidebar.footer.action", { wide })
+ 						}), (0, react_jsx_runtime.jsx)("div", {
++							"data-dsh-sidebar-settings": "",
+ 							className: SidebarRoot_module_css_default.settingsArea,
+ 							children: renderSlot("sidebar.settings", { wide })
+ 						})]
+@@ -500,6 +502,10 @@ window.__ModuleLoader__.load({
+ 						kind: "single",
+ 						scope: "root"
+ 					},
++					"sidebar.quickSwitcher": {
++						kind: "single",
++						scope: "root"
++					},
+ 					"sidebar.panellist": {
+ 						kind: "list",
+ 						scope: "root"
+diff --git a/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/types/client/contract/slots.d.ts b/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/types/client/contract/slots.d.ts
+index 6c346de..4465929 100644
+--- a/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/types/client/contract/slots.d.ts
++++ b/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/types/client/contract/slots.d.ts
+@@ -39,6 +39,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+             scope: 'root';
+             owner: SidebarBrandNameOwnerProps;
+         };
++        /** Compact mode switcher between New Session and panel navigation. */
++        'sidebar.quickSwitcher': {
++            kind: 'single';
++            scope: 'root';
++            owner: SidebarQuickSwitcherOwnerProps;
++        };
+         /**
+          * Global panel icons. Each list id addresses the matching main panel;
+          * the sidebar owns the button and resolves its label from list metadata.
+@@ -106,6 +112,11 @@ export interface SidebarPanelMetadata {
+     /** Row title and accessible name: resolved label, or the id when omitted. */
+     label: string;
+ }
++/** Sidebar state and native New Session action supplied to the switcher. */
++export interface SidebarQuickSwitcherOwnerProps {
++    wide: boolean;
++    startSession: (workspaceId?: WorkspaceId) => void;
++}
+ /**
+  * Owner share of the browser hole — the only facts crossing the shell/region
+  * boundary. Business data and actions arrive through the region's own inject.
+@@ -155,5 +166,5 @@ export type SidebarRootInjected = {
+  * render shares, this package's injected callbacks, and the standard locale
+  * seat. Panel metadata arrives through an injected observable.
+  */
+-export type SidebarRootComponentProps = PropsRuntime<'sidebar'> & PropsRenderSlots<'sidebar.brand.mark' | 'sidebar.brand.name' | 'sidebar.toggle.badge' | 'sidebar.panellist' | 'sidebar.workspaces' | 'sidebar.settings' | 'sidebar.footer.action'> & InjectFace<SidebarRootInjected> & PropsLocale<'sidebar'>;
++export type SidebarRootComponentProps = PropsRuntime<'sidebar'> & PropsRenderSlots<'sidebar.brand.mark' | 'sidebar.brand.name' | 'sidebar.toggle.badge' | 'sidebar.quickSwitcher' | 'sidebar.panellist' | 'sidebar.workspaces' | 'sidebar.settings' | 'sidebar.footer.action'> & InjectFace<SidebarRootInjected> & PropsLocale<'sidebar'>;
+ //# sourceMappingURL=slots.d.ts.map
+diff --git a/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/types/client/index.d.ts b/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/types/client/index.d.ts
+index 59371eb..77f3607 100644
+--- a/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/types/client/index.d.ts
++++ b/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/types/client/index.d.ts
+@@ -1,6 +1,6 @@
+ import type { Context as ClientContext } from '@deepseek-ai/cordis';
+ import { type SidebarKey } from './locales.ts';
+-export type { SidebarBrandMarkOwnerProps, SidebarBrandNameOwnerProps, SidebarFooterActionOwnerProps, SidebarPanelIconOwnerProps, SidebarPanelMetadata, SidebarRootComponentProps, SidebarRootInjected, SidebarSectionOwnerProps, SidebarSettingsOwnerProps, } from './contract/slots.ts';
++export type { SidebarBrandMarkOwnerProps, SidebarBrandNameOwnerProps, SidebarFooterActionOwnerProps, SidebarPanelIconOwnerProps, SidebarQuickSwitcherOwnerProps, SidebarPanelMetadata, SidebarRootComponentProps, SidebarRootInjected, SidebarSectionOwnerProps, SidebarSettingsOwnerProps, } from './contract/slots.ts';
+ export type { SidebarKey } from './locales.ts';
+ declare module '@deepseek-ai/dsh-client-ui-slots' {
+     interface LocaleNamespaceMap {
