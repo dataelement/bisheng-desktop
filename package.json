@@ -280,6 +280,7 @@
     "@deepseek-ai/schemastery": "3.18.5",
     "dsh-desktop-client-ui": "file:packages/dsh-desktop-client-ui",
     "dsh-desktop-enterprise": "file:packages/dsh-desktop-enterprise",
+    "dsh-desktop-settings": "file:packages/dsh-desktop-settings",
     "dsh-desktop-hmr-fallback": "file:packages/dsh-desktop-hmr-fallback",
     "dsh-desktop-log-bridge": "file:packages/dsh-desktop-log-bridge",
     "dsh-desktop-market-installer": "file:packages/dsh-desktop-market-installer",

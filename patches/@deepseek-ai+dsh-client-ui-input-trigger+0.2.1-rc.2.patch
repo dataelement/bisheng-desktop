@@ -1,0 +1,53 @@
+diff --git a/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/client.js b/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/client.js
+index b5ff487..579a269 100644
+--- a/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/client.js
++++ b/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/client.js
+@@ -944,7 +944,7 @@ window.__ModuleLoader__.load({
+ 					if (hl && next.source === hl.source && next.index === hl.index) return state;
+ 					return {
+ 						...state,
+-						highlight: next
++						highlight: { ...next, origin: "keyboard" }
+ 					};
+ 				}
+ 				case "hover": {
+@@ -958,7 +958,7 @@ window.__ModuleLoader__.load({
+ 					if (hl && hl.source === target.source && hl.index === target.index) return state;
+ 					return {
+ 						...state,
+-						highlight: target
++						highlight: { ...target, origin: "pointer" }
+ 					};
+ 				}
+ 				case "close": return closed(state);
+@@ -1710,8 +1710,15 @@ window.__ModuleLoader__.load({
+ 			]);
+ 			const highlight = state.open ? state.highlight : null;
+ 			(0, react.useEffect)(() => {
+-				if (highlight === null) return;
+-				document.getElementById(optionId(highlight.source, highlight.index))?.scrollIntoView({ block: "nearest" });
++				if (highlight === null || highlight.origin === "pointer") return;
++				const viewport = viewportRef.current;
++				const option = document.getElementById(optionId(highlight.source, highlight.index));
++				if (viewport === null || option === null || !viewport.contains(option)) return;
++				const bounds = viewport.getBoundingClientRect();
++				const row = option.getBoundingClientRect();
++				// Keyboard navigation reveals the row within this list; the composer stays anchored.
++				if (row.top < bounds.top) viewport.scrollTop += row.top - bounds.top;
++				else if (row.bottom > bounds.bottom) viewport.scrollTop += row.bottom - bounds.bottom;
+ 			}, [highlight]);
+ 			(0, react.useEffect)(() => {
+ 				if (!state.open) return;
+diff --git a/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/types/core/contract.d.ts b/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/types/core/contract.d.ts
+index 783482c..23e3aee 100644
+--- a/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/types/core/contract.d.ts
++++ b/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/types/core/contract.d.ts
+@@ -42,6 +42,8 @@ export interface MenuState {
+     readonly highlight: {
+         readonly source: string;
+         readonly index: number;
++        /** Pointer highlighting preserves the scroll position; keyboard movement reveals the row. */
++        readonly origin?: 'pointer' | 'keyboard';
+     } | null;
+ }
+ /** Menu reduction events. Source failure = silent group removal (log only; no error UI tier). */

@@ -1,3 +1,4 @@
+import { EnterpriseChatView } from './enterprise/chat-view'
 import { desktopFileUrl, navigateDesktopWindow } from './desktop-navigation'
 import { recoverStartupConfiguration } from './startup-config-recovery'
 import { initializeDesktopService, desktopDiagnostics } from './desktop-service'
@@ -171,6 +172,8 @@ import {
 } from './update/update-manager'
 import type { RuntimeSnapshot } from '../shared/contracts'
 import { resolveHarnessLocale } from './application-locale'
+import { registerNativeLocaleHandlers } from './native-locale'
+import type { HarnessLocale } from '../shared/native-locale'
 import { installContextMenu } from './context-menu'
 import {
   WINDOWS_TITLEBAR_HEIGHT,
@@ -233,6 +236,7 @@ let mobileWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let runtime: HarnessRuntime
 let enterpriseDesktop: EnterpriseDesktopRuntime | undefined
+let enterpriseChat: EnterpriseChatView | undefined
 let localWorkbenchCapability: string | undefined
 
 async function liveThirdPartyPluginsAllowed(): Promise<boolean> {
@@ -549,7 +553,7 @@ function applyWindowChromeTheme(window: BrowserWindow, isDark: boolean): void {
 function configureAppIdentity(): void {
   if (developmentBuild) {
     app.setName('BISHENG Dev')
-    app.setPath('userData', join(app.getPath('appData'), 'bisheng-dev'))
+    app.setPath('userData', process.env.BISHENG_DEV_USER_DATA || join(app.getPath('appData'), 'bisheng-dev'))
     return
   }
 
@@ -676,7 +680,11 @@ function dshBrandLogoPath(variant: 'light' | 'dark'): string {
   )
 }
 
+let activeHarnessLocale: HarnessLocale | undefined
+
 function harnessLocale(): 'en' | 'zh' {
+  // The live Client owns the resolved Profile preference, including automatic mode.
+  if (activeHarnessLocale) return activeHarnessLocale
   try {
     const settings = parse(
       readFileSync(join(app.getPath('userData'), 'harness', 'settings.yaml'), 'utf8')
@@ -1012,7 +1020,7 @@ function createWindow(): BrowserWindow {
     ...(process.platform === 'darwin' ? {
       titleBarStyle: 'hiddenInset' as const,
       trafficLightPosition: { x: 16, y: 18 },
-      vibrancy: 'sidebar' as const,
+      ...(nativeTheme.shouldUseDarkColors ? { vibrancy: 'sidebar' as const } : {}),
       visualEffectState: 'active' as const
     } : {}),
     ...(isWindows
@@ -1022,7 +1030,9 @@ function createWindow(): BrowserWindow {
         autoHideMenuBar: true
       }
       : {}),
-    backgroundColor: process.platform === 'darwin' ? '#00000000' : nativeTheme.shouldUseDarkColors ? '#141416' : '#f8f8f6',
+    backgroundColor: process.platform === 'darwin'
+      ? nativeTheme.shouldUseDarkColors ? '#00000000' : '#f9fafb'
+      : nativeTheme.shouldUseDarkColors ? '#141416' : '#f8f8f6',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -1033,7 +1043,8 @@ function createWindow(): BrowserWindow {
   })
   if (process.platform === 'darwin') {
     window.setWindowButtonVisibility(true)
-    const applyBackdrop = (): void => applyMacosWindowBackdrop(window, nativeTheme.shouldUseDarkColors)
+    applyMacosWindowBackdrop(window, nativeTheme.shouldUseDarkColors)
+    const applyBackdrop = (): void => applyMacosWindowBackdrop(window)
     window.on('minimize', applyBackdrop)
     window.on('hide', applyBackdrop)
     window.on('restore', applyBackdrop)
@@ -1690,6 +1701,40 @@ function registerHarnessHandlers(): void {
     }
   })
 
+  for (const channel of ['enterprise-chat:present', 'enterprise-chat:state', 'enterprise-chat:retry', 'enterprise-chat:usage', 'enterprise-chat:history', 'enterprise-chat:open', 'enterprise-chat:open-page', 'enterprise-chat:focus-settings']) ipcMain.removeHandler(channel)
+  ipcMain.handle('enterprise-chat:focus-settings', (event) => {
+    assertTrustedMainWindowEvent(event)
+    enterpriseChat?.focusSettings()
+  })
+  ipcMain.handle('enterprise-chat:present', (event, presentation: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    return enterpriseChat?.present(mainWindow!, presentation) ?? { phase: 'idle', connected: false }
+  })
+  ipcMain.handle('enterprise-chat:state', (event) => {
+    assertTrustedMainWindowEvent(event)
+    return enterpriseChat?.snapshot() ?? { phase: 'idle', connected: false }
+  })
+  ipcMain.handle('enterprise-chat:retry', (event) => {
+    assertTrustedMainWindowEvent(event)
+    enterpriseChat?.retry()
+  })
+  ipcMain.handle('enterprise-chat:usage', (event) => {
+    assertTrustedMainWindowEvent(event)
+    if (!enterpriseChat) throw new Error('Enterprise usage unavailable.')
+    return enterpriseChat.usage()
+  })
+  ipcMain.handle('enterprise-chat:history', (event, page: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    return enterpriseChat?.history(page)
+  })
+  ipcMain.handle('enterprise-chat:open-page', (event, id: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    return enterpriseChat?.openPage(id)
+  })
+  ipcMain.handle('enterprise-chat:open', (event, id: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    return enterpriseChat?.open(id)
+  })
   ipcMain.removeHandler('harness:restart')
   ipcMain.handle('harness:restart', async (event) => {
     if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
@@ -1765,7 +1810,7 @@ function registerHarnessHandlers(): void {
     if (typeof isDark !== 'boolean') {
       throw new Error('The BISHENG titlebar theme must be a boolean.')
     }
-    if (process.platform === 'win32' && mainWindow) {
+    if (mainWindow) {
       applyWindowChromeTheme(mainWindow, isDark)
     }
     return { ok: true }
@@ -1781,6 +1826,14 @@ function registerHarnessHandlers(): void {
         bundledHarnessVersion(bundledRuntimeRoot()) ?? (locale === 'zh' ? '未知' : 'Unknown'),
       locale
     }
+  })
+  ipcMain.removeHandler('desktop:settings-action')
+  ipcMain.handle('desktop:settings-action', async (event, action: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    if (action !== 'check-for-updates' && action !== 'show-harness-log' && action !== 'safe-mode') {
+      throw new Error('Invalid settings action.')
+    }
+    await executeDesktopMenuCommand(action)
   })
 }
 
@@ -3270,12 +3323,13 @@ function broadcastMobileStatus(connected: boolean): void {
 }
 
 async function showMobilePairing(): Promise<void> {
+  const zh = harnessLocale() === 'zh'
   if (runtime.snapshot().phase !== 'ready') {
     const options: MessageBoxOptions = {
       type: 'info',
-      message: 'Harness is still starting.',
-      detail: 'Wait until BISHENG is ready, then connect your phone again.',
-      buttons: ['OK']
+      message: zh ? 'Harness 仍在启动。' : 'Harness is still starting.',
+      detail: zh ? '请等待 BISHENG 就绪后再连接手机。' : 'Wait until BISHENG is ready, then connect your phone again.',
+      buttons: [zh ? '确定' : 'OK']
     }
     await (mainWindow ? dialog.showMessageBox(mainWindow, options) : dialog.showMessageBox(options))
     return
@@ -3286,9 +3340,9 @@ async function showMobilePairing(): Promise<void> {
     await mobileBridge.stop()
     const options: MessageBoxOptions = {
       type: 'warning',
-      message: 'Failed to start mobile bridge.',
-      detail: 'Please try again.',
-      buttons: ['OK']
+      message: zh ? '手机连接服务启动失败。' : 'Failed to start mobile bridge.',
+      detail: zh ? '请重试。' : 'Please try again.',
+      buttons: [zh ? '确定' : 'OK']
     }
     await (mainWindow ? dialog.showMessageBox(mainWindow, options) : dialog.showMessageBox(options))
     return
@@ -3411,6 +3465,8 @@ async function bootstrap(): Promise<void> {
     runtime.note('[enterprise] start_failed')
     enterpriseDesktop = undefined
   }
+  if (enterpriseDesktop) enterpriseChat = new EnterpriseChatView(enterpriseDesktop, (line) => runtime.note(line))
+  app.once('before-quit', () => enterpriseChat?.dispose())
   registerHarnessHandlers()
   mobileBridge = new LanMobileBridge({
     harnessUrl: () => runtime.snapshot().url,
@@ -3492,7 +3548,19 @@ async function bootstrap(): Promise<void> {
     })
     return result.canceled ? null : result.filePaths[0] ?? null
   })
-  ipcMain.handle('mobile:open-pairing', () => showMobilePairing())
+  registerNativeLocaleHandlers(ipcMain, {
+    assertTrusted: assertTrustedMainWindowEvent,
+    systemLanguages: () => app.getPreferredSystemLanguages(),
+    changed: locale => {
+      if (activeHarnessLocale === locale) return
+      activeHarnessLocale = locale
+      installMenu()
+    }
+  })
+  ipcMain.handle('mobile:open-pairing', (event) => {
+    assertTrustedMainWindowEvent(event)
+    return showMobilePairing()
+  })
   ipcMain.handle('mobile:status', () => ({ connected: mobileBridge.snapshot().connected }))
   ipcMain.handle('harness:show-log', () => {
     shell.showItemInFolder(join(app.getPath('logs'), 'harness.log'))

@@ -106,7 +106,11 @@ async function mountEnterprise(initial, hooks = {}) {
     fetch,
     CustomEvent: dom.window.CustomEvent
   })
-  const extension = definitions.get('dsh-desktop-enterprise').factory(name => { if (name === 'react') return React; throw new Error(name) })
+  const extension = definitions.get('dsh-desktop-enterprise').factory(name => {
+    if (name === 'react') return React
+    if (name === '@deepseek-ai/dsh-client-ui-primitives') return { Button: ({ variant, size, ...props }) => React.createElement('button', props) }
+    throw new Error(name)
+  })
   const { LocaleRuntime } = definitions.get('@deepseek-ai/dsh-client-locale').factory(name =>
     name === 'react' ? React : name === 'react/jsx-runtime' ? jsx : {})
   const localeContext = new Context()

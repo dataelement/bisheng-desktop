@@ -59,8 +59,13 @@ window.__ModuleLoader__.load({
     }
 
     const zh = {
-      nav: '企业账号',
-      title: '企业账号',
+      seat_not_assigned: '当前服务版本不支持直接登录，请联系管理员升级平台。',
+      seat_revoked: '当前登录已失效，请重新登录。',
+      seat_limit_reached: '当前平台仍启用了旧版接入限制，请联系管理员升级。',
+
+      nav: '账号与用量',
+      title: '账号与用量',
+      managedModels: '企业提供的模型',
       accountLabel: '当前账号',
       platform: '企业服务地址',
       login: '在浏览器中登录',
@@ -69,7 +74,8 @@ window.__ModuleLoader__.load({
       learnMore: '了解企业版',
       vision: '视觉',
       visionHint: '企业已开启图片输入',
-      usageLabel: '已用 / 额度（Token）',
+      usageLabel: '剩余积分',
+      creditsHelp: 'Chat 和 Work 共用积分，每月重置。',
       ticket: '一次性登录码',
       submitTicket: '完成登录',
       refresh: '刷新',
@@ -78,7 +84,7 @@ window.__ModuleLoader__.load({
       modelAvailable: '可用',
       noModels: '暂无可用模型，请联系管理员授权。',
       usageUnavailable: '用量暂不可用',
-      limitZero: '额度为 0，模型调用已停用',
+      limitZero: '剩余 0 分',
       secureUnavailable: '系统安全存储不可用，企业登录已停用。',
       confirmTitle: '确认毕昇平台',
       confirmLead: '确认后会停用当前企业模型连接，并在该平台新建一次 PKCE 登录。',
@@ -96,9 +102,6 @@ window.__ModuleLoader__.load({
       refresh_token_reused: '登录状态已失效，请重新登录。',
       session_expired: '登录会话已过期，请重新登录。',
       session_revoked: '本次登录会话已失效，请重新登录。',
-      seat_not_assigned: '当前服务版本不支持直接登录，请联系管理员升级平台。',
-      seat_revoked: '当前登录已失效，请重新登录。',
-      seat_limit_reached: '当前平台仍启用了旧版接入限制，请联系管理员升级。',
       license_invalid: '平台客户端授权无效，请联系管理员。',
       license_expired: '平台客户端授权已过期，请联系管理员。',
       dsh_disabled: '管理员已关闭客户端功能，请联系管理员。',
@@ -117,8 +120,13 @@ window.__ModuleLoader__.load({
     }
 
     const en = {
-      nav: 'Enterprise',
-      title: 'Enterprise account',
+      seat_not_assigned: 'This server uses a legacy sign-in policy. Ask your administrator to upgrade the platform.',
+      seat_revoked: 'Your sign-in is no longer valid. Sign in again.',
+      seat_limit_reached: 'This server still enforces a legacy access limit. Ask your administrator to upgrade.',
+
+      nav: 'Account and usage',
+      title: 'Account and usage',
+      managedModels: 'Models provided by your enterprise',
       accountLabel: 'Current account',
       platform: 'Enterprise service URL',
       login: 'Sign in in browser',
@@ -127,7 +135,8 @@ window.__ModuleLoader__.load({
       learnMore: 'Learn about Enterprise',
       vision: 'Vision',
       visionHint: 'Image input enabled by your enterprise',
-      usageLabel: 'Used / limit (tokens)',
+      usageLabel: 'Credits remaining',
+      creditsHelp: 'Chat and Work share credits, reset monthly.',
       ticket: 'One-time code',
       submitTicket: 'Complete sign-in',
       refresh: 'Refresh',
@@ -154,9 +163,6 @@ window.__ModuleLoader__.load({
       refresh_token_reused: 'Your sign-in state is no longer valid. Sign in again.',
       session_expired: 'Your sign-in session has expired. Sign in again.',
       session_revoked: 'This sign-in session is no longer valid. Sign in again.',
-      seat_not_assigned: 'This server uses a legacy sign-in policy. Ask your administrator to upgrade the platform.',
-      seat_revoked: 'Your sign-in is no longer valid. Sign in again.',
-      seat_limit_reached: 'This server still enforces a legacy access limit. Ask your administrator to upgrade.',
       license_invalid: 'The platform client license is invalid. Contact your administrator.',
       license_expired: 'The platform client license has expired. Contact your administrator.',
       dsh_disabled: 'An administrator has turned off the client. Contact your administrator.',
@@ -202,6 +208,7 @@ window.__ModuleLoader__.load({
           font-weight: 600;
           line-height: normal;
         }
+        .dshEnterpriseManagedModels { margin: 16px 0; }
         .dshEnterprise h3 {
           margin: 0 0 8px;
           font-size: 14px;
@@ -267,8 +274,7 @@ window.__ModuleLoader__.load({
         .dshEnterpriseLearnMoreShell {
           display: inline-flex;
         }
-        .dshEnterpriseLearnMore,
-        .dshEnterpriseLogout {
+        .dshEnterpriseLearnMore {
           display: inline-flex;
           align-items: center;
           gap: 5px;
@@ -283,14 +289,9 @@ window.__ModuleLoader__.load({
           cursor: pointer;
           white-space: nowrap;
         }
-        .dshEnterpriseLearnMore:hover,
-        .dshEnterpriseLogout:hover {
+        .dshEnterpriseLearnMore:hover {
           color: var(--dsw-alias-label-primary);
           background: var(--dsw-alias-interactive-bg-hover);
-        }
-        .dshEnterpriseLogout:disabled {
-          opacity: .5;
-          cursor: default;
         }
         .dshEnterpriseLearnMore:focus-visible,
         .dshEnterpriseLogout:focus-visible,
@@ -301,22 +302,31 @@ window.__ModuleLoader__.load({
         .dshEnterpriseIdentity {
           display: flex;
           align-items: center;
+          flex-direction: column;
           gap: 12px;
-          padding: 16px 0 20px;
-          border-bottom: 1px solid color-mix(in srgb, var(--dsw-alias-border-l4) 40%, transparent);
+          padding: 20px 0 28px;
+          text-align: center;
         }
         .dshEnterpriseAvatar {
           display: grid;
           place-items: center;
-          flex: 0 0 38px;
-          width: 38px;
-          height: 38px;
-          border-radius: 10px;
+          flex: none;
+          width: 64px;
+          height: 64px;
+          border-radius: 50%;
+          font-size: 22px;
+          font-weight: 500;
           color: var(--dsw-alias-label-secondary);
           background: var(--dsw-alias-interactive-bg-hover);
         }
-        .dshEnterpriseLogout {
-          margin-left: auto;
+        /* Keep sign-out as the final, explicitly destructive account action. */
+        .dshEnterprise .dshEnterpriseLogout {
+          margin: 16px 0 8px;
+          color: var(--dsw-alias-state-error-primary);
+        }
+        .dshEnterprise .dshEnterpriseLogout:hover:not(:disabled),
+        .dshEnterprise .dshEnterpriseLogout:focus-visible:not(:disabled) {
+          background: var(--dsw-alias-interactive-bg-hover-danger);
         }
         .dshEnterpriseAccount {
           display: grid;
@@ -378,26 +388,24 @@ window.__ModuleLoader__.load({
         }
         .dshEnterpriseModels {
           display: grid;
-          margin: 8px 0 0;
+          gap: 8px;
+          margin: 12px 0 0;
           padding: 0;
           list-style: none;
         }
         .dshEnterpriseModels li {
           box-sizing: border-box;
-          display: flex;
-          flex-wrap: wrap;
-          align-items: center;
-          justify-content: space-between;
-          gap: 8px 20px;
-          min-height: 64px;
-          padding: 14px 0;
+          min-width: 0;
+          border: .5px solid var(--dsw-alias-settings-card-stroke);
+          border-radius: var(--dsw-radius-xl);
+          background: var(--dsw-alias-settings-card-fill);
+          padding: 12px 14px;
           font-size: 14px;
           line-height: 22px;
         }
         .dshEnterpriseModelIdentity {
           display: grid;
-          gap: 4px;
-          flex: 1 1 180px;
+          gap: 2px;
           min-width: 0;
         }
         .dshEnterpriseModelTitle {
@@ -442,24 +450,6 @@ window.__ModuleLoader__.load({
         }
         .dshEnterpriseModelVision svg {
           flex: none;
-        }
-        .dshEnterpriseModelUsage {
-          margin-left: auto;
-          text-align: right;
-          color: var(--dsw-alias-label-secondary);
-          font-size: 13px;
-          line-height: 20px;
-          font-variant-numeric: tabular-nums;
-          white-space: nowrap;
-        }
-        .dshEnterpriseModelUsagePercent {
-          display: none;
-        }
-        .dshEnterpriseModels li:hover .dshEnterpriseModelUsageValue {
-          display: none;
-        }
-        .dshEnterpriseModels li:hover .dshEnterpriseModelUsagePercent {
-          display: inline;
         }
         .dshEnterpriseModels.paused {
           opacity: .5;
@@ -726,23 +716,14 @@ window.__ModuleLoader__.load({
       return payload
     }
 
-    function tokenAmount(value, language) {
-      const zhLocale = String(language || '').toLowerCase().startsWith('zh')
-      if (!zhLocale) {
-        return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(value)
-      }
-      if (value === 0) return '0'
-      if (value < 100) return '<0.01万'
-      return `${new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(value / 10_000)}万`
-    }
-
     function usageText(usage, language, t) {
       if (!usage || usage.source === 'unavailable' || usage.quota_state === 'unavailable') {
         return t('usageUnavailable')
       }
-      if (usage.limit === 0) return t('limitZero')
+      const formatter = new Intl.NumberFormat(language || 'en', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+      if (usage.limit === 0) return formatter.format(0)
       if (usage.used === null || usage.limit === null) return t('usageUnavailable')
-      return `${tokenAmount(usage.used, language)} / ${tokenAmount(usage.limit, language)}`
+      return formatter.format(Math.max(0, usage.limit - usage.used) / 1_000_000)
     }
 
     function readLastBase() {
@@ -770,9 +751,6 @@ window.__ModuleLoader__.load({
     }
 
     const LEGACY_ACCOUNT_PHRASES = {
-      'seat not assigned': 'seat_not_assigned',
-      'seat revoked': 'seat_revoked',
-      'dsh seat revoked': 'seat_revoked',
       'session revoked': 'session_revoked',
       'dsh session revoked': 'session_revoked',
       'session expired': 'session_expired',
@@ -785,6 +763,9 @@ window.__ModuleLoader__.load({
       'refresh token reuse detected; sign in again': 'refresh_token_reused',
       'authorization unavailable': 'authorization_unavailable',
       'dsh authorization is temporarily unavailable': 'authorization_unavailable',
+      'seat not assigned': 'seat_not_assigned',
+      'seat revoked': 'seat_revoked',
+      'dsh seat revoked': 'seat_revoked',
       'invalid grant': 'invalid_grant',
       'pkce verification failed': 'pkce_verification_failed',
       'authorization expired': 'authorization_expired',
@@ -833,16 +814,6 @@ window.__ModuleLoader__.load({
         ? cause.errorCode
         : ''
       return { message, code }
-    }
-
-    function modelUsagePercentage(usage, language, t) {
-      if (!usage || typeof usage.used !== 'number' || typeof usage.limit !== 'number' || usage.limit <= 0) {
-        return usageText(usage, language, t)
-      }
-      const zhLocale = String(language || '').toLowerCase().startsWith('zh')
-      const percentage = Math.min(100, Math.max(0, usage.used / usage.limit * 100))
-      const formatted = new Intl.NumberFormat(zhLocale ? 'zh-CN' : 'en-US', { maximumFractionDigits: 1 }).format(percentage)
-      return `${formatted}%`
     }
 
     function readUiLanguage() {
@@ -904,17 +875,14 @@ window.__ModuleLoader__.load({
 
     function renderModelRow(model, state, language, t) {
       const display = modelDisplayParts(model.display_name)
-      const usage = state.modelUsage?.[model.id]
-      const value = usageText(usage, language, t)
-      const percentage = modelUsagePercentage(usage, language, t)
-      const usageTitle = `${t('usageLabel')}: ${value} · ${percentage}`
+      const usage = state.usage
       const vision = model.capabilities?.vision === true
         ? h('span', { className: 'dshEnterpriseModelVision', title: t('visionHint') },
           createVisionIcon(),
           t('vision'))
         : null
 
-      return h('li', { key: model.id, title: usageTitle },
+      return h('li', { key: model.id },
         h('span', { className: 'dshEnterpriseModelIdentity' },
           h('span', { className: 'dshEnterpriseModelTitle' },
             h('span', { className: 'dshEnterpriseModelName', title: model.display_name }, display.name),
@@ -924,13 +892,10 @@ window.__ModuleLoader__.load({
             }) : null),
           display.provider || vision ? h('span', { className: 'dshEnterpriseModelDetails' },
             display.provider ? h('span', { className: 'dshEnterpriseModelProvider' }, display.provider) : null,
-            vision) : null),
-        h('span', { className: 'dshEnterpriseModelUsage', 'aria-label': usageTitle },
-          h('span', { className: 'dshEnterpriseModelUsageValue' }, value),
-          h('span', { className: 'dshEnterpriseModelUsagePercent', 'aria-hidden': 'true' }, percentage)))
+            vision) : null))
     }
 
-    function EnterpriseSection({ t }) {
+    function EnterpriseSection({ t, renderSlot }) {
       const [state, setState] = useState(null)
       const [base, setBase] = useState(readLastBase)
       const [ticket, setTicket] = useState('')
@@ -1041,28 +1006,27 @@ window.__ModuleLoader__.load({
       const userLabel = state?.user?.display_name || state?.user?.username || state?.user?.id || '—'
       const language = readUiLanguage()
 
+      const logoutButton = connected && h(require('@deepseek-ai/dsh-client-ui-primitives').Button, {
+        variant: 'ghost', size: 'md',
+        className: 'dshEnterpriseLogout', disabled: busy,
+        onClick: () => run(async () => {
+          const next = await api('/api/enterprise.logout', {})
+          setConfirmation(null)
+          applyAccountState(next)
+        })
+      }, t('logout'))
       const status = connected
         ? h('div', { className: 'dshEnterpriseIdentity' },
-          h('span', { className: 'dshEnterpriseAvatar', 'aria-hidden': 'true' }, createAccountIcon()),
+          h('span', { className: 'dshEnterpriseAvatar', 'aria-hidden': 'true' }, String(userLabel).slice(0, 2).toLocaleUpperCase()),
           h('div', { className: 'dshEnterpriseAccount' },
-            h('span', { className: 'dshEnterpriseAccountLabel' }, t('accountLabel')),
-            h('span', null, userLabel)),
-          h('button', {
-            className: 'dshEnterpriseLogout',
-            type: 'button',
-            disabled: busy,
-            onClick: () => run(async () => {
-              const next = await api('/api/enterprise.logout', {})
-              setConfirmation(null)
-              applyAccountState(next)
-            })
-          }, t('logout')))
+            h('strong', null, userLabel),
+            h('span', { className: 'dshEnterpriseAccountLabel' }, state?.user?.username || t('accountLabel'))))
         : null
 
       const accountContent = connected
         ? h(React.Fragment, null,
           h('div', { className: 'dshEnterpriseSectionHeader' },
-            h('h3', null, t('models')),
+            h('h3', null, t('managedModels')),
             h('button', {
               className: 'dshEnterpriseIconButton',
               type: 'button',
@@ -1181,7 +1145,14 @@ window.__ModuleLoader__.load({
           h('h2', null, t('title')),
           renderLearnMoreButton(t)),
         status,
-        accountContent,
+        connected && renderSlot?.('desktop.account.usage', {
+          credits: usageText(state.usage, document.documentElement.lang, t),
+          creditsLabel: t('usageLabel'), creditsHelp: t('creditsHelp'),
+          models: h('section', { className: 'dshEnterpriseManagedModels' }, accountContent)
+        }, { fallback: h(React.Fragment, null,
+          h('p', { title: t('creditsHelp') }, `${t('usageLabel')}: ${usageText(state.usage, document.documentElement.lang, t)}`),
+          h('section', { className: 'dshEnterpriseManagedModels' }, accountContent)) }),
+        connected ? logoutButton : accountContent,
         manualFallback,
         errorPanel,
         confirmationPanel)
@@ -1217,6 +1188,7 @@ window.__ModuleLoader__.load({
         id: ENTERPRISE_SECTION_ID,
         order: 15,
         label: () => t('nav'),
+        children: { 'desktop.account.usage': { kind: 'single', scope: 'root' } },
         inject: () => ({ t })
       }, EnterpriseSection))
     }

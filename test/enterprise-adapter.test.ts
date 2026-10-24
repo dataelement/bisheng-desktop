@@ -1,6 +1,9 @@
 // Coverage AC: AC-03, AC-30, AC-31, AC-56.
 import { createServer, type Server } from 'node:http'
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { zipSync } from 'fflate'
+// @ts-expect-error Runtime plugin is authored as JavaScript.
+import { skillContentHash } from '../packages/dsh-desktop-enterprise/work-skills.js'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { requestImageDimensions } from '@deepseek-ai/dsh-attachment'
@@ -33,6 +36,15 @@ function createPluginContext(
     provide() {},
     // Locale event behavior is covered through the real Connection in its dedicated suite.
     on() { return () => undefined },
+    inject(dependencies: string[], install: (ctx: unknown) => unknown) {
+      if (!dependencies.includes('tools') || dependencies.includes('skills') || dependencies.includes('sessions')) return
+      const value = install({
+        sessions: { get: () => undefined }, on() {}, effect() {},
+        connection: { fetch: { register: (route: RegisteredRoute) => { routes.push(route) } } },
+        tools: { register() {} }, systemPrompt: { context() {} }
+      })
+      expect(value === undefined || typeof value === 'function').toBe(true)
+    },
     effect(callback: () => (() => unknown) | undefined) {
       const dispose = callback()
       if (dispose) adapterCleanups.push(async () => { await dispose() })
@@ -182,6 +194,66 @@ describe('enterprise adapter without a Broker', () => {
 })
 
 describe('enterprise adapter with a Broker', () => {
+  it('loads skill catalogs and complete bundles after consuming the owner capability', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'enterprise-skill-broker-'))
+    const previousHome = process.env.DSH_HOME
+    process.env.DSH_HOME = home
+    adapterCleanups.push(async () => {
+      if (previousHome === undefined) delete process.env.DSH_HOME
+      else process.env.DSH_HOME = previousHome
+      await rm(home, { recursive: true, force: true })
+    })
+    const files = { 'SKILL.md': Buffer.from('---\nname: office\ndescription: Create files\n---\nEnterprise instructions'), 'templates/file.bin': Buffer.from([0, 255, 42]) }
+    const version = skillContentHash(new Map(Object.entries(files).map(([name, data]) => [name, { data }])))
+    const calls: Array<{ operation: string, authorization: string | undefined }> = []
+    const capability = 'fixture-skill-owner-capability'
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = []
+      for await (const chunk of request) chunks.push(Buffer.from(chunk))
+      const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {}
+      if (request.url === '/v1/work-skills') calls.push({ operation: body.operation, authorization: request.headers.authorization })
+      const payload = request.url === '/v1/state'
+        ? { connected: true, connectionKey: 'account-a', base: 'https://enterprise.example', tenant: { id: 2 }, user: { id: 3 }, models: [] }
+        : body.operation === 'list'
+          ? [{ id: 7, name: 'office', display_name: 'Office', description: 'Create files', content_hash: version }]
+          : body.operation === 'dependencies' ? [] : {}
+      response.writeHead(200, { 'content-type': body.operation === 'bundle' ? 'application/zip' : 'application/json' })
+      response.end(body.operation === 'bundle' ? Buffer.from(zipSync(files)) : JSON.stringify(payload))
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    adapterCleanups.push(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('Test broker did not bind.')
+    process.env.DSH_DESKTOP_ENTERPRISE_BROKER_URL = `http://127.0.0.1:${address.port}`
+    process.env.DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY = capability
+    let provider: any
+    const controller = new AbortController()
+    adapterCleanups.push(async () => { controller.abort() })
+    applyEnterprise({
+      provide() {},
+      inject(dependencies: string[], install: (ctx: unknown) => unknown) {
+        if (dependencies.length === 1 && dependencies[0] === 'skills') install({
+          skills: { registerProvider(create: (control: unknown) => unknown) { provider = create({ signal: controller.signal, invalidate() {} }) } },
+          connection: { fetch: { register() {} } }
+        })
+      },
+      connection: { fetch: { register() {} } },
+      effect(callback: () => (() => unknown) | undefined) {
+        const dispose = callback()
+        if (dispose) adapterCleanups.push(async () => { await dispose() })
+      }
+    } as never)
+    expect(process.env.DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY).toBeUndefined()
+    const [skill] = await provider.list({ signal: controller.signal })
+    expect(skill.locator.id).toBe(7)
+    expect(await provider.list({ signal: controller.signal })).toHaveLength(1)
+    const loaded = await provider.get(skill, { signal: controller.signal })
+    expect(loaded.content).toContain('Enterprise instructions')
+    expect(await readFile(join(loaded.resourceBase.path, 'templates/file.bin'))).toEqual(files['templates/file.bin'])
+    expect(calls.map(call => call.operation)).toEqual(['list', 'list', 'list', 'bundle', 'dependencies'])
+    expect(calls.every(call => call.authorization === `Bearer ${capability}`)).toBe(true)
+  })
+
   it('keeps workbench verification authorized after consuming the owner capability', async () => {
     const id = '0123456789abcdef0123456789abcdef'
     const versionId = 'fedcba9876543210fedcba9876543210'

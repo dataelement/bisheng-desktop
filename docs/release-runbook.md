@@ -36,6 +36,12 @@ The self-hosted signer downloads every handoff, including single-platform prerel
 
 PPT packages are generated under `.build/ppt-runtime/packages/` and overlaid into the Electron package. The `afterPack` gate checks ASAR unpacking, the generated `dsh-ppt` and `dsh-ppt-composer` payloads, and the offline Office runtime. A successful source build alone does not verify the packaged paths.
 
+## Rebuilding a macOS installer from an existing app
+
+Pass the `.app` bundle itself to `--prepackaged`, for example `--prepackaged "dist-dev/mac-arm64/BISHENG Dev.app"`. Electron Builder treats this argument as the application bundle and copies it into the image under the product name. Passing the containing `mac-arm64` directory creates a nested `.app` directory that Finder cannot launch.
+
+Before delivering a rebuilt DMG, mount it read-only and check the top-level application has `Contents/Info.plist`, its executable in `Contents/MacOS/`, and `Contents/Resources/app.asar`. Compare the mounted ASAR and enterprise plugin files against the selected build. Store artifacts in a distinct delivery folder with their commit and SHA-256 checksums.
+
 ## macOS packaging runners
 
 Both macOS jobs use self-hosted workers on the ARM64 Mac. Apple Silicon uses the organization runner with `self-hosted`, `macOS`, and `ARM64` labels and ARM64 Node 22. Intel uses a dedicated repository runner with `self-hosted`, `macOS`, and `bisheng-intel` labels. It requires Rosetta 2, uses x64 Node 22, and runs shell commands under `arch -x86_64 /bin/bash`. The job sets `npm_config_arch=x64` so Electron's installer does not replace the x64 binary with arm64 after detecting Rosetta; npm still installs the x64 `node-addon-require-builtin` binding from `process.arch`. `verify-target` checks the executing platform and architecture and probes the Harness native loader under Electron Node mode.

@@ -23,7 +23,10 @@ const JSON_ROUTES = new Map<string, 'GET' | 'POST'>([
   ['/v1/market', 'POST'],
   ['/v1/workbench/verify', 'POST'],
   ['/v1/workbench/materialize', 'POST'],
-  ['/v1/workbench/release', 'POST']
+  ['/v1/workbench/release', 'POST'],
+  ['/v1/work-resources', 'POST'],
+  ['/v1/work-skills', 'POST'],
+  ['/v1/work-mcp', 'POST']
 ])
 
 export interface EnterpriseCredentialBroker {
@@ -126,6 +129,28 @@ export async function startEnterpriseCredentialBroker(
         request.on('aborted', abort)
         response.on('close', abort)
         try { sendJson(response, 200, await service.reportAuditTitle(body, controller.signal)) }
+        finally { request.off('aborted', abort); response.off('close', abort) }
+        return
+      }
+      if (path === '/v1/work-skills') {
+        const controller = new AbortController()
+        const abort = () => { if (!response.writableFinished) controller.abort() }
+        request.on('aborted', abort)
+        response.on('close', abort)
+        try {
+          const result = await service.workSkills(body, controller.signal)
+          response.writeHead(200, { 'content-type': result.binary ? 'application/zip' : 'application/json', 'cache-control': 'no-store' })
+          response.end(result.bytes)
+        } finally { request.off('aborted', abort); response.off('close', abort) }
+        return
+      }
+      if (path === '/v1/work-resources' || path === '/v1/work-mcp') {
+        const controller = new AbortController()
+        const abort = () => { if (!response.writableFinished) controller.abort() }
+        request.on('aborted', abort)
+        response.on('close', abort)
+        try { sendJson(response, 200, await (path === '/v1/work-mcp'
+          ? service.workMcp(body, controller.signal) : service.workResources(body, controller.signal))) }
         finally { request.off('aborted', abort); response.off('close', abort) }
         return
       }

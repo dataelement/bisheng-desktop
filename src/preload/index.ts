@@ -1,3 +1,4 @@
+import type { EnterpriseChatPresentation, EnterpriseChatViewState } from '../shared/enterprise-chat-view'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdateStatus } from '../shared/contracts'
 import { setupDesktopStoragePersistence } from './desktop-storage'
@@ -12,8 +13,11 @@ import { isPluginLoadError } from './plugin-error-view'
 import { mountPluginErrorToast } from './plugin-error-toast'
 import { findBootFailureText } from './boot-failure'
 import { markWindowsTitlebar, mountWindowsTitlebarLayout } from './windows-titlebar'
+import { mountMacosWindowTheme } from './macos-window-theme'
 import { mountMacosWindowChrome } from './macos-window-chrome'
 import { createHostPathsBridge, HOST_PATHS_BRIDGE } from './host-paths'
+import { createNativeLocaleBridge } from './native-locale'
+import { NATIVE_LOCALE_BRIDGE, NATIVE_LOCALE_CHANGE, NATIVE_LOCALE_READ } from '../shared/native-locale'
 
 if (process.platform === 'darwin') {
   const dispose = mountMacosWindowChrome(document, listener => {
@@ -34,7 +38,7 @@ setupDesktopNotificationBridge()
 
 const MOBILE_BUTTON_ID = 'dsh-desktop-mobile-button'
 const SAFE_MODE_BANNER_ID = 'dsh-desktop-safe-mode-banner'
-const locale: UpdateLocale = navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en'
+let locale: UpdateLocale = navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en'
 
 let host: HTMLDivElement | undefined
 let content: HTMLDivElement | undefined
@@ -180,6 +184,17 @@ contextBridge.exposeInMainWorld(
   createHostPathsBridge(file => webUtils.getPathForFile(file))
 )
 
+contextBridge.exposeInMainWorld(NATIVE_LOCALE_BRIDGE, createNativeLocaleBridge({
+  read: () => ipcRenderer.invoke(NATIVE_LOCALE_READ),
+  publish: active => ipcRenderer.invoke(NATIVE_LOCALE_CHANGE, active),
+  changed: active => {
+    locale = active
+    renderMobileButton()
+    render()
+  },
+  failed: error => console.error('[desktop-locale] unable to synchronize language', error)
+}))
+
 /**
  * `[data-dsh-*]` lookups are attribute selectors with no index behind them, so
  * a miss costs a full tree walk. Caching the nodes turns the steady state into
@@ -191,15 +206,22 @@ function liveElement<T extends Element>(cached: T | undefined, selector: string)
 }
 
 function mountMobileButton(): void {
+  sidebarSettingsArea = liveElement(sidebarSettingsArea, '[data-dsh-sidebar-settings]')
+  const settingsArea = sidebarSettingsArea
+  if (!settingsArea) return
+  // The optional account launcher owns this action in normal mode. Keep the
+  // legacy button only for Safe Mode or compositions without that launcher.
+  if (settingsArea.querySelector('[data-dsh-account-launcher]')) {
+    mobileButton?.remove()
+    document.getElementById(`${MOBILE_BUTTON_ID}-style`)?.remove()
+    return
+  }
   if (!document.getElementById(`${MOBILE_BUTTON_ID}-style`)) {
     const style = document.createElement('style')
     style.id = `${MOBILE_BUTTON_ID}-style`
     style.textContent = mobileButtonStyles
     document.head.appendChild(style)
   }
-  sidebarSettingsArea = liveElement(sidebarSettingsArea, '[data-dsh-sidebar-settings]')
-  const settingsArea = sidebarSettingsArea
-  if (!settingsArea) return
   if (!mobileButton?.isConnected) {
     mobileButton =
       (document.getElementById(MOBILE_BUTTON_ID) as HTMLButtonElement | null) ?? undefined
@@ -388,6 +410,10 @@ ipcRenderer.on('mobile:status-changed', (_event, status: { connected?: boolean }
 })
 
 function initializeUi(): void {
+  if (process.platform === 'darwin') {
+    const dispose = mountMacosWindowTheme(document, ipcRenderer)
+    window.addEventListener('unload', dispose, { once: true })
+  }
   if (process.platform === 'win32') {
     mountWindowsTitlebarLayout({ document, ipcRenderer })
   }
@@ -574,6 +600,29 @@ window.addEventListener('pagehide', () => {
   pluginErrorToast.dispose()
 })
 
+ipcRenderer.on('enterprise-chat:close-settings', () => {
+  window.dispatchEvent(new CustomEvent('dsh-desktop:close-settings'))
+})
+ipcRenderer.on('enterprise-chat:settings-focus', (_event, detail) => {
+  window.dispatchEvent(new CustomEvent('dsh-desktop:settings-focus', { detail }))
+})
+
+contextBridge.exposeInMainWorld('dshEnterpriseChat', Object.freeze({
+  focusSettings: (): Promise<void> => ipcRenderer.invoke('enterprise-chat:focus-settings'),
+  present: (value: EnterpriseChatPresentation): Promise<EnterpriseChatViewState> => ipcRenderer.invoke('enterprise-chat:present', value),
+  state: (): Promise<EnterpriseChatViewState> => ipcRenderer.invoke('enterprise-chat:state'),
+  retry: (): Promise<void> => ipcRenderer.invoke('enterprise-chat:retry'),
+  usage: (): Promise<import('../shared/enterprise-usage').EnterpriseUsage> => ipcRenderer.invoke('enterprise-chat:usage'),
+  history: (page: number) => ipcRenderer.invoke('enterprise-chat:history', page),
+  openPage: (id: string): Promise<void> => ipcRenderer.invoke('enterprise-chat:open-page', id),
+  open: (id: string): Promise<void> => ipcRenderer.invoke('enterprise-chat:open', id),
+  subscribe: (listener: (state: EnterpriseChatViewState) => void): (() => void) => {
+    const receive = (_event: Electron.IpcRendererEvent, state: EnterpriseChatViewState): void => listener(state)
+    ipcRenderer.on('enterprise-chat:changed', receive)
+    return () => ipcRenderer.removeListener('enterprise-chat:changed', receive)
+  }
+}))
+
 contextBridge.exposeInMainWorld(
   'dshDesktopEnterprise',
   Object.freeze({
@@ -599,6 +648,9 @@ contextBridge.exposeInMainWorld(
   'dshDesktop',
   Object.freeze({
     restartHarness: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('harness:restart'),
+    openPhonePairing: (): Promise<void> => ipcRenderer.invoke('mobile:open-pairing'),
+    settingsInfo: (): Promise<AboutInfo> => ipcRenderer.invoke('desktop:about-info'),
+    settingsAction: (action: 'check-for-updates' | 'show-harness-log' | 'safe-mode'): Promise<void> => ipcRenderer.invoke('desktop:settings-action', action),
     getBuiltInImageGenerationStatus: (): Promise<{ enabled: boolean; marketActive: boolean }> =>
       ipcRenderer.invoke('desktop-host-plugin:status'),
     setBuiltInImageGenerationEnabled: (enabled: boolean): Promise<{ ok: boolean; enabled?: boolean; restartRequired?: boolean; reason?: string }> =>
