@@ -1,3 +1,9 @@
+## 2026-10-24 — 技能标记与文字垂直居中
+
+- 基线 `V1.2.0@a36ba71de6e5db6f2f242187d2bafc4cbdb045f8`、Harness `0.2.1-rc.2`；v0.9.0 集成参考 worktree 状态为空。
+- 图标使用独立的行内 flex 容器，与技能名称垂直居中，文字型 badge 保留原有上标语义。复用现有 12px 技能图标和主题色。
+- 干净 npm ci 与兼容文件重放、类型检查和相关 22 项回归通过；生产构建、包内 Harness 和 Office 检查通过。签名校验通过，本地桌面已更新，原应用保存为 `BISHENG Dev.before-skill-align-20261024.app`；app.asar SHA256 为 `b201407ac6bbd6e7b30cda76475a013800529841d2c54d3a25335378ea2ae5e1`。安装后实际进入 Work 技能列表，确认 Word、PPT 和公文技能图标均与名称垂直居中。证据位于主工作区 `outputs/skill-icon-alignment-20261024/`。
+
 ## 2026-10-23 — 技能标记复用线框图标
 
 - 基线 `V1.2.0@356f67518375bd73b9eba87debfb7f1fd2e90808`，Harness `0.2.1-rc.2`，v0.9.0 参考 worktree 状态为空。本次在当前交付分支继续，包含目标知识空间修复。

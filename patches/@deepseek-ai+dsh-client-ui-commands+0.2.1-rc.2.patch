@@ -1,19 +1,17 @@
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-commands/lib/client.js b/node_modules/@deepseek-ai/dsh-client-ui-commands/lib/client.js
-index 111d8aa..50e0c54 100644
+index 111d8aa..688ce79 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-commands/lib/client.js
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-commands/lib/client.js
-@@ -1954,9 +1954,9 @@ window.__ModuleLoader__.load({
+@@ -1954,6 +1954,9 @@ window.__ModuleLoader__.load({
  						children: [(0, react_jsx_runtime.jsx)("span", {
  							className: PopupSelectView_module_css_default.labelText,
  							children: option.label
--						}), option.badge !== void 0 && (0, react_jsx_runtime.jsx)("sup", {
-+						}), (option.badge !== void 0 || option.badgeIcon !== void 0) && (0, react_jsx_runtime.jsxs)("sup", {
++						}), option.badgeIcon !== void 0 && (0, react_jsx_runtime.jsx)("span", {
++							style: { display: "inline-flex", alignSelf: "center", flex: "none", color: "var(--dsw-alias-label-tertiary)" },
++							children: (0, react_jsx_runtime.jsx)(option.badgeIcon, { "aria-hidden": true })
+ 						}), option.badge !== void 0 && (0, react_jsx_runtime.jsx)("sup", {
  							className: PopupSelectView_module_css_default.badge,
--							children: option.badge
-+							children: [option.badgeIcon !== void 0 && (0, react_jsx_runtime.jsx)(option.badgeIcon, { "aria-hidden": true }), option.badge]
- 						})]
- 					}),
- 					option.detail !== void 0 && (0, react_jsx_runtime.jsx)("span", {
+ 							children: option.badge
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-commands/lib/types/client/contract.d.ts b/node_modules/@deepseek-ai/dsh-client-ui-commands/lib/types/client/contract.d.ts
 index 93cd2d4..cc4596f 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-commands/lib/types/client/contract.d.ts
