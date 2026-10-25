@@ -7,6 +7,7 @@ import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { JSDOM } from 'jsdom'
 import { SlotCore } from '@deepseek-ai/dsh-client-ui-slots'
+import { Context } from '@deepseek-ai/cordis'
 import { afterEach, expect, it, vi } from 'vitest'
 
 const source = await readFile(new URL('../packages/dsh-desktop-settings/client.js', import.meta.url), 'utf8')
@@ -234,11 +235,12 @@ it('shows enterprise models natively and embeds no account page in Account and s
   const f = await fixture()
   f.setAccount({ connected: true, modelsAvailable: true, user: { username: 'employee' }, models: [{ id: 'example-model', display_name: 'Example provider / Example model' }] })
   const code = (await readFile(new URL('../packages/dsh-desktop-enterprise/client.js', import.meta.url), 'utf8')).replace('exports.apply = apply', 'exports.EnterpriseSection = EnterpriseSection\n    exports.apply = apply')
-  let definition
-  // The enterprise bundle registers through the same loader used by the fixture.
-  window.__ModuleLoader__.load = next => { definition = next }
-  vm.runInNewContext(code, { window, document, fetch: f.request, CustomEvent: window.CustomEvent, localStorage: window.localStorage })
-  const enterprise = definition.factory(id => {
+  const definitions = new Map()
+  // Both plugins use the actual loader and Locale runtime; preserve their lifecycle contract.
+  window.__ModuleLoader__.load = next => { definitions.set(next.id, next) }
+  const localeCode = await readFile(new URL('../node_modules/@deepseek-ai/dsh-client-locale/lib/client.js', import.meta.url), 'utf8')
+  vm.runInNewContext(localeCode + '\n' + code, { window, document, fetch: f.request, CustomEvent: window.CustomEvent, localStorage: window.localStorage })
+  const enterprise = definitions.get('dsh-desktop-enterprise').factory(id => {
     if (id === 'react') return React
     if (id === '@deepseek-ai/dsh-client-ui-primitives') return { Button: ({ variant, size, ...props }) => React.createElement('button', { ...props, 'data-native-variant': variant, 'data-native-size': size }) }
     throw new Error(id)
@@ -248,15 +250,23 @@ it('shows enterprise models natively and embeds no account page in Account and s
   // children declaration must fail before it can silently hide the usage panel.
   const core = new SlotCore()
   core.register({ name: 'root', children: { 'settings.section': { kind: 'list', scope: 'root' } } }, () => null)
+  const { LocaleRuntime } = definitions.get('@deepseek-ai/dsh-client-locale').factory(id =>
+    id === 'react' ? React : id === 'react/jsx-runtime' ? jsxRuntime : {})
+  const localeContext = new Context()
+  const locale = new LocaleRuntime(localeContext, undefined, { languages: ['zh-CN'], preference: null })
   const disposers = []
-  enterprise.apply({
-    locale: { register() {}, bind: () => key => key },
-    effect: fn => { const dispose = fn(); if (dispose) disposers.push(dispose) },
-    slots: { inject: (_name, fn) => fn(), register: (config, Component) => core.register(config, Component) }
-  })
-  const usageEntry = f.registrations.find(row => row.options.id === 'desktop-usage')
-  expect(() => core.register(usageEntry.options, usageEntry.Component)).not.toThrow()
-  disposers.reverse().forEach(dispose => dispose())
+  try {
+    enterprise.apply({
+      locale,
+      effect: fn => { const dispose = fn(); if (dispose) disposers.push(dispose) },
+      slots: { inject: (_name, fn) => fn(), register: (config, Component) => core.register(config, Component) }
+    })
+    const usageEntry = f.registrations.find(row => row.options.id === 'desktop-usage')
+    expect(() => core.register(usageEntry.options, usageEntry.Component)).not.toThrow()
+  } finally {
+    disposers.reverse().forEach(dispose => dispose())
+    await localeContext.fiber.dispose()
+  }
   window.dshEnterpriseChat.usage = vi.fn(async () => ({ totals: { total_tokens: 900, input_tokens: 800, output_tokens: 100, message_count: 9, missing_usage_count: 0 }, points: [], storage: { used: 0.05, limit: 1 } }))
   const renderSlot = vi.fn((...args) => f.renderSlot(...args))
   await f.mount(EnterpriseSection, { t: key => key, renderSlot })

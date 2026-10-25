@@ -1,11 +1,15 @@
 import { readFile } from 'node:fs/promises'
 import vm from 'node:vm'
 import React, { act } from 'react'
+import * as jsx from 'react/jsx-runtime'
+import { Context } from '@deepseek-ai/cordis'
 import { createRoot } from 'react-dom/client'
 import { JSDOM } from 'jsdom'
 import { afterEach, expect, it, vi } from 'vitest'
 
+// Coverage AC: AC-03, AC-30, AC-31, AC-56.
 const source = await readFile(new URL('../packages/dsh-desktop-enterprise/client.js', import.meta.url), 'utf8')
+const localeSource = await readFile(new URL('../node_modules/@deepseek-ai/dsh-client-locale/lib/client.js', import.meta.url), 'utf8')
 const SERVICE = 'http://192.168.106.109:13001'
 const LOGIN_LINK = 'bisheng-work://login?server=http%3A%2F%2F192.168.106.109%3A13001'
 let cleanup
@@ -92,9 +96,9 @@ async function mountEnterprise(initial, hooks = {}) {
     }
     return { ok: true, json: async () => snapshot() }
   }
-  let definition
-  dom.window.__ModuleLoader__ = { load: value => { definition = value } }
-  vm.runInNewContext(source, {
+  const definitions = new Map()
+  dom.window.__ModuleLoader__ = { load: value => definitions.set(value.id, value) }
+  vm.runInNewContext(localeSource + '\n' + source, {
     window: dom.window,
     document: dom.window.document,
     Date,
@@ -102,11 +106,15 @@ async function mountEnterprise(initial, hooks = {}) {
     fetch,
     CustomEvent: dom.window.CustomEvent
   })
-  const extension = definition.factory(name => {
+  const extension = definitions.get('dsh-desktop-enterprise').factory(name => {
     if (name === 'react') return React
     if (name === '@deepseek-ai/dsh-client-ui-primitives') return { Button: ({ variant, size, ...props }) => React.createElement('button', props) }
     throw new Error(name)
   })
+  const { LocaleRuntime } = definitions.get('@deepseek-ai/dsh-client-locale').factory(name =>
+    name === 'react' ? React : name === 'react/jsx-runtime' ? jsx : {})
+  const localeContext = new Context()
+  const locale = new LocaleRuntime(localeContext, undefined, { languages: ['zh-CN'], preference: null })
   const disposers = []
   const root = createRoot(dom.window.document.getElementById('root'))
   cleanup = async () => {
@@ -114,15 +122,12 @@ async function mountEnterprise(initial, hooks = {}) {
       disposers.reverse().forEach(dispose => dispose())
       root.unmount()
     })
+    await localeContext.fiber.dispose()
     dom.window.close()
   }
   await act(async () => {
-    const dictionaries = new Map()
     extension.apply({
-      locale: {
-        register: (ns, values) => { dictionaries.set(ns, values) },
-        bind: ns => key => dictionaries.get(ns).zh[key]
-      },
+      locale,
       effect: callback => {
         const dispose = callback()
         if (dispose) disposers.push(dispose)

@@ -13,6 +13,50 @@ window.__ModuleLoader__.load({
     const LEARN_MORE_URL = 'https://dshdesktop.com/zh/enterprise/deployment/'
     const OPEN_SETTINGS_SECTION_EVENT = 'dsh-desktop:open-settings-section'
     const NS = 'settings.desktopEnterprise'
+    const SAFETY_NS = 'enterprise.contentSafety'
+    const safetyCopy = {
+      zh: {
+        CONTENT_FILTERED: '内容包含敏感词，本次请求已停止。',
+        CONTENT_CHECK_UNAVAILABLE: '暂时无法检查内容，请稍后重试。'
+      },
+      en: {
+        CONTENT_FILTERED: 'This request was stopped because sensitive words were detected.',
+        CONTENT_CHECK_UNAVAILABLE: 'Content checking is temporarily unavailable. Try again later.'
+      },
+      ja: {
+        CONTENT_FILTERED: '制限された語句が検出されたため、このリクエストを停止しました。',
+        CONTENT_CHECK_UNAVAILABLE: '現在、コンテンツを確認できません。しばらくしてから再試行してください。'
+      }
+    }
+
+    function bindContentSafetyLocale(locale) {
+      // Cookies are not port scoped; include the full authority in this display-only bridge.
+      const name = 'dshEnterpriseSafetyLocale_' + encodeURIComponent(window.location.host.toLowerCase())
+      const t = locale.bind(SAFETY_NS)
+      const attributes = '; Path=/; SameSite=Strict' + (window.location.protocol === 'https:' ? '; Secure' : '')
+      const owner = window.crypto.randomUUID()
+      let owned
+      let publishedCopy
+      const publish = () => {
+        const messages = {
+          CONTENT_FILTERED: t('CONTENT_FILTERED'),
+          CONTENT_CHECK_UNAVAILABLE: t('CONTENT_CHECK_UNAVAILABLE')
+        }
+        const copy = JSON.stringify(messages)
+        if (copy === publishedCopy) return
+        const value = encodeURIComponent(JSON.stringify({ owner, messages }))
+        document.cookie = name + '=' + value + attributes
+        owned = value
+        publishedCopy = copy
+      }
+      publish()
+      const unsubscribe = locale.subscribe(publish)
+      return () => {
+        unsubscribe()
+        const current = document.cookie.split(';').map(part => part.trim()).find(part => part.startsWith(name + '='))
+        if (current === name + '=' + owned) document.cookie = name + '=; Max-Age=0' + attributes
+      }
+    }
 
     const zh = {
       seat_not_assigned: '当前服务版本不支持直接登录，请联系管理员升级平台。',
@@ -1123,6 +1167,12 @@ window.__ModuleLoader__.load({
         () => ctx.locale.register(NS, { zh, en }),
         'dsh-desktop-enterprise: copy dictionaries'
       )
+      ctx.effect(() => ctx.locale.register(SAFETY_NS, safetyCopy), 'enterprise: content safety translations')
+      ctx.effect(() => {
+        if (ctx.locale.getSnapshot().locales.some(locale => locale.id.toLowerCase() === 'ja')) return undefined
+        return ctx.locale.addLanguage({ id: 'ja', label: '日本語', fallback: 'en' })
+      }, 'enterprise: Japanese content safety locale')
+      ctx.effect(() => bindContentSafetyLocale(ctx.locale), 'enterprise: current content safety locale')
       const t = ctx.locale.bind(NS)
       accountTranslate = t
       ctx.effect(() => ctx.locale.register('settings.enterpriseMarket', { zh: marketZh, en: marketEn }), 'enterprise-market: translations')
