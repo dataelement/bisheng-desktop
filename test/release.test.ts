@@ -377,7 +377,16 @@ describe('GitHub release contract', () => {
     expect(workflow).toContain('merge-mac-update-metadata.mjs')
     expect(workflow).toContain('Verify release assets before publication')
     expect(workflow).toContain('verify-release-assets.mjs release-assets')
-    expect(workflow).toContain('dist/${{ matrix.app-directory }}/BISHENG.app')
+    expect(workflow).toContain('Configure isolated macOS output')
+    expect(workflow).toContain(
+      'MACOS_OUTPUT_DIR=$RUNNER_TEMP/bisheng-macos-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${{ matrix.arch }}'
+    )
+    expect(workflow).toContain('--config.directories.output="$MACOS_OUTPUT_DIR"')
+    expect(workflow).toContain('$MACOS_OUTPUT_DIR/${{ matrix.app-directory }}/BISHENG.app')
+    expect(workflow).toContain(
+      'stage-development-assets.mjs ${{ matrix.arch }} "$MACOS_OUTPUT_DIR"'
+    )
+    expect(workflow).not.toContain('dist/${{ matrix.app-directory }}/BISHENG.app')
     expect(workflow).toContain('dist\\win-unpacked\\BISHENG.exe')
     expect(workflow).toContain("--name 'BISHENG'")
     expect(workflow).toContain('--title "BISHENG $release_tag"')
