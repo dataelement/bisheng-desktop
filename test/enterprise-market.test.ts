@@ -16,7 +16,11 @@ import { sweepRegistry } from 'dsh-desktop-market-installer/generations/registry
 import { zipEntries } from '../scripts/pack-enterprise-plugin.mjs'
 
 const paths: string[] = [], controllers: Array<{ stop: () => Promise<void> }> = []
-afterEach(async () => { for (const controller of controllers.splice(0)) await controller.stop(); for (const path of paths.splice(0)) await rm(path, { recursive: true, force: true }); vi.useRealTimers() })
+afterEach(async () => {
+  for (const controller of controllers.splice(0)) await controller.stop()
+  for (const path of paths.splice(0)) await rm(path, { recursive: true, force: true })
+  vi.useRealTimers()
+}, 60_000)
 const pluginId = 'a'.repeat(32), versionId = 'b'.repeat(32), target = `${process.platform}-${process.arch}`
 const account = { connected: true, desktopVersion: '0.9.2', base: 'https://enterprise.example/bisheng', user: { id: '20' }, tenant: { id: '2', name: 'Company' }, sessionExpiresAt: new Date(Date.now() + 86400000).toISOString() }
 function bundle(version = '1.0.0', source = 'export function apply(ctx) { ctx.effect(() => () => {}, "test plugin") }') {
