@@ -291,6 +291,19 @@ jobs:
           echo "APPLE_API_KEY_ID=$APPLE_API_KEY_ID" >> "$GITHUB_ENV"
           echo "APPLE_API_ISSUER=$APPLE_API_ISSUER" >> "$GITHUB_ENV"
           echo "APPLE_TEAM_ID=$APPLE_TEAM_ID" >> "$GITHUB_ENV"
+          if [ "${{ matrix.arch }}" = "x64" ]; then
+            xcrun_bridge="$RUNNER_TEMP/bisheng-arm64-xcrun"
+            mkdir -p "$xcrun_bridge"
+            cat > "$xcrun_bridge/xcrun" <<'EOF'
+          #!/bin/sh
+          exec /usr/bin/arch -arm64 /usr/bin/xcrun "$@"
+          EOF
+            chmod 755 "$xcrun_bridge/xcrun"
+            "$xcrun_bridge/xcrun" --find notarytool
+            echo "$xcrun_bridge" >> "$GITHUB_PATH"
+          else
+            /usr/bin/xcrun --find notarytool
+          fi
       - name: Prepare macOS signing keychain
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         id: signing_keychain
@@ -625,13 +638,25 @@ jobs:
               Write-Host '--- harness.log ---'
               Get-Content $logPath
             }
-            if (-not $desktop.HasExited) { Stop-Process -Id $desktop.Id -Force }
+            if (-not $desktop.HasExited) {
+              & taskkill.exe /PID $desktop.Id /T /F
+              $desktop.Refresh()
+              if ($LASTEXITCODE -ne 0 -and -not $desktop.HasExited) {
+                throw "Failed to stop packaged Windows process tree $($desktop.Id)."
+              }
+              [void]$desktop.WaitForExit(10000)
+            }
+            for ($attempt = 1; $attempt -le 5 -and (Test-Path $isolatedApp); $attempt++) {
+              Remove-Item -Recurse -Force $isolatedApp -ErrorAction SilentlyContinue
+              if (Test-Path $isolatedApp) { Start-Sleep -Seconds $attempt }
+            }
+            if (Test-Path $isolatedApp) {
+              throw "Failed to remove packaged Windows smoke copy: $isolatedApp"
+            }
           }
       - name: Archive unpacked Windows release for inner binary signing
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
-        shell: pwsh
-        run: |
-          tar -czf dist/win-unpacked.tar.gz -C dist win-unpacked
+        run: node scripts/archive-windows-unpacked.mjs
       - name: Stage unsigned Windows assets in draft release
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         shell: pwsh

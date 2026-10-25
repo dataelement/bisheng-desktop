@@ -472,6 +472,9 @@ describe('GitHub release contract', () => {
     expect(workflow).toContain("Invoke-HarnessRpc 'workspace/create'")
     expect(workflow).toContain("Invoke-HarnessRpc 'session/create'")
     expect(workflow).toContain('Harness process exited after workspace and session creation.')
+    expect(workflow).toContain('& taskkill.exe /PID $desktop.Id /T /F')
+    expect(workflow).toContain('Remove-Item -Recurse -Force $isolatedApp')
+    expect(workflow).toContain('Failed to remove packaged Windows smoke copy')
     expect(workflow).toContain('prerelease_tag:')
     expect(workflow).toContain('signed_version:')
     expect(workflow).toContain('mode:')
@@ -502,6 +505,11 @@ describe('GitHub release contract', () => {
     ]) {
       expect(workflow).toContain(`secrets.${secret}`)
     }
+    expect(workflow).toContain('bisheng-arm64-xcrun')
+    expect(workflow).toContain('if [ "${{ matrix.arch }}" = "x64" ]; then')
+    expect(workflow).toContain('exec /usr/bin/arch -arm64 /usr/bin/xcrun "$@"')
+    expect(workflow).toContain('"$xcrun_bridge/xcrun" --find notarytool')
+    expect(workflow).toContain('/usr/bin/xcrun --find notarytool')
     expect(workflow.match(/Prepare macOS signing keychain/g)).toHaveLength(1)
     expect(workflow.match(/xcrun stapler validate/g)).toHaveLength(2)
     expect(workflow.match(/xcrun notarytool submit/g)).toHaveLength(1)

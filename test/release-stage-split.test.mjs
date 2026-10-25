@@ -33,6 +33,8 @@ it('builds signed installers once on the signer and preserves development instal
   expect(scripts['package:win:unpacked']).toBe('node scripts/verify-target.mjs win32 x64 && npm run build && node scripts/electron-builder-windows.mjs --win --x64 --dir --publish never')
   expect(step('windows-x64', 'Build Windows release package').run).toBe('npm run package:win:unpacked')
   expect(step('windows-x64', 'Build isolated Windows development package').run).toBe('npm run package:dev:win')
+  expect(step('windows-x64', 'Archive unpacked Windows release for inner binary signing').run)
+    .toBe('node scripts/archive-windows-unpacked.mjs')
   const upload = step('windows-x64', 'Stage unsigned Windows assets in draft release').run
   expect(upload).toContain('dist/win-unpacked.tar.gz')
   expect(upload).not.toContain('setup.exe')
