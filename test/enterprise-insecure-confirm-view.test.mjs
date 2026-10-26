@@ -114,7 +114,7 @@ async function mountEnterprise(initial, hooks = {}) {
   const { LocaleRuntime } = definitions.get('@deepseek-ai/dsh-client-locale').factory(name =>
     name === 'react' ? React : name === 'react/jsx-runtime' ? jsx : {})
   const localeContext = new Context()
-  const locale = new LocaleRuntime(localeContext, undefined, { languages: ['zh-CN'], preference: null })
+  const locale = new LocaleRuntime(localeContext, undefined, { languages: [hooks.language === 'en' ? 'en-US' : 'zh-CN'], preference: null })
   const disposers = []
   const root = createRoot(dom.window.document.getElementById('root'))
   cleanup = async () => {
@@ -229,4 +229,31 @@ it('shows a pending spinner without blocking the one-time code', async () => {
   const submit = [...page.querySelectorAll('button')].find((item) => item.textContent === '完成登录')
   expect(submit.disabled).toBe(false)
   expect(requests.some((item) => item.path === '/api/enterprise.state')).toBe(true)
+})
+
+
+it.each(['zh', 'en'])('explains the account benefits, platform address and browser handoff in %s', async language => {
+  const page = await mountEnterprise(idleAccount(), { language })
+  expect(page.document.querySelector('h2').textContent).toBe(language === 'zh' ? '登录毕昇' : 'Sign in to BISHENG')
+  expect(page.document.querySelector('.dshEnterpriseLoginIntro').textContent).toContain(language === 'zh' ? '企业为你授权' : 'authorized by your organization')
+  const field = page.document.querySelector('input[type=url]')
+  const help = page.document.getElementById(field.getAttribute('aria-describedby'))
+  expect(help.textContent).toContain(language === 'zh' ? '向管理员获取' : 'ask your administrator')
+  expect(page.text()).toContain(language === 'zh' ? '将在浏览器中打开毕昇登录页' : 'opens the BISHENG sign-in page in your browser')
+})
+
+it.each(['zh', 'en'])('guides browser authorization and the manual-code fallback in %s', async language => {
+  const page = await mountEnterprise({ ...idleAccount(), phase: 'authorizing', loginExpiresAt: new Date(Date.now() + 60_000).toISOString() }, { captureTimers: true, language })
+  expect(page.document.querySelector('[role=status]').textContent).toContain(language === 'zh' ? '请在浏览器中完成登录并授权，再回到客户端继续' : 'Complete sign-in and authorization in your browser')
+  await page.flushTimer(8_000)
+  expect(page.document.querySelector('.dshEnterpriseManual').textContent).toContain(language === 'zh' ? '粘贴页面提供的一次性登录码' : 'paste the one-time code')
+})
+
+it('replaces the login guidance with account details after successful sign-in', async () => {
+  const page = await mountEnterprise(idleAccount())
+  await page.click('在浏览器中登录')
+  await page.click('确认为可信来源')
+  expect(page.document.querySelector('h2').textContent).toBe('账号与用量')
+  expect(page.document.querySelector('.dshEnterpriseLoginIntro')).toBeNull()
+  expect(page.text()).toContain('Alice')
 })

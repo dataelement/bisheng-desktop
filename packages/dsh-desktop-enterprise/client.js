@@ -67,7 +67,13 @@ window.__ModuleLoader__.load({
       title: '账号与用量',
       managedModels: '企业提供的模型',
       accountLabel: '当前账号',
-      platform: '企业服务地址',
+      platform: '毕昇平台地址',
+      signInTitle: '登录毕昇',
+      signInIntro: '登录后可使用聊天，以及企业为你授权的模型、工具和技能。',
+      platformHelp: '填写你平时访问毕昇的地址，也可以向管理员获取。',
+      browserHelp: '下一步将在浏览器中打开毕昇登录页。',
+      authorizationHelp: '请在浏览器中完成登录并授权，再回到客户端继续。',
+      manualHelp: '已经在浏览器中完成授权？也可以粘贴页面提供的一次性登录码。',
       login: '在浏览器中登录',
       loginAgain: '重新登录',
       loggingIn: '等待浏览器授权…',
@@ -87,7 +93,7 @@ window.__ModuleLoader__.load({
       limitZero: '剩余 0 分',
       secureUnavailable: '系统安全存储不可用，企业登录已停用。',
       confirmTitle: '确认毕昇平台',
-      confirmLead: '确认后会停用当前企业模型连接，并在该平台新建一次 PKCE 登录。',
+      confirmLead: '确认后将切换到以下毕昇平台，并在浏览器中登录。',
       insecureTitle: '确保服务地址可信',
       insecureLead: '登录信息会明文传输，确保以下服务地址由可信来源提供。',
       confirm: '确认并登录',
@@ -128,7 +134,13 @@ window.__ModuleLoader__.load({
       title: 'Account and usage',
       managedModels: 'Models provided by your enterprise',
       accountLabel: 'Current account',
-      platform: 'Enterprise service URL',
+      platform: 'BISHENG platform URL',
+      signInTitle: 'Sign in to BISHENG',
+      signInIntro: 'Sign in to use Chat and the models, tools, and skills authorized by your organization.',
+      platformHelp: 'Enter the URL you normally use for BISHENG, or ask your administrator for it.',
+      browserHelp: 'The next step opens the BISHENG sign-in page in your browser.',
+      authorizationHelp: 'Complete sign-in and authorization in your browser, then return to the app to continue.',
+      manualHelp: 'Already authorized in your browser? You can also paste the one-time code provided on that page.',
       login: 'Sign in in browser',
       loginAgain: 'Sign in again',
       loggingIn: 'Waiting for browser authorization…',
@@ -148,7 +160,7 @@ window.__ModuleLoader__.load({
       limitZero: 'Limit is 0; model calls are disabled',
       secureUnavailable: 'Operating-system secure storage is unavailable. Enterprise sign-in is disabled.',
       confirmTitle: 'Confirm BiSheng platform',
-      confirmLead: 'Continuing pauses the current enterprise connection and starts a new PKCE login at this platform.',
+      confirmLead: 'Continue to switch to this BISHENG platform and sign in through your browser.',
       insecureTitle: 'Make sure the service URL is trusted',
       insecureLead: 'Sign-in details will be sent in cleartext. Make sure the following service URL comes from a trusted source.',
       confirm: 'Confirm and sign in',
@@ -208,6 +220,9 @@ window.__ModuleLoader__.load({
           font-weight: 600;
           line-height: normal;
         }
+        .dshEnterpriseLoginIntro { margin: 0 0 24px; font-size: 14px; line-height: 1.6; color: var(--dsw-alias-label-secondary); }
+        .dshEnterpriseLoginHelp { margin: 8px 0 0; font-size: 13px; line-height: 1.6; color: var(--dsw-alias-label-secondary); }
+        .dshEnterprisePendingCopy { flex: 1; }
         .dshEnterpriseManagedModels { margin: 16px 0; }
         .dshEnterprise h3 {
           margin: 0 0 8px;
@@ -1047,6 +1062,7 @@ window.__ModuleLoader__.load({
               type: 'url',
               inputMode: 'url',
               autoComplete: 'url',
+              'aria-describedby': 'dsh-enterprise-platform-help',
               placeholder: 'https://bisheng.example.com',
               value: base,
               onChange: (event) => {
@@ -1054,14 +1070,17 @@ window.__ModuleLoader__.load({
                 rememberBase(event.target.value)
               }
             })),
+          h('p', { id: 'dsh-enterprise-platform-help', className: 'dshEnterpriseLoginHelp' }, t('platformHelp')),
           state?.secureStorageAvailable === false
             ? h('p', { className: 'dshEnterpriseError' }, t('secureUnavailable'))
             : h(React.Fragment, null,
               state?.phase === 'authorizing'
                 ? h('div', { className: 'dshEnterprisePending', role: 'status', 'aria-live': 'polite' },
-                  h('span', null, t('loggingIn')),
+                  h('div', { className: 'dshEnterprisePendingCopy' },
+                    h('span', null, t('loggingIn')),
+                    h('p', { className: 'dshEnterpriseLoginHelp' }, t('authorizationHelp'))),
                   h('span', { className: 'dshEnterprisePendingSpinner', 'aria-hidden': 'true' }, '↻'))
-                : null,
+                : h('p', { className: 'dshEnterpriseLoginHelp' }, t('browserHelp')),
               h('div', { className: 'dshEnterpriseActions' },
                 h('button', {
                   className: 'dshEnterpriseButton login',
@@ -1081,6 +1100,7 @@ window.__ModuleLoader__.load({
 
       const manualFallback = !connected && manualFallbackReady
         ? h('div', { className: 'dshEnterpriseManual' },
+          h('p', { className: 'dshEnterpriseLoginHelp' }, t('manualHelp')),
           h('label', { className: 'dshEnterpriseLabel' },
             t('ticket'),
             h('input', {
@@ -1142,8 +1162,9 @@ window.__ModuleLoader__.load({
 
       return h('section', { className: 'dshEnterprise' },
         h('div', { className: 'dshEnterpriseTitleRow' },
-          h('h2', null, t('title')),
+          h('h2', null, t(connected ? 'title' : 'signInTitle')),
           renderLearnMoreButton(t)),
+        connected ? null : h('p', { className: 'dshEnterpriseLoginIntro' }, t('signInIntro')),
         status,
         connected && renderSlot?.('desktop.account.usage', {
           credits: usageText(state.usage, document.documentElement.lang, t),
