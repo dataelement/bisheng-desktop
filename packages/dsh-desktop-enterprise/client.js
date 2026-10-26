@@ -698,6 +698,36 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function bindEnterpriseModelSync() {
+      let pending, disposed = false
+      const sync = () => {
+        if (disposed || document.visibilityState !== 'visible' || pending) return
+        const controller = new AbortController()
+        const timeout = window.setTimeout(() => controller.abort(), 30_000)
+        pending = { controller, timeout }
+        void api('/api/enterprise.models.refresh', {}, controller.signal).catch(error => {
+          if (!disposed && !controller.signal.aborted) console.warn('[enterprise-models] Catalog refresh failed', error)
+        }).finally(() => {
+          window.clearTimeout(timeout)
+          if (pending?.controller === controller) pending = undefined
+        })
+      }
+      const timer = window.setInterval(sync, 30_000)
+      window.addEventListener('focus', sync)
+      document.addEventListener('visibilitychange', sync)
+      window.addEventListener(ACCOUNT_CHANGED_EVENT, sync)
+      sync()
+      return () => {
+        disposed = true
+        pending?.controller.abort()
+        window.clearTimeout(pending?.timeout)
+        window.clearInterval(timer)
+        window.removeEventListener('focus', sync)
+        document.removeEventListener('visibilitychange', sync)
+        window.removeEventListener(ACCOUNT_CHANGED_EVENT, sync)
+      }
+    }
+
     async function api(path, body, signal) {
       const response = await fetch(path, {
         method: body === undefined ? 'GET' : 'POST',
@@ -1177,6 +1207,7 @@ window.__ModuleLoader__.load({
       accountTranslate = t
       ctx.effect(() => ctx.locale.register('settings.enterpriseMarket', { zh: marketZh, en: marketEn }), 'enterprise-market: translations')
       marketTranslate = ctx.locale.bind('settings.enterpriseMarket')
+      ctx.effect(() => bindEnterpriseModelSync(), 'enterprise: foreground model catalog sync')
       ctx.effect(() => bindEnterpriseMarketTab(ctx), 'enterprise-market: account-bound plugins tab')
       ctx.effect(() => {
         const bridge = window.dshDesktopEnterprise
