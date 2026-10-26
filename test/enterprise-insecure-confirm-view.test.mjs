@@ -203,7 +203,7 @@ it('ignores a same-origin login link while browser sign-in is already in progres
   await deliverLoginLink(LOGIN_LINK)
   expect(requests.some(item => item.path === '/api/enterprise.deep-link.inspect')).toBe(true)
   expect(text()).not.toContain('确认为可信来源')
-  expect(text()).not.toContain('确认毕昇平台')
+  expect(text()).not.toContain('确认企业平台')
 })
 
 it('shows a pending spinner without blocking the one-time code', async () => {
@@ -234,12 +234,12 @@ it('shows a pending spinner without blocking the one-time code', async () => {
 
 it.each(['zh', 'en'])('explains the account benefits, platform address and browser handoff in %s', async language => {
   const page = await mountEnterprise(idleAccount(), { language })
-  expect(page.document.querySelector('h2').textContent).toBe(language === 'zh' ? '登录毕昇' : 'Sign in to BISHENG')
+  expect(page.document.querySelector('h2').textContent).toBe(language === 'zh' ? '登录企业账号' : 'Sign in to your enterprise account')
   expect(page.document.querySelector('.dshEnterpriseLoginIntro').textContent).toContain(language === 'zh' ? '企业为你授权' : 'authorized by your organization')
   const field = page.document.querySelector('input[type=url]')
   const help = page.document.getElementById(field.getAttribute('aria-describedby'))
   expect(help.textContent).toContain(language === 'zh' ? '向管理员获取' : 'ask your administrator')
-  expect(page.text()).toContain(language === 'zh' ? '将在浏览器中打开毕昇登录页' : 'opens the BISHENG sign-in page in your browser')
+  expect(page.text()).toContain(language === 'zh' ? '将在浏览器中打开企业平台登录页' : 'opens the enterprise platform sign-in page in your browser')
 })
 
 it.each(['zh', 'en'])('guides browser authorization and the manual-code fallback in %s', async language => {
