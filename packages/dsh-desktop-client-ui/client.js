@@ -517,6 +517,7 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         const bridge = window.dshEnterpriseChat
         if (!bridge) return
+        const appRoot = document.getElementById('root')
         let observedLeading
         const present = () => {
           const rect = panel.current?.getBoundingClientRect()
@@ -539,8 +540,12 @@ window.__ModuleLoader__.load({
           const surfaceOpen = settingsOpen || state.approvalsOpen || state.accountDialogOpen
           const remote = surfaceOpen && state.settingsProtocolVersion === 1 && settingsSurface
           const palette = hostPalette()
-          void bridge.present({ visible: (remote ? state.connected && remote.bounds.width > 0 && remote.bounds.height > 0 : mode === 'chat' && !surfaceOpen), ...(remote ? { settings: remote.section } : {}), ...(palette ? { palette } : {}), bounds: remote ? remote.bounds : { x, y, width: Math.max(0, rect.right - x), height: Math.max(0, rect.y + rect.height - y) }, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light', locale: locale.getSnapshot().active === 'zh' ? 'zh' : 'en' }).catch(() => {})
+          void bridge.present({ visible: appRoot?.inert ? false : (remote ? state.connected && remote.bounds.width > 0 && remote.bounds.height > 0 : mode === 'chat' && !surfaceOpen), ...(remote ? { settings: remote.section } : {}), ...(palette ? { palette } : {}), bounds: remote ? remote.bounds : { x, y, width: Math.max(0, rect.right - x), height: Math.max(0, rect.y + rect.height - y) }, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light', locale: locale.getSnapshot().active === 'zh' ? 'zh' : 'en' }).catch(() => {})
         }
+        // The native view follows the host's modal interaction boundary.
+        // Onboarding makes #root inert while its dialog lives in a body portal.
+        const interaction = new MutationObserver(present)
+        if (appRoot) interaction.observe(appRoot, { attributes: true, attributeFilter: ['inert'] })
         const resize = new ResizeObserver(present)
         if (panel.current) resize.observe(panel.current)
         const sidebar = document.querySelector('[data-dsh-sidebar-root]')
@@ -556,7 +561,7 @@ window.__ModuleLoader__.load({
         window.addEventListener('resize', present)
         present()
         return () => {
-          resize.disconnect(); chromeLayout.disconnect(); theme.disconnect(); unsubscribeLocale(); window.removeEventListener('resize', present)
+          interaction.disconnect(); resize.disconnect(); chromeLayout.disconnect(); theme.disconnect(); unsubscribeLocale(); window.removeEventListener('resize', present)
         }
       }, [mode, settingsOpen, state.approvalsOpen, state.accountDialogOpen, settingsSurface, state.connected, state.settingsProtocolVersion, locale])
       React.useEffect(() => () => {

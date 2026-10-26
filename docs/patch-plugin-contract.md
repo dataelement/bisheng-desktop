@@ -2,6 +2,12 @@
 
 适用于 DSH Desktop 对 Harness 的宿主定制，以及为这些定制维护的第三方补丁。本文是跨目录规则的唯一维护位置；包加载和补丁重放的具体要求分别见 `packages/AGENTS.md`、`patches/AGENTS.md`。preload 能否直接改页面 DOM 的判定见 `src/preload/AGENTS.md`，不在本文重复。
 
+### 首次引导与原生 Chat 的展示归属（2026-10-26）
+
+引导使用 body portal 展示，并通过 `#root.inert` 管理宿主背景的交互。Chat 使用独立的 Electron `WebContentsView`，因此内容贡献项同时读取这一原生 DOM 状态：主界面 inert 时向宿主发送 `visible: false`，恢复后重新计算 Chat / 设置页的展示状态与原有坐标。引导在 layout effect 建立该边界；内容贡献项首次挂载读取现值，随后仅观察 root 的 inert 属性，卸载时释放 observer。设置、审批和账号弹窗继续沿用各自的可见状态。
+
+该修改直接调整自有插件，复用 Harness Modal 和现有宿主 presentation IPC。引导保存失败时保留前景与重试入口，成功后释放边界；跳转模型设置时 Chat 继续保持隐藏。行为回归见 `test/desktop-modes-ui.test.mjs`，覆盖启动顺序、尺寸变化、确认成功/失败、设置交接、返回用户与卸载清理。
+
 ### 输入候选菜单的滚动归属（2026-10-21）
 
 Harness 0.2.0-rc.2 的 `dsh-client-ui-input-trigger` 将 pointer hover 与 keyboard move 归入同一个 highlight，原视图对每次变化调用 `scrollIntoView`。鼠标悬停底部部分可见的候选时会推动列表，调用还可能滚动外层会话容器。修复直接在 reducer 的 highlight 上记录可选的 `origin`，悬停更新高亮，键盘导航按候选与列表的可见边界调整该列表的 `scrollTop`。初始候选仍按边界检查，菜单的原有高度计算、主题、溢出渐隐和滚轮行为保持。
