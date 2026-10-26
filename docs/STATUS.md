@@ -1,3 +1,12 @@
+## 2026-10-26 — 首次引导与聊天输入区显示层级修复
+
+- 根因：引导将宿主 `#root` 设为 inert，原生 Chat WebContentsView 仍按聊天模式显示，覆盖 body portal 中的引导卡片与遮罩。
+- 修复：内容贡献项读取并订阅 root 的 inert 状态，统一控制原生视图可见性；引导在 layout effect 建立交互边界。关闭后恢复原视图与草稿，跳转模型设置期间保持 Chat 隐藏，保存失败保留引导与重试入口。
+- 基线：已核对并快进至 `dataelement/bisheng-work:V1.2.0` 的 `38ba2db29352d6cea8b2b61fedcce30bbdf1be1e`；工作目录 `.worktrees/bisheng-work-capabilities-v120-integration`，修复分支 `codex/v120-onboarding-view-order`，实际 Harness `0.2.1-rc.2`。本问题属于已合并的毕昇 Chat/Work 客户端；早期 `dataelement/dsh-desktop:v0.9.0` 远端分支查询返回 404。
+- 验证：干净 npm ci 和全部兼容补丁重放、类型检查、JS 语法检查、生产构建、差异检查通过；完整回归 305 文件 / 3,010 项通过，4 文件 / 5 项条件跳过。`test/desktop-modes-ui.test.mjs` 新增 5 项组合回归；修改前相同用例有 3 项失败，修复后全部通过。
+- 原生证据：隔离的 macOS Electron 43.0.0 夹具加载真实的两个宿主插件，使用简化 Modal 与测试账号状态，验证真实 WebContentsView 的隐藏、恢复、窗口尺寸变化和设置交接。旧代码在“引导出现后隐藏原生视图”断言失败，修复后 5 个场景通过。Windows 原生安装包与真实账号端到端验收待执行；本轮交付代码修复，安装包随后续发包验证。
+- 证据：主工作区 `outputs/onboarding-view-order-20261026/`。
+
 ## 2026-10-24 — 技能标记与文字垂直居中
 
 - 基线 `V1.2.0@a36ba71de6e5db6f2f242187d2bafc4cbdb045f8`、Harness `0.2.1-rc.2`；v0.9.0 集成参考 worktree 状态为空。
