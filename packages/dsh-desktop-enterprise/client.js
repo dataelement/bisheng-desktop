@@ -1168,10 +1168,6 @@ window.__ModuleLoader__.load({
         'dsh-desktop-enterprise: copy dictionaries'
       )
       ctx.effect(() => ctx.locale.register(SAFETY_NS, safetyCopy), 'enterprise: content safety translations')
-      ctx.effect(() => {
-        if (ctx.locale.getSnapshot().locales.some(locale => locale.id.toLowerCase() === 'ja')) return undefined
-        return ctx.locale.addLanguage({ id: 'ja', label: '日本語', fallback: 'en' })
-      }, 'enterprise: Japanese content safety locale')
       ctx.effect(() => bindContentSafetyLocale(ctx.locale), 'enterprise: current content safety locale')
       const t = ctx.locale.bind(NS)
       accountTranslate = t
