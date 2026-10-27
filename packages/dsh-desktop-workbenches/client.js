@@ -1130,11 +1130,14 @@ window.__ModuleLoader__.load({
             headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id })
           })
           const data = await response.json().catch(() => ({}))
-          if (!response.ok || data.install?.id !== id || data.restartRequired !== true) {
+          if (!response.ok || data.install?.id !== id || !['applied', 'restart-required'].includes(data.application)) {
             throw new Error(typeof data.error === 'string' ? data.error : '企业工作台安装失败。')
           }
-          this.pendingRestart.add(id)
-          this.restartNeeded = true
+          if (data.application === 'restart-required') {
+            this.pendingRestart.add(id)
+            this.restartNeeded = true
+          }
+          await this.readInstalls()
         } finally {
           this.installing = null
           this.publish()
