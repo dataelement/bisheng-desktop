@@ -286,10 +286,10 @@ describe('enterprise content-safety current-locale entry', () => {
     expect(fixture.received.every(entry => !entry.headers.cookie && !JSON.stringify(entry.body).includes('CONTENT_FILTERED'))).toBe(true)
   })
 
-  it.each(['CHAT', 'RESPONSES'])('%s follows actual selectable zh/en/ja and preserves tenant messages', async protocol => {
+  it.each(['CHAT', 'RESPONSES'])('%s follows selectable zh/en and preserves tenant messages', async protocol => {
     const renderer = await fixture.createRenderer()
-    expect(renderer.locale.getSnapshot().locales.map(locale => locale.id)).toContain('ja')
-    for (const language of ['zh', 'en', 'ja']) {
+    expect(renderer.locale.getSnapshot().locales.map(locale => locale.id)).toEqual(['zh', 'en'])
+    for (const language of ['zh', 'en']) {
       renderer.locale.setLocale(language)
       for (const [scenario, code] of [['blocked', 'CONTENT_FILTERED'], ['unavailable', 'CONTENT_CHECK_UNAVAILABLE']]) {
         expect((await fixture.invoke(renderer.cookie(), scenario, protocol)).failure).toMatchObject({
@@ -305,7 +305,7 @@ describe('enterprise content-safety current-locale entry', () => {
   it('publishes active selection synchronously while Host preference persistence is unresolved', async () => {
     const writes = []
     const durableHost = { subscribe() { return () => {} }, getSnapshot() { return { value: {} } }, set(key, value) { writes.push([key, value]); return new Promise(() => {}) } }
-    const renderer = await fixture.createRenderer({ durableHost })
+    const renderer = await fixture.createRenderer({ durableHost, existingJapanese: true })
     expect(writes).toHaveLength(0)
     renderer.locale.setLocale('ja')
     expect((await fixture.invoke(renderer.cookie())).failure.message).toBe(expected('CONTENT_FILTERED', 'ja'))
@@ -314,7 +314,7 @@ describe('enterprise content-safety current-locale entry', () => {
 
   it('keeps concurrent authenticated requests in separate locale contexts', async () => {
     const renderers = await Promise.all(['zh', 'en', 'ja'].map(async language => {
-      const renderer = await fixture.createRenderer()
+      const renderer = await fixture.createRenderer({ existingJapanese: language === 'ja' })
       renderer.locale.setLocale(language)
       return { renderer, language }
     }))
@@ -325,7 +325,7 @@ describe('enterprise content-safety current-locale entry', () => {
   })
 
   it('ignores malformed, oversized, untrusted, duplicate and other-authority display cookies', async () => {
-    const renderer = await fixture.createRenderer()
+    const renderer = await fixture.createRenderer({ existingJapanese: true })
     renderer.locale.setLocale('ja')
     const messages = { CONTENT_FILTERED: expected('CONTENT_FILTERED', 'ja'), CONTENT_CHECK_UNAVAILABLE: expected('CONTENT_CHECK_UNAVAILABLE', 'ja') }
     const badValues = ['%invalid', 'x'.repeat(2049), encoded(messages, 'not-an-owner'),
@@ -349,11 +349,12 @@ describe('enterprise content-safety current-locale entry', () => {
   it('unloads and reloads real Cordis fibers without stale dictionaries, language ownership or duplicate subscriptions', async () => {
     const renderer = await fixture.createRenderer()
     for (let index = 0; index < 3; index++) {
-      renderer.locale.setLocale('ja')
-      expect((await fixture.invoke(renderer.cookie())).failure.message).toBe(expected('CONTENT_FILTERED', 'ja'))
+      expect(renderer.locale.getSnapshot().locales.map(locale => locale.id)).toEqual(['zh', 'en'])
+      renderer.locale.setLocale('en')
+      expect((await fixture.invoke(renderer.cookie())).failure.message).toBe(expected('CONTENT_FILTERED', 'en'))
       await renderer.deactivate()
       expect(renderer.cookie().includes(fixture.name + '=')).toBe(false)
-      expect(renderer.locale.getSnapshot().locales.map(locale => locale.id)).not.toContain('ja')
+      expect(renderer.locale.getSnapshot().locales.map(locale => locale.id)).toEqual(['zh', 'en'])
       await renderer.activate()
     }
   })
@@ -383,7 +384,7 @@ describe('queued current-locale through the public SessionController and Agent',
     ('%s captures the later ja request for %s instead of its older active driver locale', async (protocol, scenario) => {
       await fixture.dispose()
       fixture = await createFixture({ queueProtocol: protocol })
-      const renderer = await fixture.createRenderer()
+      const renderer = await fixture.createRenderer({ existingJapanese: true })
       renderer.locale.setLocale('zh')
       expect((await fixture.enqueue(renderer.cookie(), 'first-unique-request')).accepted).toBe(true)
       await fixture.firstStarted

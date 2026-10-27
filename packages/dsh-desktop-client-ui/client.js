@@ -6,7 +6,7 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
 
     const React = require('react')
-    const { Menu, MenuItemButton, Modal, Button } = require('@deepseek-ai/dsh-client-ui-primitives')
+    const { Menu, MenuItemButton, Modal, Button, ReferenceIconRegular } = require('@deepseek-ai/dsh-client-ui-primitives')
 
     // Paths are copied from build/bisheng-logo-mark.svg. Keeping the browser
     // occupant self-contained makes it replayable when Harness loads plugins
@@ -254,8 +254,8 @@ window.__ModuleLoader__.load({
 
     const MODES_NS = 'desktop.chatWork'
     const MODES_COPY = {
-      zh: { welcomeMessage: '来一起创造', welcome: '欢迎来到', newConversation: '新建对话', navigation: '导航', moreNavigation: '更多', recent: '对话', projects: '工作区', all: '所有会话', results: '搜索结果', cloud: '云端聊天', local: '本地工作', recentEmpty: '暂无最近会话', recentSearchEmpty: '当前列表没有匹配的会话', chat: '聊天', work: '工作', label: '聊天与工作', loading: '正在连接企业聊天…', error: '企业聊天连接失败，请重试', retry: '重新连接', refresh: '刷新聊天记录', historyLoading: '正在加载聊天记录…', historyError: '加载失败，点击重试', empty: '暂无聊天记录', more: '加载更多', newChat: '新聊天', signIn: '登录企业账号', justNow: '刚刚' },
-      en: { welcomeMessage: "Let's Create Together", welcome: 'Welcome', newConversation: 'New conversation', navigation: 'Navigation', moreNavigation: 'More', recent: 'Conversations', projects: 'Workspaces', all: 'All conversations', results: 'Search results', cloud: 'Cloud chat', local: 'Local work', recentEmpty: 'No recent conversations', recentSearchEmpty: 'No matches in the current list', chat: 'Chat', work: 'Work', label: 'Chat and Work', loading: 'Connecting to enterprise Chat…', error: 'Could not connect to enterprise Chat. Try again.', retry: 'Reconnect', refresh: 'Refresh Chat history', historyLoading: 'Loading history…', historyError: 'Loading failed. Retry', empty: 'No chats yet', more: 'Load more', newChat: 'New chat', signIn: 'Enterprise account', justNow: 'Now' }
+      zh: { welcomeMessage: '来一起创造', welcome: '欢迎来到', newConversation: '新建对话', navigation: '导航', moreNavigation: '更多', recent: '对话', projects: '工作区', all: '所有会话', results: '搜索结果', cloud: '云端聊天', local: '本地工作', recentEmpty: '暂无最近会话', recentSearchEmpty: '当前列表没有匹配的会话', chat: '聊天', work: '工作', label: '聊天与工作', loading: '正在连接企业聊天…', error: '企业聊天连接失败，请重试', retry: '重新连接', refresh: '刷新聊天记录', historyLoading: '正在加载聊天记录…', historyError: '加载失败，点击重试', empty: '暂无聊天记录', more: '加载更多', newChat: '新聊天', signIn: '登录企业账号', signInTitle: '登录后使用聊天', signInDescription: '聊天由企业平台提供。登录后，即可使用平台中的模型和对话记录。', continueWork: '继续使用工作', close: '关闭', justNow: '刚刚' },
+      en: { welcomeMessage: "Let's Create Together", welcome: 'Welcome', newConversation: 'New conversation', navigation: 'Navigation', moreNavigation: 'More', recent: 'Conversations', projects: 'Workspaces', all: 'All conversations', results: 'Search results', cloud: 'Cloud chat', local: 'Local work', recentEmpty: 'No recent conversations', recentSearchEmpty: 'No matches in the current list', chat: 'Chat', work: 'Work', label: 'Chat and Work', loading: 'Connecting to enterprise Chat…', error: 'Could not connect to enterprise Chat. Try again.', retry: 'Reconnect', refresh: 'Refresh Chat history', historyLoading: 'Loading history…', historyError: 'Loading failed. Retry', empty: 'No chats yet', more: 'Load more', newChat: 'New chat', signIn: 'Sign in to your enterprise account', signInTitle: 'Sign in to use Chat', signInDescription: 'Chat is provided by your enterprise platform. Sign in to use its models and conversations.', continueWork: 'Continue in Work', close: 'Close', justNow: 'Now' }
     }
     /**
      * Host tokens the embedded enterprise document reuses. It cannot read the host's CSS, so the
@@ -316,16 +316,16 @@ window.__ModuleLoader__.load({
 
     /** One renderer-owned mode/history controller shared by the content and sidebar slots. */
     function createChatNavigation(ctx) {
-      let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, approvalsOpen: false, accountDialogOpen: false, settingsSurface: undefined, pageId: undefined, navigation: undefined, workLanding: false, panelOpen: false, activePanelId: null }
+      let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, signInPromptOpen: false, approvalsOpen: false, accountDialogOpen: false, settingsSurface: undefined, pageId: undefined, navigation: undefined, workLanding: false, panelOpen: false, activePanelId: null }
       const listeners = new Set()
       let active = false, revision = 0, historyRequest = 0, timer, lastHistory = 0
       const publish = (patch) => { value = { ...value, ...patch }; listeners.forEach(fn => fn()) }
       const select = (mode) => {
         if (mode === 'chat' && !value.connected) {
-          window.dispatchEvent(new CustomEvent('dsh-desktop:open-settings-section', { detail: { id: 'enterprise-account' } }))
+          publish({ signInPromptOpen: true })
           return false
         }
-        publish({ mode, pageId: undefined })
+        publish({ mode, pageId: undefined, signInPromptOpen: false })
         return true
       }
       const refreshHistory = async (more = false) => {
@@ -364,7 +364,7 @@ window.__ModuleLoader__.load({
           const signedIn = next.connected && !value.connected
           const conversationChanged = next.conversationId !== value.conversationId
           if (identityChanged || !next.connected) { historyRequest++; publish({ items: [], page: 0, hasMore: false, historyPhase: 'idle' }); lastHistory = 0 }
-          publish({ ...next, pageId: next.navigation?.entries.find(entry => entry.active)?.id, mode: next.connected ? signedIn ? 'chat' : value.mode : 'work' })
+          publish({ ...next, signInPromptOpen: next.connected ? false : value.signInPromptOpen, pageId: next.navigation?.entries.find(entry => entry.active)?.id, mode: next.connected ? signedIn ? 'chat' : value.mode : 'work' })
           if (signedIn) window.dispatchEvent(new CustomEvent('dsh-desktop:close-settings'))
           if (next.connected && next.phase === 'ready' && (conversationChanged || Date.now() - lastHistory > 30000)) void refreshHistory()
         } catch { if (active && request === revision) publish({ phase: 'error' }) }
@@ -373,6 +373,11 @@ window.__ModuleLoader__.load({
         snapshot: () => value,
         subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn) },
         select, open, refreshHistory,
+        dismissSignIn() { publish({ signInPromptOpen: false }) },
+        signIn() {
+          publish({ signInPromptOpen: false })
+          window.dispatchEvent(new CustomEvent('dsh-desktop:open-settings-section', { detail: { id: 'enterprise-account' } }))
+        },
         async openPage(id) {
           if (!value.connected || !value.navigation?.entries.some(entry => entry.id === id)) return
           ctx.layout.selectPanel(null)
@@ -427,7 +432,7 @@ window.__ModuleLoader__.load({
           const unsubscribeSessions = ctx.sessions.list.subscribe(workState)
           const unsubscribeChat = window.dshEnterpriseChat?.subscribe?.((next) => {
             revision++
-            publish({ ...next, pageId: next.navigation?.entries.find(entry => entry.active)?.id })
+            publish({ ...next, signInPromptOpen: next.connected ? false : value.signInPromptOpen, pageId: next.navigation?.entries.find(entry => entry.active)?.id })
           })
           workState(); panel()
           window.addEventListener('dsh-desktop:enterprise-account-changed', account)
@@ -579,6 +584,12 @@ window.__ModuleLoader__.load({
         if (select(next)) tabs.current[next]?.focus()
       }
       return React.createElement('div', { className: 'dshModes' },
+        state.signInPromptOpen && React.createElement(Modal, {
+          open: true, title: t('signInTitle'), closeLabel: t('close'), onClose: navigation.dismissSignIn,
+          footer: React.createElement('div', { className: 'dshChatSignInActions' },
+            React.createElement(Button, { type: 'button', variant: 'outline', onClick: navigation.dismissSignIn }, t('continueWork')),
+            React.createElement(Button, { type: 'button', variant: 'primary', onClick: navigation.signIn }, t('signIn')))
+        }, React.createElement('p', { className: 'dshChatSignInDescription' }, t('signInDescription'))),
         showModePicker && React.createElement('header', { className: 'dshModesHeader' },
           React.createElement('div', { role: 'tablist', 'aria-label': t('label'), className: 'dshModesTabs', onKeyDown: keyDown },
             ...['chat', 'work'].map((key) => React.createElement('button', { key, id: `dsh-mode-${key}`, type: 'button', role: 'tab', 'aria-selected': mode === key, 'aria-controls': `dsh-panel-${key}`, tabIndex: mode === key ? 0 : -1, ref: (node) => { tabs.current[key] = node }, onClick: (event) => { setAnimateWork(event.detail > 0 && key === 'work'); select(key) } }, t(key))))),
@@ -597,6 +608,9 @@ window.__ModuleLoader__.load({
       skills: 'M5 3h14v18H5V3Zm3 4h8M8 11h8M8 15h5',
       square: 'M3 4h6v6H3V4Zm12 0h6v6h-6V4ZM3 14h6v6H3v-6Zm12 0h6v6h-6v-6',
       more: 'M5 12h.01M12 12h.01M19 12h.01'
+    }
+    function ResourceIcon({ id, size = 16 }) {
+      return React.createElement(ReferenceIconRegular, { kind: { skills: 'skill', tools: 'tool', knowledge: 'folder' }[id], size })
     }
     function NavigationIcon({ id, size = 16 }) {
       return React.createElement('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: id === 'more' ? 3 : 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
@@ -633,6 +647,8 @@ window.__ModuleLoader__.load({
           anchor: renderAction({ id: 'more', label: t('moreNavigation'), icon: React.createElement(NavigationIcon, { id: 'more' }), active: Boolean(activeId) || (state.mode === 'work' && morePanels.some(panel => panel.id === state.activePanelId)), expanded: menuOpen, onClick: () => { if (!wide) expandSidebar(); setMenuOpen(open => !open) } })
         }))
     }
+    // Work overlays use viewport coordinates. Isolate stacking while keeping
+    // their fixed-position containing block attached to the viewport.
     function installDesktopModes(ctx) {
       const navigation = createChatNavigation(ctx)
       ctx.effect(() => ctx.locale.register(MODES_NS, MODES_COPY), 'desktop: Chat and Work locale')
@@ -650,7 +666,7 @@ window.__ModuleLoader__.load({
           .dshModesTabs button[aria-selected=true]{background:var(--dsw-alias-interactive-bg-hover-solid);color:var(--dsw-alias-label-primary)}
           .dshModes button:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
           .dshModeBody{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}.dshModeBody[hidden]{display:none}
-          .dshWorkContent{display:grid;grid-template-rows:minmax(0,1fr);contain:layout paint}.dshWorkContent[hidden]{display:none}
+          .dshWorkContent{display:grid;grid-template-rows:minmax(0,1fr);isolation:isolate}.dshWorkContent[hidden]{display:none}
           .dshWorkContent[data-reveal-controls=true]:not([hidden]) [data-dsh-hero-controls]{clip-path:inset(-8px -8px -8px -8px);transition:clip-path 180ms cubic-bezier(.23,1,.32,1)}
           @starting-style{.dshWorkContent[data-reveal-controls=true]:not([hidden]) [data-dsh-hero-controls]{clip-path:inset(-8px 100% -8px -8px)}}
           @media(prefers-reduced-motion:reduce){.dshWorkContent[data-reveal-controls=true] [data-dsh-hero-controls]{transition:none;clip-path:none}}
@@ -663,6 +679,8 @@ window.__ModuleLoader__.load({
           .dshHistoryRow:is(:hover,:focus-visible) span{text-overflow:clip}.dshHistoryRow:is(:hover,:focus-visible) time{display:none}
           .dshHistoryNotice{padding:8px;font:inherit;font-size:12px;color:var(--dsw-alias-label-secondary);background:transparent;border:0;text-align:left}.dshHistoryNotice:is(button){cursor:pointer}
           .dshSharedCollection button:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}
+          .dshChatSignInDescription{margin:0;font-size:14px;line-height:1.6;color:var(--dsw-alias-label-secondary)}
+          .dshChatSignInActions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
           .dshChatStatus{margin:auto;text-align:center;font-size:14px;color:var(--dsw-alias-label-secondary)}
           .dshChatStatus button{font:inherit;color:inherit;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:8px 16px;cursor:pointer}
         `
@@ -813,7 +831,7 @@ window.__ModuleLoader__.load({
         for (const space of spaces) {
           if (present.has(space.id)) continue
           const ref = JSON.stringify({ id: space.id, name: space.name })
-          if (!input.insertReference({ source: KNOWLEDGE_REFERENCE_SOURCE, ref, label: space.name, clipboardText: `@${space.name}` }, captureInsertion())) throw new Error('Knowledge selection changed. Please try again.')
+          if (!input.insertReference({ source: KNOWLEDGE_REFERENCE_SOURCE, appearance: 'folder', ref, label: space.name, clipboardText: `@${space.name}` }, captureInsertion())) throw new Error('Knowledge selection changed. Please try again.')
           present.add(space.id)
         }
         used.add(inputFor(sessionId).input)
@@ -926,7 +944,7 @@ window.__ModuleLoader__.load({
       ctx.effect(() => ctx.locale.register(RESOURCE_NS, RESOURCE_COPY), 'desktop Work resources locale')
       const t = ctx.locale.bind(RESOURCE_NS)
       const available = session => ctx.sessions.subagentAddress(session.sessionId) === undefined
-      ctx.commandUi.register({ name: 'skills', label: () => t('skills'), description: () => t('skillsHint'), icon: props => React.createElement(NavigationIcon, { ...props, id: 'skills' }), available,
+      ctx.commandUi.register({ name: 'skills', label: () => t('skills'), description: () => t('skillsHint'), icon: props => React.createElement(ResourceIcon, { ...props, id: 'skills' }), available,
         ui: { kind: 'popupSelect', searchMode: 'fuzzy-label',
           options: ({ sessionId }, signal) => ctx.sessions.using(sessionId, { source: 'workSkillPicker', signal }, async () => {
             const catalog = await workSkillRequest({ operation: 'catalog' }, signal)
@@ -936,7 +954,7 @@ window.__ModuleLoader__.load({
             return result.value.skills.map(skill => ({
               id: JSON.stringify({ name: skill.name, label: labels.get(skill.name) || skill.name, enterprise: labels.has(skill.name) }),
               label: labels.get(skill.name) || skill.name,
-              badgeIcon: labels.has(skill.name) ? props => React.createElement(NavigationIcon, { ...props, id: 'skills', size: 12 }) : undefined,
+              badgeIcon: labels.has(skill.name) ? props => React.createElement(ResourceIcon, { ...props, id: 'skills', size: 12 }) : undefined,
               detail: skill.description
             }))
           }),
@@ -946,11 +964,11 @@ window.__ModuleLoader__.load({
             const input = ctx.conversation.input.for(scope)
             scope.bail(scope, 'slash/input-consume-token', { guard: { kind: 'bare-token', token: '/skills' } })
             const state = input.state.getSnapshot()
-            const applied = input.insertReference({ source: SKILL_REFERENCE_SOURCE, ref: option.id, label: option.label, clipboardText: `/${option.label}` }, { start: 0, end: 0, draftRev: state.draftRev })
+            const applied = input.insertReference({ source: SKILL_REFERENCE_SOURCE, appearance: 'skill', ref: option.id, label: option.label, clipboardText: `/${option.label}` }, { start: 0, end: 0, draftRev: state.draftRev })
             if (!applied) throw new Error('Finish editing the current command, then choose a skill.')
           }
         } })
-      ctx.commandUi.register({ name: 'tools', label: () => t('tools'), description: () => t('toolsHint'), icon: props => React.createElement(NavigationIcon, { ...props, id: 'tools' }), available,
+      ctx.commandUi.register({ name: 'tools', label: () => t('tools'), description: () => t('toolsHint'), icon: props => React.createElement(ResourceIcon, { ...props, id: 'tools' }), available,
         ui: { kind: 'popupSelect', searchMode: 'fuzzy-label',
           options: async (_session, signal) => {
             const catalog = await workToolRequest({ operation: 'catalog' }, signal)
@@ -963,10 +981,10 @@ window.__ModuleLoader__.load({
             scope.bail(scope, 'slash/input-consume-token', { guard: { kind: 'bare-token', token: '/tools' } })
             const state = input.state.getSnapshot()
             if (state.occurrences.some(item => item.source === TOOL_REFERENCE_SOURCE && decodeToolReference(item.ref).name === decodeToolReference(option.id).name)) return
-            if (!input.insertReference({ source: TOOL_REFERENCE_SOURCE, ref: option.id, label: option.label, clipboardText: `/${option.label}` }, { start: 0, end: 0, draftRev: state.draftRev })) throw new Error('Finish editing the current command, then choose a tool.')
+            if (!input.insertReference({ source: TOOL_REFERENCE_SOURCE, appearance: 'tool', ref: option.id, label: option.label, clipboardText: `/${option.label}` }, { start: 0, end: 0, draftRev: state.draftRev })) throw new Error('Finish editing the current command, then choose a tool.')
           }
         } })
-      ctx.commandUi.register({ name: 'knowledge', label: () => t('knowledge'), description: () => t('knowledgeHint'), icon: props => React.createElement(NavigationIcon, { ...props, id: 'knowledge' }), available,
+      ctx.commandUi.register({ name: 'knowledge', label: () => t('knowledge'), description: () => t('knowledgeHint'), icon: props => React.createElement(ResourceIcon, { ...props, id: 'knowledge' }), available,
         ui: { kind: 'action', run: ({ sessionId }) => controls.get(sessionId)?.open() } })
       ctx.slots.inject('conversation.input.accessory', () => ctx.slots.register({ name: 'conversation.input.accessory', id: 'desktop-work-resources', order: 20, inject: sessionId => ({ sessionId, controls, t, knowledge }) }, WorkResourceAccessory))
       ctx.effect(() => {

@@ -31,6 +31,7 @@ const LOCAL_PATHS = Object.freeze({
   inspectDeepLink: '/api/enterprise.deep-link.inspect',
   confirmDeepLink: '/api/enterprise.deep-link.confirm',
   refresh: '/api/enterprise.refresh',
+  refreshModels: '/api/enterprise.models.refresh',
   logout: '/api/enterprise.logout'
 })
 
@@ -386,6 +387,13 @@ export function apply(ctx) {
       base: String(body?.base ?? ''),
       ...(body?.confirmInsecurePrivateHttp === true ? { confirmInsecurePrivateHttp: true } : {})
     })
+  })
+  registerJsonRoute(connection, LOCAL_PATHS.refreshModels, ['POST'], async (request) => {
+    await readJson(request)
+    if (!broker) return disabledState()
+    const state = await brokerJson('/v1/models/refresh', {})
+    ingestEnterpriseState(state)
+    return state
   })
   registerJsonRoute(connection, LOCAL_PATHS.refresh, ['POST'], async (request) => {
     await readJson(request)
