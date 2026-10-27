@@ -1,4 +1,21 @@
+## 2026-10-27 — Work 消息展示工具名称
+
+- 基线：远端 `dataelement/bisheng-work:V1.2.0@f6b12ae267d857a93c8d53fe3baf0887812c0ce0`；独立分支 `codex/v120-tool-message-label`，工作目录 `.worktrees/bisheng-work-v120-tool-message-label`。已安装 Harness `0.2.1-rc.2`；v0.9.0 参考集成工作树检查时为干净状态。
+- 根因与实现：工具序列化原先仅保留 ID。现在同一消息正文携带准确工具身份与选择时的名称快照，通过 Harness `uiConversation.userText` 和 `conversation.user.text.node` 展示名称与工具图标。模型继续读取工具身份，发送前沿用当前账号的可用性验证。名称按 JSON 字符串编码，渲染按 React 文本处理。
+- 历史行为：新消息持久化后可独立还原名称，重新打开、退出登录或切换账号均使用原名称快照；编辑正文后重发保留已有身份与名称。旧消息仅含 ID，显示本地化“已选工具”。历史记录保持原文，真实执行仍沿用服务端权限和审批。
+- 验证：相关 5 个测试文件共 47 项通过；类型检查和生产构建通过。新增 `test/work-tool-message.test.mjs` 运行已安装 Harness 的提交、文本评估与渲染实现，覆盖名称快照、历史重载、正文编辑重发、多工具、重复引用、特殊字符、长名称、异常文本、权限失败、旧消息中英文展示和卸载重装；`test/work-tool-composer.test.mjs` 更新序列化合同，并保留身份与取消回归。完整回归 3,034 项通过、5 项条件跳过（306 个文件通过、4 个跳过）；首次受本机端口权限限制，使用允许本机测试服务的权限完整重跑后通过。macOS Electron 43.0.0 真实组件检查覆盖 390/900 宽度、深浅主题共 4 组及持久化刷新，截图已检查。组件目录校验采用模拟响应。依赖复用已安装的锁定版本，生产构建重新生成运行资源。
+- 证据位于主工作区 `outputs/tool-message-label-20261027/`。本轮交付源码与 PR；真实账号工具调用、安装后的完整会话流程及 Windows 验收待后续执行。
+
+## 2026-10-27 — 侧栏恢复工作区名称
+
+- 侧栏工作区标题中文恢复为“工作区”，英文统一为“Workspaces”，直接维护宿主 locale 文案。
+- 基线：已核对远端 `dataelement/bisheng-work:V1.2.0@c2d71dffab1328ab723b4dad44992b6293d2f485`；工作目录 `.worktrees/bisheng-work-v120-workbench-settings-locale`，分支 `codex/v120-workspace-label`；实际安装 Harness `0.2.1-rc.2`。v0.9.0 集成参考目录状态为空。
+- 验证：JS 语法、类型检查、相关 30 项回归和生产构建通过；完整回归 3,012 项通过、5 项跳过，1 项 Office 转换超时后单独重跑所属文件 8 项全部通过。初次受限环境测试出现本机端口 EPERM，完整回归结果以正常本机权限批次为准。
+- macOS arm64 测试应用通过包内 Harness、原生模块、699 个依赖清单和 Office 转换检查；包内客户端文件与源码逐字节一致。Apple Development 签名测试包 DMG/ZIP 归档与深度签名校验通过，安装后的界面由用户手动验收。证据位于主工作区 `outputs/workspace-label-20261027/`。
+
 ## 2026-10-26 — 首次引导与聊天输入区显示层级修复
+
+- 2026-10-27 合并复核（PR #85）：同步目标 `V1.2.0@2171c5d64de8ffebeb6a3042878bc4a1d31da679`，保留双方新增文档章节，沿用现有功能实现。实际 Harness `0.2.1-rc.2`；干净依赖安装与兼容处理、类型检查、生产构建和差异检查通过，完整回归 3068 项通过、5 项条件跳过。 本 PR 的隔离 Electron 验证脚本通过，真实账号验收沿用原记录边界。 目标后续合入 #79 后，调整状态记录排列，并复核与 `a4c2928` 自动合并成功。
 
 - 根因：引导将宿主 `#root` 设为 inert，原生 Chat WebContentsView 仍按聊天模式显示，覆盖 body portal 中的引导卡片与遮罩。
 - 修复：内容贡献项读取并订阅 root 的 inert 状态，统一控制原生视图可见性；引导在 layout effect 建立交互边界。关闭后恢复原视图与草稿，跳转模型设置期间保持 Chat 隐藏，保存失败保留引导与重试入口。
@@ -577,6 +594,14 @@ Verification:
 
 - Display-name follow-up: conversation model captions, menu/search names, tooltips and `/model` choices use localized enterprise-model labels when the server supplies a blank name or internal identifier. Original IDs remain in selection requests. Six additional display cases passed (31 model-related tests total). Clean dependency replay, typecheck and production build passed. Full regression: 2,081 passed, 3 skipped, and the same baseline first-abort-reason case failed.
 
+
+## 2026-10-27 — Workbench settings English locale
+
+- Target: `dataelement/bisheng-work:V1.2.0@c2d71dffab1328ab723b4dad44992b6293d2f485`, verified against the remote branch before implementation and delivery. Worktree: `.worktrees/bisheng-work-v120-workbench-settings-locale`, branch `codex/v120-workbench-settings-locale`. Installed Harness `0.2.1-rc.2`, Electron `43.0.0`. The general v0.9.0 integration checkout was inspected and clean; this fix targets the BISHENG Work settings shown in the report. The remote DSH `v0.9.0` lookup returned no branch ref.
+- Root cause: the settings tab label, heading, switch label/accessibility name and disabled-state hint used literal Chinese strings. The settings panel also lacked a locale subscription.
+- Implementation: register paired Chinese/English settings copy through the host locale service, resolve the tab label through that service, and subscribe the settings panel to active-language changes. The existing enterprise descriptions refresh with the panel.
+- Automated verification: 222 targeted workbench/client/download tests, JavaScript syntax, TypeScript and diff checks passed. The four new settings cases exercise both switch states and enterprise market configurations, English → Chinese → English, accessible labels and locale invalidation.
+- Complete regression: 3,016 passed, 5 skipped, and one Office Safe Mode readiness failure during the concurrent run. The isolated rerun of all 8 Office runtime cases passed. Production build and packaged Harness/bootstrap/native-module checks (699 dependency manifests), Office authoring and DOCX/PPTX/XLSX PDF conversion passed. The packaged workbench client matches the source byte-for-byte (SHA-256 `35a585ccb3db8c9c23c8aa8f42032a2e2e101fff3a475d587969f192e34b4137`). macOS arm64 development DMG/ZIP packaging and DMG checksum verification passed. Artifacts and logs: `outputs/workbench-settings-locale-20261027/`. Native visual acceptance belongs to the user. Source fix: `b771749`, delivered on `codex/v120-workbench-settings-locale` for review against `V1.2.0`.
 
 ## 2026-10-27 — Session action tooltip positioning
 
