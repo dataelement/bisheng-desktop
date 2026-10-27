@@ -20,6 +20,14 @@ Harness 0.2.0-rc.2 的 `dsh-client-ui-input-trigger` 将 pointer hover 与 keybo
 
 手机桌面配对页的已认证 `/desktop/status` 响应携带当前语言，页面沿用现有轮询检测变化并重新请求 HTML；连接模式切换期间延后刷新，不重建手机桥、隧道、配对 token 或 PIN。旧客户端忽略新增响应字段。原账号菜单继续由官方 slot 和 Harness locale 控制；preload 仅同步未加载账号插件时的既有手机按钮，不新增 DOM 入口。网页自身语言机制不受影响。
 
+### Work 工具消息的名称与模型身份（Harness 0.2.1-rc.2，2026-10-27）
+
+桌面工具引用通过发送前的账号可用性校验后，序列化为 `[Selected tool: mcp__bisheng__bisheng_tool_<id>; label: "名称"]`。`label` 使用 JSON 字符串编码，消息持久化保留名称快照与模型需要的工具身份；连接身份继续仅参与发送前校验。名称要求为有内容的单行文本。
+
+宿主插件通过 `uiConversation.userText.register` 注册纯同步解析规则，通过 `conversation.user.text.node` 的 `desktop-tool` keyed slot 呈现名称与现有工具图标。该注册独立于工具菜单和 Skills 服务，历史展示直接读取正文中的名称。旧版 `[Selected tool: <id>]` 记录显示本地化“已选工具”；缺失的历史名称保持未知，账号目录变化仅影响之后的新选择。异常引用保留原始文字，名称作为 React 文本节点处理。模型上下文与存储原文保持工具身份，已有权限和审批继续由发送、执行边界控制。
+
+扩展复用当前 Harness 的公开接口。规则、slot、语言和样式均由插件生命周期管理。回归使用已安装 Harness 的提交、文本评估和渲染实现，覆盖名称持久化、正文修改重发、旧消息、多个引用、特殊字符与卸载重装。
+
 ## 1. 按能力选扩展方式
 
 产品能力和长期维护的桌面表现优先放在宿主代码或插件中；patch 用于修复上游缺陷或补足必要的扩展接缝。插件不能通过隐藏的 DOM 改写、内部方法替换，把实际的上游耦合伪装成无补丁扩展。
@@ -207,6 +215,37 @@ Work 知识空间引用在原生输入的 `plain` 和 `claimed` 两个可编辑�
 ### 技能菜单的复用图标（Harness 0.2.1-rc.2，2026-10-23）
 
 原生 popupSelect 的 `SelectOption.badgeIcon` 接收 option owner 的装饰图标组件，在名称旁以 inline-flex 垂直居中显示；文字 badge 沿用原有上标容器。技能 owner 复用菜单 `NavigationIcon(id=skills)` 的 SVG 路径，尺寸 12px、颜色继承原生次级文字 token；其他调用方保持既有文字 badge 和可访问名称。此接缝仅扩展原生候选行的渲染数据，不改变列表、搜索、选择或序列化。实现与类型由 commands 兼容文件重放，上游支持等价图标字段后切换并移除该变更。
+
+### 企业来源统一 Plugin Manager（Harness 0.2.1-rc.2）
+
+企业插件的安装、启停、卸载入口经过现有 `pluginManager`；设置页仍使用企业目录和配置接口。Manager 增加可选的 `profileManagedBundleSource` 宿主服务接缝：`accepts(target)`、`listBundles()` 和 `change(request)`。来源操作使用 Manager 的 Profile 操作锁、统一 `ChangeResult` 和 changed 事件；未匹配来源继续走原有 Profile 路径。此接缝不是新的 runtime 或第二个管理器。
+
+企业来源由 `dsh-desktop-enterprise/managed-market.js` 实现。清单身份包含当前账号摘要与企业插件 ID，安装使用只存在于后端的一次性票据；旧账号目标及已消费票据拒绝执行。业务校验在串行队列真正执行时再次核对账号。来源后端保留现有发布快照、`.enterprise-generations` 和实例凭据撤销，加载改用下述 Harness 根组合内存层；不把受在线授权控制的插件写进普通 Profile 的 bundles。离线、撤权和账号切换继续通过现有控制器卸载实例。配置与授权自动收敛属于企业来源职责。
+
+加载阶段：企业插件仍从经校验的企业 generation 读取入口，并以该包解析客户端和 bundle；普通 Profile 不新增企业持久投影，Safe Mode 不加载此来源。实例激活失败保留原始诊断并走已有更新回退。Manager 必须保留来源报告的 `applied`，不能套用普通 Profile 的 `no-hmr`；来源清单不返回目录、配置或凭据。
+
+企业工作台仍通过 Broker 获取并核验临时 `.tgz`，安装改为 `pluginManager.installBundle`，启停与卸载使用既有 Manager 路径。临时文件保持到整个操作结束，再释放。回移植 upstream V0.13.0 的 `expectedName` / `expectedVersion` / `replace` 接口形态与 verified backend 能力声明：安装后端在发布前校验包身份，Manager 在接受 bundle 前再次核对；不支持或拒绝校验时不得退回普通 pnpm。页面区分已应用、待重启、覆盖、失败及取消，不能把退出码 0 当成激活成功。
+
+升级到 upstream V0.13.0 时，用上游 verified-install 实现替换这部分回移植，保留企业授权来源接缝，除非上游已提供等价的账号范围生命周期 API。不得直接删除企业目录、授权与凭据撤销边界。企业旧 ZIP/npm 包和账号安装记录不迁移格式；本改动统一管理接口，不合并授权存储与普通 Profile 存储。
+
+回归入口：`test/enterprise-plugin-manager.test.mjs` 验证真实 Manager 方法、来源隔离、单次票据、结果语义与 verified backend；`test/enterprise-market.test.ts` 的隔离子进程运行实际 Plugin Manager + Cordis Loader，覆盖安装、启停、坏版本回退及停止。普通 generation 与开关测试保留原契约。真实企业服务、GUI 和 Windows 安装包需另行验收。
+
+
+### 企业 bundle 的可撤销根组合层（Harness 0.2.1-rc.2）
+
+加载变更覆盖 Profile 组合、后端导入与客户端发现：从已校验的 `.enterprise-generations/<generation>/node_modules/<package>` 读取声明，以该包的 `package.json` URL 为解析基准，通过 Harness 的 `resolvePluginResource` 使用 Node ESM 条件导出解析。普通 Profile 使用此路径；Safe Mode 不提供该接缝。入口解析和内部依赖错误保留原始 cause，控制器继续使用已安装旧版本回退和启停恢复入口。
+
+删除企业 `MarketTree`、独立 group、手工 `packageEntry` 加载和 `createRequire().resolve()`。bundle patches 由标准 `loadOverlayPatches` 读取，插入入口锚定为实际模块 URL，交给 Harness 根 Include；已声明的插件 ID 保持稳定，匿名条目由标准 Loader 分配 ID，重复插入 ID 会明确拒绝，不再随机改写 bundle 身份。patch 的 name 仍是匹配断言。插件直接修改宿主根条目（例如禁用 `compaction-basic`），不再对空树应用补丁。客户端沿用现有 ClientModuleRegistry 的实际模块位置发现机制。
+
+app-boot 增加可选 `profileRuntimeLayers.set/remove` 内存接缝，使用原生 `recomposeCore`、激活审计与回滚。内存层按启用顺序应用在持久 Profile patches 之后，不写 manifest、用户 patch 或 Profile 投影；普通配置重载/HMR 组合保留这些层。移除后使用最新持久层恢复宿主配置，失败不重新添加已撤权层。企业入口自身处于卸载事务时，先撤销凭据并停止自身插件，再排队恢复根配置，避免等待正在等待自己的根事务；排队恢复失败记录日志。
+
+实例 grant 在激活前准备，通过 Cordis 既有 `internal/plugin` 事件绑定到新 fiber context；绝不绑定共享根或可复用 entry context。解绑保留 tombstone，旧实例在新授权后仍不可用。账号、在线授权、Broker、generation 校验和旧版本回退继续由企业适配层负责。
+
+新增子进程行为回归 `test/helpers/enterprise-root-smoke.mjs`，由 `test/enterprise-market.test.ts` 启动：import-only exports、自引用子路径、根替换与恢复、标准客户端 graph/脚本响应、私有依赖、缺少宿主 peer、多个内存层、持久配置重载、坏版本回滚、旧凭据隔离和 owner 卸载。原 isolated Profile/PluginManager 子进程改用真实 root Include；Safe Mode 测试确认不注册内存层。上述不替代浏览器执行挂载、真实企业服务、Windows 和正式安装包验收。
+
+upstream V0.13.0 本身没有企业授权层，合并不会自动替代此接缝。升级时重新验证 app-boot root composition 与 Cordis 事件时序；上游提供等价可撤销层后删除本地补丁并改用官方 API，保留授权与撤权回归。不能保证跨版本无冲突合并。
+
+相关 SDK、community bundle 与 search-market 测试统一改为 root Include fixture；SDK 从同一记录重复挂载改为两个独立记录，另验证重复 ID 被拒绝。缺少服务的断言接受原生激活审计中的 `enterpriseAuth` 诊断，原有搜索选择、用户后续修改和异步清理断言保留。
 
 ### 输入框资源图标（Harness 0.2.1-rc.2，2026-10-27）
 
