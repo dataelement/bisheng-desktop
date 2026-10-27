@@ -1,3 +1,10 @@
+## 2026-10-27 — 侧栏恢复工作区名称
+
+- 侧栏工作区标题中文恢复为“工作区”，英文统一为“Workspaces”，直接维护宿主 locale 文案。
+- 基线：已核对远端 `dataelement/bisheng-work:V1.2.0@c2d71dffab1328ab723b4dad44992b6293d2f485`；工作目录 `.worktrees/bisheng-work-v120-workbench-settings-locale`，分支 `codex/v120-workspace-label`；实际安装 Harness `0.2.1-rc.2`。v0.9.0 集成参考目录状态为空。
+- 验证：JS 语法、类型检查、相关 30 项回归和生产构建通过；完整回归 3,012 项通过、5 项跳过，1 项 Office 转换超时后单独重跑所属文件 8 项全部通过。初次受限环境测试出现本机端口 EPERM，完整回归结果以正常本机权限批次为准。
+- macOS arm64 测试应用通过包内 Harness、原生模块、699 个依赖清单和 Office 转换检查；包内客户端文件与源码逐字节一致。Apple Development 签名测试包 DMG/ZIP 归档与深度签名校验通过，安装后的界面由用户手动验收。证据位于主工作区 `outputs/workspace-label-20261027/`。
+
 ## 2026-10-26 — 首次引导与聊天输入区显示层级修复
 
 - 根因：引导将宿主 `#root` 设为 inert，原生 Chat WebContentsView 仍按聊天模式显示，覆盖 body portal 中的引导卡片与遮罩。
