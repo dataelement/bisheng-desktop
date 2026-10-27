@@ -318,6 +318,15 @@ export class EnterpriseChatView {
         })
         isolated.setPermissionCheckHandler((_contents, permission, requestingOrigin) => permission === 'clipboard-sanitized-write' && requestingOrigin === origin)
         const view = new WebContentsView({ webPreferences: { session: isolated, preload: join(import.meta.dirname, '../preload/enterprise-chat.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true } })
+        // Observe successful saves on this identity-owned browser session. The
+        // notification carries no remote data or authority; Harness rereads permissions.
+        isolated.webRequest.onCompleted({ urls: [origin + '/api/v1/dsh/capabilities/*/availability'] }, details => {
+          if (generation !== this.generation || this.view !== view || this.key !== key) return
+          if (details.webContentsId !== view.webContents.id || details.method !== 'PUT' || details.statusCode !== 200) return
+          const saved = new URL(details.url)
+          if (saved.origin !== origin || !/^\/api\/v1\/dsh\/capabilities\/[1-9][0-9]*\/availability$/u.test(saved.pathname)) return
+          if (this.owner && !this.owner.isDestroyed()) this.owner.webContents.send('enterprise-chat:tools-changed')
+        })
         view.setVisible(false)
         view.setBackgroundColor(this.presentation?.theme === 'dark' ? '#141416' : '#ffffff')
         view.webContents.setWindowOpenHandler(({ url }) => {
@@ -468,6 +477,7 @@ export class EnterpriseChatView {
       if (!view.webContents.isDestroyed()) view.webContents.close()
     }
     if (isolated) {
+      isolated.webRequest.onCompleted(null)
       void isolated.clearStorageData().then(() => isolated.closeAllConnections()).catch(() => this.note('[enterprise-chat] session_cleanup_failed'))
     }
     this.state = { phase: 'idle' }

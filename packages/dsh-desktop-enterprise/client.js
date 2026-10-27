@@ -1160,7 +1160,27 @@ window.__ModuleLoader__.load({
 
     const inject = ['slots', 'locale']
 
+    function bindWorkToolChanges() {
+      const bridge = window.dshEnterpriseChat
+      if (!bridge?.onToolsChanged) return undefined
+      const controller = new AbortController()
+      const unsubscribe = bridge.onToolsChanged(() => {
+        void fetch('/api/enterprise.work-tools', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ operation: 'refresh' }), signal: controller.signal
+        }).then(async response => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+          await response.body?.cancel()
+        }).catch(error => {
+          if (controller.signal.aborted) return
+          console.warn('Enterprise tool refresh failed; the next model request will retry.', error)
+        })
+      })
+      return () => { unsubscribe(); controller.abort() }
+    }
+
     function apply(ctx) {
+      ctx.effect(bindWorkToolChanges, 'enterprise: refresh saved tool availability')
       installStyles()
       installMarketStyles()
       ctx.effect(
