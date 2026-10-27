@@ -124,6 +124,14 @@ PR #357 展示了两种应区别处理的变化：
 
 这些是设计选择示例，不表示所提新扩展 API 已存在。本文是开发与评审约束；当前尚无自动 slot 契约门禁。
 
+### Agent preset configuration tooltips (Harness 0.2.1-rc.2, 2026-10-27)
+
+The preset configuration button renders the existing Harness `Tooltip` with `portal: true`, top placement and end alignment. The bubble belongs to the body overlay layer and uses the primitive's viewport fitting, theme tokens and hover/focus lifecycle. The previous absolutely positioned `data-tip` pseudo-element belonged to the card inside the settings scroll container, which clipped the English label at the right edge. Its attribute and CSS rules are removed together.
+
+The button keeps its accessible name, configuration action and viewer focus-return reference. The roster, settings slots, import/export and preset selection retain their existing ownership. The installed agent-preset renderer owns this button and exposes no tooltip configuration slot, so the direct component change is recorded in its existing versioned install replay file. Remove this change when Harness provides equivalent portal rendering for this action.
+
+`node scripts/verify-agent-settings-tooltips.mjs` renders the installed section and Tooltip in an isolated native Electron window. It covers English/Chinese, light/dark theme tokens, two window widths, three zoom levels, scroll, hover/focus, click dispatch, dismissal and unmount cleanup. Remote data and unrelated dialogs use fixture stubs; real-account desktop acceptance remains a separate check.
+
 ## Chat / Work 接缝（Harness 0.2.0-rc.2）
 
 `dsh-client-ui-layout` 声明 root/single 的 `desktop.mode.content`，owner 为 `work: ReactNode`、`columns: string`、`resizeHandle: ReactNode`。位置只覆盖第二、三列；贡献项占据这两列并保持 Work 挂载一次。默认 fallback 使用原内容和 frame 坐标的拖拽柄；桌面贡献项使用内容区域坐标的拖拽柄。左侧原生 SidebarRoot 始终挂载。
