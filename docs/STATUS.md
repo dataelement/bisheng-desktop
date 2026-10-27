@@ -576,3 +576,12 @@ Verification:
 - Release boundary: installer rebuild, real enterprise account authorization changes, and native Windows acceptance remain pending.
 
 - Display-name follow-up: conversation model captions, menu/search names, tooltips and `/model` choices use localized enterprise-model labels when the server supplies a blank name or internal identifier. Original IDs remain in selection requests. Six additional display cases passed (31 model-related tests total). Clean dependency replay, typecheck and production build passed. Full regression: 2,081 passed, 3 skipped, and the same baseline first-abort-reason case failed.
+
+
+## 2026-10-27 — Session action tooltip positioning
+
+- Baseline: remote `dataelement/bisheng-work:V1.2.0@c2d71dffab1328ab723b4dad44992b6293d2f485`. Worktree `.worktrees/bisheng-work-v120-session-tooltip-position`, branch `codex/v120-session-tooltip-position`; installed Harness `0.2.1-rc.2`, Electron `43.0.0`. The general v0.9.0 integration checkout remains clean; this fix targets the reported BISHENG Work version.
+- Root cause: Work grid layout/paint containment established a containing block for fixed-position tooltips whose positions are calculated in viewport coordinates. Native baseline reproduction measured a 279.995px horizontal error with a 280px sidebar.
+- Implementation: the Work grid uses stacking isolation, preserving viewport-based fixed overlay coordinates and existing conversation/inspector sizing. The installed Tooltip implementation stays unchanged.
+- Verification: 36 real Electron geometry scenarios passed (expanded/collapsed sidebar, inspector visibility, scroll, 80%/100%/125% zoom, top/bottom placement, hover/focus events and dismissal); 31 related desktop-mode/layout tests, TypeScript, JS syntax and diff checks passed. The geometry script uses a temporary Profile and fixture content; real-account native acceptance belongs to the user.
+- Production build and packaged Harness/bootstrap/native modules (699 dependency manifests), Office authoring and DOCX/PPTX/XLSX PDF conversion checks passed. Packaged client source matches SHA-256 `691c723e60971b32a2d636bb702c99e6b64b00039ca9603de2365d54f10a3222`. Full suite: 3,012 passed, 5 skipped, one Safe Mode test hit `EADDRINUSE` on its temporary port; its isolated rerun passed. Native layout maximum horizontal error is 0.0049px and maximum 8px-gap error is 0.0079px. Delivery evidence: `outputs/session-tooltip-position-20261027/`.
