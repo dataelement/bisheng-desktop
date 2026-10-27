@@ -5,13 +5,14 @@ import { describe, expect, it } from 'vitest'
 
 const projectRoot = path.resolve(import.meta.dirname, '..')
 
-it('prepares the Office and PPT runtimes before focused Windows regressions', async () => {
+it('prepares only the PPT runtime before focused Windows regressions', async () => {
   const packageJson = JSON.parse(
     await readFile(path.join(projectRoot, 'package.json'), 'utf8')
   ) as { scripts: Record<string, string> }
 
-  expect(packageJson.scripts['pretest:windows']).toBe('npm run office:prepare && npm run ppt:build')
-  expect(packageJson.scripts['pretest:windows']).toBe(packageJson.scripts.pretest)
+  expect(packageJson.scripts['pretest:windows']).toBe('npm run ppt:build')
+  expect(packageJson.scripts.pretest).toBe('npm run office:prepare && npm run ppt:build')
+  expect(packageJson.scripts.build).toContain('npm run office:prepare')
 })
 
 it('defaults Windows to focused regressions and makes recovery UI an explicit dispatch check', async () => {
@@ -26,9 +27,12 @@ it('defaults Windows to focused regressions and makes recovery UI an explicit di
   const focused = steps.find(step => step.name === 'Run focused Windows regressions')
   const complete = steps.find(step => step.name === 'Run complete Windows test suite')
   const recovery = steps.find(step => step.name === 'Check recovery UI on native Windows at three display scales')
-  expect(focused?.run).toBe('npm run test:windows')
-  expect(complete?.run).toBe('npm test')
-  expect(steps.some(step => step.run === 'npm run build')).toBe(false)
+  expect(focused?.run).toBe('npx --no-install vitest run --config vitest.windows.config.ts')
+  expect(complete?.run).toBe('npx --no-install vitest run')
+  const buildIndex = steps.findIndex(step => step.name === 'Build Windows application once')
+  expect(buildIndex).toBeGreaterThan(-1)
+  expect(buildIndex).toBeLessThan(steps.findIndex(step => step === focused))
+  expect(buildIndex).toBeLessThan(steps.findIndex(step => step === complete))
   expect(workflow.on.workflow_dispatch.inputs.windows_full_tests?.default).toBe(false)
   expect(workflow.on.workflow_dispatch.inputs.windows_recovery_ui?.default).toBe(false)
   const evaluate = (expression: string | undefined, event: string, inputs: Record<string, boolean>) =>
@@ -455,7 +459,7 @@ describe('GitHub release contract', () => {
     expect(workflow).toContain('runs-on: ${' + '{ matrix.runner }}')
     expect(workflow).toContain('runs-on: [self-hosted, macOS, bisheng-windows]')
     expect(workflow).toContain('runs-on: windows-2022')
-    expect(workflow).toContain('npm run package:dev:win')
+    expect(workflow).toContain('node scripts/electron-builder-windows.mjs --win --x64 --publish never --config electron-builder.dev.cjs')
     expect(workflow).toContain('Smoke test packaged Windows Harness')
     expect(workflow).toContain('$sourceExecutable = Get-Item $env:SMOKE_EXE')
     expect(workflow).toContain("$isolatedApp = Join-Path $env:RUNNER_TEMP")
@@ -597,7 +601,7 @@ describe('GitHub release contract', () => {
     const persistentJobs = Object.values(jobs).filter(job =>
       Array.isArray(job['runs-on']) && job['runs-on'].includes('self-hosted')
     )
-    expect(persistentJobs).toHaveLength(2)
+    expect(persistentJobs).toHaveLength(3)
     for (const job of persistentJobs) {
       const setup = job.steps.find(step => step.uses?.startsWith('actions/setup-node@'))
       expect(setup).toBeDefined()
