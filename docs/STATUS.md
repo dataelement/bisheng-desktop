@@ -1,3 +1,10 @@
+## 2026-10-27 — macOS Chat 顶部窗口拖动
+
+- 基线：核对 `dataelement/bisheng-work:V1.2.0@c2d71dffab1328ab723b4dad44992b6293d2f485`；工作目录 `.worktrees/bisheng-work-v120-chat-window-drag`，分支 `codex/v120-chat-window-drag`。实际 Harness `0.2.1-rc.2`、Electron `43.0.0`；v0.9.0 集成参考工作树状态为空。
+- 根因与实现：Chat 使用独立 WebContentsView，标题栏原样式只定义布局。桌面宿主的 `CHAT_LAYOUT_CSS` 现在为 `.dsh-chat-surface .dsh-chat-header` 声明原生拖动区域，标题文本禁用选择；按钮、链接、表单和可聚焦/编辑控件保留鼠标输入。
+- 验证进度：相关 25 项回归、类型检查、生产构建通过。新增 `scripts/verify-chat-window-drag.mjs` 在真实 macOS Electron 子视图中检查 900/1200 宽度、0.8/1/1.25 缩放的拖动区域及按钮点击，共 6 组通过；原生鼠标按钮点击通过。自动鼠标拖动未取得窗口位移证据，安装后的手动拖动验收待执行。完整回归 3,012 项通过、5 项条件跳过，1 项 Word 测试遇到构建并发刷新 Python 目录；资源稳定后该测试文件 13 项全部通过。macOS arm64 包内 Harness、699 项依赖及 Office 生成/转换检查通过，macOS arm64 DMG 已生成，应用完整签名校验通过；开发签名测试包沿用项目公证配置。
+- 证据目录：主工作区 `outputs/chat-window-drag-20261027/`。
+
 ## 2026-10-26 — 首次引导与聊天输入区显示层级修复
 
 - 根因：引导将宿主 `#root` 设为 inert，原生 Chat WebContentsView 仍按聊天模式显示，覆盖 body portal 中的引导卡片与遮罩。
