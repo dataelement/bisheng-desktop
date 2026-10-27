@@ -6,6 +6,12 @@
 - 验证：定向 27 项通过（含新增菜单插入用例）；完整回归 306 文件 / 3,017 项通过，4 文件 / 5 项条件跳过（新增菜单插入用例单独通过）。类型检查、生产构建、JS 语法检查与 diff 检查通过。修改的两个依赖兼容文件从恢复的原始文件重放成功，结果与运行文件逐字节一致。
 - 本地浅深色预览使用真实 ReferenceChip 和 ReferenceIconRegular 渲染；真实账号下完整 Work 输入与 Windows 验收待执行。macOS 测试包构建状态单独登记。
 
+- 交付补充：本地代码提交 Chat `0851f9380`、Work `a4c321d`。macOS arm64 测试包 `dist-dev/bisheng-dev-mac-arm64.dmg` 已生成，系统环境下 `codesign --verify --deep --strict` 通过；包内宿主插件、primitives 与 conversation 三份修改文件与源码逐字节一致。包内 Harness/依赖检查、Office 生成和 PDF 转换检查通过。测试包使用开发签名；真实账号和 Windows 验收待执行。聊天网页需配套部署才能生效。
+- 全部兼容文件重放检查通过；本轮复用已安装依赖并重放修改文件，完整网络 npm ci 留待 CI。完整回归第一次受本机服务权限限制中止，允许本机测试服务后 3,017 项通过；新增菜单插入用例单独通过。
+- 推送状态：自动审批拦截 `SuperstructureJH/bisheng` 与 `dataelement/bisheng-work` 的分支推送，理由为本轮缺少对具体远端的明确授权；已向用户请求授权，当前保留本地提交。远端最新基线与正式发布状态待后续核对。
+- 证据：主工作区 `outputs/composer-resource-icons-20261027/`，包括浅深色组件预览、实际 Electron 整体删除与撤销记录、类型/构建/回归日志与包校验信息。
+
+
 ## 2026-10-26 — 首次引导与聊天输入区显示层级修复
 
 - 根因：引导将宿主 `#root` 设为 inert，原生 Chat WebContentsView 仍按聊天模式显示，覆盖 body portal 中的引导卡片与遮罩。
