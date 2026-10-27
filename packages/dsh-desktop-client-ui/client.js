@@ -6,7 +6,7 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
 
     const React = require('react')
-    const { Menu, MenuItemButton, Modal, Button } = require('@deepseek-ai/dsh-client-ui-primitives')
+    const { Menu, MenuItemButton, Modal, Button, ReferenceIconRegular } = require('@deepseek-ai/dsh-client-ui-primitives')
 
     // Paths are copied from build/bisheng-logo-mark.svg. Keeping the browser
     // occupant self-contained makes it replayable when Harness loads plugins
@@ -609,6 +609,9 @@ window.__ModuleLoader__.load({
       square: 'M3 4h6v6H3V4Zm12 0h6v6h-6V4ZM3 14h6v6H3v-6Zm12 0h6v6h-6v-6',
       more: 'M5 12h.01M12 12h.01M19 12h.01'
     }
+    function ResourceIcon({ id, size = 16 }) {
+      return React.createElement(ReferenceIconRegular, { kind: { skills: 'skill', tools: 'tool', knowledge: 'folder' }[id], size })
+    }
     function NavigationIcon({ id, size = 16 }) {
       return React.createElement('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: id === 'more' ? 3 : 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
         React.createElement('path', { d: NAV_ICON_PATHS[id === 'capabilities' ? 'skills' : id] || NAV_ICON_PATHS.apps }))
@@ -826,7 +829,7 @@ window.__ModuleLoader__.load({
         for (const space of spaces) {
           if (present.has(space.id)) continue
           const ref = JSON.stringify({ id: space.id, name: space.name })
-          if (!input.insertReference({ source: KNOWLEDGE_REFERENCE_SOURCE, ref, label: space.name, clipboardText: `@${space.name}` }, captureInsertion())) throw new Error('Knowledge selection changed. Please try again.')
+          if (!input.insertReference({ source: KNOWLEDGE_REFERENCE_SOURCE, appearance: 'folder', ref, label: space.name, clipboardText: `@${space.name}` }, captureInsertion())) throw new Error('Knowledge selection changed. Please try again.')
           present.add(space.id)
         }
         used.add(inputFor(sessionId).input)
@@ -939,7 +942,7 @@ window.__ModuleLoader__.load({
       ctx.effect(() => ctx.locale.register(RESOURCE_NS, RESOURCE_COPY), 'desktop Work resources locale')
       const t = ctx.locale.bind(RESOURCE_NS)
       const available = session => ctx.sessions.subagentAddress(session.sessionId) === undefined
-      ctx.commandUi.register({ name: 'skills', label: () => t('skills'), description: () => t('skillsHint'), icon: props => React.createElement(NavigationIcon, { ...props, id: 'skills' }), available,
+      ctx.commandUi.register({ name: 'skills', label: () => t('skills'), description: () => t('skillsHint'), icon: props => React.createElement(ResourceIcon, { ...props, id: 'skills' }), available,
         ui: { kind: 'popupSelect', searchMode: 'fuzzy-label',
           options: ({ sessionId }, signal) => ctx.sessions.using(sessionId, { source: 'workSkillPicker', signal }, async () => {
             const catalog = await workSkillRequest({ operation: 'catalog' }, signal)
@@ -949,7 +952,7 @@ window.__ModuleLoader__.load({
             return result.value.skills.map(skill => ({
               id: JSON.stringify({ name: skill.name, label: labels.get(skill.name) || skill.name, enterprise: labels.has(skill.name) }),
               label: labels.get(skill.name) || skill.name,
-              badgeIcon: labels.has(skill.name) ? props => React.createElement(NavigationIcon, { ...props, id: 'skills', size: 12 }) : undefined,
+              badgeIcon: labels.has(skill.name) ? props => React.createElement(ResourceIcon, { ...props, id: 'skills', size: 12 }) : undefined,
               detail: skill.description
             }))
           }),
@@ -959,11 +962,11 @@ window.__ModuleLoader__.load({
             const input = ctx.conversation.input.for(scope)
             scope.bail(scope, 'slash/input-consume-token', { guard: { kind: 'bare-token', token: '/skills' } })
             const state = input.state.getSnapshot()
-            const applied = input.insertReference({ source: SKILL_REFERENCE_SOURCE, ref: option.id, label: option.label, clipboardText: `/${option.label}` }, { start: 0, end: 0, draftRev: state.draftRev })
+            const applied = input.insertReference({ source: SKILL_REFERENCE_SOURCE, appearance: 'skill', ref: option.id, label: option.label, clipboardText: `/${option.label}` }, { start: 0, end: 0, draftRev: state.draftRev })
             if (!applied) throw new Error('Finish editing the current command, then choose a skill.')
           }
         } })
-      ctx.commandUi.register({ name: 'tools', label: () => t('tools'), description: () => t('toolsHint'), icon: props => React.createElement(NavigationIcon, { ...props, id: 'tools' }), available,
+      ctx.commandUi.register({ name: 'tools', label: () => t('tools'), description: () => t('toolsHint'), icon: props => React.createElement(ResourceIcon, { ...props, id: 'tools' }), available,
         ui: { kind: 'popupSelect', searchMode: 'fuzzy-label',
           options: async (_session, signal) => {
             const catalog = await workToolRequest({ operation: 'catalog' }, signal)
@@ -976,10 +979,10 @@ window.__ModuleLoader__.load({
             scope.bail(scope, 'slash/input-consume-token', { guard: { kind: 'bare-token', token: '/tools' } })
             const state = input.state.getSnapshot()
             if (state.occurrences.some(item => item.source === TOOL_REFERENCE_SOURCE && decodeToolReference(item.ref).name === decodeToolReference(option.id).name)) return
-            if (!input.insertReference({ source: TOOL_REFERENCE_SOURCE, ref: option.id, label: option.label, clipboardText: `/${option.label}` }, { start: 0, end: 0, draftRev: state.draftRev })) throw new Error('Finish editing the current command, then choose a tool.')
+            if (!input.insertReference({ source: TOOL_REFERENCE_SOURCE, appearance: 'tool', ref: option.id, label: option.label, clipboardText: `/${option.label}` }, { start: 0, end: 0, draftRev: state.draftRev })) throw new Error('Finish editing the current command, then choose a tool.')
           }
         } })
-      ctx.commandUi.register({ name: 'knowledge', label: () => t('knowledge'), description: () => t('knowledgeHint'), icon: props => React.createElement(NavigationIcon, { ...props, id: 'knowledge' }), available,
+      ctx.commandUi.register({ name: 'knowledge', label: () => t('knowledge'), description: () => t('knowledgeHint'), icon: props => React.createElement(ResourceIcon, { ...props, id: 'knowledge' }), available,
         ui: { kind: 'action', run: ({ sessionId }) => controls.get(sessionId)?.open() } })
       ctx.slots.inject('conversation.input.accessory', () => ctx.slots.register({ name: 'conversation.input.accessory', id: 'desktop-work-resources', order: 20, inject: sessionId => ({ sessionId, controls, t, knowledge }) }, WorkResourceAccessory))
       ctx.effect(() => {
