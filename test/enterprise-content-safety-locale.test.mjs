@@ -73,6 +73,16 @@ async function createFixture({ queueProtocol } = {}) {
     const input = chunks.length ? JSON.parse(Buffer.concat(chunks)) : undefined
     response.setHeader('content-type', 'application/json')
     if (request.url === '/v1/state') return response.end(JSON.stringify(account))
+    // Model admission now refreshes the enterprise tool catalog before assembly.
+    // This content-safety fixture has an authenticated account and an empty catalog.
+    if (request.url === '/v1/work-mcp') {
+      const message = input.message
+      if (message.method.startsWith('notifications/')) return response.end('null')
+      const result = message.method === 'initialize'
+        ? { protocolVersion: '2025-11-25', capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1' } }
+        : { tools: [] }
+      return response.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }))
+    }
     if (request.url === '/v1/chat' || request.url === '/v1/responses') {
       received.push({ path: request.url, headers: request.headers, body: input })
       if (queueProtocol && received.length === 1) {

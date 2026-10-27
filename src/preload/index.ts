@@ -640,6 +640,12 @@ ipcRenderer.on('enterprise-chat:settings-focus', (_event, detail) => {
 })
 
 contextBridge.exposeInMainWorld('dshEnterpriseChat', Object.freeze({
+  onToolsChanged: (listener: () => void): (() => void) => {
+    if (typeof listener !== 'function') throw new TypeError('Tool change listener must be a function.')
+    const receive = (): void => listener()
+    ipcRenderer.on('enterprise-chat:tools-changed', receive)
+    return () => ipcRenderer.removeListener('enterprise-chat:tools-changed', receive)
+  },
   focusSettings: (): Promise<void> => ipcRenderer.invoke('enterprise-chat:focus-settings'),
   present: (value: EnterpriseChatPresentation): Promise<EnterpriseChatViewState> => ipcRenderer.invoke('enterprise-chat:present', value),
   state: (): Promise<EnterpriseChatViewState> => ipcRenderer.invoke('enterprise-chat:state'),

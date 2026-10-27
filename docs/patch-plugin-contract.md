@@ -85,6 +85,14 @@ Run `node scripts/verify-session-tooltips.mjs` on a native desktop for the geome
 - CSS 限定到自有根节点或明确的宿主接缝；不依赖压缩类名、翻译文字或宽泛的全局选择器。覆盖主题时保留 hover、disabled、focus 等状态。
 - 不能为一个插件更改全局 slot registry 的竞争规则、屏蔽其他贡献项或绕过依赖校验。
 
+### Enterprise tool availability synchronization (Harness 0.2.1-rc.2, 2026-10-27)
+
+The identity-owned enterprise browser observes completed HTTP 200 PUT requests to its own `/api/v1/dsh/capabilities/<id>/availability` endpoint. It validates the current browser instance, account generation, request origin and WebContents ID, then sends a payload-free `enterprise-chat:tools-changed` notification to the local renderer. The existing host bridge exposes a disposable listener. The enterprise client invokes the authenticated local tool route with `operation: refresh`; the host rereads the permission-filtered MCP catalog. The observer is removed when the browser session closes, and the client releases its listener and requests on unload. A refresh notification carries no permission decision or tool metadata.
+
+The system-prompt package adds an awaited, scope-filtered `system-prompt/prepare` event before reading providers. The existing `system-prompt/assemble` waterfall runs after collection and therefore cannot provide this freshness boundary. Main Work agents refresh their enterprise catalog at preparation; native tool ordering, PTC presentation and scoped restrictions remain owned by the original providers. Concurrent readers join an existing synchronization and then start a fresh read, so a response captured before a toggle can finish without becoming the next request's catalog. Refresh failure clears stale registrations and rejects that assembly; a subsequent request retries. Background polling continues as supplemental synchronization.
+
+This extension modifies `dsh-system-prompt@0.2.1-rc.2` runtime and event types through the versioned install replay file. A scope without preparation listeners retains the existing provider and waterfall pipeline. Replace this extension when Harness provides an equivalent awaited provider-preparation boundary. Tests in `enterprise-tool-sync.test.mjs` use the installed AgentLoop, model adapter boundary, ToolRuntime and MCP SDK; browser ownership is covered in `enterprise-chat-view.test.ts`. After `npm run build`, `node scripts/verify-enterprise-tool-save.mjs` exercises the production browser host in native Electron with loopback HTTP saves and renderer IPC. Successful PUT responses each emit one refresh; reads and rejected writes preserve the current catalog. The content-safety integration fixture supplies an empty MCP catalog so its queued Agent requests exercise the new admission boundary. Real-account desktop acceptance remains a separate check.
+
 ## 4. Patch 的最小范围与退出路径
 
 - 对样式定制，patch 尽量只补标记/变量；CSS 放自有文件。对结构缺口，patch 只补必要的出口、配置或局部结构；不要把后续业务功能不断堆进编译 bundle。
