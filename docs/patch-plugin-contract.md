@@ -207,3 +207,11 @@ Work 知识空间引用在原生输入的 `plain` 和 `claimed` 两个可编辑�
 ### 技能菜单的复用图标（Harness 0.2.1-rc.2，2026-10-23）
 
 原生 popupSelect 的 `SelectOption.badgeIcon` 接收 option owner 的装饰图标组件，在名称旁以 inline-flex 垂直居中显示；文字 badge 沿用原有上标容器。技能 owner 复用菜单 `NavigationIcon(id=skills)` 的 SVG 路径，尺寸 12px、颜色继承原生次级文字 token；其他调用方保持既有文字 badge 和可访问名称。此接缝仅扩展原生候选行的渲染数据，不改变列表、搜索、选择或序列化。实现与类型由 commands 兼容文件重放，上游支持等价图标字段后切换并移除该变更。
+
+### 输入框资源图标（Harness 0.2.1-rc.2，2026-10-27）
+
+技能、工具与知识空间的原生引用分别携带 `appearance: skill | tool | folder`，菜单与引用共同使用 `ReferenceIconRegular`。技能与锤子路径来自当前 BISHENG `bisheng-icons@0.2.36` 的 Outlined.Skill / Outlined.Hammer；文件夹复用 Harness 的 FolderClose。图标只承担展示，source、ref、clipboardText、权限校验与模型序列化继续由原 owner 管理。
+
+现有 appearance 协议只有 session/file/folder；本次在原生渲染器、类型与草稿校验枚举中加入 skill/tool，支持保存和恢复。原生节点继续负责整体选中、删除和撤销，布局与主题使用原 ReferenceChip。第三方分发变更通过已有 primitives/conversation 兼容文件记录，并已从恢复的原始文件重放及逐字节比较；上游提供相同类型和图标后迁移至对应发行版，移除本次兼容段并保留行为回归。宿主 ResourceIcon 统一菜单和候选图标，侧边栏导航保留原实现。
+
+回归覆盖菜单插入、真实 ReferenceChip 渲染、草稿持久化、未知枚举拒绝、原 file/session/纯文字草稿兼容及资源序列化。使用局部真实运行时代码的组件验证与完整账号验收分别登记。

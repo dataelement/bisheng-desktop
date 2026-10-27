@@ -1,3 +1,11 @@
+## 2026-10-27 — Work 输入框资源图标统一
+
+- 实现：技能、工具、知识空间插入原生引用时携带 skill/tool/folder 图标类型，菜单与输入标签复用 ReferenceIconRegular。技能与锤子使用 BISHENG 菜单路径，文件夹使用 Harness FolderClose；引用 ID、权限校验及发送序列化沿用原 owner。
+- 根因：宿主插入引用时省略 appearance；原生渲染和持久化枚举只接受 session/file/folder。本次补齐插入元数据、渲染分支、类型与保存恢复协议，整体选中、删除和撤销仍由原生节点负责。
+- 基线：`dataelement/bisheng-work:V1.2.0` 本地跟踪 SHA `c2d71dffab1328ab723b4dad44992b6293d2f485`；独立目录 `.worktrees/bisheng-work-composer-resource-icons`，分支 `codex/v120-composer-resource-icons`，实际 Harness `0.2.1-rc.2`。开始前确认旧 `.worktrees/dsh-desktop-v090-integration` 工作区干净；本次属于已迁入 bisheng-work 的企业版。远端 V1.2.0 与旧 v0.9.0 查询因 GitHub DNS/TLS/EOF 连接错误未完成，远端最新状态待恢复连接后确认。
+- 验证：定向 27 项通过（含新增菜单插入用例）；完整回归 306 文件 / 3,017 项通过，4 文件 / 5 项条件跳过（新增菜单插入用例单独通过）。类型检查、生产构建、JS 语法检查与 diff 检查通过。修改的两个依赖兼容文件从恢复的原始文件重放成功，结果与运行文件逐字节一致。
+- 本地浅深色预览使用真实 ReferenceChip 和 ReferenceIconRegular 渲染；真实账号下完整 Work 输入与 Windows 验收待执行。macOS 测试包构建状态单独登记。
+
 ## 2026-10-26 — 首次引导与聊天输入区显示层级修复
 
 - 根因：引导将宿主 `#root` 设为 inert，原生 Chat WebContentsView 仍按聊天模式显示，覆盖 body portal 中的引导卡片与遮罩。
