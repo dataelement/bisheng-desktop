@@ -1,3 +1,10 @@
+## 2026-10-27 — PR #79 同步目标分支并处理冲突
+
+- 远端 PR #79 原 head `6e3b2f5`，目标 `dataelement/bisheng-work:V1.2.0` 已更新至 `802638a1a6c4a21c95e503f4c2cb803d83776e8c`；沿用 `codex/v120-chat-signin-guidance` 与 `.worktrees/bisheng-work-capabilities-v120-integration`，实际 Harness `0.2.1-rc.2`。v0.9.0 参考集成目录状态为空。
+- `docs/STATUS.md` 保留双方新增记录；`packages/dsh-desktop-client-ui/client.js` 同时保留目标分支“工作区 / Workspaces”名称及本 PR 的企业账号登录提示、说明与继续工作操作。
+- 验证：锁定依赖重新安装及兼容处理、类型检查、JS 语法检查、生产构建、完整回归和差异检查通过；完整回归 309 个文件 / 3,076 项通过，4 个文件 / 5 项条件跳过。验证期间目标分支新增 Windows 侧栏间距提交 `2171c5d`，改动位于独立的 sidebar 兼容文件与测试。
+- 本轮验证范围为合并后的源码与构建；真实企业授权与跨平台安装仍按原 PR 的验收范围执行。
+
 ## 2026-10-27 — Work 消息展示工具名称
 
 - 基线：远端 `dataelement/bisheng-work:V1.2.0@f6b12ae267d857a93c8d53fe3baf0887812c0ce0`；独立分支 `codex/v120-tool-message-label`，工作目录 `.worktrees/bisheng-work-v120-tool-message-label`。已安装 Harness `0.2.1-rc.2`；v0.9.0 参考集成工作树检查时为干净状态。
@@ -12,6 +19,18 @@
 - 基线：已核对远端 `dataelement/bisheng-work:V1.2.0@c2d71dffab1328ab723b4dad44992b6293d2f485`；工作目录 `.worktrees/bisheng-work-v120-workbench-settings-locale`，分支 `codex/v120-workspace-label`；实际安装 Harness `0.2.1-rc.2`。v0.9.0 集成参考目录状态为空。
 - 验证：JS 语法、类型检查、相关 30 项回归和生产构建通过；完整回归 3,012 项通过、5 项跳过，1 项 Office 转换超时后单独重跑所属文件 8 项全部通过。初次受限环境测试出现本机端口 EPERM，完整回归结果以正常本机权限批次为准。
 - macOS arm64 测试应用通过包内 Harness、原生模块、699 个依赖清单和 Office 转换检查；包内客户端文件与源码逐字节一致。Apple Development 签名测试包 DMG/ZIP 归档与深度签名校验通过，安装后的界面由用户手动验收。证据位于主工作区 `outputs/workspace-label-20261027/`。
+
+## 2026-10-26 — Chat 登录前说明与账号流程引导
+
+- 点击未登录状态的“聊天”时，先展示 Harness 原生说明弹窗，解释聊天与企业平台的关系；用户选择“登录企业账号”后打开现有账号页，选择“继续使用工作”或关闭时保留当前 Work 与草稿。账号就绪后关闭提示，沿用现有登录成功切回 Chat 流程。
+- 账号页补齐登录用途、企业平台地址来源、浏览器授权与返回客户端提示，以及一次性登录码说明；中英文同步。切换平台确认使用业务描述，账号、授权和服务端协议继续复用现有实现。
+- 基线 `dataelement/bisheng-work:V1.2.0` 的 `91123a8d523611fb46066bcb4d0ab995431b91e1`，包含已合并的 #78；修复分支 `codex/v120-chat-signin-guidance`，目录 `.worktrees/bisheng-work-capabilities-v120-integration`，Harness `0.2.1-rc.2`。
+- 验证：定向 51 项通过；完整回归 305 文件 / 3,018 项通过，4 文件 / 5 项条件跳过；类型检查、JS 语法检查、生产构建和差异检查通过。调整原“点击立即跳设置”断言，新增 8 项取消、登录成功及中英文文案/状态组合回归。
+- macOS Electron 43.0.0 隔离夹具加载实际 Harness Modal / Button、官方主题和宿主插件，验证提示先于设置、Esc 关闭、继续工作、显式登录、等待授权、模拟账号就绪后返回 Chat；浅深色弹窗、账号页与等待页截图已检查。账号接口使用测试状态，真实企业登录及 Windows 安装包验收随发包执行。
+- 证据：主工作区 `outputs/chat-signin-guidance-20261026/`。
+- 本地网页由用户查看并认可登录引导；按验收意见，登录入口和账号页统一使用“企业账号 / 企业平台”，中英文同步。真实企业授权与 Windows 安装包验收仍随发包执行。
+
+- 文案调整后：本地网页确认弹窗与账号页使用“企业账号 / 企业平台”；完整回归 3,018 项通过、5 项条件跳过，类型检查、生产构建、JS 语法和差异检查通过。远端目标分支复核为 `c2d71dffab1328ab723b4dad44992b6293d2f485`，此次沿用原 PR 分支与 Harness `0.2.1-rc.2`。
 
 ## 2026-10-26 — 首次引导与聊天输入区显示层级修复
 

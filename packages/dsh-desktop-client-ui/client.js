@@ -254,8 +254,8 @@ window.__ModuleLoader__.load({
 
     const MODES_NS = 'desktop.chatWork'
     const MODES_COPY = {
-      zh: { welcomeMessage: '来一起创造', welcome: '欢迎来到', newConversation: '新建对话', navigation: '导航', moreNavigation: '更多', recent: '对话', projects: '工作区', all: '所有会话', results: '搜索结果', cloud: '云端聊天', local: '本地工作', recentEmpty: '暂无最近会话', recentSearchEmpty: '当前列表没有匹配的会话', chat: '聊天', work: '工作', label: '聊天与工作', loading: '正在连接企业聊天…', error: '企业聊天连接失败，请重试', retry: '重新连接', refresh: '刷新聊天记录', historyLoading: '正在加载聊天记录…', historyError: '加载失败，点击重试', empty: '暂无聊天记录', more: '加载更多', newChat: '新聊天', signIn: '登录企业账号', justNow: '刚刚' },
-      en: { welcomeMessage: "Let's Create Together", welcome: 'Welcome', newConversation: 'New conversation', navigation: 'Navigation', moreNavigation: 'More', recent: 'Conversations', projects: 'Workspaces', all: 'All conversations', results: 'Search results', cloud: 'Cloud chat', local: 'Local work', recentEmpty: 'No recent conversations', recentSearchEmpty: 'No matches in the current list', chat: 'Chat', work: 'Work', label: 'Chat and Work', loading: 'Connecting to enterprise Chat…', error: 'Could not connect to enterprise Chat. Try again.', retry: 'Reconnect', refresh: 'Refresh Chat history', historyLoading: 'Loading history…', historyError: 'Loading failed. Retry', empty: 'No chats yet', more: 'Load more', newChat: 'New chat', signIn: 'Enterprise account', justNow: 'Now' }
+      zh: { welcomeMessage: '来一起创造', welcome: '欢迎来到', newConversation: '新建对话', navigation: '导航', moreNavigation: '更多', recent: '对话', projects: '工作区', all: '所有会话', results: '搜索结果', cloud: '云端聊天', local: '本地工作', recentEmpty: '暂无最近会话', recentSearchEmpty: '当前列表没有匹配的会话', chat: '聊天', work: '工作', label: '聊天与工作', loading: '正在连接企业聊天…', error: '企业聊天连接失败，请重试', retry: '重新连接', refresh: '刷新聊天记录', historyLoading: '正在加载聊天记录…', historyError: '加载失败，点击重试', empty: '暂无聊天记录', more: '加载更多', newChat: '新聊天', signIn: '登录企业账号', signInTitle: '登录后使用聊天', signInDescription: '聊天由企业平台提供。登录后，即可使用平台中的模型和对话记录。', continueWork: '继续使用工作', close: '关闭', justNow: '刚刚' },
+      en: { welcomeMessage: "Let's Create Together", welcome: 'Welcome', newConversation: 'New conversation', navigation: 'Navigation', moreNavigation: 'More', recent: 'Conversations', projects: 'Workspaces', all: 'All conversations', results: 'Search results', cloud: 'Cloud chat', local: 'Local work', recentEmpty: 'No recent conversations', recentSearchEmpty: 'No matches in the current list', chat: 'Chat', work: 'Work', label: 'Chat and Work', loading: 'Connecting to enterprise Chat…', error: 'Could not connect to enterprise Chat. Try again.', retry: 'Reconnect', refresh: 'Refresh Chat history', historyLoading: 'Loading history…', historyError: 'Loading failed. Retry', empty: 'No chats yet', more: 'Load more', newChat: 'New chat', signIn: 'Sign in to your enterprise account', signInTitle: 'Sign in to use Chat', signInDescription: 'Chat is provided by your enterprise platform. Sign in to use its models and conversations.', continueWork: 'Continue in Work', close: 'Close', justNow: 'Now' }
     }
     /**
      * Host tokens the embedded enterprise document reuses. It cannot read the host's CSS, so the
@@ -316,16 +316,16 @@ window.__ModuleLoader__.load({
 
     /** One renderer-owned mode/history controller shared by the content and sidebar slots. */
     function createChatNavigation(ctx) {
-      let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, approvalsOpen: false, accountDialogOpen: false, settingsSurface: undefined, pageId: undefined, navigation: undefined, workLanding: false, panelOpen: false, activePanelId: null }
+      let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, signInPromptOpen: false, approvalsOpen: false, accountDialogOpen: false, settingsSurface: undefined, pageId: undefined, navigation: undefined, workLanding: false, panelOpen: false, activePanelId: null }
       const listeners = new Set()
       let active = false, revision = 0, historyRequest = 0, timer, lastHistory = 0
       const publish = (patch) => { value = { ...value, ...patch }; listeners.forEach(fn => fn()) }
       const select = (mode) => {
         if (mode === 'chat' && !value.connected) {
-          window.dispatchEvent(new CustomEvent('dsh-desktop:open-settings-section', { detail: { id: 'enterprise-account' } }))
+          publish({ signInPromptOpen: true })
           return false
         }
-        publish({ mode, pageId: undefined })
+        publish({ mode, pageId: undefined, signInPromptOpen: false })
         return true
       }
       const refreshHistory = async (more = false) => {
@@ -364,7 +364,7 @@ window.__ModuleLoader__.load({
           const signedIn = next.connected && !value.connected
           const conversationChanged = next.conversationId !== value.conversationId
           if (identityChanged || !next.connected) { historyRequest++; publish({ items: [], page: 0, hasMore: false, historyPhase: 'idle' }); lastHistory = 0 }
-          publish({ ...next, pageId: next.navigation?.entries.find(entry => entry.active)?.id, mode: next.connected ? signedIn ? 'chat' : value.mode : 'work' })
+          publish({ ...next, signInPromptOpen: next.connected ? false : value.signInPromptOpen, pageId: next.navigation?.entries.find(entry => entry.active)?.id, mode: next.connected ? signedIn ? 'chat' : value.mode : 'work' })
           if (signedIn) window.dispatchEvent(new CustomEvent('dsh-desktop:close-settings'))
           if (next.connected && next.phase === 'ready' && (conversationChanged || Date.now() - lastHistory > 30000)) void refreshHistory()
         } catch { if (active && request === revision) publish({ phase: 'error' }) }
@@ -373,6 +373,11 @@ window.__ModuleLoader__.load({
         snapshot: () => value,
         subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn) },
         select, open, refreshHistory,
+        dismissSignIn() { publish({ signInPromptOpen: false }) },
+        signIn() {
+          publish({ signInPromptOpen: false })
+          window.dispatchEvent(new CustomEvent('dsh-desktop:open-settings-section', { detail: { id: 'enterprise-account' } }))
+        },
         async openPage(id) {
           if (!value.connected || !value.navigation?.entries.some(entry => entry.id === id)) return
           ctx.layout.selectPanel(null)
@@ -427,7 +432,7 @@ window.__ModuleLoader__.load({
           const unsubscribeSessions = ctx.sessions.list.subscribe(workState)
           const unsubscribeChat = window.dshEnterpriseChat?.subscribe?.((next) => {
             revision++
-            publish({ ...next, pageId: next.navigation?.entries.find(entry => entry.active)?.id })
+            publish({ ...next, signInPromptOpen: next.connected ? false : value.signInPromptOpen, pageId: next.navigation?.entries.find(entry => entry.active)?.id })
           })
           workState(); panel()
           window.addEventListener('dsh-desktop:enterprise-account-changed', account)
@@ -579,6 +584,12 @@ window.__ModuleLoader__.load({
         if (select(next)) tabs.current[next]?.focus()
       }
       return React.createElement('div', { className: 'dshModes' },
+        state.signInPromptOpen && React.createElement(Modal, {
+          open: true, title: t('signInTitle'), closeLabel: t('close'), onClose: navigation.dismissSignIn,
+          footer: React.createElement('div', { className: 'dshChatSignInActions' },
+            React.createElement(Button, { type: 'button', variant: 'outline', onClick: navigation.dismissSignIn }, t('continueWork')),
+            React.createElement(Button, { type: 'button', variant: 'primary', onClick: navigation.signIn }, t('signIn')))
+        }, React.createElement('p', { className: 'dshChatSignInDescription' }, t('signInDescription'))),
         showModePicker && React.createElement('header', { className: 'dshModesHeader' },
           React.createElement('div', { role: 'tablist', 'aria-label': t('label'), className: 'dshModesTabs', onKeyDown: keyDown },
             ...['chat', 'work'].map((key) => React.createElement('button', { key, id: `dsh-mode-${key}`, type: 'button', role: 'tab', 'aria-selected': mode === key, 'aria-controls': `dsh-panel-${key}`, tabIndex: mode === key ? 0 : -1, ref: (node) => { tabs.current[key] = node }, onClick: (event) => { setAnimateWork(event.detail > 0 && key === 'work'); select(key) } }, t(key))))),
@@ -663,6 +674,8 @@ window.__ModuleLoader__.load({
           .dshHistoryRow:is(:hover,:focus-visible) span{text-overflow:clip}.dshHistoryRow:is(:hover,:focus-visible) time{display:none}
           .dshHistoryNotice{padding:8px;font:inherit;font-size:12px;color:var(--dsw-alias-label-secondary);background:transparent;border:0;text-align:left}.dshHistoryNotice:is(button){cursor:pointer}
           .dshSharedCollection button:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}
+          .dshChatSignInDescription{margin:0;font-size:14px;line-height:1.6;color:var(--dsw-alias-label-secondary)}
+          .dshChatSignInActions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
           .dshChatStatus{margin:auto;text-align:center;font-size:14px;color:var(--dsw-alias-label-secondary)}
           .dshChatStatus button{font:inherit;color:inherit;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:8px 16px;cursor:pointer}
         `

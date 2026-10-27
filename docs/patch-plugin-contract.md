@@ -2,6 +2,10 @@
 
 适用于 DSH Desktop 对 Harness 的宿主定制，以及为这些定制维护的第三方补丁。本文是跨目录规则的唯一维护位置；包加载和补丁重放的具体要求分别见 `packages/AGENTS.md`、`patches/AGENTS.md`。preload 能否直接改页面 DOM 的判定见 `src/preload/AGENTS.md`，不在本文重复。
 
+### Chat 登录前说明（2026-10-26）
+
+`createChatNavigation` 管理未登录的 Chat 选择意图，以 `signInPromptOpen` 呈现原生 Harness Modal；显式登录操作打开既有 `enterprise-account` 设置区，关闭操作保留当前 Work。连接状态通过轮询或宿主订阅变为已登录时，清除提示；登录成功导航沿用既有账号状态同步。弹窗使用原生焦点、Esc 与遮罩行为，说明和按钮通过 `desktop.chatWork` 的中英文词典提供。账号页继续由企业插件拥有，新增说明随登录前/授权中/登录后状态切换。
+
 ### 首次引导与原生 Chat 的展示归属（2026-10-26）
 
 引导使用 body portal 展示，并通过 `#root.inert` 管理宿主背景的交互。Chat 使用独立的 Electron `WebContentsView`，因此内容贡献项同时读取这一原生 DOM 状态：主界面 inert 时向宿主发送 `visible: false`，恢复后重新计算 Chat / 设置页的展示状态与原有坐标。引导在 layout effect 建立该边界；内容贡献项首次挂载读取现值，随后仅观察 root 的 inert 属性，卸载时释放 observer。设置、审批和账号弹窗继续沿用各自的可见状态。
