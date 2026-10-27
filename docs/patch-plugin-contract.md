@@ -207,3 +207,17 @@ Work 知识空间引用在原生输入的 `plain` 和 `claimed` 两个可编辑�
 ### 技能菜单的复用图标（Harness 0.2.1-rc.2，2026-10-23）
 
 原生 popupSelect 的 `SelectOption.badgeIcon` 接收 option owner 的装饰图标组件，在名称旁以 inline-flex 垂直居中显示；文字 badge 沿用原有上标容器。技能 owner 复用菜单 `NavigationIcon(id=skills)` 的 SVG 路径，尺寸 12px、颜色继承原生次级文字 token；其他调用方保持既有文字 badge 和可访问名称。此接缝仅扩展原生候选行的渲染数据，不改变列表、搜索、选择或序列化。实现与类型由 commands 兼容文件重放，上游支持等价图标字段后切换并移除该变更。
+
+### 企业来源统一 Plugin Manager（Harness 0.2.1-rc.2）
+
+企业插件的安装、启停、卸载入口经过现有 `pluginManager`；设置页仍使用企业目录和配置接口。Manager 增加可选的 `profileManagedBundleSource` 宿主服务接缝：`accepts(target)`、`listBundles()` 和 `change(request)`。来源操作使用 Manager 的 Profile 操作锁、统一 `ChangeResult` 和 changed 事件；未匹配来源继续走原有 Profile 路径。此接缝不是新的 runtime 或第二个管理器。
+
+企业来源由 `dsh-desktop-enterprise/managed-market.js` 实现。清单身份包含当前账号摘要与企业插件 ID，安装使用只存在于后端的一次性票据；旧账号目标及已消费票据拒绝执行。业务校验在串行队列真正执行时再次核对账号。来源后端保留现有发布快照、`.enterprise-generations`、临时 Loader 子树和实例凭据撤销；不把受在线授权控制的插件写进普通 Profile 的 bundles。离线、撤权和账号切换继续通过现有控制器卸载实例。配置与授权自动收敛属于企业来源职责。
+
+加载阶段：企业插件仍从经校验的企业 generation 读取入口，并以该包解析客户端和 bundle；普通 Profile 不新增企业持久投影，Safe Mode 不加载此来源。实例激活失败保留原始诊断并走已有更新回退。Manager 必须保留来源报告的 `applied`，不能套用普通 Profile 的 `no-hmr`；来源清单不返回目录、配置或凭据。
+
+企业工作台仍通过 Broker 获取并核验临时 `.tgz`，安装改为 `pluginManager.installBundle`，启停与卸载使用既有 Manager 路径。临时文件保持到整个操作结束，再释放。回移植 upstream V0.13.0 的 `expectedName` / `expectedVersion` / `replace` 接口形态与 verified backend 能力声明：安装后端在发布前校验包身份，Manager 在接受 bundle 前再次核对；不支持或拒绝校验时不得退回普通 pnpm。页面区分已应用、待重启、覆盖、失败及取消，不能把退出码 0 当成激活成功。
+
+升级到 upstream V0.13.0 时，用上游 verified-install 实现替换这部分回移植，保留企业授权来源接缝，除非上游已提供等价的账号范围生命周期 API。不得直接删除企业目录、授权与凭据撤销边界。企业旧 ZIP/npm 包和账号安装记录不迁移格式；本改动统一管理接口，不合并授权存储与普通 Profile 存储。
+
+回归入口：`test/enterprise-plugin-manager.test.mjs` 验证真实 Manager 方法、来源隔离、单次票据、结果语义与 verified backend；`test/enterprise-market.test.ts` 的隔离子进程运行实际 Plugin Manager + Cordis Loader，覆盖安装、启停、坏版本回退及停止。普通 generation 与开关测试保留原契约。真实企业服务、GUI 和 Windows 安装包需另行验收。

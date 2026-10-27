@@ -417,7 +417,7 @@ describe('review regressions', () => {
    const { stdout } = await promisify(execFile)(process.execPath, [join(process.cwd(), 'test/helpers/enterprise-profile-smoke.mjs'), isolated.entry, root, fixtureFile], {
      cwd: root, env: { ...process.env, NODE_PATH: '', NODE_OPTIONS: '' }, timeout: 30000
    })
-   expect(JSON.parse(stdout)).toMatchObject({ isolatedImport: 'PASS', install: 'PASS', disableEnable: 'PASS', failedUpdateRollback: 'PASS', stop: 'PASS' })
+   expect(JSON.parse(stdout)).toMatchObject({ isolatedImport: 'PASS', managerLifecycle: 'PASS', install: 'PASS', disableEnable: 'PASS', failedUpdateRollback: 'PASS', stop: 'PASS' })
  })
 
  it('blocks installs below the actual Desktop minimum and exposes the same verdict to the list', async () => {
