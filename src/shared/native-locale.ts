@@ -19,3 +19,12 @@ export function parseHarnessLocale(value: unknown): HarnessLocale {
   if (value !== 'zh' && value !== 'en') throw new TypeError('Invalid desktop locale.')
   return value
 }
+
+/** The Client writes `en` or `zh-CN` onto `<html lang>`. Other tags stay unresolved. */
+export function localeFromHtmlLang(lang: string | null | undefined): HarnessLocale | undefined {
+  const value = lang?.trim().toLowerCase()
+  if (!value) return undefined
+  if (value === 'zh' || value.startsWith('zh-')) return 'zh'
+  if (value === 'en' || value.startsWith('en-')) return 'en'
+  return undefined
+}
