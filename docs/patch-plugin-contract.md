@@ -2,6 +2,10 @@
 
 适用于 DSH Desktop 对 Harness 的宿主定制，以及为这些定制维护的第三方补丁。本文是跨目录规则的唯一维护位置；包加载和补丁重放的具体要求分别见 `packages/AGENTS.md`、`patches/AGENTS.md`。preload 能否直接改页面 DOM 的判定见 `src/preload/AGENTS.md`，不在本文重复。
 
+### Chat 登录前说明（2026-10-26）
+
+`createChatNavigation` 管理未登录的 Chat 选择意图，以 `signInPromptOpen` 呈现原生 Harness Modal；显式登录操作打开既有 `enterprise-account` 设置区，关闭操作保留当前 Work。连接状态通过轮询或宿主订阅变为已登录时，清除提示；登录成功导航沿用既有账号状态同步。弹窗使用原生焦点、Esc 与遮罩行为，说明和按钮通过 `desktop.chatWork` 的中英文词典提供。账号页继续由企业插件拥有，新增说明随登录前/授权中/登录后状态切换。
+
 ### 首次引导与原生 Chat 的展示归属（2026-10-26）
 
 引导使用 body portal 展示，并通过 `#root.inert` 管理宿主背景的交互。Chat 使用独立的 Electron `WebContentsView`，因此内容贡献项同时读取这一原生 DOM 状态：主界面 inert 时向宿主发送 `visible: false`，恢复后重新计算 Chat / 设置页的展示状态与原有坐标。引导在 layout effect 建立该边界；内容贡献项首次挂载读取现值，随后仅观察 root 的 inert 属性，卸载时释放 observer。设置、审批和账号弹窗继续沿用各自的可见状态。
@@ -65,6 +69,12 @@ Harness 0.2.0-rc.2 的 `dsh-client-ui-input-trigger` 将 pointer hover 与 keybo
 - 禁止为了保留旧位置再额外渲染同一份有状态贡献项，造成双挂载、重复订阅或重复副作用。
 - 替换既有贡献项仅使用目标版本明确支持的机制；不要猜测 ID 覆盖、优先级或过滤参数的行为。
 - `data-dsh-*` 只是样式/定位接缝，不是 slot，也不能代替 slot 的上下文或生命周期契约。自有标记需有明确归属和用途，避免与上游及其他插件冲突。
+
+### Work surface viewport overlays (2026-10-27)
+
+The desktop Work grid uses `isolation: isolate` to keep its stacking boundary while fixed-position Harness overlays retain the viewport as their containing block. The installed Tooltip reads its trigger with `getBoundingClientRect()` and writes viewport coordinates to a fixed bubble. Layout/paint containment on the Work grid added the sidebar and header offsets a second time. The grid and its relative-positioned layout remain the owners of conversation and inspector sizing.
+
+Run `node scripts/verify-session-tooltips.mjs` on a native desktop for the geometry regression. It renders the installed Tooltip implementation and production desktop styles in an isolated Electron profile, covering sidebar widths, inspector visibility, scroll, three zoom factors, top/bottom placement, hover/focus events and dismissal. This is a deterministic browser-layout fixture; real-account native acceptance is a separate gate.
 
 ## 3. Plugin 的职责与可卸载性
 
@@ -247,8 +257,14 @@ upstream V0.13.0 本身没有企业授权层，合并不会自动替代此接缝
 
 相关 SDK、community bundle 与 search-market 测试统一改为 root Include fixture；SDK 从同一记录重复挂载改为两个独立记录，另验证重复 ID 被拒绝。缺少服务的断言接受原生激活审计中的 `enterpriseAuth` 诊断，原有搜索选择、用户后续修改和异步清理断言保留。
 
-### Work surface viewport overlays (2026-10-27)
+### 输入框资源图标（Harness 0.2.1-rc.2，2026-10-27）
 
-The desktop Work grid uses `isolation: isolate` to keep its stacking boundary while fixed-position Harness overlays retain the viewport as their containing block. The installed Tooltip reads its trigger with `getBoundingClientRect()` and writes viewport coordinates to a fixed bubble. Layout/paint containment on the Work grid added the sidebar and header offsets a second time. The grid and its relative-positioned layout remain the owners of conversation and inspector sizing.
+技能、工具与知识空间的原生引用分别携带 `appearance: skill | tool | folder`，菜单与引用共同使用 `ReferenceIconRegular`。技能与锤子路径来自当前 BISHENG `bisheng-icons@0.2.36` 的 Outlined.Skill / Outlined.Hammer；文件夹复用 Harness 的 FolderClose。图标只承担展示，source、ref、clipboardText、权限校验与模型序列化继续由原 owner 管理。
 
-Run `node scripts/verify-session-tooltips.mjs` on a native desktop for the geometry regression. It renders the installed Tooltip implementation and production desktop styles in an isolated Electron profile, covering sidebar widths, inspector visibility, scroll, three zoom factors, top/bottom placement, hover/focus events and dismissal. This is a deterministic browser-layout fixture; real-account native acceptance is a separate gate.
+现有 appearance 协议只有 session/file/folder；本次在原生渲染器、类型与草稿校验枚举中加入 skill/tool，支持保存和恢复。原生节点继续负责整体选中、删除和撤销，布局与主题使用原 ReferenceChip。第三方分发变更通过已有 primitives/conversation 兼容文件记录，并已从恢复的原始文件重放及逐字节比较；上游提供相同类型和图标后迁移至对应发行版，移除本次兼容段并保留行为回归。宿主 ResourceIcon 统一菜单和候选图标，侧边栏导航保留原实现。
+
+回归覆盖菜单插入、真实 ReferenceChip 渲染、草稿持久化、未知枚举拒绝、原 file/session/纯文字草稿兼容及资源序列化。使用局部真实运行时代码的组件验证与完整账号验收分别登记。
+
+实际加载补充：Harness web-frontend 把 primitives 预编译进共享模块，插件 require 与原生引用消费的是该共享模块。`scripts/prepare-reference-icons.mjs` 在安装、开发、构建和测试前从上述唯一图标定义生成对应分支；按公开 `ReferenceIconRegular` 导出定位实现，发现压缩符号并保留内置 session/file/folder 分支，生成区域可重复覆盖。版本或结构变化时构建失败，入口带内容摘要刷新缓存。生成内容留在依赖分发目录，Git 维护生成器和原定义。上游共享前端支持这些类型后一起移除生成步骤。
+
+`test/frontend-reference-icons.test.mjs` 执行完整前端入口及 vendor 依赖，捕获传给 Harness loader 的真实 staticModules，并用其中的 React 与 ReferenceIconRegular 渲染五类图标，覆盖实际运行包与库文件不同步的回归。

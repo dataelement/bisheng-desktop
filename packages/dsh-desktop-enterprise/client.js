@@ -67,7 +67,13 @@ window.__ModuleLoader__.load({
       title: '账号与用量',
       managedModels: '企业提供的模型',
       accountLabel: '当前账号',
-      platform: '企业服务地址',
+      platform: '企业平台地址',
+      signInTitle: '登录企业账号',
+      signInIntro: '登录后可使用聊天，以及企业为你授权的模型、工具和技能。',
+      platformHelp: '填写你平时访问企业平台的地址，也可以向管理员获取。',
+      browserHelp: '下一步将在浏览器中打开企业平台登录页。',
+      authorizationHelp: '请在浏览器中完成登录并授权，再回到客户端继续。',
+      manualHelp: '已经在浏览器中完成授权？也可以粘贴页面提供的一次性登录码。',
       login: '在浏览器中登录',
       loginAgain: '重新登录',
       loggingIn: '等待浏览器授权…',
@@ -86,8 +92,8 @@ window.__ModuleLoader__.load({
       usageUnavailable: '用量暂不可用',
       limitZero: '剩余 0 分',
       secureUnavailable: '系统安全存储不可用，企业登录已停用。',
-      confirmTitle: '确认毕昇平台',
-      confirmLead: '确认后会停用当前企业模型连接，并在该平台新建一次 PKCE 登录。',
+      confirmTitle: '确认企业平台',
+      confirmLead: '确认后将切换到以下企业平台，并在浏览器中登录。',
       insecureTitle: '确保服务地址可信',
       insecureLead: '登录信息会明文传输，确保以下服务地址由可信来源提供。',
       confirm: '确认并登录',
@@ -112,7 +118,7 @@ window.__ModuleLoader__.load({
       internal_error: '平台服务异常，请稍后重试或联系管理员。',
       access_denied: '你已取消本次登录授权。',
       authorization_failed: '本次登录授权失败，请重新发起登录。',
-      network_error: '无法连接毕昇平台，请检查地址和网络。',
+      network_error: '无法连接企业平台，请检查地址和网络。',
       invalid_response: '平台响应异常，请检查服务地址或联系管理员。',
       contract_incompatible: '客户端与平台版本不兼容，请联系管理员更新。',
       model_not_allowed: '当前模型未获授权或已不可用，请刷新模型列表或联系管理员。',
@@ -128,7 +134,13 @@ window.__ModuleLoader__.load({
       title: 'Account and usage',
       managedModels: 'Models provided by your enterprise',
       accountLabel: 'Current account',
-      platform: 'Enterprise service URL',
+      platform: 'Enterprise platform URL',
+      signInTitle: 'Sign in to your enterprise account',
+      signInIntro: 'Sign in to use Chat and the models, tools, and skills authorized by your organization.',
+      platformHelp: 'Enter the URL you normally use for your enterprise platform, or ask your administrator for it.',
+      browserHelp: 'The next step opens the enterprise platform sign-in page in your browser.',
+      authorizationHelp: 'Complete sign-in and authorization in your browser, then return to the app to continue.',
+      manualHelp: 'Already authorized in your browser? You can also paste the one-time code provided on that page.',
       login: 'Sign in in browser',
       loginAgain: 'Sign in again',
       loggingIn: 'Waiting for browser authorization…',
@@ -147,8 +159,8 @@ window.__ModuleLoader__.load({
       usageUnavailable: 'Usage unavailable',
       limitZero: 'Limit is 0; model calls are disabled',
       secureUnavailable: 'Operating-system secure storage is unavailable. Enterprise sign-in is disabled.',
-      confirmTitle: 'Confirm BiSheng platform',
-      confirmLead: 'Continuing pauses the current enterprise connection and starts a new PKCE login at this platform.',
+      confirmTitle: 'Confirm enterprise platform',
+      confirmLead: 'Continue to switch to this enterprise platform and sign in through your browser.',
       insecureTitle: 'Make sure the service URL is trusted',
       insecureLead: 'Sign-in details will be sent in cleartext. Make sure the following service URL comes from a trusted source.',
       confirm: 'Confirm and sign in',
@@ -173,7 +185,7 @@ window.__ModuleLoader__.load({
       internal_error: 'The platform service failed. Try again later or contact an administrator.',
       access_denied: 'You cancelled this sign-in.',
       authorization_failed: 'This sign-in authorization failed. Start sign-in again.',
-      network_error: 'Could not reach the BiSheng platform. Check the service address and your network.',
+      network_error: 'Could not reach the enterprise platform. Check the service address and your network.',
       invalid_response: 'The platform returned an unexpected response. Check the service address or contact your administrator.',
       contract_incompatible: 'This client is incompatible with the platform. Ask your administrator to update it.',
       model_not_allowed: 'This model is not authorized or is unavailable. Refresh the model list or contact your administrator.',
@@ -208,6 +220,9 @@ window.__ModuleLoader__.load({
           font-weight: 600;
           line-height: normal;
         }
+        .dshEnterpriseLoginIntro { margin: 0 0 24px; font-size: 14px; line-height: 1.6; color: var(--dsw-alias-label-secondary); }
+        .dshEnterpriseLoginHelp { margin: 8px 0 0; font-size: 13px; line-height: 1.6; color: var(--dsw-alias-label-secondary); }
+        .dshEnterprisePendingCopy { flex: 1; }
         .dshEnterpriseManagedModels { margin: 16px 0; }
         .dshEnterprise h3 {
           margin: 0 0 8px;
@@ -698,6 +713,36 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function bindEnterpriseModelSync() {
+      let pending, disposed = false
+      const sync = () => {
+        if (disposed || document.visibilityState !== 'visible' || pending) return
+        const controller = new AbortController()
+        const timeout = window.setTimeout(() => controller.abort(), 30_000)
+        pending = { controller, timeout }
+        void api('/api/enterprise.models.refresh', {}, controller.signal).catch(error => {
+          if (!disposed && !controller.signal.aborted) console.warn('[enterprise-models] Catalog refresh failed', error)
+        }).finally(() => {
+          window.clearTimeout(timeout)
+          if (pending?.controller === controller) pending = undefined
+        })
+      }
+      const timer = window.setInterval(sync, 30_000)
+      window.addEventListener('focus', sync)
+      document.addEventListener('visibilitychange', sync)
+      window.addEventListener(ACCOUNT_CHANGED_EVENT, sync)
+      sync()
+      return () => {
+        disposed = true
+        pending?.controller.abort()
+        window.clearTimeout(pending?.timeout)
+        window.clearInterval(timer)
+        window.removeEventListener('focus', sync)
+        document.removeEventListener('visibilitychange', sync)
+        window.removeEventListener(ACCOUNT_CHANGED_EVENT, sync)
+      }
+    }
+
     async function api(path, body, signal) {
       const response = await fetch(path, {
         method: body === undefined ? 'GET' : 'POST',
@@ -1047,6 +1092,7 @@ window.__ModuleLoader__.load({
               type: 'url',
               inputMode: 'url',
               autoComplete: 'url',
+              'aria-describedby': 'dsh-enterprise-platform-help',
               placeholder: 'https://bisheng.example.com',
               value: base,
               onChange: (event) => {
@@ -1054,14 +1100,17 @@ window.__ModuleLoader__.load({
                 rememberBase(event.target.value)
               }
             })),
+          h('p', { id: 'dsh-enterprise-platform-help', className: 'dshEnterpriseLoginHelp' }, t('platformHelp')),
           state?.secureStorageAvailable === false
             ? h('p', { className: 'dshEnterpriseError' }, t('secureUnavailable'))
             : h(React.Fragment, null,
               state?.phase === 'authorizing'
                 ? h('div', { className: 'dshEnterprisePending', role: 'status', 'aria-live': 'polite' },
-                  h('span', null, t('loggingIn')),
+                  h('div', { className: 'dshEnterprisePendingCopy' },
+                    h('span', null, t('loggingIn')),
+                    h('p', { className: 'dshEnterpriseLoginHelp' }, t('authorizationHelp'))),
                   h('span', { className: 'dshEnterprisePendingSpinner', 'aria-hidden': 'true' }, '↻'))
-                : null,
+                : h('p', { className: 'dshEnterpriseLoginHelp' }, t('browserHelp')),
               h('div', { className: 'dshEnterpriseActions' },
                 h('button', {
                   className: 'dshEnterpriseButton login',
@@ -1081,6 +1130,7 @@ window.__ModuleLoader__.load({
 
       const manualFallback = !connected && manualFallbackReady
         ? h('div', { className: 'dshEnterpriseManual' },
+          h('p', { className: 'dshEnterpriseLoginHelp' }, t('manualHelp')),
           h('label', { className: 'dshEnterpriseLabel' },
             t('ticket'),
             h('input', {
@@ -1142,8 +1192,9 @@ window.__ModuleLoader__.load({
 
       return h('section', { className: 'dshEnterprise' },
         h('div', { className: 'dshEnterpriseTitleRow' },
-          h('h2', null, t('title')),
+          h('h2', null, t(connected ? 'title' : 'signInTitle')),
           renderLearnMoreButton(t)),
+        connected ? null : h('p', { className: 'dshEnterpriseLoginIntro' }, t('signInIntro')),
         status,
         connected && renderSlot?.('desktop.account.usage', {
           credits: usageText(state.usage, document.documentElement.lang, t),
@@ -1177,6 +1228,7 @@ window.__ModuleLoader__.load({
       accountTranslate = t
       ctx.effect(() => ctx.locale.register('settings.enterpriseMarket', { zh: marketZh, en: marketEn }), 'enterprise-market: translations')
       marketTranslate = ctx.locale.bind('settings.enterpriseMarket')
+      ctx.effect(() => bindEnterpriseModelSync(), 'enterprise: foreground model catalog sync')
       ctx.effect(() => bindEnterpriseMarketTab(ctx), 'enterprise-market: account-bound plugins tab')
       ctx.effect(() => {
         const bridge = window.dshDesktopEnterprise
