@@ -11,7 +11,7 @@ it('prepares only the PPT runtime before focused Windows regressions', async () 
   ) as { scripts: Record<string, string> }
 
   expect(packageJson.scripts['pretest:windows']).toBe('npm run ppt:build')
-  expect(packageJson.scripts.pretest).toBe('npm run office:prepare && npm run ppt:build')
+  expect(packageJson.scripts.pretest).toBe('npm run reference-icons:prepare && npm run office:prepare && npm run ppt:build')
   expect(packageJson.scripts.build).toContain('npm run office:prepare')
 })
 
