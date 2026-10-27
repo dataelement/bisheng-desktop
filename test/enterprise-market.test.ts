@@ -7,8 +7,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
-import { Loader } from '@deepseek-ai/cordis-plugin-loader'
-import { createMarketRuntime } from '../packages/dsh-desktop-enterprise/market-runtime.js'
 import { applyEnterpriseMarket, createMarketController, hostDshEntryPath, isMarketVersionCompatible } from '../packages/dsh-desktop-enterprise/market.js'
 import { installOfflineBundle, readBundleZip, sha256, validateOfflineBundle, verifyInstalledBundle } from '../packages/dsh-desktop-enterprise/offline-bundle.js'
 import { acceptMarketSnapshot } from '../packages/dsh-desktop-enterprise/market-policy.js'
@@ -79,23 +77,12 @@ describe('offline bundles', () => {
     expect(plugin.apply).toBeTypeOf('function')
   })
 
-  it('registers the real host Loader entry and removes it when the enterprise plugin stops', async () => {
-    const root = await home(), data = bundle()
-    const generation = await installOfflineBundle(root, data.bytes, data.expected, target)
-    const context = new Context()
-    const loaderFiber = context.plugin(Loader, { baseUrl: pathToFileURL(`${root}/`).href })
-    await loaderFiber
-    let runtime: ReturnType<typeof createMarketRuntime> | undefined
-    context.loader.builtins.enterpriseTest = { apply(child: Context) { runtime = createMarketRuntime(child) } }
-    const ownerId = await context.loader.create({ name: 'cordis:enterpriseTest' })
-    await context.loader.await()
-    try {
-      const mounted = await runtime!({ ...generation, ...data.expected, plugin_id: 'fixture-plugin' })
-      expect([...context.loader.entries()].some(entry => entry.options.name.includes('company-demo/index.js'))).toBe(true)
-      expect(mounted.state).toBe(2)
-      await mounted.dispose()
-      expect([...context.loader.entries()].some(entry => entry.options.name.includes('company-demo/index.js'))).toBe(false)
-    } finally { await context.loader.remove(ownerId); await loaderFiber.dispose() }
+  it('uses native root composition and ESM resolution with revocable instance credentials', async () => {
+    const root = await home()
+    const { stdout } = await promisify(execFile)(process.execPath, ['--expose-internals', join(process.cwd(), 'test/helpers/enterprise-root-smoke.mjs'), root], {
+      cwd: root, env: { ...process.env, NODE_PATH: '', NODE_OPTIONS: '' }, timeout: 30000
+    })
+    expect(stdout.trim()).toBe('PASS')
   })
   it('installs a verified generation without package manager or network access', async () => {
     const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network forbidden'))
@@ -414,7 +401,7 @@ describe('review regressions', () => {
    const fixtureFile = join(root, 'fixtures.json')
    const shape = (value: ReturnType<typeof bundle>, id: string) => ({ ...value.expected, id, bytes: value.bytes.toString('base64'), manifest: value.manifest })
    await writeFile(fixtureFile, JSON.stringify({ pluginId, good: shape(good, versionId), bad: shape(bad, 'c'.repeat(32)) }))
-   const { stdout } = await promisify(execFile)(process.execPath, [join(process.cwd(), 'test/helpers/enterprise-profile-smoke.mjs'), isolated.entry, root, fixtureFile], {
+   const { stdout } = await promisify(execFile)(process.execPath, ['--expose-internals', join(process.cwd(), 'test/helpers/enterprise-profile-smoke.mjs'), isolated.entry, root, fixtureFile], {
      cwd: root, env: { ...process.env, NODE_PATH: '', NODE_OPTIONS: '' }, timeout: 30000
    })
    expect(JSON.parse(stdout)).toMatchObject({ isolatedImport: 'PASS', managerLifecycle: 'PASS', install: 'PASS', disableEnable: 'PASS', failedUpdateRollback: 'PASS', stop: 'PASS' })

@@ -11,6 +11,7 @@ const require = createRequire(join(entry, 'package.json'))
 const dshEntryPath = createRequire(import.meta.url).resolve('@deepseek-ai/dsh/lib/bin.js')
 const { Context } = await import(pathToFileURL(require.resolve('@deepseek-ai/cordis')).href)
 const { Loader } = await import(pathToFileURL(require.resolve('@deepseek-ai/cordis-plugin-loader')).href)
+const { mountRootInclude } = await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-app-boot')).href)
 const { apply } = await import(pathToFileURL(join(entry, 'index.js')).href)
 assert.equal(typeof apply, 'function')
 const { PluginManager } = await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-plugin-manager')).href)
@@ -38,7 +39,8 @@ ctx.loader.builtins.enterpriseSmoke = { apply(scope) {
   source = createManagedMarketSource(market)
   scope.provide('profileManagedBundleSource', source)
 } }
-const owner = await ctx.loader.create({ name: 'cordis:enterpriseSmoke' })
+await writeFile(join(home, 'cordis.yml'), '[]')
+await mountRootInclude(ctx, join(home, 'cordis.yml'), [{ insert: [{ id: 'enterprise-owner', name: 'cordis:enterpriseSmoke' }] }])
 await ctx.loader.await()
 const profile = join(home, 'profiles', 'web')
 await mkdir(profile, { recursive: true })
@@ -66,4 +68,4 @@ try {
   assert.ok(changes > changesBeforeStop, 'account stop publishes manager inventory changes')
   assert.equal([...ctx.loader.entries()].filter(row => row.options.name.includes('company-demo/index.js')).length, 0)
   console.log(JSON.stringify({ isolatedImport: 'PASS', managerLifecycle: 'PASS', install: 'PASS', disableEnable: 'PASS', failedUpdateRollback: 'PASS', stop: 'PASS', platform: process.platform }))
-} finally { await market.stop(); await ctx.loader.remove(owner); await managerFiber.dispose(); await loader.dispose() }
+} finally { await market.stop(); await managerFiber.dispose(); await loader.dispose() }
