@@ -44,7 +44,7 @@ async function mount(connected = false, collection = {}, inert = false) {
   window.__ModuleLoader__ = { load({ factory }) {
     plugin = factory(name => {
       if (name === 'react') return React
-      if (name === '@deepseek-ai/dsh-client-ui-primitives') return { Menu: ({ anchor, open, items, onSelect }) => React.createElement('div', null, anchor, open && items.map(item => React.createElement('button', { key: item.id, role: 'menuitem', onClick: () => onSelect(item.id) }, item.label))) }
+      if (name === '@deepseek-ai/dsh-client-ui-primitives') return { Button: ({ variant, size, ...props }) => React.createElement('button', props), Modal: ({ children, title, footer, onClose, closeLabel }) => createPortal(React.createElement('div', { role: 'dialog', 'aria-modal': true, 'aria-label': title }, React.createElement('button', { onClick: onClose, 'aria-label': closeLabel }, closeLabel), children, footer), document.body), Menu: ({ anchor, open, items, onSelect }) => React.createElement('div', null, anchor, open && items.map(item => React.createElement('button', { key: item.id, role: 'menuitem', onClick: () => onSelect(item.id) }, item.label))) }
       throw new Error(name)
     })
   } }
@@ -93,7 +93,7 @@ async function mount(connected = false, collection = {}, inert = false) {
     draft: () => container.querySelector('textarea')
   }
 }
-it('routes unauthenticated Chat to the existing enterprise settings while keeping Work mounted', async () => {
+it('explains Chat sign-in before opening account settings while keeping the Work draft mounted', async () => {
   const ui = await mount()
   expect(ui.selected()).toBe('work')
   const draft = ui.draft()
@@ -101,6 +101,12 @@ it('routes unauthenticated Chat to the existing enterprise settings while keepin
   window.addEventListener('dsh-desktop:open-settings-section', open)
   disposers.push(() => window.removeEventListener('dsh-desktop:open-settings-section', open))
   await ui.click('chat')
+  expect(open).toHaveBeenCalledTimes(0)
+  const dialog = document.querySelector('[role=dialog]')
+  expect(dialog.getAttribute('aria-label')).toBe('signInTitle')
+  expect(dialog.textContent).toContain('signInDescription')
+  await act(async () => [...dialog.querySelectorAll('button')].find(button => button.textContent === 'signIn').click())
+  expect(document.querySelector('[role=dialog]')).toBeNull()
   expect(open.mock.calls[0][0].detail).toEqual({ id: 'enterprise-account' })
   expect(ui.selected()).toBe('work')
   expect(ui.draft()).toBe(draft)
@@ -475,4 +481,27 @@ it('lets returning users continue in Chat when onboarding is already acknowledge
     expect(document.querySelector('[role=dialog]')).toBeNull()
     expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
   } finally { await notice.dispose() }
+})
+
+
+it.each(['continueWork', 'close'])('returns to the existing Work draft when the sign-in prompt is dismissed with %s', async action => {
+  const ui = await mount()
+  const draft = ui.draft()
+  await ui.click('chat')
+  await act(async () => [...document.querySelectorAll('[role=dialog] button')].find(button => button.textContent === action).click())
+  expect(document.querySelector('[role=dialog]')).toBeNull()
+  expect(ui.selected()).toBe('work')
+  expect(ui.draft()).toBe(draft)
+  await ui.click('chat')
+  expect(document.querySelectorAll('[role=dialog]')).toHaveLength(1)
+})
+
+it('dismisses the sign-in prompt and enters Chat when the account becomes available', async () => {
+  const ui = await mount()
+  await ui.click('chat')
+  expect(document.querySelector('[role=dialog]')).toBeTruthy()
+  await ui.account(true)
+  expect(document.querySelector('[role=dialog]')).toBeNull()
+  expect(ui.selected()).toBe('chat')
+  expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
 })
