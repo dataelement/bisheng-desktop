@@ -1,16 +1,14 @@
-## 2026-10-27 — Work 输入框资源图标统一
+## 2026-10-27 — Work 输入框资源图标统一与运行包修复
 
-- 实现：技能、工具、知识空间插入原生引用时携带 skill/tool/folder 图标类型，菜单与输入标签复用 ReferenceIconRegular。技能与锤子使用 BISHENG 菜单路径，文件夹使用 Harness FolderClose；引用 ID、权限校验及发送序列化沿用原 owner。
-- 根因：宿主插入引用时省略 appearance；原生渲染和持久化枚举只接受 session/file/folder。本次补齐插入元数据、渲染分支、类型与保存恢复协议，整体选中、删除和撤销仍由原生节点负责。
-- 基线：`dataelement/bisheng-work:V1.2.0` 本地跟踪 SHA `c2d71dffab1328ab723b4dad44992b6293d2f485`；独立目录 `.worktrees/bisheng-work-composer-resource-icons`，分支 `codex/v120-composer-resource-icons`，实际 Harness `0.2.1-rc.2`。开始前确认旧 `.worktrees/dsh-desktop-v090-integration` 工作区干净；本次属于已迁入 bisheng-work 的企业版。远端 V1.2.0 与旧 v0.9.0 查询因 GitHub DNS/TLS/EOF 连接错误未完成，远端最新状态待恢复连接后确认。
-- 验证：定向 27 项通过（含新增菜单插入用例）；完整回归 306 文件 / 3,017 项通过，4 文件 / 5 项条件跳过（新增菜单插入用例单独通过）。类型检查、生产构建、JS 语法检查与 diff 检查通过。修改的两个依赖兼容文件从恢复的原始文件重放成功，结果与运行文件逐字节一致。
-- 本地浅深色预览使用真实 ReferenceChip 和 ReferenceIconRegular 渲染；真实账号下完整 Work 输入与 Windows 验收待执行。macOS 测试包构建状态单独登记。
-
-- 交付补充：本地代码提交 Chat `0851f9380`、Work `a4c321d`。macOS arm64 测试包 `dist-dev/bisheng-dev-mac-arm64.dmg` 已生成，系统环境下 `codesign --verify --deep --strict` 通过；包内宿主插件、primitives 与 conversation 三份修改文件与源码逐字节一致。包内 Harness/依赖检查、Office 生成和 PDF 转换检查通过。测试包使用开发签名；真实账号和 Windows 验收待执行。聊天网页需配套部署才能生效。
-- 全部兼容文件重放检查通过；本轮复用已安装依赖并重放修改文件，完整网络 npm ci 留待 CI。完整回归第一次受本机服务权限限制中止，允许本机测试服务后 3,017 项通过；新增菜单插入用例单独通过。
-- PR 交付：Chat https://github.com/dataelement/bisheng/pull/2521 （目标 feat/bisheng-work-120-main）；Work https://github.com/dataelement/bisheng-work/pull/82 （目标 V1.2.0）。两处实现分支均已推送；运行环境配套发布与真实账号验收继续按前述边界登记。
-- 证据：主工作区 `outputs/composer-resource-icons-20261027/`，包括浅深色组件预览、实际 Electron 整体删除与撤销记录、类型/构建/回归日志与包校验信息。
-
+- 产品行为：技能、工具、知识空间显示对应图标与资源名称，菜单和输入框引用共用 ReferenceIconRegular；整体编辑、资源身份、权限和发送序列化沿用原生协议。
+- 基线：已核对远端 `dataelement/bisheng-work:V1.2.0@c2d71dffab1328ab723b4dad44992b6293d2f485`，修复前远端 PR 分支 `17e74d3f8e7d8210a0ad9a594ab27f09e0d83608`；目录 `.worktrees/bisheng-work-composer-resource-icons`，分支 `codex/v120-composer-resource-icons`，安装 Harness `0.2.1-rc.2`。
+- 实现：插入元数据与草稿恢复支持 skill/tool/folder；技能与锤子使用 BISHENG 图形，文件夹沿用 Harness。首次交付仅修改 primitives 分发库，真实桌面消费 web-frontend 中预编译的共享模块，导致技能和工具图标为空。此前组件验证没有覆盖该路径。
+- 根因修复：构建步骤从同一权威图标定义生成真实共享前端中的分支，并接入安装、开发、构建、测试和打包路径。通过公开导出定位运行实现，版本和结构漂移触发构建失败；内容摘要更新入口缓存键。
+- 自动验证：定向 5 文件 / 29 项通过，涵盖完整前端入口与 vendor 依赖执行、实际 loader staticModules 的五种图标渲染、幂等构建与上游结构漂移；类型检查通过。完整回归 307 文件 / 3,020 项通过，4 文件 / 5 项条件跳过。首轮并行构建与测试发生 Office 准备文件竞争；随后发现本地旧 PPT 依赖副本与构建输出摘要不同，强制重新生成后全量复核通过。
+- macOS 交付：新 arm64 DMG/ZIP 已生成；系统签名校验、699 个依赖清单、Office 生成及 PDF 转换通过。包内宿主插件、primitives、conversation、真实 web 入口与 index HTML 五份文件逐字节一致。重启实际测试应用后，已在已登录 Work 页面确认菜单三类图标与原有三项引用同时可见，草稿恢复完整；未发送任务。截图 `runtime-fix-native.png`。
+- 兼容重放：此前两个修改依赖从原始文件重放后逐字节一致，全部兼容文件重放通过；本轮复用本地物化依赖，网络 npm ci 由 CI 继续检查。
+- PR：Chat https://github.com/dataelement/bisheng/pull/2521 ，Work https://github.com/dataelement/bisheng-work/pull/82 。Chat 前端需配套部署。Windows 和资源实际执行效果由独立验收确认。
+- 证据：主工作区 `outputs/composer-resource-icons-20261027/`；旧组件预览、旧安装包校验属于首轮证据，运行包修复使用 `runtime-fix-*` 日志。
 
 ## 2026-10-26 — 首次引导与聊天输入区显示层级修复
 

@@ -215,3 +215,7 @@ Work 知识空间引用在原生输入的 `plain` 和 `claimed` 两个可编辑�
 现有 appearance 协议只有 session/file/folder；本次在原生渲染器、类型与草稿校验枚举中加入 skill/tool，支持保存和恢复。原生节点继续负责整体选中、删除和撤销，布局与主题使用原 ReferenceChip。第三方分发变更通过已有 primitives/conversation 兼容文件记录，并已从恢复的原始文件重放及逐字节比较；上游提供相同类型和图标后迁移至对应发行版，移除本次兼容段并保留行为回归。宿主 ResourceIcon 统一菜单和候选图标，侧边栏导航保留原实现。
 
 回归覆盖菜单插入、真实 ReferenceChip 渲染、草稿持久化、未知枚举拒绝、原 file/session/纯文字草稿兼容及资源序列化。使用局部真实运行时代码的组件验证与完整账号验收分别登记。
+
+实际加载补充：Harness web-frontend 把 primitives 预编译进共享模块，插件 require 与原生引用消费的是该共享模块。`scripts/prepare-reference-icons.mjs` 在安装、开发、构建和测试前从上述唯一图标定义生成对应分支；按公开 `ReferenceIconRegular` 导出定位实现，发现压缩符号并保留内置 session/file/folder 分支，生成区域可重复覆盖。版本或结构变化时构建失败，入口带内容摘要刷新缓存。生成内容留在依赖分发目录，Git 维护生成器和原定义。上游共享前端支持这些类型后一起移除生成步骤。
+
+`test/frontend-reference-icons.test.mjs` 执行完整前端入口及 vendor 依赖，捕获传给 Harness loader 的真实 staticModules，并用其中的 React 与 ReferenceIconRegular 渲染五类图标，覆盖实际运行包与库文件不同步的回归。
