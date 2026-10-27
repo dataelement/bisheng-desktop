@@ -207,3 +207,11 @@ Work 知识空间引用在原生输入的 `plain` 和 `claimed` 两个可编辑�
 ### 技能菜单的复用图标（Harness 0.2.1-rc.2，2026-10-23）
 
 原生 popupSelect 的 `SelectOption.badgeIcon` 接收 option owner 的装饰图标组件，在名称旁以 inline-flex 垂直居中显示；文字 badge 沿用原有上标容器。技能 owner 复用菜单 `NavigationIcon(id=skills)` 的 SVG 路径，尺寸 12px、颜色继承原生次级文字 token；其他调用方保持既有文字 badge 和可访问名称。此接缝仅扩展原生候选行的渲染数据，不改变列表、搜索、选择或序列化。实现与类型由 commands 兼容文件重放，上游支持等价图标字段后切换并移除该变更。
+
+### Agent preset configuration tooltips (Harness 0.2.1-rc.2, 2026-10-27)
+
+The preset configuration button renders the existing Harness `Tooltip` with `portal: true`, top placement and end alignment. The bubble belongs to the body overlay layer and uses the primitive's viewport fitting, theme tokens and hover/focus lifecycle. The previous absolutely positioned `data-tip` pseudo-element belonged to the card inside the settings scroll container, which clipped the English label at the right edge. Its attribute and CSS rules are removed together.
+
+The button keeps its accessible name, configuration action and viewer focus-return reference. The roster, settings slots, import/export and preset selection retain their existing ownership. The installed agent-preset renderer owns this button and exposes no tooltip configuration slot, so the direct component change is recorded in its existing versioned install replay file. Remove this change when Harness provides equivalent portal rendering for this action.
+
+`node scripts/verify-agent-settings-tooltips.mjs` renders the installed section and Tooltip in an isolated native Electron window. It covers English/Chinese, light/dark theme tokens, two window widths, three zoom levels, scroll, hover/focus, click dispatch, dismissal and unmount cleanup. Remote data and unrelated dialogs use fixture stubs; real-account desktop acceptance remains a separate check.
