@@ -70,6 +70,12 @@ Harness 0.2.0-rc.2 的 `dsh-client-ui-input-trigger` 将 pointer hover 与 keybo
 - 替换既有贡献项仅使用目标版本明确支持的机制；不要猜测 ID 覆盖、优先级或过滤参数的行为。
 - `data-dsh-*` 只是样式/定位接缝，不是 slot，也不能代替 slot 的上下文或生命周期契约。自有标记需有明确归属和用途，避免与上游及其他插件冲突。
 
+### Work surface viewport overlays (2026-10-27)
+
+The desktop Work grid uses `isolation: isolate` to keep its stacking boundary while fixed-position Harness overlays retain the viewport as their containing block. The installed Tooltip reads its trigger with `getBoundingClientRect()` and writes viewport coordinates to a fixed bubble. Layout/paint containment on the Work grid added the sidebar and header offsets a second time. The grid and its relative-positioned layout remain the owners of conversation and inspector sizing.
+
+Run `node scripts/verify-session-tooltips.mjs` on a native desktop for the geometry regression. It renders the installed Tooltip implementation and production desktop styles in an isolated Electron profile, covering sidebar widths, inspector visibility, scroll, three zoom factors, top/bottom placement, hover/focus events and dismissal. This is a deterministic browser-layout fixture; real-account native acceptance is a separate gate.
+
 ## 3. Plugin 的职责与可卸载性
 
 - 展示、文案、交互和桌面特有业务留在自有模块；与第三方内部实现的兼容逻辑集中在小范围适配层，不散布到多个插件。
