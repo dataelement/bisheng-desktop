@@ -273,8 +273,14 @@ describe('BISHENG client slot occupants', () => {
 
     const logoRowStart = source.indexOf('className: SidebarRoot_module_css_default.logoRow')
     expect(logoRowStart).toBeGreaterThan(-1)
-    expect(source.slice(Math.max(0, logoRowStart - 120), logoRowStart)).toContain('!darwinDesktop &&')
+    expect(source.slice(Math.max(0, logoRowStart - 220), logoRowStart)).toContain('!darwinDesktop && !windowsTitlebar &&')
     expect(source).toContain('className: SidebarRoot_module_css_default.topStrip')
+    // Windows pins the toggle into the caption. Rendering it outside the logo
+    // row lets that empty 40px band go away without losing the button.
+    const windowsToggle = source.indexOf('windowsTitlebar && toggle')
+    expect(windowsToggle).toBeGreaterThan(-1)
+    expect(windowsToggle).toBeLessThan(logoRowStart)
+    expect(source.slice(windowsToggle, logoRowStart)).not.toContain('logoRow')
 
     const wideBrandStart = source.indexOf('children: [wide &&')
     const wideBrandEnd = source.indexOf('})(), toggle]', wideBrandStart)

@@ -17,7 +17,7 @@ import { mountMacosWindowTheme } from './macos-window-theme'
 import { mountMacosWindowChrome } from './macos-window-chrome'
 import { createHostPathsBridge, HOST_PATHS_BRIDGE } from './host-paths'
 import { createNativeLocaleBridge } from './native-locale'
-import { NATIVE_LOCALE_BRIDGE, NATIVE_LOCALE_CHANGE, NATIVE_LOCALE_READ } from '../shared/native-locale'
+import { localeFromHtmlLang, NATIVE_LOCALE_BRIDGE, NATIVE_LOCALE_CHANGE, NATIVE_LOCALE_READ } from '../shared/native-locale'
 
 if (process.platform === 'darwin') {
   const dispose = mountMacosWindowChrome(document, listener => {
@@ -38,7 +38,12 @@ setupDesktopNotificationBridge()
 
 const MOBILE_BUTTON_ID = 'dsh-desktop-mobile-button'
 const SAFE_MODE_BANNER_ID = 'dsh-desktop-safe-mode-banner'
-let locale: UpdateLocale = navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en'
+
+function navigatorLocale(): UpdateLocale {
+  return navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en'
+}
+
+let locale: UpdateLocale = localeFromHtmlLang(document.documentElement?.lang) ?? navigatorLocale()
 
 let host: HTMLDivElement | undefined
 let content: HTMLDivElement | undefined
@@ -184,13 +189,33 @@ contextBridge.exposeInMainWorld(
   createHostPathsBridge(file => webUtils.getPathForFile(file))
 )
 
+function publishLocale(next: UpdateLocale): void {
+  void ipcRenderer.invoke(NATIVE_LOCALE_CHANGE, next).catch((error: unknown) => {
+    console.error('[desktop-locale] unable to synchronize language', error)
+  })
+}
+
+/** Refresh chrome that follows the in-app language. Publishing is for the document language, which the bridge reports on its own. */
+function applyLiveLocale(next: UpdateLocale, publish: boolean): void {
+  if (next === locale) return
+  locale = next
+  renderMobileButton()
+  render()
+  renderAbout()
+  if (publish) publishLocale(next)
+}
+
+function syncLocaleFromDocument(): void {
+  const next = localeFromHtmlLang(document.documentElement?.lang)
+  if (!next) return
+  applyLiveLocale(next, true)
+}
+
 contextBridge.exposeInMainWorld(NATIVE_LOCALE_BRIDGE, createNativeLocaleBridge({
   read: () => ipcRenderer.invoke(NATIVE_LOCALE_READ),
   publish: active => ipcRenderer.invoke(NATIVE_LOCALE_CHANGE, active),
   changed: active => {
-    locale = active
-    renderMobileButton()
-    render()
+    applyLiveLocale(active, false)
   },
   failed: error => console.error('[desktop-locale] unable to synchronize language', error)
 }))
@@ -425,6 +450,13 @@ function initializeUi(): void {
     childList: true,
     subtree: true
   })
+  const localeObserver = new MutationObserver(() => syncLocaleFromDocument())
+  localeObserver.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['lang']
+  })
+  window.addEventListener('unload', () => localeObserver.disconnect(), { once: true })
+  syncLocaleFromDocument()
   void refreshMobileStatus()
   void mountSafeModeBanner()
   positionSafeModeFrame()
@@ -879,7 +911,7 @@ function renderAbout(): void {
 
   aboutHost.style.display = 'flex'
   const info = aboutInfo
-  const zh = info.locale === 'zh'
+  const zh = locale === 'zh'
 
   let overlay = aboutShadow.querySelector('.about-overlay') as HTMLElement | null
   if (!overlay) {
@@ -1240,6 +1272,9 @@ ipcRenderer.on('updates:status-changed', (_event, status: UpdateStatus) => {
 ipcRenderer.on('desktop:show-about', (_event, info: AboutInfo) => {
   aboutInfo = info
   aboutOpen = true
+  const live = localeFromHtmlLang(document.documentElement?.lang)
+  if (live) applyLiveLocale(live, true)
+  else if (info.locale === 'en' || info.locale === 'zh') applyLiveLocale(info.locale, false)
   renderAbout()
 })
 

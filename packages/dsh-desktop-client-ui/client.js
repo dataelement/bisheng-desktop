@@ -707,9 +707,10 @@ window.__ModuleLoader__.load({
       return result
     }
     const TOOL_REFERENCE_SOURCE = 'desktop-tool'
+    const validToolLabel = label => typeof label === 'string' && label.trim().length > 0 && !/[\u0000-\u001f\u007f]/u.test(label)
     const decodeToolReference = ref => {
       const tool = JSON.parse(ref)
-      if (!/^mcp__bisheng__bisheng_tool_[1-9][0-9]*$/.test(tool.name) || typeof tool.label !== 'string' || typeof tool.connectionKey !== 'string' || !tool.connectionKey) throw new Error('Invalid tool reference.')
+      if (!tool || !/^mcp__bisheng__bisheng_tool_[1-9][0-9]*$/.test(tool.name) || !validToolLabel(tool.label) || typeof tool.connectionKey !== 'string' || !tool.connectionKey) throw new Error('Invalid tool reference.')
       return tool
     }
     const toolReferenceSource = {
@@ -719,9 +720,49 @@ window.__ModuleLoader__.load({
         serialize: async (ref, signal) => {
           const tool = decodeToolReference(ref)
           await workToolRequest({ operation: 'validate', names: [tool.name], connectionKey: tool.connectionKey }, signal)
-          return ` [Selected tool: ${tool.name}] `
+          return ` [Selected tool: ${tool.name}; label: ${JSON.stringify(tool.label)}] `
         }
       }
+    }
+    // Persist the selection's label with its model identity. Transcript rendering
+    // reads this snapshot, so account changes and catalog renames preserve history.
+    const workToolMessageRule = {
+      id: TOOL_REFERENCE_SOURCE, order: 20,
+      match(text, from) {
+        const pattern = /\[Selected tool: (mcp__bisheng__bisheng_tool_[1-9][0-9]*)(?:; label: ("(?:[^"\\\r\n]|\\.)*"))?\]/gu
+        pattern.lastIndex = from
+        for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+          let label
+          if (match[2] !== undefined) {
+            try { label = JSON.parse(match[2]) } catch { continue }
+            if (!validToolLabel(label)) continue
+          }
+          return { id: TOOL_REFERENCE_SOURCE, start: match.index, end: pattern.lastIndex, data: { name: match[1], ...(label === undefined ? {} : { label }) } }
+        }
+      }
+    }
+    function WorkToolMessage({ node, t }) {
+      // Legacy messages carry only an ID. A neutral label keeps their meaning
+      // without resolving that ID against a different enterprise account.
+      const label = node.data.label ?? t('selectedTool')
+      return React.createElement('span', { className: 'dshWorkToolReference', title: label },
+        React.createElement(NavigationIcon, { id: 'tools', size: 14 }), label)
+    }
+    function installWorkToolMessages(ctx) {
+      const ns = 'desktop.toolMessage'
+      ctx.effect(() => ctx.locale.register(ns, { zh: { selectedTool: '已选工具' }, en: { selectedTool: 'Selected tool' } }), 'desktop tool message locale')
+      ctx.effect(() => ctx.uiConversation.userText.register(workToolMessageRule), 'desktop tool message rule')
+      ctx.slots.inject('conversation.user.text.node', () => ctx.slots.register({
+        name: 'conversation.user.text.node', key: TOOL_REFERENCE_SOURCE, priority: 100,
+        inject: () => ({ t: ctx.locale.bind(ns) })
+      }, WorkToolMessage))
+      ctx.effect(() => {
+        const style = document.createElement('style')
+        style.dataset.plugin = 'dsh-desktop-tool-message'
+        style.textContent = '.dshWorkToolReference{color:var(--dsw-alias-state-business-primary);overflow-wrap:anywhere}.dshWorkToolReference svg{vertical-align:text-bottom;margin-inline-end:4px}'
+        document.head.appendChild(style)
+        return () => style.remove()
+      })
     }
     const SKILL_REFERENCE_SOURCE = 'desktop-skill'
     const decodeSkillReference = ref => {
@@ -976,6 +1017,7 @@ window.__ModuleLoader__.load({
     const inject = ['slots', 'locale', 'remote', 'remote.session', 'sessions', 'uiWorkspace', 'layout']
     function apply(ctx) {
       const navigation = installDesktopModes(ctx)
+      if (typeof ctx.inject === 'function') ctx.inject(['uiConversation'], installWorkToolMessages)
       if (typeof ctx.inject === 'function') ctx.inject(['commandUi', 'inputTriggers', 'conversation', 'remote.skills'], installWorkResources)
       // `remote` and `remote.session` are separate inject names. Reading
       // `ctx.remote` without declaring `remote` throws and unmounts this slot.
