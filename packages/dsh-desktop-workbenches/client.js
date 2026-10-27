@@ -5,6 +5,19 @@ window.__ModuleLoader__.load({
     const { Service } = require('@deepseek-ai/cordis')
     const { Switch, Toast } = require('@deepseek-ai/dsh-client-ui-primitives')
     const h = React.createElement
+    const SETTINGS_NS = 'dsh-desktop-workbenches.settings'
+    const settingsCopy = {
+      zh: {
+        title: '工作台',
+        showInSidebar: '在左侧显示工作台',
+        enableHint: '开启后，可以在左侧会话旁进入工作台。'
+      },
+      en: {
+        title: 'Workbenches',
+        showInSidebar: 'Show workbenches in the sidebar',
+        enableHint: 'Turn this on to access workbenches next to Sessions in the sidebar.'
+      }
+    }
     const DOWNLOAD_NS = 'dsh-desktop-workbenches.download'
     const downloadCopy = {
       zh: { download_failed: '无法下载工作台安装包', download_interrupted: '工作台安装包下载中断', invalid_download_url: '工作台下载地址无效。', unsafe_download_url: '工作台下载地址必须使用 HTTPS，且不能包含凭据或自定义端口。' },
@@ -2602,19 +2615,21 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           ...loaded.filter((item) => !item.customFrame).map((item) => h(HeaderHost, { as: 'aside', entry: item, key: item.id, className: 'dshWbBusiness', 'data-side': item.layout?.businessSide, 'data-embedded': item.embedded === true, hidden: id !== item.id, 'aria-label': item.panelTitle }, h(PanelBoundary, { service }, h(item.Component, { service, entry: item }))))))
     }
     function WorkbenchSettingsTab() {
+      useHostLocale()
+      const t = hostLocale.bind(SETTINGS_NS)
       const enabled = React.useSyncExternalStore(workbenchPreference.subscribe.bind(workbenchPreference), workbenchPreference.getSnapshot.bind(workbenchPreference))
       const enterprise = React.useSyncExternalStore(enterpriseCapability.subscribe.bind(enterpriseCapability), enterpriseCapability.getSnapshot.bind(enterpriseCapability))
       return h('section', { className: 'dshWb dshWbSettings' },
-        h('h2', null, '工作台'),
+        h('h2', null, t('title')),
         h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: '8px' } },
-          h('span', null, '在左侧显示工作台'),
+          h('span', null, t('showInSidebar')),
           h(Switch, {
             checked: enabled,
-            label: '在左侧显示工作台',
+            label: t('showInSidebar'),
             onChange: workbenchPreference.set.bind(workbenchPreference)
           })),
         h('p', { className: 'dshWbMuted' }, !enabled
-          ? '开启后，可以在左侧会话旁进入工作台。'
+          ? t('enableHint')
           : enterprise.allowThirdPartyWorkbenches
             ? enterpriseText(undefined, 'settingsOpen')
             : enterpriseText(undefined, 'settingsClosed')))
@@ -2622,6 +2637,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
     function apply(ctx) {
       workbenchLocaleCtx = ctx
       hostLocale = ctx.locale
+      ctx.effect(() => ctx.locale.register(SETTINGS_NS, settingsCopy), 'workbenches: settings dictionaries')
       ctx.effect(() => ctx.locale.register(DOWNLOAD_NS, downloadCopy), 'workbenches: download dictionaries')
       const service = new Workbenches(ctx)
       ctx.effect(() => ctx.reflect.provide('desktopWorkbenches', service), 'workbenches: service')
@@ -2673,7 +2689,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           disposeTab = undefined
           if (!enterpriseCapability.getSnapshot().connected) return
           disposeTab = ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({
-            name: 'settings.plugins.tab', id: 'desktop-workbenches', order: 40, label: () => '工作台'
+            name: 'settings.plugins.tab', id: 'desktop-workbenches', order: 40, label: () => ctx.locale.bind(SETTINGS_NS)('title')
           }, WorkbenchSettingsTab))
         }
         const timer = typeof window.setInterval === 'function' ? window.setInterval(() => { void sync() }, 5000) : undefined
