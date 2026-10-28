@@ -284,3 +284,21 @@ upstream V0.13.0 本身没有企业授权层，合并不会自动替代此接缝
 实际加载补充：Harness web-frontend 把 primitives 预编译进共享模块，插件 require 与原生引用消费的是该共享模块。`scripts/prepare-reference-icons.mjs` 在安装、开发、构建和测试前从上述唯一图标定义生成对应分支；按公开 `ReferenceIconRegular` 导出定位实现，发现压缩符号并保留内置 session/file/folder 分支，生成区域可重复覆盖。版本或结构变化时构建失败，入口带内容摘要刷新缓存。生成内容留在依赖分发目录，Git 维护生成器和原定义。上游共享前端支持这些类型后一起移除生成步骤。
 
 `test/frontend-reference-icons.test.mjs` 执行完整前端入口及 vendor 依赖，捕获传给 Harness loader 的真实 staticModules，并用其中的 React 与 ReferenceIconRegular 渲染五类图标，覆盖实际运行包与库文件不同步的回归。
+
+### Windows enterprise content navigation (2026-10-28)
+
+Windows window dragging belongs to the existing 40px caption row. The Desktop
+mode header and the isolated enterprise Chat header use content-area dragging
+only on macOS. `chatLayoutCss(platform)` selects the embedded document's chrome
+from the host platform, and the host plugin uses its existing macOS marker.
+This keeps the Windows knowledge-space navigation in the client area when the
+enterprise view occupies the former Chat / Work header bounds. The host platform owns this boundary for both native views.
+
+The change lives in the owning Desktop stylesheet and enterprise view loader.
+The knowledge-space buttons keep their existing navigation and menu handlers.
+Run `node scripts/verify-workspace-navigation.mjs` for a temporary-profile
+Electron fixture covering host/child regions, Chat → files, directory-menu
+selection and back-button SVG clicks, sidebar widths, zoom, locale and theme.
+The script reports its native OS explicitly; Windows installation and real-account
+acceptance require a Windows run. `verify-chat-window-drag.mjs` retains the
+macOS header regression.

@@ -6,7 +6,7 @@ import type { EnterpriseDesktopRuntime } from './enterprise-desktop'
 import { MODULE_ROUTE_PATTERN, MODULE_THEME_CSS, moduleThemeScript } from './chat-module-theme'
 import { chatDialogViewportScript } from './chat-dialog-viewport'
 import { chatLocaleScript } from './chat-locale'
-import { CHAT_LAYOUT_CSS } from './chat-layout'
+import { chatLayoutCss } from './chat-layout'
 import { parseUsageSummary, parseUsageStorage, type EnterpriseUsage } from '../../shared/enterprise-usage'
 
 /** Remote Chat gets its own in-memory browser session and a presentation-only preload. */
@@ -420,7 +420,7 @@ export class EnterpriseChatView {
           if (generation !== this.generation) return
           if (new URL(view.webContents.getURL()).pathname.startsWith('/workspace')) {
             // Host-owned module styles live in this document until the next full load replaces it.
-            void view.webContents.insertCSS(`${MODULE_THEME_CSS}\n${CHAT_LAYOUT_CSS}`).catch(() => this.note('[enterprise-chat] module_style_failed'))
+            void view.webContents.insertCSS(`${MODULE_THEME_CSS}\n${chatLayoutCss(process.platform)}`).catch(() => this.note('[enterprise-chat] module_style_failed'))
             this.state = { phase: 'ready' }; void this.syncSettings(); this.layout(); this.notify()
           } else {
             this.state = { phase: 'error' }; this.layout(); this.note('[enterprise-chat] unexpected_login_redirect')
