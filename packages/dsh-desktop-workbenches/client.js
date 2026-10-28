@@ -614,7 +614,7 @@ window.__ModuleLoader__.load({
         }, migrations))
       }
       publish() {
-        this.snapshot = { state: this.state, drafts: Object.fromEntries(this.draftNotes), ready: this.ready, error: this.error,
+        this.snapshot = { state: this.state, enabled: workbenchPreference.getSnapshot(), drafts: Object.fromEntries(this.draftNotes), ready: this.ready, error: this.error,
           catalogLoaded: this.catalogLoaded, catalogError: this.catalogError, catalogStale: this.catalogStale, catalogRefreshing: this.catalogRefreshing, checkingUpdates: this.checkingUpdates, pending: this.pending, marketOpen: this.marketOpen,
           catalog: this.marketCatalog(), categories: this.marketCategories, installs: this.installs, installing: this.installing, native: this.native, togglingPlugin: this.togglingPlugin, removingPlugin: this.removingPlugin, removedWorkbenchIds: [...this.removedWorkbenchIds], restartNeeded: this.restartNeeded, switcherHint: this.switcherHint === true,
           enterpriseCatalog: this.enterpriseCatalog, enterpriseCatalogStatus: this.enterpriseCatalogStatus, enterpriseCatalogError: this.enterpriseCatalogError, enterpriseDetail: this.enterpriseDetail, enterpriseVerify: this.enterpriseVerify }

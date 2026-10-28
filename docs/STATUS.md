@@ -1,3 +1,11 @@
+## 2026-10-28 — 工作台顶部导航显示范围
+
+- 根因：模式选择栏依据空白会话状态展示，工作台首次进入和空白会话也满足该条件。现在 Work 首页同时要求处于普通会话界面；进入工作台时移除整行 Chat / Work 导航并释放顶部空间，返回普通会话时按原首页规则恢复。
+- 实现：桌面导航通过 Cordis 可选注入订阅既有 `desktopWorkbenches` 服务；工作台快照提供功能启用状态。功能关闭、服务卸载及重载使用同一订阅生命周期，Chat 首页保留原有入口，会话组件与草稿保持原实例。
+- 基线：已核对远端 `dataelement/bisheng-work:V1.2.0@ea1b79129b1b636d459de65642f17dfd3864d8d3`；工作目录 `.worktrees/bisheng-work-v120-workbench-mode-header`，分支 `codex/v120-workbench-mode-header`；干净安装的 Harness 为 `0.2.1-rc.2`。v0.9.0 参考集成目录检查时为干净状态。
+- 验证：干净依赖安装及兼容处理、相关 242 项回归、类型检查和两个插件 JS 语法检查通过。`test/desktop-modes-ui.test.mjs` 覆盖首次恢复工作台、进入/切换/退出、空白与已有会话、启停、可选服务卸载/重载、Chat 首页与草稿保留；`test/workbench-client.test.mjs` 覆盖服务实际启停快照。生产构建和完整回归通过：314 个测试文件、3,101 项通过，4 个文件 / 5 项条件跳过；差异检查通过。构建使用按锁定 SHA256 校验的本地下载缓存。
+- macOS Electron 隔离夹具运行真实桌面导航组件和样式，使用模拟服务状态，在 600/1200 宽度和深浅模式下共 4 组通过，确认顶部空间回收、返回恢复与订阅清理。真实同事工作台、真实账号及 Windows 安装包验收待发包执行。证据位于主工作区 `outputs/workbench-mode-header-20261028/`。
+
 ## 2026-10-27 — PR #79 同步目标分支并处理冲突
 
 - 远端 PR #79 原 head `6e3b2f5`，目标 `dataelement/bisheng-work:V1.2.0` 已更新至 `802638a1a6c4a21c95e503f4c2cb803d83776e8c`；沿用 `codex/v120-chat-signin-guidance` 与 `.worktrees/bisheng-work-capabilities-v120-integration`，实际 Harness `0.2.1-rc.2`。v0.9.0 参考集成目录状态为空。
