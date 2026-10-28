@@ -21,7 +21,7 @@ async function loadWithin<T>(operation: Promise<T>, ms: number): Promise<T> {
 }
 
 export class EnterpriseChatView {
-  private knowledgeDialogOpen = false
+  private modalOpen = false
   private dialogViewport?: string
   private landing?: boolean
   private navigation?: ReturnType<typeof parseEnterpriseNavigation>
@@ -269,7 +269,7 @@ export class EnterpriseChatView {
     const x = Math.max(0, Math.round(bounds.x * zoom))
     const y = Math.max(0, Math.round(bounds.y * zoom))
     const contentBounds = { x, y, width: Math.max(0, Math.min(width - x, Math.round(bounds.width * zoom))), height: Math.max(0, Math.min(height - y, Math.round(bounds.height * zoom))) }
-    const windowDialog = this.knowledgeDialogOpen && !this.presentation.settings
+    const windowDialog = this.modalOpen && !this.presentation.settings
     this.view.setBounds(windowDialog ? { x: 0, y: 0, width, height } : contentBounds)
     const viewZoom = this.view.webContents.getZoomFactor()
     const viewportScript = chatDialogViewportScript(windowDialog ? {
@@ -375,10 +375,12 @@ export class EnterpriseChatView {
             this.note(`[enterprise-settings] ready_report path_match=${report.path === url.pathname} section_match=${report.section === this.settingsSection} content_mode=${url.searchParams.get('dshSettings') === '1'}`)
           }
           if (report.path !== url.pathname) return
-          if (channel === 'enterprise-chat:knowledge-dialog') {
-            if (typeof report.open !== 'boolean' || !/^\/workspace\/(?:c|chat|linsight)\/[a-zA-Z0-9_-]+$/u.test(url.pathname)) return
-            this.knowledgeDialogOpen = report.open
+          if (channel === 'enterprise-chat:modal') {
+            if (typeof report.open !== 'boolean') return
+            const opening = report.open && !this.modalOpen
+            this.modalOpen = report.open
             this.layout()
+            if (opening && this.presentation?.visible) view.webContents.focus()
             return
           }
           if (channel === 'enterprise-chat:settings-ready') {
@@ -417,7 +419,7 @@ export class EnterpriseChatView {
         })
         view.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
           if (isMainFrame && !isInPlace && generation === this.generation && this.view === view) {
-            this.knowledgeDialogOpen = false
+            this.modalOpen = false
             this.dialogViewport = undefined
             this.layout()
           }
@@ -428,7 +430,8 @@ export class EnterpriseChatView {
         })
         view.webContents.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
           if (isMainFrame && generation === this.generation && this.view === view) {
-            this.knowledgeDialogOpen = false
+            this.modalOpen = false
+            view.webContents.send('enterprise-chat:sync-modal')
             this.landing = undefined
             if (this.settingsSection) {
               const url = new URL(view.webContents.getURL())
@@ -480,7 +483,7 @@ export class EnterpriseChatView {
   }
 
   private clear(): void {
-    this.knowledgeDialogOpen = false
+    this.modalOpen = false
     this.dialogViewport = undefined
     clearTimeout(this.settingsTimer)
     this.settingsSection = undefined
