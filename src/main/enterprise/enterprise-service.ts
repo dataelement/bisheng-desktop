@@ -155,6 +155,9 @@ const MODELS_INTERVAL_MS = 5 * 60 * 1000
 const MODELS_JITTER_MS = 15_000
 const DEGRADED_BACKOFF_MS = 30_000
 const MAX_DEGRADED_BACKOFF_MS = 5 * 60 * 1000
+// Wake needs time for Wi-Fi, VPN or a proxy to reconnect before the next refresh.
+export const BACKGROUND_RESUME_DELAY_MS = 10_000
+export const BACKGROUND_RESUME_JITTER_MS = 2_000
 
 export class EnterpriseService {
   private mutation: Promise<unknown> = Promise.resolve()
@@ -172,7 +175,9 @@ export class EnterpriseService {
   private errorCode: string | undefined
   private requestId: string | undefined
   private pendingLogin: PendingLogin | undefined
+  private modelsRefresh: { epoch: number; promise: Promise<void> } | undefined
   private modelsTimer: NodeJS.Timeout | undefined
+  private backgroundSuspended = false
   private loginExpiryTimer: NodeJS.Timeout | undefined
   private modelsAttempt = 0
   private lastPublicSignature = ''
@@ -411,6 +416,26 @@ export class EnterpriseService {
       this.refreshInFlight = undefined
     })
     return this.refreshInFlight
+  }
+
+  /** Synchronize catalog metadata using the current account's host-held credentials. */
+  async refreshModels(includeUsage = false): Promise<EnterprisePublicState> {
+    const epoch = this.epoch
+    let refresh = this.modelsRefresh
+    if (refresh?.epoch !== epoch) {
+      refresh = { epoch, promise: this.tickModels() }
+      this.modelsRefresh = refresh
+    }
+    try {
+      await refresh.promise
+    } finally {
+      if (this.modelsRefresh === refresh) this.modelsRefresh = undefined
+    }
+    if (includeUsage && this.epoch === epoch && this.phase === 'connected') {
+      await this.refreshUsageCatalog(epoch)
+      if (this.epoch === epoch) this.scheduleModels(this.modelsDelay())
+    }
+    return this.snapshot()
   }
 
   async logout(): Promise<EnterprisePublicState> {
@@ -727,14 +752,9 @@ export class EnterpriseService {
       }))
       this.modelsAvailable = this.models.length > 0
       if (this.phase === 'degraded') this.phase = 'connected'
-      await this.refreshUsageCatalog(epoch)
-      if (this.epoch !== epoch) return
       this.modelsAttempt = 0
       this.clearError()
-      await this.refreshUsageCatalog(epoch)
-      if (this.epoch !== epoch) return
       this.publish()
-      this.scheduleModels(this.modelsDelay())
     } catch (error) {
       if (this.epoch !== epoch) return
       if (!accessRetried && error instanceof EnterprisePlatformError && error.code === 'invalid_access_token') {
@@ -1488,11 +1508,23 @@ export class EnterpriseService {
     })
   }
 
+  suspendBackground(): void {
+    this.backgroundSuspended = true
+    this.clearModelsTimer()
+  }
+
+  resumeBackground(): void {
+    this.backgroundSuspended = false
+    if (!this.session?.access_token) return
+    if (this.phase === 'disabled' || this.phase === 'reauthRequired') return
+    this.scheduleModels(BACKGROUND_RESUME_DELAY_MS + Math.floor(Math.random() * BACKGROUND_RESUME_JITTER_MS))
+  }
+
   private scheduleModels(delayMs: number): void {
     this.clearModelsTimer()
-    if (!this.session?.access_token) return
+    if (this.backgroundSuspended || !this.session?.access_token) return
     this.modelsTimer = setTimeout(() => {
-      void this.tickModels()
+      void this.refreshModels(true)
     }, delayMs)
     this.modelsTimer.unref?.()
   }

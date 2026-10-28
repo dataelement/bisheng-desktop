@@ -320,16 +320,25 @@ describe('enterprise adapter with a Broker', () => {
     })
   })
 
-  it('registers enterprise models when settings reads a published catalog', async () => {
+  it('publishes renamed models through foreground refresh with stable routing', async () => {
     const platform = createMockEnterpriseServer({ port: 0 })
     const origin = await platform.listen()
     adapterCleanups.push(async () => platform.close())
 
     const directory = await mkdtemp(join(tmpdir(), 'enterprise-adapter-'))
     const vault = new SecureEnterpriseCredentialVault(join(directory, ENTERPRISE_VAULT_FILENAME), memorySafeStorage())
+    let displayName = '阿里云百炼 / qwen-max'
     const service = new EnterpriseService({
       vault,
-      fetchImpl: createEnterpriseFetch(globalThis.fetch),
+      fetchImpl: createEnterpriseFetch(async (input, init) => {
+        const response = await globalThis.fetch(input, init)
+        if (String(input).includes('/api/v1/dsh/models') && response.ok) {
+          const payload = await response.json() as { data: Array<{ display_name: string }> }
+          payload.data.forEach(model => { model.display_name = displayName })
+          return Response.json(payload)
+        }
+        return response
+      }),
       allowInsecureLoopback: true
     })
     await service.restore()
@@ -343,10 +352,13 @@ describe('enterprise adapter with a Broker', () => {
     process.env.DSH_DESKTOP_ENTERPRISE_ALLOW_INSECURE_LOOPBACK = '1'
 
     const registered: string[][] = []
+    let adapter: { listModels(provider: string): Promise<Array<{ id: string; name: string }>> } | undefined
+    let replacements = 0
     const routes = createPluginContext({
-      registerAdapter(providers: string[]) {
+      registerAdapter(providers: string[], value: typeof adapter) {
+        adapter = value
         registered.push(providers)
-        return Object.assign(() => undefined, { replace: () => undefined })
+        return Object.assign(() => undefined, { replace: () => { replacements += 1 } })
       }
     } as never)
 
@@ -361,6 +373,16 @@ describe('enterprise adapter with a Broker', () => {
       phase: expect.stringMatching(/refreshing|connected/)
     })
     expect(registered).toContainEqual(['bisheng-enterprise'])
+    const before = await adapter!.listModels('bisheng-enterprise')
+    expect(before[0]?.name).toBe(displayName)
+    const oldReplacements = replacements
+    displayName = '阿里云百炼 / 1111'
+    const refreshed = await invoke(routes, '/api/enterprise.models.refresh', 'POST', {})
+    expect(refreshed.status).toBe(200)
+    const after = await adapter!.listModels('bisheng-enterprise')
+    expect(after.map(model => model.id)).toEqual(before.map(model => model.id))
+    expect(after[0]?.name).toBe(displayName)
+    expect(replacements).toBeGreaterThan(oldReplacements)
   })
 })
 

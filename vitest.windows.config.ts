@@ -29,6 +29,8 @@ export default defineConfig({
       'test/legacy-preset-migration.test.ts',
       'test/pnpm-runner.test.js',
       'test/local-path-links.test.ts',
+      'test/local-workbench-path.test.mjs',
+      'test/office-engine-resolution.test.ts',
       'test/remove-tree.test.ts',
       'test/shell-environment-encoding.test.ts',
       'test/directory-picker.test.ts',

@@ -19,6 +19,7 @@ import {
   ipcMain,
   Menu,
   nativeTheme,
+  powerMonitor,
   safeStorage,
   shell,
   Tray,
@@ -171,7 +172,8 @@ import {
   stopUpdateManager
 } from './update/update-manager'
 import type { RuntimeSnapshot } from '../shared/contracts'
-import { resolveHarnessLocale } from './application-locale'
+import { resolveShellLocale } from './application-locale'
+import { darwinApplicationMenuRoles } from './darwin-application-menu'
 import { registerNativeLocaleHandlers } from './native-locale'
 import type { HarnessLocale } from '../shared/native-locale'
 import { installContextMenu } from './context-menu'
@@ -683,19 +685,9 @@ function dshBrandLogoPath(variant: 'light' | 'dark'): string {
 let activeHarnessLocale: HarnessLocale | undefined
 
 function harnessLocale(): 'en' | 'zh' {
-  // The live Client owns the resolved Profile preference, including automatic mode.
-  if (activeHarnessLocale) return activeHarnessLocale
-  try {
-    const settings = parse(
-      readFileSync(join(app.getPath('userData'), 'harness', 'settings.yaml'), 'utf8')
-    ) as { locale?: { preference?: unknown } }
-    return resolveHarnessLocale(
-      settings.locale?.preference,
-      app.getPreferredSystemLanguages()
-    )
-  } catch {
-    return resolveHarnessLocale(undefined, app.getPreferredSystemLanguages())
-  }
+  // The Client publishes the resolved Profile language, including automatic mode.
+  // settings.yaml is retired and must not keep native chrome in a stale language.
+  return resolveShellLocale(activeHarnessLocale, app.getPreferredSystemLanguages())
 }
 
 function gpuFallbackStatePath(): string {
@@ -3212,6 +3204,7 @@ function installMenu(): void {
   const checkForUpdatesLabel = isChinese
     ? '检查更新…'
     : 'Check for Updates…'
+  const appMenuRoles = darwinApplicationMenuRoles(isChinese ? 'zh' : 'en', app.name)
   const template: Electron.MenuItemConstructorOptions[] = [
     ...(process.platform === 'darwin'
       ? [
@@ -3232,11 +3225,11 @@ function installMenu(): void {
               click: () => void checkForUpdates(true).catch(showUnexpectedError)
             },
             { type: 'separator' as const },
-            { role: 'hide' as const },
-            { role: 'hideOthers' as const },
-            { role: 'unhide' as const },
+            appMenuRoles.hide,
+            appMenuRoles.hideOthers,
+            appMenuRoles.showAll,
             { type: 'separator' as const },
-            { role: 'quit' as const }
+            appMenuRoles.quit
           ]
         }
       ]
@@ -3459,7 +3452,17 @@ async function bootstrap(): Promise<void> {
       safeStorage,
       fetchImpl: createElectronEnterpriseFetch(net.fetch.bind(net)),
       allowInsecureLoopback: allowInsecureEnterpriseLoopback(),
-      note: (line) => runtime.note(line)
+      note: (line) => runtime.note(line),
+      powerMonitor: {
+        on: (event, listener) => {
+          if (event === 'suspend') powerMonitor.on('suspend', listener)
+          else powerMonitor.on('resume', listener)
+        },
+        removeListener: (event, listener) => {
+          if (event === 'suspend') powerMonitor.removeListener('suspend', listener)
+          else powerMonitor.removeListener('resume', listener)
+        }
+      }
     })
   } catch {
     runtime.note('[enterprise] start_failed')

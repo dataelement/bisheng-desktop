@@ -1,4 +1,16 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import { observeEnterpriseModals } from './enterprise-modal'
+
+let modals: ReturnType<typeof observeEnterpriseModals> | undefined
+const refreshModals = (): void => modals?.refresh()
+window.addEventListener('DOMContentLoaded', () => {
+  modals = observeEnterpriseModals(open => ipcRenderer.send('enterprise-chat:modal', { open, path: window.location.pathname }))
+  ipcRenderer.on('enterprise-chat:sync-modal', refreshModals)
+}, { once: true })
+window.addEventListener('pagehide', () => {
+  modals?.dispose()
+  ipcRenderer.removeListener('enterprise-chat:sync-modal', refreshModals)
+}, { once: true })
 
 /** Presentation-only channel. Remote Chat receives no local execution or account APIs. */
 contextBridge.exposeInMainWorld('dshChatPresentation', Object.freeze({
@@ -6,7 +18,7 @@ contextBridge.exposeInMainWorld('dshChatPresentation', Object.freeze({
     ipcRenderer.send('enterprise-chat:navigation', { navigation, path: window.location.pathname })
   },
   reportKnowledgeDialog(open: unknown): void {
-    if (typeof open === 'boolean') ipcRenderer.send('enterprise-chat:knowledge-dialog', { open, path: window.location.pathname })
+    if (typeof open === 'boolean') refreshModals()
   },
   reportLanding(landing: unknown): void {
     if (typeof landing === 'boolean') ipcRenderer.send('enterprise-chat:landing', { landing, path: window.location.pathname })

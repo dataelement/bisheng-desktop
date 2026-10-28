@@ -7,12 +7,17 @@ export interface UsageMetrics {
   missing_usage_count: number
 }
 export interface UsagePoint extends UsageMetrics { start_at: string; end_at: string }
-export interface EnterpriseUsage {
+export interface UsageSummary {
   start_at: string
   end_at: string
   totals: UsageMetrics
   points: UsagePoint[]
-  storage: { used: number; limit: number } | null
+}
+export type UsageStorage = { used: number; limit: number } | null
+export type UsageSection<T> = { status: 'ready'; data: T } | { status: 'error' }
+export interface EnterpriseUsage {
+  summary: UsageSection<UsageSummary>
+  storage: UsageSection<UsageStorage>
 }
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid usage response.')
@@ -31,7 +36,7 @@ function timestamp(value: unknown): string {
   if (typeof value !== 'string' || value.length > 64 || !Number.isFinite(Date.parse(value))) throw new Error('Invalid usage timestamp.')
   return value
 }
-export function parseUsageSummary(value: unknown): Omit<EnterpriseUsage, 'storage'> {
+export function parseUsageSummary(value: unknown): UsageSummary {
   const row = object(value)
   if (row.timezone !== 'Asia/Shanghai' || row.granularity !== 'day' || !Array.isArray(row.points) || row.points.length > 366) throw new Error('Invalid daily usage summary.')
   const start_at = timestamp(row.start_at), end_at = timestamp(row.end_at)
@@ -46,7 +51,7 @@ export function parseUsageSummary(value: unknown): Omit<EnterpriseUsage, 'storag
   })
   return { start_at, end_at, totals: metrics(row.totals), points }
 }
-export function parseUsageStorage(value: unknown): EnterpriseUsage['storage'] {
+export function parseUsageStorage(value: unknown): UsageStorage {
   if (!Array.isArray(value) || value.length > 1000) throw new Error('Invalid storage quota.')
   const item = value.map(object).find(row => row.resource_type === 'knowledge_space_file')
   if (!item) return null

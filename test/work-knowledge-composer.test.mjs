@@ -56,7 +56,7 @@ describe('Work inline knowledge references', () => {
     update([a])
     const [ref] = input.state.getSnapshot().occurrences
     expect(ref).toMatchObject({ source: 'desktop-knowledge', label: a.name, clipboardText: `@${a.name}` })
-    expect(ref.appearance).toBeUndefined()
+    expect(ref.appearance).toBe('folder')
     expect(composer.source.openReference()).toBe(false)
     expect(await composer.source.codec.serialize(ref.ref)).toBe(`@${a.name}`)
     expect(composer.read('one')).toEqual([a])

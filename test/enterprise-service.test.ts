@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createEnterpriseFetch, type EnterpriseFetch } from '../src/main/enterprise/platform-fetch'
-import { EnterpriseService, type EnterpriseServiceNote, type EnterpriseServiceOptions } from '../src/main/enterprise/enterprise-service'
+import { BACKGROUND_RESUME_DELAY_MS, BACKGROUND_RESUME_JITTER_MS, EnterpriseService, type EnterpriseServiceNote, type EnterpriseServiceOptions } from '../src/main/enterprise/enterprise-service'
 import { startLoginCallbackServer } from '../src/main/enterprise/login-callback-server'
 import {
   ENTERPRISE_VAULT_FILENAME,
@@ -82,7 +82,9 @@ describe('enterprise service login loop', () => {
     const origin = await platform.listen()
     cleanups.push(async () => platform.close())
     let label = 'Provider A / Original label'
+    const requests: string[] = []
     const fetchImpl: EnterpriseFetch = async (input, init) => {
+      requests.push(String(input))
       const response = await globalThis.fetch(input, init)
       if (String(input).includes('/api/v1/dsh/models') && response.ok) {
         const body = await response.json() as { data: Array<{ display_name: string }> }
@@ -97,11 +99,40 @@ describe('enterprise service login loop', () => {
     await waitFor(() => service.snapshot().phase === 'connected' && service.snapshot().modelsAvailable)
     const before = service.snapshot()
     label = 'Provider A / Renamed label'
-    await service.refresh()
+    requests.length = 0
+    await Promise.all([service.refreshModels(), service.refreshModels(), service.refreshModels()])
+    expect(requests.filter(url => url.includes('/api/v1/dsh/models'))).toHaveLength(1)
+    expect(requests.filter(url => url.includes('/token') || url.includes('/usage'))).toHaveLength(0)
     const after = service.snapshot()
     expect(after.models.map(model => model.id)).toEqual(before.models.map(model => model.id))
     expect(after.models[0]?.display_name).toBe(label)
     expect(after.revision).toBeGreaterThan(before.revision)
+  })
+
+  it('keeps the signed-out catalog empty when an earlier metadata refresh finishes', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    let hold = false
+    let release: (() => void) | undefined
+    const fetchImpl: EnterpriseFetch = async (input, init) => {
+      const response = await globalThis.fetch(input, init)
+      if (hold && String(input).includes('/api/v1/dsh/models')) {
+        await new Promise<void>(resolve => { release = resolve })
+      }
+      return response
+    }
+    const { service } = await createService(createEnterpriseFetch(fetchImpl))
+    const started = await service.startLogin(origin)
+    await completeBrowserLogin(origin, started.authorizationUrl)
+    await waitFor(() => service.snapshot().phase === 'connected')
+    hold = true
+    const refreshing = service.refreshModels()
+    await waitFor(() => release !== undefined)
+    await service.logout()
+    release?.()
+    await refreshing
+    expect(service.snapshot()).toMatchObject({ connected: false, modelsAvailable: false, models: [] })
   })
 
   it('retains reasoning metadata through login, refresh and detached public snapshots', async () => {
@@ -881,5 +912,58 @@ describe('enterprise Work MCP single sign-on', () => {
     await service.logout()
     await expect(service.workMcp(request)).rejects.toThrow('account changed')
     expect(calls).toBe(1)
+  })
+})
+
+describe('enterprise background refresh and system sleep', () => {
+  async function loggedInService() {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    const requests: string[] = []
+    let completedTokens = 0
+    const fetchImpl: EnterpriseFetch = async (input, init) => {
+      requests.push(String(input))
+      const response = await globalThis.fetch(input, init)
+      if (String(input).includes('/token')) completedTokens += 1
+      return response
+    }
+    let now = Date.now()
+    const created = await createService(createEnterpriseFetch(fetchImpl), { now: () => now })
+    const started = await created.service.startLogin(origin)
+    await completeBrowserLogin(origin, started.authorizationUrl)
+    await waitFor(() => created.service.snapshot().phase === 'connected')
+    const tokenCount = () => requests.filter((url) => url.includes('/token')).length
+    const finishedTokens = () => completedTokens
+    return { ...created, requests, tokenCount, finishedTokens, advance: (ms: number) => { now += ms } }
+  }
+
+  it('pauses background refresh while suspended and refreshes after the resume delay', async () => {
+    const { service, tokenCount, finishedTokens, advance } = await loggedInService()
+    const before = tokenCount()
+    service.suspendBackground()
+    advance(5 * 60 * 1000)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+    try {
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
+      expect(tokenCount()).toBe(before)
+      service.resumeBackground()
+      await vi.advanceTimersByTimeAsync(BACKGROUND_RESUME_DELAY_MS - 1)
+      expect(tokenCount()).toBe(before)
+      await vi.advanceTimersByTimeAsync(BACKGROUND_RESUME_JITTER_MS + 1)
+      expect(tokenCount()).toBe(before + 1)
+    } finally {
+      vi.useRealTimers()
+    }
+    await waitFor(() => finishedTokens() === before + 1 && service.snapshot().phase === 'connected')
+  })
+
+  it('still refreshes an explicit request while background refresh is suspended', async () => {
+    const { service, tokenCount } = await loggedInService()
+    const before = tokenCount()
+    service.suspendBackground()
+    await service.refresh()
+    expect(tokenCount()).toBe(before + 1)
+    expect(service.snapshot().phase).toBe('connected')
   })
 })

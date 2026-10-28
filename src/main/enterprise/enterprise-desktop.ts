@@ -14,6 +14,11 @@ import {
   SecureEnterpriseCredentialVault
 } from './secure-credential-vault'
 
+export interface EnterprisePowerEvents {
+  on(event: 'suspend' | 'resume', listener: () => void): void
+  removeListener(event: 'suspend' | 'resume', listener: () => void): void
+}
+
 export interface EnterpriseDesktopRuntime {
   snapshot(): EnterprisePublicState
   webSession(connectionKey: string): Promise<EnterpriseWebSession>
@@ -32,6 +37,7 @@ export async function startEnterpriseDesktop(options: {
   fetchImpl: EnterpriseFetch
   allowInsecureLoopback: boolean
   note?: (line: string) => void
+  powerMonitor?: EnterprisePowerEvents
 }): Promise<EnterpriseDesktopRuntime> {
   await sweepWorkbenchVerifyDirectory().catch(() => undefined)
   const vault = new SecureEnterpriseCredentialVault(
@@ -63,6 +69,17 @@ export async function startEnterpriseDesktop(options: {
     }
   })
   await service.restore()
+
+  const onSuspend = () => {
+    service.suspendBackground()
+    options.note?.('[enterprise] background_suspended')
+  }
+  const onResume = () => {
+    service.resumeBackground()
+    options.note?.('[enterprise] background_resumed')
+  }
+  options.powerMonitor?.on('suspend', onSuspend)
+  options.powerMonitor?.on('resume', onResume)
 
   let broker: EnterpriseCredentialBroker | undefined
   try {
@@ -97,6 +114,8 @@ export async function startEnterpriseDesktop(options: {
       broker?.rotateCapability()
     },
     async stop() {
+      options.powerMonitor?.removeListener('suspend', onSuspend)
+      options.powerMonitor?.removeListener('resume', onResume)
       await broker?.stop()
       await service.stop()
     }

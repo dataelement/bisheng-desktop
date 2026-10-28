@@ -9,7 +9,7 @@ vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events')
   return {
     session: { fromPartition: () => {
-      const isolated = { fetch: vi.fn(async () => ({ ok: true, json: async () => ({ data: [{ chat_id: 'cloud-a', name: 'Cloud A', flow_type: 15, update_time: '2026-10-16' }] }) })), cookies: { set: vi.fn(async () => {}) }, clearStorageData: vi.fn(async () => {}), closeAllConnections: vi.fn(async () => {}), setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() }
+      const isolated = { webRequest: { onCompleted: vi.fn() }, fetch: vi.fn(async (url: string) => url.endsWith('usage-summary') || url.endsWith('quota/effective') ? usageResponse(url) : ({ ok: true, json: async () => ({ data: [{ chat_id: 'cloud-a', name: 'Cloud A', flow_type: 15, update_time: '2026-10-16' }] }) })), cookies: { set: vi.fn(async () => {}) }, clearStorageData: vi.fn(async () => {}), closeAllConnections: vi.fn(async () => {}), setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() }
       fake.sessions.push(isolated)
       return isolated
     } },
@@ -21,7 +21,7 @@ vi.mock('electron', async () => {
       setBackgroundColor = vi.fn()
       constructor(public options: any) {
         let url = ''
-        this.webContents = Object.assign(new EventEmitter(), { session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), mainFrame: {}, getURL: () => url, getZoomFactor: () => 1, close: vi.fn(), executeJavaScript: vi.fn(async () => {}), insertCSS: vi.fn(async () => 'key'), loadURL: vi.fn(async (next) => { url = next; this.webContents.emit('did-finish-load') }) })
+        this.webContents = Object.assign(new EventEmitter(), { id: fake.views.length + 100, session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), focus: vi.fn(), send: vi.fn(), mainFrame: {}, getURL: () => url, getZoomFactor: () => 1, close: vi.fn(), executeJavaScript: vi.fn(async () => {}), insertCSS: vi.fn(async () => 'key'), loadURL: vi.fn(async (next) => { url = next; this.webContents.emit('did-finish-load') }) })
         fake.views.push(this)
       }
     }
@@ -49,7 +49,7 @@ describe('enterprise Chat host boundary', () => {
       const totals = { message_count: 2, input_tokens: 10, output_tokens: 5, total_tokens: 15, missing_usage_count: 0 }
       const summary = { start_at: '2026-10-22T00:00:00+08:00', end_at: '2026-10-22T12:00:00+08:00', timezone: 'Asia/Shanghai', granularity: 'day', totals, points: [] }
       fake.sessions[0].fetch.mockImplementation(async (url: string) => new Response(JSON.stringify({ status_code: 200, data: url.endsWith('usage-summary') ? summary : [{ resource_type: 'knowledge_space_file', user_used: 0.1, effective: -1 }] })))
-      expect(await f.host.usage()).toMatchObject({ totals, storage: { used: 0.1, limit: -1 } })
+      expect(await f.host.usage()).toMatchObject({ summary: { status: 'ready', data: { totals } }, storage: { status: 'ready', data: { used: 0.1, limit: -1 } } })
       expect(fake.sessions[0].fetch.mock.calls.map((call: unknown[]) => call[0])).toEqual(['https://enterprise.example/api/v1/dsh/me/usage-summary', 'https://enterprise.example/api/v1/quota/effective'])
       const finishes: Array<(response: Response) => void> = []
       fake.sessions[0].fetch.mockImplementation(() => new Promise<Response>(resolve => { finishes.push(resolve) }))
@@ -478,16 +478,16 @@ it('pushes connection failures and logout to mounted settings without waiting fo
 })
 
 
-it('presents the knowledge dialog across the window and restores the chat region on close or navigation', async () => {
+it.each(['/workspace/c/new', '/workspace/capabilities', '/workspace/skills', '/workspace/knowledge'])('presents body dialogs across the window on %s and restores the content region', async (path) => {
   const f = fixture()
   try {
     const region = { x: 240, y: 56, width: 860, height: 744 }
     f.host.present(f.owner, { ...presentation, bounds: region })
     await flush()
     const view = fake.views[0], wc = view.webContents
-    await wc.loadURL('https://enterprise.example/workspace/c/new')
-    const report = (senderFrame: unknown, open: unknown, path = '/workspace/c/new') =>
-      wc.emit('ipc-message', { senderFrame }, 'enterprise-chat:knowledge-dialog', { open, path })
+    await wc.loadURL('https://enterprise.example' + path)
+    const report = (senderFrame: unknown, open: unknown, reportPath = path) =>
+      wc.emit('ipc-message', { senderFrame }, 'enterprise-chat:modal', { open, path: reportPath })
     report({}, true)
     report(wc.mainFrame, 'true')
     report(wc.mainFrame, true, '/workspace/c/old')
@@ -495,6 +495,7 @@ it('presents the knowledge dialog across the window and restores the chat region
     report(wc.mainFrame, true)
     expect(view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 1100, height: 800 })
     expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#00000000')
+    expect(wc.focus).toHaveBeenCalledTimes(1)
     expect(wc.executeJavaScript.mock.calls.some(([script]: [string]) => script.includes('left: 240px; top: 56px'))).toBe(true)
     report(wc.mainFrame, false)
     expect(view.setBounds).toHaveBeenLastCalledWith(region)
@@ -502,6 +503,19 @@ it('presents the knowledge dialog across the window and restores the chat region
     report(wc.mainFrame, true)
     wc.emit('did-navigate-in-page', {}, 'https://enterprise.example/workspace/c/other', true)
     expect(view.setBounds).toHaveBeenLastCalledWith(region)
+  } finally { f.host.dispose() }
+})
+
+it('retains host-owned settings bounds when an embedded settings page reports a modal', async () => {
+  const f = fixture()
+  try {
+    const region = { x: 380, y: 100, width: 600, height: 600 }
+    f.host.present(f.owner, { ...presentation, bounds: region, settings: 'desktop-usage' })
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:modal', { open: true, path: '/workspace/settings/desktop-usage' })
+    expect(view.setBounds).toHaveBeenLastCalledWith(region)
+    expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#141416')
   } finally { f.host.dispose() }
 })
 
@@ -517,5 +531,109 @@ it('validates platform cookie names and applies the isolated cookie to embedded 
     f.host.present(f.owner, presentation)
     await flush()
     expect(fake.sessions[0].cookies.set).toHaveBeenCalledWith(expect.objectContaining({ name: 'bs_credits_3007' }))
+  } finally { f.host.dispose() }
+})
+
+
+it('refreshes tools only after a current account browser completes an availability save', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0], isolated = fake.sessions[0]
+    const [filter, completed] = isolated.webRequest.onCompleted.mock.calls[0]
+    expect(filter.urls).toEqual(['https://enterprise.example/api/v1/dsh/capabilities/*/availability'])
+    const saved = { url: 'https://enterprise.example/api/v1/dsh/capabilities/38/availability',
+      method: 'PUT', statusCode: 200, webContentsId: view.webContents.id }
+    f.owner.webContents.send.mockClear()
+    for (const change of [{ method: 'GET' }, { statusCode: 403 }, { statusCode: 500 },
+      { webContentsId: 999 }, { webContentsId: undefined },
+      { url: 'https://other.example/api/v1/dsh/capabilities/38/availability' },
+      { url: 'https://enterprise.example/api/v1/dsh/capabilities/38/run' }]) completed({ ...saved, ...change })
+    expect(f.owner.webContents.send).toHaveBeenCalledTimes(0)
+    completed(saved)
+    expect(f.owner.webContents.send).toHaveBeenCalledExactlyOnceWith('enterprise-chat:tools-changed')
+    f.change({ connected: true, connectionKey: 'tenant-b' })
+    expect(isolated.webRequest.onCompleted).toHaveBeenLastCalledWith(null)
+    f.owner.webContents.send.mockClear()
+    completed(saved)
+    expect(f.owner.webContents.send).toHaveBeenCalledTimes(0)
+  } finally { f.host.dispose() }
+})
+
+const usageTotals = { message_count: 2, input_tokens: 10, output_tokens: 5, total_tokens: 15, missing_usage_count: 0 }
+const usageSummary = { start_at: '2026-10-28T00:00:00+08:00', end_at: '2026-10-28T12:00:00+08:00', timezone: 'Asia/Shanghai', granularity: 'day', totals: usageTotals, points: [] }
+const usageResponse = (url: string) => new Response(JSON.stringify({ status_code: 200, data: url.endsWith('usage-summary') ? usageSummary : [{ resource_type: 'knowledge_space_file', user_used: 0.1, effective: -1 }] }))
+
+it.each(['summary', 'storage'])('preserves the other usage section when %s fails', async failed => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation); await flush()
+    fake.sessions[0].fetch.mockImplementation(async (url: string) => (url.endsWith('usage-summary') === (failed === 'summary')) ? new Response('service failed', { status: 500 }) : usageResponse(url))
+    const result = await f.host.usage()
+    expect(result[failed as 'summary' | 'storage']).toEqual({ status: 'error' })
+    expect(result[failed === 'summary' ? 'storage' : 'summary'].status).toBe('ready')
+  } finally { f.host.dispose() }
+})
+
+it('keeps valid statistics when storage payload validation fails', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation); await flush()
+    fake.sessions[0].fetch.mockImplementation(async (url: string) => url.endsWith('usage-summary') ? usageResponse(url) : new Response(JSON.stringify({ status_code: 200, data: [{ resource_type: 'knowledge_space_file', user_used: -2, effective: 1 }] })))
+    expect(await f.host.usage()).toMatchObject({ summary: { status: 'ready', data: { totals: usageTotals } }, storage: { status: 'error' } })
+  } finally { f.host.dispose() }
+})
+
+it('renews one cookie session for concurrent expired usage reads', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation); await flush()
+    const attempts = new Map<string, number>()
+    fake.sessions[0].fetch.mockImplementation(async (url: string) => {
+      const count = (attempts.get(url) ?? 0) + 1; attempts.set(url, count)
+      return count === 1 ? new Response('expired', { status: 401 }) : usageResponse(url)
+    })
+    const result = await f.host.usage()
+    expect(result.summary.status).toBe('ready'); expect(result.storage.status).toBe('ready')
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(2)
+    expect([...attempts.values()]).toEqual([2, 2])
+  } finally { f.host.dispose() }
+})
+
+it('bounds authentication retries to one renewal per usage request', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation); await flush()
+    fake.sessions[0].fetch.mockImplementation(async () => new Response('expired', { status: 401 }))
+    expect(await f.host.usage()).toEqual({ summary: { status: 'error' }, storage: { status: 'error' } })
+    expect(fake.sessions[0].fetch).toHaveBeenCalledTimes(4)
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(2)
+  } finally { f.host.dispose() }
+})
+
+it('recovers a failed Chat session when the user requests usage again', async () => {
+  const f = fixture()
+  try {
+    f.enterprise.webSession.mockRejectedValueOnce(new Error('offline'))
+    f.host.present(f.owner, presentation); await flush()
+    expect(f.host.snapshot().phase).toBe('error')
+    expect(await f.host.usage()).toMatchObject({ summary: { status: 'ready', data: { totals: usageTotals } }, storage: { status: 'ready' } })
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(2)
+  } finally { f.host.dispose() }
+})
+
+it('discards delayed 401 responses after logout before renewing a session', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation); await flush()
+    const finishers: Array<(value: Response) => void> = []
+    fake.sessions[0].fetch.mockImplementation(() => new Promise<Response>(resolve => finishers.push(resolve)))
+    const pending = f.host.usage()
+    const rejected = expect(pending).rejects.toThrow('identity changed')
+    f.change({ connected: false, connectionKey: 'tenant-a' })
+    finishers.forEach(finish => finish(new Response('expired', { status: 401 })))
+    await rejected
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(1)
   } finally { f.host.dispose() }
 })

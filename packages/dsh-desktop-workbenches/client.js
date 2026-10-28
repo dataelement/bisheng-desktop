@@ -5,6 +5,19 @@ window.__ModuleLoader__.load({
     const { Service } = require('@deepseek-ai/cordis')
     const { Switch, Toast } = require('@deepseek-ai/dsh-client-ui-primitives')
     const h = React.createElement
+    const SETTINGS_NS = 'dsh-desktop-workbenches.settings'
+    const settingsCopy = {
+      zh: {
+        title: '工作台',
+        showInSidebar: '在左侧显示工作台',
+        enableHint: '开启后，可以在左侧会话旁进入工作台。'
+      },
+      en: {
+        title: 'Workbenches',
+        showInSidebar: 'Show workbenches in the sidebar',
+        enableHint: 'Turn this on to access workbenches next to Sessions in the sidebar.'
+      }
+    }
     const DOWNLOAD_NS = 'dsh-desktop-workbenches.download'
     const downloadCopy = {
       zh: { download_failed: '无法下载工作台安装包', download_interrupted: '工作台安装包下载中断', invalid_download_url: '工作台下载地址无效。', unsafe_download_url: '工作台下载地址必须使用 HTTPS，且不能包含凭据或自定义端口。' },
@@ -601,7 +614,7 @@ window.__ModuleLoader__.load({
         }, migrations))
       }
       publish() {
-        this.snapshot = { state: this.state, drafts: Object.fromEntries(this.draftNotes), ready: this.ready, error: this.error,
+        this.snapshot = { state: this.state, enabled: workbenchPreference.getSnapshot(), drafts: Object.fromEntries(this.draftNotes), ready: this.ready, error: this.error,
           catalogLoaded: this.catalogLoaded, catalogError: this.catalogError, catalogStale: this.catalogStale, catalogRefreshing: this.catalogRefreshing, checkingUpdates: this.checkingUpdates, pending: this.pending, marketOpen: this.marketOpen,
           catalog: this.marketCatalog(), categories: this.marketCategories, installs: this.installs, installing: this.installing, native: this.native, togglingPlugin: this.togglingPlugin, removingPlugin: this.removingPlugin, removedWorkbenchIds: [...this.removedWorkbenchIds], restartNeeded: this.restartNeeded, switcherHint: this.switcherHint === true,
           enterpriseCatalog: this.enterpriseCatalog, enterpriseCatalogStatus: this.enterpriseCatalogStatus, enterpriseCatalogError: this.enterpriseCatalogError, enterpriseDetail: this.enterpriseDetail, enterpriseVerify: this.enterpriseVerify }
@@ -1117,17 +1130,26 @@ window.__ModuleLoader__.load({
             headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id })
           })
           const data = await response.json().catch(() => ({}))
-          if (!response.ok || data.install?.id !== id || data.restartRequired !== true) {
+          if (!response.ok || data.install?.id !== id || !['applied', 'restart-required'].includes(data.application)) {
             throw new Error(typeof data.error === 'string' ? data.error : '企业工作台安装失败。')
           }
-          this.pendingRestart.add(id)
-          this.restartNeeded = true
+          if (data.application === 'restart-required') {
+            this.pendingRestart.add(id)
+            this.restartNeeded = true
+          }
+          await this.readInstalls()
         } finally {
           this.installing = null
           this.publish()
         }
       }
       async openNative(startSession) {
+        await this.returnToNativeSession(startSession)
+      }
+      // Logout hides the workbench switcher, so an active workbench has to close
+      // itself and reopen the remembered native session. Creating a session is
+      // left to an explicit New Session action.
+      async returnToNativeSession(startSession) {
         this.setMarketOpen(false)
         if (this.state.active) await this.leave()
         else this.ctx.layout.selectPanel(null)
@@ -1137,6 +1159,7 @@ window.__ModuleLoader__.load({
           this.openSession(location.sessionId)
           return
         }
+        if (typeof startSession !== 'function') return
         const workspace = this.ctx.workspaces.list.getSnapshot().items.find((item) => item.workspaceId === location?.workspaceId)
         startSession(workspace?.workspaceId)
       }
@@ -2602,19 +2625,21 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           ...loaded.filter((item) => !item.customFrame).map((item) => h(HeaderHost, { as: 'aside', entry: item, key: item.id, className: 'dshWbBusiness', 'data-side': item.layout?.businessSide, 'data-embedded': item.embedded === true, hidden: id !== item.id, 'aria-label': item.panelTitle }, h(PanelBoundary, { service }, h(item.Component, { service, entry: item }))))))
     }
     function WorkbenchSettingsTab() {
+      useHostLocale()
+      const t = hostLocale.bind(SETTINGS_NS)
       const enabled = React.useSyncExternalStore(workbenchPreference.subscribe.bind(workbenchPreference), workbenchPreference.getSnapshot.bind(workbenchPreference))
       const enterprise = React.useSyncExternalStore(enterpriseCapability.subscribe.bind(enterpriseCapability), enterpriseCapability.getSnapshot.bind(enterpriseCapability))
       return h('section', { className: 'dshWb dshWbSettings' },
-        h('h2', null, '工作台'),
+        h('h2', null, t('title')),
         h('div', { style: { display: 'inline-flex', alignItems: 'center', gap: '8px' } },
-          h('span', null, '在左侧显示工作台'),
+          h('span', null, t('showInSidebar')),
           h(Switch, {
             checked: enabled,
-            label: '在左侧显示工作台',
+            label: t('showInSidebar'),
             onChange: workbenchPreference.set.bind(workbenchPreference)
           })),
         h('p', { className: 'dshWbMuted' }, !enabled
-          ? '开启后，可以在左侧会话旁进入工作台。'
+          ? t('enableHint')
           : enterprise.allowThirdPartyWorkbenches
             ? enterpriseText(undefined, 'settingsOpen')
             : enterpriseText(undefined, 'settingsClosed')))
@@ -2622,6 +2647,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
     function apply(ctx) {
       workbenchLocaleCtx = ctx
       hostLocale = ctx.locale
+      ctx.effect(() => ctx.locale.register(SETTINGS_NS, settingsCopy), 'workbenches: settings dictionaries')
       ctx.effect(() => ctx.locale.register(DOWNLOAD_NS, downloadCopy), 'workbenches: download dictionaries')
       const service = new Workbenches(ctx)
       ctx.effect(() => ctx.reflect.provide('desktopWorkbenches', service), 'workbenches: service')
@@ -2649,6 +2675,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           } catch { return }
           if (disposed) return
           const connected = account?.connected === true && Date.parse(account.sessionExpiresAt) > Date.now()
+          const previousConnected = enterpriseCapability.getSnapshot().connected
           const previousKey = service.enterpriseAccountKey
           if (!connected || (previousKey && account.connectionKey && account.connectionKey !== previousKey)) {
             service.enterpriseTicket += 1
@@ -2662,6 +2689,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
             connected,
             allowThirdPartyWorkbenches: connected && account.allowThirdPartyWorkbenches === true
           })
+          if (previousConnected && !connected && (service.state.active || service.marketOpen)) service.run(service.returnToNativeSession())
           const marketAllowed = connected && account.allowThirdPartyWorkbenches === true
           service.networkMarketAllowed = marketAllowed
           if (!marketAllowed) service.closePublicMarket()
@@ -2673,14 +2701,16 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           disposeTab = undefined
           if (!enterpriseCapability.getSnapshot().connected) return
           disposeTab = ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({
-            name: 'settings.plugins.tab', id: 'desktop-workbenches', order: 40, label: () => '工作台'
+            name: 'settings.plugins.tab', id: 'desktop-workbenches', order: 40, label: () => ctx.locale.bind(SETTINGS_NS)('title')
           }, WorkbenchSettingsTab))
         }
         const timer = typeof window.setInterval === 'function' ? window.setInterval(() => { void sync() }, 5000) : undefined
+        const onAccountChanged = () => { void sync() }
+        window.addEventListener('dsh-desktop:enterprise-account-changed', onAccountChanged)
         const unsubscribe = enterpriseCapability.subscribe(syncTab)
         void sync()
         syncTab()
-        return () => { disposed = true; disposeTab?.(); unsubscribe(); if (timer !== undefined) window.clearInterval(timer) }
+        return () => { disposed = true; disposeTab?.(); unsubscribe(); window.removeEventListener('dsh-desktop:enterprise-account-changed', onAccountChanged); if (timer !== undefined) window.clearInterval(timer) }
       }, 'workbenches: enterprise capability')
       ctx.effect(() => ctx.locale?.register?.('workbench.enterprise', {
         zh: {
@@ -2705,7 +2735,10 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
         : undefined, 'workbenches: scoped workspace removal')
       ctx.effect(() => typeof ctx.uiWorkspace.registerSessionStarter === 'function'
         ? ctx.uiWorkspace.registerSessionStarter((workspaceId) => {
-          if (!workbenchPreference.getSnapshot() || !service.ready || !service.state.active || service.activationFor(service.catalog.get(service.state.active) || { id: service.state.active }) === 'off') return false
+          const capability = enterpriseCapability.getSnapshot()
+          const signedOut = capability.known && !capability.connected
+          const intercept = !signedOut && !!(workbenchPreference.getSnapshot() && service.ready && service.state.active && service.activationFor(service.catalog.get(service.state.active) || { id: service.state.active }) !== 'off')
+          if (!intercept) return false
           service.run(service.newSession(workspaceId))
           return true
         })

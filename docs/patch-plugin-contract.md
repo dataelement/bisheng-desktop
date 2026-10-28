@@ -2,6 +2,16 @@
 
 适用于 DSH Desktop 对 Harness 的宿主定制，以及为这些定制维护的第三方补丁。本文是跨目录规则的唯一维护位置；包加载和补丁重放的具体要求分别见 `packages/AGENTS.md`、`patches/AGENTS.md`。preload 能否直接改页面 DOM 的判定见 `src/preload/AGENTS.md`，不在本文重复。
 
+### Chat 登录前说明（2026-10-26）
+
+`createChatNavigation` 管理未登录的 Chat 选择意图，以 `signInPromptOpen` 呈现原生 Harness Modal；显式登录操作打开既有 `enterprise-account` 设置区，关闭操作保留当前 Work。连接状态通过轮询或宿主订阅变为已登录时，清除提示；登录成功导航沿用既有账号状态同步。弹窗使用原生焦点、Esc 与遮罩行为，说明和按钮通过 `desktop.chatWork` 的中英文词典提供。账号页继续由企业插件拥有，新增说明随登录前/授权中/登录后状态切换。
+
+### 首次引导与原生 Chat 的展示归属（2026-10-26）
+
+引导使用 body portal 展示，并通过 `#root.inert` 管理宿主背景的交互。Chat 使用独立的 Electron `WebContentsView`，因此内容贡献项同时读取这一原生 DOM 状态：主界面 inert 时向宿主发送 `visible: false`，恢复后重新计算 Chat / 设置页的展示状态与原有坐标。引导在 layout effect 建立该边界；内容贡献项首次挂载读取现值，随后仅观察 root 的 inert 属性，卸载时释放 observer。设置、审批和账号弹窗继续沿用各自的可见状态。
+
+该修改直接调整自有插件，复用 Harness Modal 和现有宿主 presentation IPC。引导保存失败时保留前景与重试入口，成功后释放边界；跳转模型设置时 Chat 继续保持隐藏。行为回归见 `test/desktop-modes-ui.test.mjs`，覆盖启动顺序、尺寸变化、确认成功/失败、设置交接、返回用户与卸载清理。
+
 ### 输入候选菜单的滚动归属（2026-10-21）
 
 Harness 0.2.0-rc.2 的 `dsh-client-ui-input-trigger` 将 pointer hover 与 keyboard move 归入同一个 highlight，原视图对每次变化调用 `scrollIntoView`。鼠标悬停底部部分可见的候选时会推动列表，调用还可能滚动外层会话容器。修复直接在 reducer 的 highlight 上记录可选的 `origin`，悬停更新高亮，键盘导航按候选与列表的可见边界调整该列表的 `scrollTop`。初始候选仍按边界检查，菜单的原有高度计算、主题、溢出渐隐和滚轮行为保持。
@@ -13,6 +23,20 @@ Harness 0.2.0-rc.2 的 `dsh-client-ui-input-trigger` 将 pointer hover 与 keybo
 直接消费上游 `dsh-client-locale` 的 `__DSH_LOCALE__.read()/onChange(active)` 接口，不新增补丁、插件或语言偏好副本。preload 只暴露读取系统语言与上报活动语言两项能力；main 复用可信主窗口与主 frame 校验，并仅接受 `zh` / `en`。初始化返回系统语言顺序与 `preference: null`，持久偏好由 Harness 已有 configForms 从当前 Profile 提供；Client 初始化后立即上报解析值，后续通过上游 locale/change 上报。main 在内存保留该值供手机桥及原生文案使用，尚未激活 Client 的启动/恢复页面保留现有回退。此改动不参与 Profile 组合、包解析或客户端加载图。
 
 手机桌面配对页的已认证 `/desktop/status` 响应携带当前语言，页面沿用现有轮询检测变化并重新请求 HTML；连接模式切换期间延后刷新，不重建手机桥、隧道、配对 token 或 PIN。旧客户端忽略新增响应字段。原账号菜单继续由官方 slot 和 Harness locale 控制；preload 仅同步未加载账号插件时的既有手机按钮，不新增 DOM 入口。网页自身语言机制不受影响。
+
+### Work 工具消息的名称与模型身份（Harness 0.2.1-rc.2，2026-10-27）
+
+桌面工具引用通过发送前的账号可用性校验后，序列化为 `[Selected tool: mcp__bisheng__bisheng_tool_<id>; label: "名称"]`。`label` 使用 JSON 字符串编码，消息持久化保留名称快照与模型需要的工具身份；连接身份继续仅参与发送前校验。名称要求为有内容的单行文本。
+
+宿主插件通过 `uiConversation.userText.register` 注册纯同步解析规则，通过 `conversation.user.text.node` 的 `desktop-tool` keyed slot 呈现名称与现有工具图标。该注册独立于工具菜单和 Skills 服务，历史展示直接读取正文中的名称。旧版 `[Selected tool: <id>]` 记录显示本地化“已选工具”；缺失的历史名称保持未知，账号目录变化仅影响之后的新选择。异常引用保留原始文字，名称作为 React 文本节点处理。模型上下文与存储原文保持工具身份，已有权限和审批继续由发送、执行边界控制。
+
+扩展复用当前 Harness 的公开接口。规则、slot、语言和样式均由插件生命周期管理。回归使用已安装 Harness 的提交、文本评估和渲染实现，覆盖名称持久化、正文修改重发、旧消息、多个引用、特殊字符与卸载重装。
+
+### 嵌入页面的窗口级模态展示（2026-10-28）
+
+页面 body portal 的模态状态由 presentation preload 汇总，经当前账号、主 frame、origin 与 pathname 校验传给 `EnterpriseChatView`。弹窗期间子视图覆盖窗口，`#root` 保留内容区坐标，透明背景让原生侧栏透出相同蒙版。关闭最后一个 portal 后恢复内容区；多层弹窗及退场动画共用该生命周期。设置内容页继续采用宿主设置容器范围。
+
+这是原生窗口展示接缝：Harness slot 位于另一个 renderer。preload 只观察 portal 与 root 的背景隔离属性，按动画帧汇总变化；隐藏时暂停，卸载时释放。语义为普通浮层的 popover 保持原范围。知识空间旧展示入口触发同一个汇总状态刷新。验证入口为 `test/enterprise-modal.test.mjs`、`test/enterprise-chat-view.test.ts` 和跨平台 `scripts/verify-enterprise-modal.mjs`。
 
 ## 1. 按能力选扩展方式
 
@@ -52,6 +76,12 @@ Harness 0.2.0-rc.2 的 `dsh-client-ui-input-trigger` 将 pointer hover 与 keybo
 - 替换既有贡献项仅使用目标版本明确支持的机制；不要猜测 ID 覆盖、优先级或过滤参数的行为。
 - `data-dsh-*` 只是样式/定位接缝，不是 slot，也不能代替 slot 的上下文或生命周期契约。自有标记需有明确归属和用途，避免与上游及其他插件冲突。
 
+### Work surface viewport overlays (2026-10-27)
+
+The desktop Work grid uses `isolation: isolate` to keep its stacking boundary while fixed-position Harness overlays retain the viewport as their containing block. The installed Tooltip reads its trigger with `getBoundingClientRect()` and writes viewport coordinates to a fixed bubble. Layout/paint containment on the Work grid added the sidebar and header offsets a second time. The grid and its relative-positioned layout remain the owners of conversation and inspector sizing.
+
+Run `node scripts/verify-session-tooltips.mjs` on a native desktop for the geometry regression. It renders the installed Tooltip implementation and production desktop styles in an isolated Electron profile, covering sidebar widths, inspector visibility, scroll, three zoom factors, top/bottom placement, hover/focus events and dismissal. This is a deterministic browser-layout fixture; real-account native acceptance is a separate gate.
+
 ## 3. Plugin 的职责与可卸载性
 
 - 展示、文案、交互和桌面特有业务留在自有模块；与第三方内部实现的兼容逻辑集中在小范围适配层，不散布到多个插件。
@@ -60,6 +90,14 @@ Harness 0.2.0-rc.2 的 `dsh-client-ui-input-trigger` 将 pointer hover 与 keybo
 - 卸载或切换会话后，旧异步结果不得更新新实例；重载后不得重复注册或残留样式。共享资源按引用/所有权处理，不能删除其他插件的资源。
 - CSS 限定到自有根节点或明确的宿主接缝；不依赖压缩类名、翻译文字或宽泛的全局选择器。覆盖主题时保留 hover、disabled、focus 等状态。
 - 不能为一个插件更改全局 slot registry 的竞争规则、屏蔽其他贡献项或绕过依赖校验。
+
+### Enterprise tool availability synchronization (Harness 0.2.1-rc.2, 2026-10-27)
+
+The identity-owned enterprise browser observes completed HTTP 200 PUT requests to its own `/api/v1/dsh/capabilities/<id>/availability` endpoint. It validates the current browser instance, account generation, request origin and WebContents ID, then sends a payload-free `enterprise-chat:tools-changed` notification to the local renderer. The existing host bridge exposes a disposable listener. The enterprise client invokes the authenticated local tool route with `operation: refresh`; the host rereads the permission-filtered MCP catalog. The observer is removed when the browser session closes, and the client releases its listener and requests on unload. A refresh notification carries no permission decision or tool metadata.
+
+The system-prompt package adds an awaited, scope-filtered `system-prompt/prepare` event before reading providers. The existing `system-prompt/assemble` waterfall runs after collection and therefore cannot provide this freshness boundary. Main Work agents refresh their enterprise catalog at preparation; native tool ordering, PTC presentation and scoped restrictions remain owned by the original providers. Concurrent readers join an existing synchronization and then start a fresh read, so a response captured before a toggle can finish without becoming the next request's catalog. Refresh failure clears stale registrations and rejects that assembly; a subsequent request retries. Background polling continues as supplemental synchronization.
+
+This extension modifies `dsh-system-prompt@0.2.1-rc.2` runtime and event types through the versioned install replay file. A scope without preparation listeners retains the existing provider and waterfall pipeline. Replace this extension when Harness provides an equivalent awaited provider-preparation boundary. Tests in `enterprise-tool-sync.test.mjs` use the installed AgentLoop, model adapter boundary, ToolRuntime and MCP SDK; browser ownership is covered in `enterprise-chat-view.test.ts`. After `npm run build`, `node scripts/verify-enterprise-tool-save.mjs` exercises the production browser host in native Electron with loopback HTTP saves and renderer IPC. Successful PUT responses each emit one refresh; reads and rejected writes preserve the current catalog. The content-safety integration fixture supplies an empty MCP catalog so its queued Agent requests exercise the new admission boundary. Real-account desktop acceptance remains a separate check.
 
 ## 4. Patch 的最小范围与退出路径
 
@@ -91,6 +129,14 @@ PR #357 展示了两种应区别处理的变化：
 - ContextMeter 原本直接渲染；把它挪到 dock 旁边并不自动让它成为 slot。若采用新的位置配置/独立贡献机制，需要先实现相应契约；同时验证原 dock 贡献项的空间和挂载条件。
 
 这些是设计选择示例，不表示所提新扩展 API 已存在。本文是开发与评审约束；当前尚无自动 slot 契约门禁。
+
+### Agent preset configuration tooltips (Harness 0.2.1-rc.2, 2026-10-27)
+
+The preset configuration button renders the existing Harness `Tooltip` with `portal: true`, top placement and end alignment. The bubble belongs to the body overlay layer and uses the primitive's viewport fitting, theme tokens and hover/focus lifecycle. The previous absolutely positioned `data-tip` pseudo-element belonged to the card inside the settings scroll container, which clipped the English label at the right edge. Its attribute and CSS rules are removed together.
+
+The button keeps its accessible name, configuration action and viewer focus-return reference. The roster, settings slots, import/export and preset selection retain their existing ownership. The installed agent-preset renderer owns this button and exposes no tooltip configuration slot, so the direct component change is recorded in its existing versioned install replay file. Remove this change when Harness provides equivalent portal rendering for this action.
+
+`node scripts/verify-agent-settings-tooltips.mjs` renders the installed section and Tooltip in an isolated native Electron window. It covers English/Chinese, light/dark theme tokens, two window widths, three zoom levels, scroll, hover/focus, click dispatch, dismissal and unmount cleanup. Remote data and unrelated dialogs use fixture stubs; real-account desktop acceptance remains a separate check.
 
 ## Chat / Work 接缝（Harness 0.2.0-rc.2）
 
@@ -201,3 +247,85 @@ Work 知识空间引用在原生输入的 `plain` 和 `claimed` 两个可编辑�
 ### 技能菜单的复用图标（Harness 0.2.1-rc.2，2026-10-23）
 
 原生 popupSelect 的 `SelectOption.badgeIcon` 接收 option owner 的装饰图标组件，在名称旁以 inline-flex 垂直居中显示；文字 badge 沿用原有上标容器。技能 owner 复用菜单 `NavigationIcon(id=skills)` 的 SVG 路径，尺寸 12px、颜色继承原生次级文字 token；其他调用方保持既有文字 badge 和可访问名称。此接缝仅扩展原生候选行的渲染数据，不改变列表、搜索、选择或序列化。实现与类型由 commands 兼容文件重放，上游支持等价图标字段后切换并移除该变更。
+
+### 企业来源统一 Plugin Manager（Harness 0.2.1-rc.2）
+
+企业插件的安装、启停、卸载入口经过现有 `pluginManager`；设置页仍使用企业目录和配置接口。Manager 增加可选的 `profileManagedBundleSource` 宿主服务接缝：`accepts(target)`、`listBundles()` 和 `change(request)`。来源操作使用 Manager 的 Profile 操作锁、统一 `ChangeResult` 和 changed 事件；未匹配来源继续走原有 Profile 路径。此接缝不是新的 runtime 或第二个管理器。
+
+企业来源由 `dsh-desktop-enterprise/managed-market.js` 实现。清单身份包含当前账号摘要与企业插件 ID，安装使用只存在于后端的一次性票据；旧账号目标及已消费票据拒绝执行。业务校验在串行队列真正执行时再次核对账号。来源后端保留现有发布快照、`.enterprise-generations` 和实例凭据撤销，加载改用下述 Harness 根组合内存层；不把受在线授权控制的插件写进普通 Profile 的 bundles。离线、撤权和账号切换继续通过现有控制器卸载实例。配置与授权自动收敛属于企业来源职责。
+
+加载阶段：企业插件仍从经校验的企业 generation 读取入口，并以该包解析客户端和 bundle；普通 Profile 不新增企业持久投影，Safe Mode 不加载此来源。实例激活失败保留原始诊断并走已有更新回退。Manager 必须保留来源报告的 `applied`，不能套用普通 Profile 的 `no-hmr`；来源清单不返回目录、配置或凭据。
+
+企业工作台仍通过 Broker 获取并核验临时 `.tgz`，安装改为 `pluginManager.installBundle`，启停与卸载使用既有 Manager 路径。临时文件保持到整个操作结束，再释放。回移植 upstream V0.13.0 的 `expectedName` / `expectedVersion` / `replace` 接口形态与 verified backend 能力声明：安装后端在发布前校验包身份，Manager 在接受 bundle 前再次核对；不支持或拒绝校验时不得退回普通 pnpm。页面区分已应用、待重启、覆盖、失败及取消，不能把退出码 0 当成激活成功。
+
+升级到 upstream V0.13.0 时，用上游 verified-install 实现替换这部分回移植，保留企业授权来源接缝，除非上游已提供等价的账号范围生命周期 API。不得直接删除企业目录、授权与凭据撤销边界。企业旧 ZIP/npm 包和账号安装记录不迁移格式；本改动统一管理接口，不合并授权存储与普通 Profile 存储。
+
+回归入口：`test/enterprise-plugin-manager.test.mjs` 验证真实 Manager 方法、来源隔离、单次票据、结果语义与 verified backend；`test/enterprise-market.test.ts` 的隔离子进程运行实际 Plugin Manager + Cordis Loader，覆盖安装、启停、坏版本回退及停止。普通 generation 与开关测试保留原契约。真实企业服务、GUI 和 Windows 安装包需另行验收。
+
+
+### 企业 bundle 的可撤销根组合层（Harness 0.2.1-rc.2）
+
+加载变更覆盖 Profile 组合、后端导入与客户端发现：从已校验的 `.enterprise-generations/<generation>/node_modules/<package>` 读取声明，以该包的 `package.json` URL 为解析基准，通过 Harness 的 `resolvePluginResource` 使用 Node ESM 条件导出解析。普通 Profile 使用此路径；Safe Mode 不提供该接缝。入口解析和内部依赖错误保留原始 cause，控制器继续使用已安装旧版本回退和启停恢复入口。
+
+删除企业 `MarketTree`、独立 group、手工 `packageEntry` 加载和 `createRequire().resolve()`。bundle patches 由标准 `loadOverlayPatches` 读取，插入入口锚定为实际模块 URL，交给 Harness 根 Include；已声明的插件 ID 保持稳定，匿名条目由标准 Loader 分配 ID，重复插入 ID 会明确拒绝，不再随机改写 bundle 身份。patch 的 name 仍是匹配断言。插件直接修改宿主根条目（例如禁用 `compaction-basic`），不再对空树应用补丁。客户端沿用现有 ClientModuleRegistry 的实际模块位置发现机制。
+
+app-boot 增加可选 `profileRuntimeLayers.set/remove` 内存接缝，使用原生 `recomposeCore`、激活审计与回滚。内存层按启用顺序应用在持久 Profile patches 之后，不写 manifest、用户 patch 或 Profile 投影；普通配置重载/HMR 组合保留这些层。移除后使用最新持久层恢复宿主配置，失败不重新添加已撤权层。企业入口自身处于卸载事务时，先撤销凭据并停止自身插件，再排队恢复根配置，避免等待正在等待自己的根事务；排队恢复失败记录日志。
+
+实例 grant 在激活前准备，通过 Cordis 既有 `internal/plugin` 事件绑定到新 fiber context；绝不绑定共享根或可复用 entry context。解绑保留 tombstone，旧实例在新授权后仍不可用。账号、在线授权、Broker、generation 校验和旧版本回退继续由企业适配层负责。
+
+新增子进程行为回归 `test/helpers/enterprise-root-smoke.mjs`，由 `test/enterprise-market.test.ts` 启动：import-only exports、自引用子路径、根替换与恢复、标准客户端 graph/脚本响应、私有依赖、缺少宿主 peer、多个内存层、持久配置重载、坏版本回滚、旧凭据隔离和 owner 卸载。原 isolated Profile/PluginManager 子进程改用真实 root Include；Safe Mode 测试确认不注册内存层。上述不替代浏览器执行挂载、真实企业服务、Windows 和正式安装包验收。
+
+upstream V0.13.0 本身没有企业授权层，合并不会自动替代此接缝。升级时重新验证 app-boot root composition 与 Cordis 事件时序；上游提供等价可撤销层后删除本地补丁并改用官方 API，保留授权与撤权回归。不能保证跨版本无冲突合并。
+
+相关 SDK、community bundle 与 search-market 测试统一改为 root Include fixture；SDK 从同一记录重复挂载改为两个独立记录，另验证重复 ID 被拒绝。缺少服务的断言接受原生激活审计中的 `enterpriseAuth` 诊断，原有搜索选择、用户后续修改和异步清理断言保留。
+
+### 输入框资源图标（Harness 0.2.1-rc.2，2026-10-27）
+
+技能、工具与知识空间的原生引用分别携带 `appearance: skill | tool | folder`，菜单与引用共同使用 `ReferenceIconRegular`。技能与锤子路径来自当前 BISHENG `bisheng-icons@0.2.36` 的 Outlined.Skill / Outlined.Hammer；文件夹复用 Harness 的 FolderClose。图标只承担展示，source、ref、clipboardText、权限校验与模型序列化继续由原 owner 管理。
+
+现有 appearance 协议只有 session/file/folder；本次在原生渲染器、类型与草稿校验枚举中加入 skill/tool，支持保存和恢复。原生节点继续负责整体选中、删除和撤销，布局与主题使用原 ReferenceChip。第三方分发变更通过已有 primitives/conversation 兼容文件记录，并已从恢复的原始文件重放及逐字节比较；上游提供相同类型和图标后迁移至对应发行版，移除本次兼容段并保留行为回归。宿主 ResourceIcon 统一菜单和候选图标，侧边栏导航保留原实现。
+
+回归覆盖菜单插入、真实 ReferenceChip 渲染、草稿持久化、未知枚举拒绝、原 file/session/纯文字草稿兼容及资源序列化。使用局部真实运行时代码的组件验证与完整账号验收分别登记。
+
+实际加载补充：Harness web-frontend 把 primitives 预编译进共享模块，插件 require 与原生引用消费的是该共享模块。`scripts/prepare-reference-icons.mjs` 在安装、开发、构建和测试前从上述唯一图标定义生成对应分支；按公开 `ReferenceIconRegular` 导出定位实现，发现压缩符号并保留内置 session/file/folder 分支，生成区域可重复覆盖。版本或结构变化时构建失败，入口带内容摘要刷新缓存。生成内容留在依赖分发目录，Git 维护生成器和原定义。上游共享前端支持这些类型后一起移除生成步骤。
+
+`test/frontend-reference-icons.test.mjs` 执行完整前端入口及 vendor 依赖，捕获传给 Harness loader 的真实 staticModules，并用其中的 React 与 ReferenceIconRegular 渲染五类图标，覆盖实际运行包与库文件不同步的回归。
+
+### Windows enterprise content navigation (2026-10-28)
+
+Windows window dragging belongs to the existing 40px caption row. The Desktop
+mode header and the isolated enterprise Chat header use content-area dragging
+only on macOS. `chatLayoutCss(platform)` selects the embedded document's chrome
+from the host platform, and the host plugin uses its existing macOS marker.
+This keeps the Windows knowledge-space navigation in the client area when the
+enterprise view occupies the former Chat / Work header bounds. The host platform owns this boundary for both native views.
+
+The change lives in the owning Desktop stylesheet and enterprise view loader.
+The knowledge-space buttons keep their existing navigation and menu handlers.
+Run `node scripts/verify-workspace-navigation.mjs` for a temporary-profile
+Electron fixture covering host/child regions, Chat → files, directory-menu
+selection and back-button SVG clicks, sidebar widths, zoom, locale and theme.
+The script reports its native OS explicitly; Windows installation and real-account
+acceptance require a Windows run. `verify-chat-window-drag.mjs` retains the
+macOS header regression.
+
+### Enterprise usage recovery (2026-10-28)
+
+The account usage slot consumes separately validated summary and storage sections
+through the existing host IPC. Each section owns its success/error state, so its
+sibling can display available data. Host reads remain fixed to the authenticated
+self-service endpoints and the identity-owned cookie session. A 401 renews that
+session once per usage operation; both reads share the renewal, and identity
+checks bracket renewal, requests and final publication. Logs identify the failed
+section and HTTP status while response bodies remain host-owned.
+
+The Usage subscription tracks identity and connection readiness. Mounting and
+explicit retry request a host read, which establishes the session when needed;
+a ready transition refreshes the data. In-flight reads coalesce readiness events,
+and account changes invalidate earlier responses. Repeated error notifications
+wait for an explicit retry or a ready transition.
+
+The native fixture `node scripts/verify-usage-recovery.mjs` uses an isolated
+Electron profile and the actual settings plugin to verify pointer retry, ready
+transitions and independently failing sections. Real-account acceptance remains
+an environment-specific check.
