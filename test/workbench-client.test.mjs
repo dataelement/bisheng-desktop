@@ -32,7 +32,7 @@ const clientWindow = { sessionStorage, localStorage: {
   getItem: key => sessionValues.has(key) ? sessionValues.get(key) : key === WORKBENCH_ENABLED ? 'true' : null,
   setItem: (key, value) => sessionValues.set(key, String(value)),
   removeItem: key => sessionValues.delete(key)
-}, __ModuleLoader__: { load({ factory }) {
+}, addEventListener() {}, removeEventListener() {}, __ModuleLoader__: { load({ factory }) {
   const client = factory((name) => {
     if (name === 'react') return { createElement() {}, Component: class {} }
     if (name === '@deepseek-ai/cordis') return { Service }
