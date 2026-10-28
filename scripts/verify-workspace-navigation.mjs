@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path'
 import { build } from 'esbuild'
 
 // Native Chromium layout and input fixture. Run on Windows for Windows OS acceptance.
+// Keep animation frames progressing while other verification windows have focus.
 const root = resolve(import.meta.dirname, '..')
 const temporary = await mkdtemp(join(tmpdir(), 'dsh-workspace-navigation-'))
 try {
@@ -29,9 +30,9 @@ try {
     app.setPath('userData', ${JSON.stringify(join(temporary, 'profile'))})
     app.whenReady().then(async () => {
       const win = new BrowserWindow({ width:1080,height:700,show:true,frame:false,
-        webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false} })
+        webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false} })
       await win.loadFile(${JSON.stringify(join(temporary, 'host.html'))})
-      const view = new WebContentsView({webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}})
+      const view = new WebContentsView({webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}})
       win.contentView.addChildView(view)
       let cases = 0
       for (const platform of ['win32','darwin']) {

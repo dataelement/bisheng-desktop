@@ -302,3 +302,24 @@ selection and back-button SVG clicks, sidebar widths, zoom, locale and theme.
 The script reports its native OS explicitly; Windows installation and real-account
 acceptance require a Windows run. `verify-chat-window-drag.mjs` retains the
 macOS header regression.
+
+### Enterprise usage recovery (2026-10-28)
+
+The account usage slot consumes separately validated summary and storage sections
+through the existing host IPC. Each section owns its success/error state, so its
+sibling can display available data. Host reads remain fixed to the authenticated
+self-service endpoints and the identity-owned cookie session. A 401 renews that
+session once per usage operation; both reads share the renewal, and identity
+checks bracket renewal, requests and final publication. Logs identify the failed
+section and HTTP status while response bodies remain host-owned.
+
+The Usage subscription tracks identity and connection readiness. Mounting and
+explicit retry request a host read, which establishes the session when needed;
+a ready transition refreshes the data. In-flight reads coalesce readiness events,
+and account changes invalidate earlier responses. Repeated error notifications
+wait for an explicit retry or a ready transition.
+
+The native fixture `node scripts/verify-usage-recovery.mjs` uses an isolated
+Electron profile and the actual settings plugin to verify pointer retry, ready
+transitions and independently failing sections. Real-account acceptance remains
+an environment-specific check.
