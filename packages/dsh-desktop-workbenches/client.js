@@ -1144,6 +1144,12 @@ window.__ModuleLoader__.load({
         }
       }
       async openNative(startSession) {
+        await this.returnToNativeSession(startSession)
+      }
+      // Logout hides the workbench switcher, so an active workbench has to close
+      // itself and reopen the remembered native session. Creating a session is
+      // left to an explicit New Session action.
+      async returnToNativeSession(startSession) {
         this.setMarketOpen(false)
         if (this.state.active) await this.leave()
         else this.ctx.layout.selectPanel(null)
@@ -1153,6 +1159,7 @@ window.__ModuleLoader__.load({
           this.openSession(location.sessionId)
           return
         }
+        if (typeof startSession !== 'function') return
         const workspace = this.ctx.workspaces.list.getSnapshot().items.find((item) => item.workspaceId === location?.workspaceId)
         startSession(workspace?.workspaceId)
       }
@@ -2668,6 +2675,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           } catch { return }
           if (disposed) return
           const connected = account?.connected === true && Date.parse(account.sessionExpiresAt) > Date.now()
+          const previousConnected = enterpriseCapability.getSnapshot().connected
           const previousKey = service.enterpriseAccountKey
           if (!connected || (previousKey && account.connectionKey && account.connectionKey !== previousKey)) {
             service.enterpriseTicket += 1
@@ -2681,6 +2689,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
             connected,
             allowThirdPartyWorkbenches: connected && account.allowThirdPartyWorkbenches === true
           })
+          if (previousConnected && !connected && (service.state.active || service.marketOpen)) service.run(service.returnToNativeSession())
           const marketAllowed = connected && account.allowThirdPartyWorkbenches === true
           service.networkMarketAllowed = marketAllowed
           if (!marketAllowed) service.closePublicMarket()
@@ -2696,10 +2705,12 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           }, WorkbenchSettingsTab))
         }
         const timer = typeof window.setInterval === 'function' ? window.setInterval(() => { void sync() }, 5000) : undefined
+        const onAccountChanged = () => { void sync() }
+        window.addEventListener('dsh-desktop:enterprise-account-changed', onAccountChanged)
         const unsubscribe = enterpriseCapability.subscribe(syncTab)
         void sync()
         syncTab()
-        return () => { disposed = true; disposeTab?.(); unsubscribe(); if (timer !== undefined) window.clearInterval(timer) }
+        return () => { disposed = true; disposeTab?.(); unsubscribe(); window.removeEventListener('dsh-desktop:enterprise-account-changed', onAccountChanged); if (timer !== undefined) window.clearInterval(timer) }
       }, 'workbenches: enterprise capability')
       ctx.effect(() => ctx.locale?.register?.('workbench.enterprise', {
         zh: {
@@ -2724,7 +2735,10 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
         : undefined, 'workbenches: scoped workspace removal')
       ctx.effect(() => typeof ctx.uiWorkspace.registerSessionStarter === 'function'
         ? ctx.uiWorkspace.registerSessionStarter((workspaceId) => {
-          if (!workbenchPreference.getSnapshot() || !service.ready || !service.state.active || service.activationFor(service.catalog.get(service.state.active) || { id: service.state.active }) === 'off') return false
+          const capability = enterpriseCapability.getSnapshot()
+          const signedOut = capability.known && !capability.connected
+          const intercept = !signedOut && !!(workbenchPreference.getSnapshot() && service.ready && service.state.active && service.activationFor(service.catalog.get(service.state.active) || { id: service.state.active }) !== 'off')
+          if (!intercept) return false
           service.run(service.newSession(workspaceId))
           return true
         })
