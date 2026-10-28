@@ -451,6 +451,183 @@ describe('desktop workbench client navigation', () => {
     expect(startSession).toHaveBeenCalledWith('project-2')
   })
 
+  it('returns to the remembered native session without creating one when logout closes the workbench', async () => {
+    const { service, ctx, list } = await fixture(boundState())
+    const workspaces = ctx.workspaces.list.getSnapshot().items
+    workspaces.push({ workspaceId: 'project-2', title: 'Other project', sessionIds: ['native-2'] })
+    list.ids.push('native-2')
+    list.byId['native-2'] = { sessionId: 'native-2', displayTitle: 'Native session' }
+    selectIn(list, 'native-2')
+    service.selectionChanged()
+    await service.open('writer')
+    const startSession = vi.fn()
+    ctx.uiWorkspace.startSession = startSession
+
+    await service.returnToNativeSession()
+
+    expect(ctx.uiWorkspace.openSession).toHaveBeenLastCalledWith('native-2')
+    expect(currentOf(list)).toBe('native-2')
+    expect(service.state.active).toBeNull()
+    expect(startSession).not.toHaveBeenCalled()
+    expect(ctx.sessions.create).not.toHaveBeenCalled()
+  })
+
+  it('clears the active workbench without creating a session when the remembered native session is gone', async () => {
+    const { service, ctx, list } = await fixture(boundState())
+    ctx.workspaces.list.getSnapshot().items.push({ workspaceId: 'project-2', title: 'Other project', sessionIds: ['native-2'] })
+    list.ids.push('native-2')
+    list.byId['native-2'] = { sessionId: 'native-2', displayTitle: 'Native session' }
+    selectIn(list, 'native-2')
+    service.selectionChanged()
+    await service.open('writer')
+    delete list.byId['native-2']
+    list.ids = list.ids.filter(id => id !== 'native-2')
+    ctx.uiWorkspace.openSession.mockClear()
+    const startSession = vi.fn()
+    ctx.uiWorkspace.startSession = startSession
+
+    await expect(service.returnToNativeSession()).resolves.toBeUndefined()
+
+    expect(service.state.active).toBeNull()
+    expect(startSession).not.toHaveBeenCalled()
+    expect(ctx.sessions.create).not.toHaveBeenCalled()
+    expect(ctx.uiWorkspace.openSession).not.toHaveBeenCalled()
+  })
+
+  it('leaves the workbench when the account change event reports logout and stops binding new sessions', async () => {
+    let signedIn = true
+    let stored = { revision: 0, state: structuredClone(boundState()) }
+    const fetchImpl = vi.fn(async (url, options = {}) => {
+      const path = String(url)
+      if (path.startsWith('/api/enterprise.state')) {
+        return Response.json(signedIn ? {
+          connected: true,
+          sessionExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          connectionKey: 'account-1',
+          allowThirdPartyWorkbenches: true
+        } : { connected: false })
+      }
+      if (path.startsWith('/api/enterprise.workbenches/catalog')) return Response.json({ status: 'empty', data: [] })
+      if (path.startsWith('/api/desktop-workbenches/catalog')) return Response.json({
+        stale: false,
+        catalog: { schemaVersion: 2, kind: 'catalog', categories: [], workbenches: [
+          { id: 'writer', owner: 'test', repository: 'writer', url: 'https://github.com/test/writer', name: 'Writer', category: 'other', description: { zh: 'Writer' }, screenshots: [], version: '1.0.0', distribution: { name: 'writer' } }
+        ] }
+      })
+      if (path.startsWith('/api/desktop-workbenches/market-installs')) return Response.json({ installs: {} })
+      if (path === '/api/desktop-workbenches/state' && options.method !== 'POST') return Response.json(stored)
+      if (options.method === 'POST') {
+        const payload = JSON.parse(options.body)
+        if (payload.revision !== stored.revision) return Response.json({ error: 'Conflict' }, { status: 409 })
+        stored = { revision: stored.revision + 1, state: structuredClone(payload.state) }
+        return Response.json(stored)
+      }
+      return Response.json({ error: 'unexpected' }, { status: 404 })
+    })
+    const listeners = new Map()
+    const storage = new Map([[WORKBENCH_ENABLED, 'true']])
+    const testWindow = {
+      localStorage: {
+        getItem: key => storage.has(key) ? storage.get(key) : null,
+        setItem: (key, value) => storage.set(key, String(value)),
+        removeItem: key => storage.delete(key)
+      },
+      sessionStorage,
+      setInterval: () => 0,
+      clearInterval: () => {},
+      addEventListener(type, fn) {
+        const list = listeners.get(type) ?? []
+        list.push(fn)
+        listeners.set(type, list)
+      },
+      removeEventListener(type, fn) {
+        listeners.set(type, (listeners.get(type) ?? []).filter(item => item !== fn))
+      },
+      dispatchEvent(event) {
+        for (const fn of [...(listeners.get(event.type) ?? [])]) fn(event)
+      }
+    }
+    let applyLocal
+    vm.runInNewContext(code, {
+      window: Object.assign(testWindow, { __ModuleLoader__: { load({ factory }) {
+        applyLocal = factory(name => name === 'react' ? { createElement() {}, Component: class {} } : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null }).apply
+      } } }),
+      document, fetch: fetchImpl, setTimeout, clearTimeout, AbortController
+    })
+    const list = { ids: ['old', 'writer-1', 'writer-2', 'research-1'], byId: {} }
+    for (const id of list.ids) list.byId[id] = { sessionId: id, displayTitle: id }
+    const projects = [{ workspaceId: 'project-1', title: 'User project', sessionIds: [...list.ids] }]
+    let sessionCount = 0
+    let navigation = new AbortController()
+    let service
+    let starter
+    const cleanups = []
+    const ctx = {
+      fiber: { name: 'writer', entry: { options: { name: 'writer' } } },
+      locale: { register: vi.fn(), bind: () => () => '', getSnapshot: () => ({ active: 'zh' }) },
+      reflect: { provide: (name, value) => { if (name === 'desktopWorkbenches') service = value } },
+      effect: (callback, label) => {
+        if (label === 'workbenches: styles' || label === 'workbenches: lifecycle') return
+        const cleanup = callback()
+        if (typeof cleanup === 'function') cleanups.push(cleanup)
+      },
+      slots: { inject: (_name, callback) => callback(), register: vi.fn() },
+      sessions: {
+        list: { getSnapshot: () => list, subscribe: vi.fn(() => () => {}) },
+        refresh: vi.fn(async () => {}),
+        create: vi.fn(async ({ workspaceId }) => {
+          const id = `fresh-${++sessionCount}`
+          list.ids.push(id)
+          list.byId[id] = { sessionId: id, displayTitle: id }
+          projects.find(item => item.workspaceId === workspaceId).sessionIds.push(id)
+          return id
+        })
+      },
+      layout: {
+        selectPanel: vi.fn(),
+        beginNavigation: vi.fn(() => { navigation.abort(); navigation = new AbortController(); return navigation.signal })
+      },
+      uiWorkspace: {
+        openSession: vi.fn(id => { selectIn(list, id); service?.selectionChanged() }),
+        registerSessionStarter: vi.fn(handler => { starter = handler; return () => {} }),
+        registerSessionFilter: vi.fn(),
+        registerWorkspaceFilter: vi.fn(),
+        registerWorkspaceDeleteHandler: vi.fn(),
+        registerSessionReuseFilter: vi.fn(),
+        registerSessionOpener: vi.fn()
+      },
+      workspaces: {
+        list: { getSnapshot: () => ({ items: projects }) },
+        create: vi.fn()
+      }
+    }
+    applyLocal(ctx)
+    setFiberPackage(ctx, 'writer')
+    service.register({ title: 'Writer' }, () => null)
+    await service.load()
+    await vi.waitFor(() => expect(service.getSnapshot().enterpriseCatalogStatus).toBe('empty'))
+    projects.push({ workspaceId: 'project-2', title: 'Other project', sessionIds: ['native-2'] })
+    list.ids.push('native-2')
+    list.byId['native-2'] = { sessionId: 'native-2', displayTitle: 'Native session' }
+    selectIn(list, 'native-2')
+    service.selectionChanged()
+    await service.open('writer')
+
+    expect(starter('project-1')).toBe(true)
+    await vi.waitFor(() => expect(service.state.sessionBindings[list.ids.at(-1)]).toBe('writer'))
+    const created = ctx.sessions.create.mock.calls.length
+
+    signedIn = false
+    testWindow.dispatchEvent({ type: 'dsh-desktop:enterprise-account-changed' })
+    await vi.waitFor(() => expect(service.state.active).toBeNull())
+    expect(ctx.uiWorkspace.openSession).toHaveBeenLastCalledWith('native-2')
+    expect(currentOf(list)).toBe('native-2')
+    expect(starter('project-1')).toBe(false)
+    expect(ctx.sessions.create).toHaveBeenCalledTimes(created)
+    for (const cleanup of cleanups) cleanup()
+    service.dispose()
+  })
+
   it('removes a shared workspace only from the active workbench while keeping both session groups', async () => {
     const { service, ctx, saved } = await fixture(boundState())
     const workspace = ctx.workspaces.list.getSnapshot().items[0]
