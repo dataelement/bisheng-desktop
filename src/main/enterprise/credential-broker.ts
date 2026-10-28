@@ -16,6 +16,7 @@ const JSON_ROUTES = new Map<string, 'GET' | 'POST'>([
   ['/v1/login/start', 'POST'],
   ['/v1/login/manual', 'POST'],
   ['/v1/refresh', 'POST'],
+  ['/v1/models/refresh', 'POST'],
   ['/v1/logout', 'POST'],
   ['/v1/chat', 'POST'],
   ['/v1/responses', 'POST'],
@@ -214,7 +215,7 @@ export async function startEnterpriseCredentialBroker(
         sendJson(response, 200, await service.submitManualTicket(body.identityTicket))
         return
       }
-      if (path === '/v1/refresh') {
+      if (path === '/v1/refresh' || path === '/v1/models/refresh') {
         if (!refreshLimit.allow()) {
           sendJson(response, 429, { error: 'Too many refresh attempts.' })
           return
@@ -223,7 +224,7 @@ export async function startEnterpriseCredentialBroker(
           sendJson(response, 400, { error: 'Refresh does not accept a body.' })
           return
         }
-        sendJson(response, 200, await service.refresh())
+        sendJson(response, 200, path === '/v1/models/refresh' ? await service.refreshModels() : await service.refresh())
         return
       }
       if (path === '/v1/logout') {

@@ -122,6 +122,7 @@ export interface EnterpriseServiceNote {
   event: string
   status?: number
   requestId?: string
+  code?: string
   originHash?: string
   pluginId?: string
   path?: string
@@ -172,6 +173,7 @@ export class EnterpriseService {
   private errorCode: string | undefined
   private requestId: string | undefined
   private pendingLogin: PendingLogin | undefined
+  private modelsRefresh: { epoch: number; promise: Promise<void> } | undefined
   private modelsTimer: NodeJS.Timeout | undefined
   private loginExpiryTimer: NodeJS.Timeout | undefined
   private modelsAttempt = 0
@@ -411,6 +413,26 @@ export class EnterpriseService {
       this.refreshInFlight = undefined
     })
     return this.refreshInFlight
+  }
+
+  /** Synchronize catalog metadata using the current account's host-held credentials. */
+  async refreshModels(includeUsage = false): Promise<EnterprisePublicState> {
+    const epoch = this.epoch
+    let refresh = this.modelsRefresh
+    if (refresh?.epoch !== epoch) {
+      refresh = { epoch, promise: this.tickModels() }
+      this.modelsRefresh = refresh
+    }
+    try {
+      await refresh.promise
+    } finally {
+      if (this.modelsRefresh === refresh) this.modelsRefresh = undefined
+    }
+    if (includeUsage && this.epoch === epoch && this.phase === 'connected') {
+      await this.refreshUsageCatalog(epoch)
+      if (this.epoch === epoch) this.scheduleModels(this.modelsDelay())
+    }
+    return this.snapshot()
   }
 
   async logout(): Promise<EnterprisePublicState> {
@@ -727,14 +749,9 @@ export class EnterpriseService {
       }))
       this.modelsAvailable = this.models.length > 0
       if (this.phase === 'degraded') this.phase = 'connected'
-      await this.refreshUsageCatalog(epoch)
-      if (this.epoch !== epoch) return
       this.modelsAttempt = 0
       this.clearError()
-      await this.refreshUsageCatalog(epoch)
-      if (this.epoch !== epoch) return
       this.publish()
-      this.scheduleModels(this.modelsDelay())
     } catch (error) {
       if (this.epoch !== epoch) return
       if (!accessRetried && error instanceof EnterprisePlatformError && error.code === 'invalid_access_token') {
@@ -1492,7 +1509,7 @@ export class EnterpriseService {
     this.clearModelsTimer()
     if (!this.session?.access_token) return
     this.modelsTimer = setTimeout(() => {
-      void this.tickModels()
+      void this.refreshModels(true)
     }, delayMs)
     this.modelsTimer.unref?.()
   }
@@ -1549,6 +1566,7 @@ export class EnterpriseService {
     this.options.note?.({
       event,
       ...(details.status ? { status: details.status } : {}),
+      ...(typeof details.code === 'string' && details.code.length > 0 && details.code.length <= 64 ? { code: details.code } : {}),
       ...(sanitizeRequestId(details.requestId) ? { requestId: sanitizeRequestId(details.requestId) } : {}),
       ...(details.originHash ? { originHash: details.originHash } : {}),
       ...(details.pluginId ? { pluginId: details.pluginId } : {}),
@@ -1657,7 +1675,8 @@ function noteFromError(error: unknown): Omit<EnterpriseServiceNote, 'event'> {
   if (error instanceof EnterprisePlatformError) {
     return {
       ...(error.status ? { status: error.status } : {}),
-      ...(sanitizeRequestId(error.requestId) ? { requestId: sanitizeRequestId(error.requestId) } : {})
+      ...(sanitizeRequestId(error.requestId) ? { requestId: sanitizeRequestId(error.requestId) } : {}),
+      ...(typeof error.code === 'string' && error.code.length > 0 && error.code.length <= 64 ? { code: error.code } : {})
     }
   }
   return {}

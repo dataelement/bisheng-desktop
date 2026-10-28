@@ -9,7 +9,7 @@ vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events')
   return {
     session: { fromPartition: () => {
-      const isolated = { fetch: vi.fn(async () => ({ ok: true, json: async () => ({ data: [{ chat_id: 'cloud-a', name: 'Cloud A', flow_type: 15, update_time: '2026-10-16' }] }) })), cookies: { set: vi.fn(async () => {}) }, clearStorageData: vi.fn(async () => {}), closeAllConnections: vi.fn(async () => {}), setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() }
+      const isolated = { webRequest: { onCompleted: vi.fn() }, fetch: vi.fn(async () => ({ ok: true, json: async () => ({ data: [{ chat_id: 'cloud-a', name: 'Cloud A', flow_type: 15, update_time: '2026-10-16' }] }) })), cookies: { set: vi.fn(async () => {}) }, clearStorageData: vi.fn(async () => {}), closeAllConnections: vi.fn(async () => {}), setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() }
       fake.sessions.push(isolated)
       return isolated
     } },
@@ -21,7 +21,7 @@ vi.mock('electron', async () => {
       setBackgroundColor = vi.fn()
       constructor(public options: any) {
         let url = ''
-        this.webContents = Object.assign(new EventEmitter(), { session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), mainFrame: {}, getURL: () => url, getZoomFactor: () => 1, close: vi.fn(), executeJavaScript: vi.fn(async () => {}), insertCSS: vi.fn(async () => 'key'), loadURL: vi.fn(async (next) => { url = next; this.webContents.emit('did-finish-load') }) })
+        this.webContents = Object.assign(new EventEmitter(), { id: fake.views.length + 100, session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), mainFrame: {}, getURL: () => url, getZoomFactor: () => 1, close: vi.fn(), executeJavaScript: vi.fn(async () => {}), insertCSS: vi.fn(async () => 'key'), loadURL: vi.fn(async (next) => { url = next; this.webContents.emit('did-finish-load') }) })
         fake.views.push(this)
       }
     }
@@ -517,5 +517,32 @@ it('validates platform cookie names and applies the isolated cookie to embedded 
     f.host.present(f.owner, presentation)
     await flush()
     expect(fake.sessions[0].cookies.set).toHaveBeenCalledWith(expect.objectContaining({ name: 'bs_credits_3007' }))
+  } finally { f.host.dispose() }
+})
+
+
+it('refreshes tools only after a current account browser completes an availability save', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0], isolated = fake.sessions[0]
+    const [filter, completed] = isolated.webRequest.onCompleted.mock.calls[0]
+    expect(filter.urls).toEqual(['https://enterprise.example/api/v1/dsh/capabilities/*/availability'])
+    const saved = { url: 'https://enterprise.example/api/v1/dsh/capabilities/38/availability',
+      method: 'PUT', statusCode: 200, webContentsId: view.webContents.id }
+    f.owner.webContents.send.mockClear()
+    for (const change of [{ method: 'GET' }, { statusCode: 403 }, { statusCode: 500 },
+      { webContentsId: 999 }, { webContentsId: undefined },
+      { url: 'https://other.example/api/v1/dsh/capabilities/38/availability' },
+      { url: 'https://enterprise.example/api/v1/dsh/capabilities/38/run' }]) completed({ ...saved, ...change })
+    expect(f.owner.webContents.send).toHaveBeenCalledTimes(0)
+    completed(saved)
+    expect(f.owner.webContents.send).toHaveBeenCalledExactlyOnceWith('enterprise-chat:tools-changed')
+    f.change({ connected: true, connectionKey: 'tenant-b' })
+    expect(isolated.webRequest.onCompleted).toHaveBeenLastCalledWith(null)
+    f.owner.webContents.send.mockClear()
+    completed(saved)
+    expect(f.owner.webContents.send).toHaveBeenCalledTimes(0)
   } finally { f.host.dispose() }
 })

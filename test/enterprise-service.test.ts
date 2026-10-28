@@ -82,7 +82,9 @@ describe('enterprise service login loop', () => {
     const origin = await platform.listen()
     cleanups.push(async () => platform.close())
     let label = 'Provider A / Original label'
+    const requests: string[] = []
     const fetchImpl: EnterpriseFetch = async (input, init) => {
+      requests.push(String(input))
       const response = await globalThis.fetch(input, init)
       if (String(input).includes('/api/v1/dsh/models') && response.ok) {
         const body = await response.json() as { data: Array<{ display_name: string }> }
@@ -97,11 +99,40 @@ describe('enterprise service login loop', () => {
     await waitFor(() => service.snapshot().phase === 'connected' && service.snapshot().modelsAvailable)
     const before = service.snapshot()
     label = 'Provider A / Renamed label'
-    await service.refresh()
+    requests.length = 0
+    await Promise.all([service.refreshModels(), service.refreshModels(), service.refreshModels()])
+    expect(requests.filter(url => url.includes('/api/v1/dsh/models'))).toHaveLength(1)
+    expect(requests.filter(url => url.includes('/token') || url.includes('/usage'))).toHaveLength(0)
     const after = service.snapshot()
     expect(after.models.map(model => model.id)).toEqual(before.models.map(model => model.id))
     expect(after.models[0]?.display_name).toBe(label)
     expect(after.revision).toBeGreaterThan(before.revision)
+  })
+
+  it('keeps the signed-out catalog empty when an earlier metadata refresh finishes', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    let hold = false
+    let release: (() => void) | undefined
+    const fetchImpl: EnterpriseFetch = async (input, init) => {
+      const response = await globalThis.fetch(input, init)
+      if (hold && String(input).includes('/api/v1/dsh/models')) {
+        await new Promise<void>(resolve => { release = resolve })
+      }
+      return response
+    }
+    const { service } = await createService(createEnterpriseFetch(fetchImpl))
+    const started = await service.startLogin(origin)
+    await completeBrowserLogin(origin, started.authorizationUrl)
+    await waitFor(() => service.snapshot().phase === 'connected')
+    hold = true
+    const refreshing = service.refreshModels()
+    await waitFor(() => release !== undefined)
+    await service.logout()
+    release?.()
+    await refreshing
+    expect(service.snapshot()).toMatchObject({ connected: false, modelsAvailable: false, models: [] })
   })
 
   it('retains reasoning metadata through login, refresh and detached public snapshots', async () => {
@@ -367,7 +398,7 @@ describe('enterprise service login loop', () => {
     const fetchImpl: EnterpriseFetch = async (input, init) => {
       if (rejectRefresh && String(input).includes('/api/v1/dsh/token') && String(init?.body).includes('refresh_token')) {
         return new Response(JSON.stringify({
-          error: { message: 'Refresh token is invalid.', type: 'authentication_error', code: 'invalid_refresh_token' }
+          error: { message: 'Refresh token is invalid.', type: 'authentication_error', code: 'refresh_token_reused' }
         }), {
           status: 401,
           headers: { 'content-type': 'application/json' }
@@ -375,7 +406,7 @@ describe('enterprise service login loop', () => {
       }
       return globalThis.fetch(input, init)
     }
-    const { service } = await createService(createEnterpriseFetch(fetchImpl))
+    const { service, entries } = await createService(createEnterpriseFetch(fetchImpl))
     const started = await service.startLogin(origin)
     await completeBrowserLogin(origin, started.authorizationUrl)
     await waitFor(() => {
@@ -387,8 +418,9 @@ describe('enterprise service login loop', () => {
     expect(cleared.connected).toBe(false)
     expect(cleared.phase).toBe('idle')
     expect(cleared.models).toEqual([])
-    expect(cleared.errorCode).toBe('invalid_refresh_token')
+    expect(cleared.errorCode).toBe('refresh_token_reused')
     expect(cleared.error).toBe('Refresh token is invalid.')
+    expect(entries).toContainEqual(expect.objectContaining({ event: 'refresh_invalid', code: 'refresh_token_reused' }))
   })
 
   it('clears the session and keeps the reason when the session has expired', async () => {
@@ -407,7 +439,7 @@ describe('enterprise service login loop', () => {
       }
       return globalThis.fetch(input, init)
     }
-    const { service, notes } = await createService(createEnterpriseFetch(fetchImpl))
+    const { service, notes, entries } = await createService(createEnterpriseFetch(fetchImpl))
     const started = await service.startLogin(origin)
     await completeBrowserLogin(origin, started.authorizationUrl)
     await waitFor(() => {
@@ -422,6 +454,7 @@ describe('enterprise service login loop', () => {
     expect(cleared.errorCode).toBe('session_expired')
     expect(cleared.error).toBe('session expired')
     expect(notes).toContain('refresh_invalid')
+    expect(entries).toContainEqual(expect.objectContaining({ event: 'refresh_invalid', code: 'session_expired' }))
   })
 
   it('publishes access_denied when browser sign-in is cancelled', async () => {

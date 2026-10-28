@@ -3857,3 +3857,25 @@ describe('workbench feature default', () => {
     expect(await openError('true')).not.toBe('工作台功能已关闭。')
   })
 })
+
+describe('enterprise workbench Manager outcomes', () => {
+  it.each(['applied', 'restart-required'])('uses the %s outcome without inventing a restart', async application => {
+    const { service, request } = await fixture()
+    const id = 'a'.repeat(32)
+    request.mockImplementation(async url => url === '/api/desktop-workbenches/enterprise-install'
+      ? Response.json({ application, install: { id }, restartRequired: application === 'restart-required' })
+      : Response.json({ installs: {}, packages: {} }))
+    await service.installEnterpriseWorkbench(id)
+    expect(service.pendingRestart.has(id)).toBe(application === 'restart-required')
+    expect(Boolean(service.restartNeeded)).toBe(application === 'restart-required')
+    expect(service.installing).toBeNull()
+  })
+  it('does not accept a failed activation even when package bytes were installed', async () => {
+    const { service, request } = await fixture()
+    const id = 'a'.repeat(32)
+    request.mockResolvedValue(Response.json({ application: 'failed', install: { id }, error: 'activation failed' }, { status: 409 }))
+    await expect(service.installEnterpriseWorkbench(id)).rejects.toThrow('activation failed')
+    expect(service.pendingRestart.has(id)).toBe(false)
+    expect(service.installing).toBeNull()
+  })
+})
