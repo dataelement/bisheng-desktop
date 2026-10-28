@@ -316,7 +316,7 @@ window.__ModuleLoader__.load({
 
     /** One renderer-owned mode/history controller shared by the content and sidebar slots. */
     function createChatNavigation(ctx) {
-      let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, signInPromptOpen: false, approvalsOpen: false, accountDialogOpen: false, settingsSurface: undefined, pageId: undefined, navigation: undefined, workLanding: false, panelOpen: false, activePanelId: null }
+      let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, signInPromptOpen: false, approvalsOpen: false, accountDialogOpen: false, settingsSurface: undefined, pageId: undefined, navigation: undefined, workLanding: false, nativeWork: true, panelOpen: false, activePanelId: null }
       const listeners = new Set()
       let active = false, revision = 0, historyRequest = 0, timer, lastHistory = 0
       const publish = (patch) => { value = { ...value, ...patch }; listeners.forEach(fn => fn()) }
@@ -373,6 +373,15 @@ window.__ModuleLoader__.load({
         snapshot: () => value,
         subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn) },
         select, open, refreshHistory,
+        bindWorkbench(service) {
+          const sync = () => {
+            const snapshot = service.getSnapshot()
+            publish({ nativeWork: snapshot.enabled === false || snapshot.state.active == null })
+          }
+          const unsubscribe = service.subscribe(sync)
+          sync()
+          return () => { unsubscribe(); publish({ nativeWork: true }) }
+        },
         dismissSignIn() { publish({ signInPromptOpen: false }) },
         signIn() {
           publish({ signInPromptOpen: false })
@@ -574,7 +583,7 @@ window.__ModuleLoader__.load({
       }, [])
       const showModePicker = !settingsOpen && (mode === 'chat'
         ? !state.pageId && state.conversationId === 'new' && state.landing !== false
-        : state.workLanding && !state.panelOpen)
+        : state.nativeWork && state.workLanding && !state.panelOpen)
       const select = navigation.choose
       const keyDown = (event) => {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
@@ -1035,6 +1044,9 @@ window.__ModuleLoader__.load({
     const inject = ['slots', 'locale', 'remote', 'remote.session', 'sessions', 'uiWorkspace', 'layout']
     function apply(ctx) {
       const navigation = installDesktopModes(ctx)
+      if (typeof ctx.inject === 'function') ctx.inject(['desktopWorkbenches'], scoped => {
+        scoped.effect(() => navigation.bindWorkbench(scoped.desktopWorkbenches))
+      })
       if (typeof ctx.inject === 'function') ctx.inject(['uiConversation'], installWorkToolMessages)
       if (typeof ctx.inject === 'function') ctx.inject(['commandUi', 'inputTriggers', 'conversation', 'remote.skills'], installWorkResources)
       // `remote` and `remote.session` are separate inject names. Reading
