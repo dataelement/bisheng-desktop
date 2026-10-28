@@ -16,7 +16,18 @@ afterEach(async () => {
   delete window.__ModuleLoader__
   vi.unstubAllGlobals()
 })
-async function mount(connected = false, collection = {}, inert = false) {
+async function mount(connected = false, collection = {}, inert = false, workbench) {
+  let workbenchSnapshot = workbench
+  let bindWorkbench, disposeWorkbench
+  const workbenchListeners = new Set()
+  const attachWorkbench = () => bindWorkbench({
+    desktopWorkbenches: {
+      getSnapshot: () => workbenchSnapshot,
+      subscribe: fn => { workbenchListeners.add(fn); return () => workbenchListeners.delete(fn) }
+    },
+    effect(fn) { disposeWorkbench = fn() }
+  })
+  disposers.push(() => disposeWorkbench?.())
   let snapshot = { connected, phase: 'ready', epoch: 1, conversationId: 'new' }
   let chatListener
   window.dshEnterpriseChat = {
@@ -50,6 +61,12 @@ async function mount(connected = false, collection = {}, inert = false) {
   } }
   new Function(await readFile('packages/dsh-desktop-client-ui/client.js', 'utf8'))()
   plugin.apply({
+    inject(names, callback) {
+      if (names.includes('desktopWorkbenches')) {
+        bindWorkbench = callback
+        if (workbenchSnapshot) attachWorkbench()
+      }
+    },
     uiWorkspace: { registerNavigationHandler: (fn) => { navigate = fn; return () => {} }, startSession: () => { navigate('new'); setSessions({ phase: 'ready', byId: { draft: { id: 'draft', blank: true, retainedBy: { mainView: 1 } } } }); setPanel(null) } },
     sessions: { binding: id => id === 'draft' ? { session: liveSession } : undefined, list: { getSnapshot: () => sessionList, subscribe: fn => { sessionListeners.add(fn); return () => sessionListeners.delete(fn) } } },
     layout: { selectPanel: setPanel, panelInfo: { getSnapshot: () => panelState, subscribe: fn => { panelListeners.add(fn); return () => panelListeners.delete(fn) } } },
@@ -73,6 +90,15 @@ async function mount(connected = false, collection = {}, inert = false) {
     React.createElement(content.component, { ...content.props, columns: '1fr 0px', work: React.createElement('textarea', { 'aria-label': 'work draft', defaultValue: 'retained draft' }) })
   )))
   return {
+    async workbench(active, enabled = true) {
+      await act(async () => {
+        workbenchSnapshot = { state: { active }, enabled }
+        if (disposeWorkbench) workbenchListeners.forEach(fn => fn())
+        else attachWorkbench()
+      })
+    },
+    async unloadWorkbench() { await act(async () => { disposeWorkbench(); disposeWorkbench = undefined }) },
+    workbenchListenerCount: () => workbenchListeners.size,
     async locale(value) { await act(async () => { activeLocale = value; localeListeners.forEach(fn => fn()) }) },
     localeListenerCount: () => localeListeners.size,
     async navigation(entries, path = '/skills') { snapshot = { ...snapshot, navigation: { entries, homeLabel: 'Welcome' }, path, conversationId: undefined }; await act(async () => chatListener(snapshot)) },
@@ -93,6 +119,49 @@ async function mount(connected = false, collection = {}, inert = false) {
     draft: () => container.querySelector('textarea')
   }
 }
+it('shows mode selection on the native landing page and restores it after leaving a workbench', async () => {
+  const ui = await mount()
+  const draft = ui.draft()
+  expect(ui.picker()).not.toBeNull()
+  await ui.workbench('writer')
+  expect(container.querySelector('.dshModesHeader')).toBeNull()
+  await ui.workSession(false)
+  await ui.workSession(true)
+  expect(ui.picker()).toBeNull()
+  await ui.workbench('research')
+  expect(ui.picker()).toBeNull()
+  await ui.workbench(null)
+  expect(ui.picker()).not.toBeNull()
+  expect(ui.draft()).toBe(draft)
+  expect(draft.value).toBe('retained draft')
+})
+
+it('respects a restored workbench, the feature switch and optional service unload/reload', async () => {
+  const ui = await mount(false, {}, false, { enabled: true, state: { active: 'writer' } })
+  expect(ui.picker()).toBeNull()
+  await ui.workbench('writer', false)
+  expect(ui.picker()).not.toBeNull()
+  await ui.workbench('writer')
+  expect(ui.picker()).toBeNull()
+  expect(ui.workbenchListenerCount()).toBe(1)
+  await ui.unloadWorkbench()
+  expect(ui.picker()).not.toBeNull()
+  expect(ui.workbenchListenerCount()).toBe(0)
+  await ui.workbench('writer')
+  expect(ui.picker()).toBeNull()
+  expect(ui.workbenchListenerCount()).toBe(1)
+})
+
+it('keeps Chat landing navigation available while a workbench is retained in Work', async () => {
+  const ui = await mount(true, {}, false, { enabled: true, state: { active: 'writer' } })
+  expect(ui.selected()).toBe('chat')
+  expect(ui.picker()).not.toBeNull()
+  await ui.click('work')
+  expect(ui.selected()).toBe('work')
+  expect(ui.picker()).toBeNull()
+  expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
+})
+
 it('explains Chat sign-in before opening account settings while keeping the Work draft mounted', async () => {
   const ui = await mount()
   expect(ui.selected()).toBe('work')

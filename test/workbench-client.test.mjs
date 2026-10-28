@@ -1849,6 +1849,7 @@ describe('desktop workbench client navigation', () => {
     const { service, ctx } = await fixture(boundState())
     await service.open('writer')
     service.setEnabled(false)
+    expect(service.getSnapshot().enabled).toBe(false)
     await service.queue
     expect(service.state.active).toBeNull()
     expect(service.sessionVisible('old')).toBe(true)
@@ -1856,6 +1857,7 @@ describe('desktop workbench client navigation', () => {
     expect(ctx.layout.selectPanel).toHaveBeenLastCalledWith(null)
     await expect(service.open('writer')).rejects.toThrow('工作台功能已关闭')
     service.setEnabled(true)
+    expect(service.getSnapshot().enabled).toBe(true)
   })
 
   it('persists favorites independently from installation and lets an unavailable favorite be removed', async () => {

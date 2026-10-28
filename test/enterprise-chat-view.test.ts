@@ -9,7 +9,7 @@ vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events')
   return {
     session: { fromPartition: () => {
-      const isolated = { webRequest: { onCompleted: vi.fn() }, fetch: vi.fn(async () => ({ ok: true, json: async () => ({ data: [{ chat_id: 'cloud-a', name: 'Cloud A', flow_type: 15, update_time: '2026-10-16' }] }) })), cookies: { set: vi.fn(async () => {}) }, clearStorageData: vi.fn(async () => {}), closeAllConnections: vi.fn(async () => {}), setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() }
+      const isolated = { webRequest: { onCompleted: vi.fn() }, fetch: vi.fn(async (url: string) => url.endsWith('usage-summary') || url.endsWith('quota/effective') ? usageResponse(url) : ({ ok: true, json: async () => ({ data: [{ chat_id: 'cloud-a', name: 'Cloud A', flow_type: 15, update_time: '2026-10-16' }] }) })), cookies: { set: vi.fn(async () => {}) }, clearStorageData: vi.fn(async () => {}), closeAllConnections: vi.fn(async () => {}), setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() }
       fake.sessions.push(isolated)
       return isolated
     } },
@@ -49,7 +49,7 @@ describe('enterprise Chat host boundary', () => {
       const totals = { message_count: 2, input_tokens: 10, output_tokens: 5, total_tokens: 15, missing_usage_count: 0 }
       const summary = { start_at: '2026-10-22T00:00:00+08:00', end_at: '2026-10-22T12:00:00+08:00', timezone: 'Asia/Shanghai', granularity: 'day', totals, points: [] }
       fake.sessions[0].fetch.mockImplementation(async (url: string) => new Response(JSON.stringify({ status_code: 200, data: url.endsWith('usage-summary') ? summary : [{ resource_type: 'knowledge_space_file', user_used: 0.1, effective: -1 }] })))
-      expect(await f.host.usage()).toMatchObject({ totals, storage: { used: 0.1, limit: -1 } })
+      expect(await f.host.usage()).toMatchObject({ summary: { status: 'ready', data: { totals } }, storage: { status: 'ready', data: { used: 0.1, limit: -1 } } })
       expect(fake.sessions[0].fetch.mock.calls.map((call: unknown[]) => call[0])).toEqual(['https://enterprise.example/api/v1/dsh/me/usage-summary', 'https://enterprise.example/api/v1/quota/effective'])
       const finishes: Array<(response: Response) => void> = []
       fake.sessions[0].fetch.mockImplementation(() => new Promise<Response>(resolve => { finishes.push(resolve) }))
@@ -558,5 +558,82 @@ it('refreshes tools only after a current account browser completes an availabili
     f.owner.webContents.send.mockClear()
     completed(saved)
     expect(f.owner.webContents.send).toHaveBeenCalledTimes(0)
+  } finally { f.host.dispose() }
+})
+
+const usageTotals = { message_count: 2, input_tokens: 10, output_tokens: 5, total_tokens: 15, missing_usage_count: 0 }
+const usageSummary = { start_at: '2026-10-28T00:00:00+08:00', end_at: '2026-10-28T12:00:00+08:00', timezone: 'Asia/Shanghai', granularity: 'day', totals: usageTotals, points: [] }
+const usageResponse = (url: string) => new Response(JSON.stringify({ status_code: 200, data: url.endsWith('usage-summary') ? usageSummary : [{ resource_type: 'knowledge_space_file', user_used: 0.1, effective: -1 }] }))
+
+it.each(['summary', 'storage'])('preserves the other usage section when %s fails', async failed => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation); await flush()
+    fake.sessions[0].fetch.mockImplementation(async (url: string) => (url.endsWith('usage-summary') === (failed === 'summary')) ? new Response('service failed', { status: 500 }) : usageResponse(url))
+    const result = await f.host.usage()
+    expect(result[failed as 'summary' | 'storage']).toEqual({ status: 'error' })
+    expect(result[failed === 'summary' ? 'storage' : 'summary'].status).toBe('ready')
+  } finally { f.host.dispose() }
+})
+
+it('keeps valid statistics when storage payload validation fails', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation); await flush()
+    fake.sessions[0].fetch.mockImplementation(async (url: string) => url.endsWith('usage-summary') ? usageResponse(url) : new Response(JSON.stringify({ status_code: 200, data: [{ resource_type: 'knowledge_space_file', user_used: -2, effective: 1 }] })))
+    expect(await f.host.usage()).toMatchObject({ summary: { status: 'ready', data: { totals: usageTotals } }, storage: { status: 'error' } })
+  } finally { f.host.dispose() }
+})
+
+it('renews one cookie session for concurrent expired usage reads', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation); await flush()
+    const attempts = new Map<string, number>()
+    fake.sessions[0].fetch.mockImplementation(async (url: string) => {
+      const count = (attempts.get(url) ?? 0) + 1; attempts.set(url, count)
+      return count === 1 ? new Response('expired', { status: 401 }) : usageResponse(url)
+    })
+    const result = await f.host.usage()
+    expect(result.summary.status).toBe('ready'); expect(result.storage.status).toBe('ready')
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(2)
+    expect([...attempts.values()]).toEqual([2, 2])
+  } finally { f.host.dispose() }
+})
+
+it('bounds authentication retries to one renewal per usage request', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation); await flush()
+    fake.sessions[0].fetch.mockImplementation(async () => new Response('expired', { status: 401 }))
+    expect(await f.host.usage()).toEqual({ summary: { status: 'error' }, storage: { status: 'error' } })
+    expect(fake.sessions[0].fetch).toHaveBeenCalledTimes(4)
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(2)
+  } finally { f.host.dispose() }
+})
+
+it('recovers a failed Chat session when the user requests usage again', async () => {
+  const f = fixture()
+  try {
+    f.enterprise.webSession.mockRejectedValueOnce(new Error('offline'))
+    f.host.present(f.owner, presentation); await flush()
+    expect(f.host.snapshot().phase).toBe('error')
+    expect(await f.host.usage()).toMatchObject({ summary: { status: 'ready', data: { totals: usageTotals } }, storage: { status: 'ready' } })
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(2)
+  } finally { f.host.dispose() }
+})
+
+it('discards delayed 401 responses after logout before renewing a session', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation); await flush()
+    const finishers: Array<(value: Response) => void> = []
+    fake.sessions[0].fetch.mockImplementation(() => new Promise<Response>(resolve => finishers.push(resolve)))
+    const pending = f.host.usage()
+    const rejected = expect(pending).rejects.toThrow('identity changed')
+    f.change({ connected: false, connectionKey: 'tenant-a' })
+    finishers.forEach(finish => finish(new Response('expired', { status: 401 })))
+    await rejected
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(1)
   } finally { f.host.dispose() }
 })

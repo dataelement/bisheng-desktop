@@ -29,3 +29,15 @@ This is a host window-presentation seam: Harness slots belong to the separate ho
 - Windows installation, real-account skill upload and deployed-page acceptance: pending. Native fixture results represent the platform and fixture stated above.
 
 Evidence: workspace `outputs/window-modal-20261028/`.
+
+## PR #94 target-branch synchronization — 2026-10-28
+
+- Remote repository: `dataelement/bisheng-desktop`; target `V1.2.0@3ec92416fc53610d0189b70729b683a2a98a03e5`; original PR head `2941475e59cc17a7b484093bc155e2b982a30b46`. Both fetched before merging.
+- Continued in `.worktrees/bisheng-work-v120-window-modal` on `codex/v120-window-modal`; checkout was clean; installed Harness `0.2.1-rc.2`. The reference v0.9.0 integration checkout was clean.
+- Conflict cause: both branches prepended independent entries to `docs/STATUS.md`. Resolution preserves both entries. Target changes to platform-specific drag regions, account usage recovery and workbench navigation combine with the window-modal implementation.
+- Clean `npm ci` and all postinstall compatibility replay passed; installed Harness remains `0.2.1-rc.2`. The initial offline attempt found an uncached registry response; the subsequent online clean installation completed.
+- Typecheck, production build and Git whitespace checks passed.
+- Complete regression: 315 files / 3,127 tests passed, 4 files / 5 tests skipped, one Office startup test failed because the runtime port was occupied (`EADDRINUSE`), accompanied by temporary cache cleanup failure (`ENOTEMPTY`). The Office test and runtime source match the original PR baseline.
+- Final serial recheck: all 55 tests in `office-runtime.test.mjs`, `enterprise-modal.test.mjs`, `enterprise-chat-view.test.ts` and `windows-workspace-navigation.test.ts` passed. The complete run and isolated recheck remain separate results.
+- Native Electron 43.0.0 on macOS: all 12 modal cases and 48 navigation fixture cases passed. Windows installation, Windows native interaction and real-account skill upload remain pending.
+- Evidence: workspace `outputs/pr94-conflict-20261028/`.

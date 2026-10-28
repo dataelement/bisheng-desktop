@@ -1,7 +1,16 @@
 ## 2026-10-28 — 页面弹窗覆盖桌面侧栏
 
+- PR #94 冲突处理：同步目标分支 `V1.2.0@3ec92416fc53610d0189b70729b683a2a98a03e5`，保留页面弹窗与工作台导航两组状态记录；干净依赖安装、类型检查、构建及差异检查通过；完整回归 3,127 项通过、5 项跳过，1 项 Office 端口占用失败，最终串行复测 55 项全部通过；macOS 原生弹窗 12 组及导航 48 组通过。详情见 [合并验证记录](status/window-modal-20261028.md#pr-94-target-branch-synchronization--2026-10-28)。
 - 技能上传等页面弹窗统一采用窗口级展示范围，内容页保留原坐标；多层弹窗全部关闭后恢复内容区。根因、基线及验证记录见 [窗口级弹窗](status/window-modal-20261028.md)。
 - 相关 37 项回归、类型检查、生产构建及 macOS Electron 12 组子视图验证通过。完整回归 3,107 项通过、5 项跳过，1 项 Office 重算超时；资源稳定后的串行复测 52 项通过。Windows 与真实账号验收待执行。
+
+## 2026-10-28 — 工作台顶部导航显示范围
+
+- 根因：模式选择栏依据空白会话状态展示，工作台首次进入和空白会话也满足该条件。现在 Work 首页同时要求处于普通会话界面；进入工作台时移除整行 Chat / Work 导航并释放顶部空间，返回普通会话时按原首页规则恢复。
+- 实现：桌面导航通过 Cordis 可选注入订阅既有 `desktopWorkbenches` 服务；工作台快照提供功能启用状态。功能关闭、服务卸载及重载使用同一订阅生命周期，Chat 首页保留原有入口，会话组件与草稿保持原实例。
+- 基线：已核对远端 `dataelement/bisheng-work:V1.2.0@ea1b79129b1b636d459de65642f17dfd3864d8d3`；工作目录 `.worktrees/bisheng-work-v120-workbench-mode-header`，分支 `codex/v120-workbench-mode-header`；干净安装的 Harness 为 `0.2.1-rc.2`。v0.9.0 参考集成目录检查时为干净状态。
+- 验证：干净依赖安装及兼容处理、相关 242 项回归、类型检查和两个插件 JS 语法检查通过。`test/desktop-modes-ui.test.mjs` 覆盖首次恢复工作台、进入/切换/退出、空白与已有会话、启停、可选服务卸载/重载、Chat 首页与草稿保留；`test/workbench-client.test.mjs` 覆盖服务实际启停快照。生产构建和完整回归通过：314 个测试文件、3,101 项通过，4 个文件 / 5 项条件跳过；差异检查通过。构建使用按锁定 SHA256 校验的本地下载缓存。
+- macOS Electron 隔离夹具运行真实桌面导航组件和样式，使用模拟服务状态，在 600/1200 宽度和深浅模式下共 4 组通过，确认顶部空间回收、返回恢复与订阅清理。真实同事工作台、真实账号及 Windows 安装包验收待发包执行。证据位于主工作区 `outputs/workbench-mode-header-20261028/`。
 
 ## 2026-10-27 — PR #79 同步目标分支并处理冲突
 
@@ -648,3 +657,19 @@ Verification:
 - Implementation: register paired Chinese/English settings copy through the host locale service, resolve the tab label through that service, and subscribe the settings panel to active-language changes. The existing enterprise descriptions refresh with the panel.
 - Automated verification: 222 targeted workbench/client/download tests, JavaScript syntax, TypeScript and diff checks passed. The four new settings cases exercise both switch states and enterprise market configurations, English → Chinese → English, accessible labels and locale invalidation.
 - Complete regression: 3,016 passed, 5 skipped, and one Office Safe Mode readiness failure during the concurrent run. The isolated rerun of all 8 Office runtime cases passed. Production build and packaged Harness/bootstrap/native-module checks (699 dependency manifests), Office authoring and DOCX/PPTX/XLSX PDF conversion passed. The packaged workbench client matches the source byte-for-byte (SHA-256 `35a585ccb3db8c9c23c8aa8f42032a2e2e101fff3a475d587969f192e34b4137`). macOS arm64 development DMG/ZIP packaging and DMG checksum verification passed. Artifacts and logs: `outputs/workbench-settings-locale-20261027/`. Native visual acceptance belongs to the user. Source fix: `b771749`, delivered on `codex/v120-workbench-settings-locale` for review against `V1.2.0`.
+
+## 2026-10-28 — Windows workspace navigation chrome
+
+- Baseline: remote `dataelement/bisheng-work:V1.2.0@ea1b79129b1b636d459de65642f17dfd3864d8d3`. Worktree `bisheng-work-windows-workspace-navigation`, branch `codex/windows-workspace-navigation`. Clean dependency installation and compatibility replay passed; installed Harness `0.2.1-rc.2`, Electron `43.0.0`. Local BISHENG app is `1.2.0-test.2` with Harness `0.2.1-rc.2`. The DSH `v0.9.0` remote lookup returned an empty ref; its existing integration worktree was clean. This report's screen maps to the embedded BISHENG knowledge-space header.
+- Implementation: Windows dragging belongs to its existing caption row. Both the host mode header and embedded Chat header enable content dragging on macOS. The existing knowledge-space navigation and directory-menu actions retain their ownership.
+- Defect evidence: the original host stylesheet and original embedded Chat stylesheet each fail the native Chromium Windows-layout drag-region check (`drag` versus expected client area). This establishes the platform-scoping defect. Exact reproduction of the reported click failure on Windows remains pending.
+- Verification: 69 focused tests, TypeScript, JavaScript syntax, production build and diff checks passed. Native Electron on macOS passed 48 local navigation fixtures (Windows/macOS styles, expanded/collapsed sidebar, 80%/100%/125% zoom, Chinese/English and light/dark themes) plus the existing macOS Chat drag-region and click check. Both original styles independently fail the new Windows region checks. The full suite passed 3,100 tests, skipped 5 and failed one unrelated PPT template timing assertion; the isolated 36-test PPT file then passed. Its test and production source match the baseline. Office download timed out initially; the successful build reused SHA-verified local download caches. Fixtures use temporary profiles and local content.
+- Integration update: merged live-verified `V1.2.0@a52a43cf768bae59d3834be9fff0d2ab6c7e7f5e`, preserving the account usage recovery implementation and both documentation sections. Dependencies and compatibility files match the prior installed baseline. TypeScript, production build and diff checks passed. Full regression: 3,112 passed, 5 skipped, one model-catalog startup failed with `EADDRINUSE`; its isolated rerun passed. All 48 native navigation fixtures and the native usage recovery fixture passed on macOS. The navigation fixture keeps animation frames active in the background after an initial throttling timeout.
+- Delivery boundary: source PR. Windows package rebuild, Windows real-account end-to-end navigation, and target deployment remain pending.
+
+## 2026-10-28 — Enterprise account usage recovery
+
+- Baseline: live-verified `origin/V1.2.0@ea1b79129b1b636d459de65642f17dfd3864d8d3`; branch `codex/usage-recovery`. Remote access recovered and the target SHA matches the tested baseline. The legacy `dsh-desktop:v0.9.0` remote check encountered the same transport failure; its local integration worktree was clean. This fix targets the BISHENG Work V1.2.0 usage panel. Installed BISHENG is `1.2.0-test.2`, with packaged and local Harness `0.2.1-rc.2`.
+- Implemented: usage retries call the host from an errored Chat session; readiness transitions refresh the same account; summary and storage return separate validated results and localized errors. Expired cookie sessions receive one shared renewal per usage operation. Identity changes invalidate pending reads; logs retain section and HTTP status.
+- Verification: 81 focused regressions and TypeScript checks passed. A temporary-profile macOS Electron 43.0.0 fixture passed native pointer retry, same-epoch ready recovery and both independent failure directions. The final production build passed. The full suite recorded 3,109 passed, 5 skipped and one model-catalog startup failure caused by EADDRINUSE; the isolated final rerun passed. An intermediate rerun overlapped Office resource assembly and was superseded by the sequential successful run.
+- Delivery target: the user explicitly authorized direct publication to `dataelement/bisheng-work:V1.2.0`. The remote version SHA matches the tested baseline, so the repair is eligible for a normal fast-forward update. The affected 13001 account's original response, remote deployment revision, rebuilt release installation, Windows native checks and real-account acceptance remain pending.

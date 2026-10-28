@@ -17,7 +17,7 @@ try {
   await build({ stdin: { contents: `
     import assert from 'node:assert/strict'
     import { app, BrowserWindow, WebContentsView } from 'electron'
-    import { CHAT_LAYOUT_CSS } from './src/main/enterprise/chat-layout'
+    import { chatLayoutCss } from './src/main/enterprise/chat-layout'
     app.setPath('userData', ${JSON.stringify(join(temporary, 'profile'))})
     app.whenReady().then(async () => {
       const window = new BrowserWindow({ title: 'Chat window drag verification',
@@ -36,7 +36,7 @@ try {
         '<style>*{box-sizing:border-box}body{margin:0;font:14px sans-serif;background:white;color:#222}.dsh-chat-header{display:grid;padding:9px 16px;border-bottom:1px solid #ddd}.dsh-chat-header-row{display:flex;align-items:center;gap:16px}.dsh-chat-title{flex:1}button,a{padding:5px}input{width:70px}article{padding:32px}#more{margin-top:24px}</style>' +
         '<main class="dsh-chat-surface"><header class="dsh-chat-header"><div class="dsh-chat-header-row"><div class="dsh-chat-title">Chat title</div><button id="action"><span>Action</span></button><a id="link" href="#details">Link</a><input id="input" aria-label="Title"></div><div class="dsh-chat-section-row">Conversation</div></header><article id="message">Drag the blank title bar to move this window.<div id="more"><span role="button" tabindex="0">Role button</span><select><option>Option</option></select><textarea></textarea><span contenteditable="true">Editable</span></div></article></main><section id="work"><header class="dsh-chat-header">Work header</header></section><div id="portal">Portal menu</div>'
       ))
-      await view.webContents.insertCSS(CHAT_LAYOUT_CSS)
+      await view.webContents.insertCSS(chatLayoutCss('darwin'))
       await view.webContents.executeJavaScript(
         'window.clicks = 0; document.querySelector("#action").addEventListener("click", () => { window.clicks++; document.querySelector("#message").firstChild.textContent = "Action clicked " + window.clicks + " times"; console.log("ACTION_CLICK " + window.clicks) })'
       )

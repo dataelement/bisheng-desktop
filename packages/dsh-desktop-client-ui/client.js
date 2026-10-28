@@ -316,7 +316,7 @@ window.__ModuleLoader__.load({
 
     /** One renderer-owned mode/history controller shared by the content and sidebar slots. */
     function createChatNavigation(ctx) {
-      let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, signInPromptOpen: false, approvalsOpen: false, accountDialogOpen: false, settingsSurface: undefined, pageId: undefined, navigation: undefined, workLanding: false, panelOpen: false, activePanelId: null }
+      let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, signInPromptOpen: false, approvalsOpen: false, accountDialogOpen: false, settingsSurface: undefined, pageId: undefined, navigation: undefined, workLanding: false, nativeWork: true, panelOpen: false, activePanelId: null }
       const listeners = new Set()
       let active = false, revision = 0, historyRequest = 0, timer, lastHistory = 0
       const publish = (patch) => { value = { ...value, ...patch }; listeners.forEach(fn => fn()) }
@@ -373,6 +373,15 @@ window.__ModuleLoader__.load({
         snapshot: () => value,
         subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn) },
         select, open, refreshHistory,
+        bindWorkbench(service) {
+          const sync = () => {
+            const snapshot = service.getSnapshot()
+            publish({ nativeWork: snapshot.enabled === false || snapshot.state.active == null })
+          }
+          const unsubscribe = service.subscribe(sync)
+          sync()
+          return () => { unsubscribe(); publish({ nativeWork: true }) }
+        },
         dismissSignIn() { publish({ signInPromptOpen: false }) },
         signIn() {
           publish({ signInPromptOpen: false })
@@ -574,7 +583,7 @@ window.__ModuleLoader__.load({
       }, [])
       const showModePicker = !settingsOpen && (mode === 'chat'
         ? !state.pageId && state.conversationId === 'new' && state.landing !== false
-        : state.workLanding && !state.panelOpen)
+        : state.nativeWork && state.workLanding && !state.panelOpen)
       const select = navigation.choose
       const keyDown = (event) => {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
@@ -660,7 +669,8 @@ window.__ModuleLoader__.load({
           .dshPrimaryNavigation[data-wide=false]{gap:12px}
           .dshNavigationMenu{display:flex;flex-direction:column;position:relative;width:100%}.dshNavigationMenu .dshNavigationMenuList{width:100%;min-width:0;max-width:100%;box-sizing:border-box}
           .dshModes{grid-column:2 / -1;min-width:0;min-height:0;width:100%;height:100%;display:flex;flex-direction:column;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary)}
-          .dshModesHeader{height:56px;flex:none;display:flex;align-items:center;justify-content:center;-webkit-app-region:drag}
+          .dshModesHeader{height:56px;flex:none;display:flex;align-items:center;justify-content:center}
+          html[data-platform=darwin] .dshModesHeader{-webkit-app-region:drag}
           .dshModesTabs{display:flex;padding:3px;border-radius:24px;background:var(--dsw-alias-bg-layer-2);-webkit-app-region:no-drag}
           .dshModesTabs button{font:inherit;font-size:13px;min-width:96px;height:30px;padding:0 20px;border:0;border-radius:20px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
           .dshModesTabs button[aria-selected=true]{background:var(--dsw-alias-interactive-bg-hover-solid);color:var(--dsw-alias-label-primary)}
@@ -1035,6 +1045,9 @@ window.__ModuleLoader__.load({
     const inject = ['slots', 'locale', 'remote', 'remote.session', 'sessions', 'uiWorkspace', 'layout']
     function apply(ctx) {
       const navigation = installDesktopModes(ctx)
+      if (typeof ctx.inject === 'function') ctx.inject(['desktopWorkbenches'], scoped => {
+        scoped.effect(() => navigation.bindWorkbench(scoped.desktopWorkbenches))
+      })
       if (typeof ctx.inject === 'function') ctx.inject(['uiConversation'], installWorkToolMessages)
       if (typeof ctx.inject === 'function') ctx.inject(['commandUi', 'inputTriggers', 'conversation', 'remote.skills'], installWorkResources)
       // `remote` and `remote.session` are separate inject names. Reading
