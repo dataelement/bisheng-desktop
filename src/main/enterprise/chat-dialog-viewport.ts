@@ -23,7 +23,7 @@ export function chatDialogViewportScript(bounds: ContentBounds | undefined, mask
     if (css) {
       if (!style) { style = document.createElement('style'); style.id = 'dsh-window-dialog-viewport'; document.head.appendChild(style); }
       if (style.textContent !== css) style.textContent = css;
-      root.dataset.dshWindowDialog = 'knowledge';
+      root.dataset.dshWindowDialog = 'open';
     } else {
       delete root.dataset.dshWindowDialog;
       style?.remove();

@@ -1,3 +1,8 @@
+## 2026-10-28 — 页面弹窗覆盖桌面侧栏
+
+- 技能上传等页面弹窗统一采用窗口级展示范围，内容页保留原坐标；多层弹窗全部关闭后恢复内容区。根因、基线及验证记录见 [窗口级弹窗](status/window-modal-20261028.md)。
+- 相关 37 项回归、类型检查、生产构建及 macOS Electron 12 组子视图验证通过。完整回归 3,107 项通过、5 项跳过，1 项 Office 重算超时；资源稳定后的串行复测 52 项通过。Windows 与真实账号验收待执行。
+
 ## 2026-10-27 — PR #79 同步目标分支并处理冲突
 
 - 远端 PR #79 原 head `6e3b2f5`，目标 `dataelement/bisheng-work:V1.2.0` 已更新至 `802638a1a6c4a21c95e503f4c2cb803d83776e8c`；沿用 `codex/v120-chat-signin-guidance` 与 `.worktrees/bisheng-work-capabilities-v120-integration`，实际 Harness `0.2.1-rc.2`。v0.9.0 参考集成目录状态为空。

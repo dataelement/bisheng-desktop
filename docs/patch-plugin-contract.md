@@ -32,6 +32,12 @@ Harness 0.2.0-rc.2 的 `dsh-client-ui-input-trigger` 将 pointer hover 与 keybo
 
 扩展复用当前 Harness 的公开接口。规则、slot、语言和样式均由插件生命周期管理。回归使用已安装 Harness 的提交、文本评估和渲染实现，覆盖名称持久化、正文修改重发、旧消息、多个引用、特殊字符与卸载重装。
 
+### 嵌入页面的窗口级模态展示（2026-10-28）
+
+页面 body portal 的模态状态由 presentation preload 汇总，经当前账号、主 frame、origin 与 pathname 校验传给 `EnterpriseChatView`。弹窗期间子视图覆盖窗口，`#root` 保留内容区坐标，透明背景让原生侧栏透出相同蒙版。关闭最后一个 portal 后恢复内容区；多层弹窗及退场动画共用该生命周期。设置内容页继续采用宿主设置容器范围。
+
+这是原生窗口展示接缝：Harness slot 位于另一个 renderer。preload 只观察 portal 与 root 的背景隔离属性，按动画帧汇总变化；隐藏时暂停，卸载时释放。语义为普通浮层的 popover 保持原范围。知识空间旧展示入口触发同一个汇总状态刷新。验证入口为 `test/enterprise-modal.test.mjs`、`test/enterprise-chat-view.test.ts` 和跨平台 `scripts/verify-enterprise-modal.mjs`。
+
 ## 1. 按能力选扩展方式
 
 产品能力和长期维护的桌面表现优先放在宿主代码或插件中；patch 用于修复上游缺陷或补足必要的扩展接缝。插件不能通过隐藏的 DOM 改写、内部方法替换，把实际的上游耦合伪装成无补丁扩展。
