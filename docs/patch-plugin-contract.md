@@ -284,3 +284,24 @@ upstream V0.13.0 本身没有企业授权层，合并不会自动替代此接缝
 实际加载补充：Harness web-frontend 把 primitives 预编译进共享模块，插件 require 与原生引用消费的是该共享模块。`scripts/prepare-reference-icons.mjs` 在安装、开发、构建和测试前从上述唯一图标定义生成对应分支；按公开 `ReferenceIconRegular` 导出定位实现，发现压缩符号并保留内置 session/file/folder 分支，生成区域可重复覆盖。版本或结构变化时构建失败，入口带内容摘要刷新缓存。生成内容留在依赖分发目录，Git 维护生成器和原定义。上游共享前端支持这些类型后一起移除生成步骤。
 
 `test/frontend-reference-icons.test.mjs` 执行完整前端入口及 vendor 依赖，捕获传给 Harness loader 的真实 staticModules，并用其中的 React 与 ReferenceIconRegular 渲染五类图标，覆盖实际运行包与库文件不同步的回归。
+
+### Enterprise usage recovery (2026-10-28)
+
+The account usage slot consumes separately validated summary and storage sections
+through the existing host IPC. Each section owns its success/error state, so its
+sibling can display available data. Host reads remain fixed to the authenticated
+self-service endpoints and the identity-owned cookie session. A 401 renews that
+session once per usage operation; both reads share the renewal, and identity
+checks bracket renewal, requests and final publication. Logs identify the failed
+section and HTTP status while response bodies remain host-owned.
+
+The Usage subscription tracks identity and connection readiness. Mounting and
+explicit retry request a host read, which establishes the session when needed;
+a ready transition refreshes the data. In-flight reads coalesce readiness events,
+and account changes invalidate earlier responses. Repeated error notifications
+wait for an explicit retry or a ready transition.
+
+The native fixture `node scripts/verify-usage-recovery.mjs` uses an isolated
+Electron profile and the actual settings plugin to verify pointer retry, ready
+transitions and independently failing sections. Real-account acceptance remains
+an environment-specific check.

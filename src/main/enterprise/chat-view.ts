@@ -7,7 +7,7 @@ import { MODULE_ROUTE_PATTERN, MODULE_THEME_CSS, moduleThemeScript } from './cha
 import { chatDialogViewportScript } from './chat-dialog-viewport'
 import { chatLocaleScript } from './chat-locale'
 import { CHAT_LAYOUT_CSS } from './chat-layout'
-import { parseUsageSummary, parseUsageStorage, type EnterpriseUsage } from '../../shared/enterprise-usage'
+import { parseUsageSummary, parseUsageStorage, type EnterpriseUsage, type UsageSection } from '../../shared/enterprise-usage'
 
 /** Remote Chat gets its own in-memory browser session and a presentation-only preload. */
 const DOCUMENT_LOAD_TIMEOUT_MS = 45_000
@@ -96,8 +96,24 @@ export class EnterpriseChatView {
     if (this.state.phase !== 'ready') await this.connect()
     if (epoch !== this.generation || !this.isolated || !this.origin || !this.enterprise.snapshot().connected) throw new Error('Usage identity changed.')
     const isolated = this.isolated, origin = this.origin
+    const assertCurrent = () => {
+      if (epoch !== this.generation || isolated !== this.isolated || !this.enterprise.snapshot().connected) throw new Error('Usage identity changed.')
+    }
+    let renewal: Promise<void> | undefined
     const read = async (path: string): Promise<unknown> => {
-      const response = await isolated.fetch(new URL(path, origin).href, { redirect: 'error', signal: AbortSignal.timeout(15_000) })
+      const request = () => {
+        assertCurrent()
+        return isolated.fetch(new URL(path, origin).href, { redirect: 'error', signal: AbortSignal.timeout(15_000) })
+      }
+      let response = await request()
+      if (response.status === 401) {
+        await response.body?.cancel()
+        assertCurrent()
+        renewal ??= this.connect()
+        await renewal
+        assertCurrent()
+        response = await request()
+      }
       if (!response.ok) {
         await response.body?.cancel()
         throw new Error(`Usage request failed (${response.status}).`)
@@ -119,9 +135,22 @@ export class EnterpriseChatView {
       if (!result || typeof result !== 'object' || !('status_code' in result) || result.status_code !== 200 || !('data' in result)) throw new Error('Usage unavailable.')
       return result.data
     }
-    const [summary, storage] = await Promise.all([read('/api/v1/dsh/me/usage-summary'), read('/api/v1/quota/effective')])
-    if (epoch !== this.generation || isolated !== this.isolated || !this.enterprise.snapshot().connected) throw new Error('Usage identity changed.')
-    return { ...parseUsageSummary(summary), storage: parseUsageStorage(storage) }
+    const section = async <T>(name: 'summary' | 'storage', path: string, parse: (value: unknown) => T): Promise<UsageSection<T>> => {
+      try {
+        return { status: 'ready', data: parse(await read(path)) }
+      } catch (error) {
+        // Fixed host stages retain diagnostics while response bodies stay in the host.
+        const status = error instanceof Error ? error.message.match(/^Usage request failed \((\d{3})\)\.$/u)?.[1] : undefined
+        this.note(`[enterprise-chat] usage_failed section=${name} status=${status ?? 'transport-or-response'}`)
+        return { status: 'error' }
+      }
+    }
+    const [summary, storage] = await Promise.all([
+      section('summary', '/api/v1/dsh/me/usage-summary', parseUsageSummary),
+      section('storage', '/api/v1/quota/effective', parseUsageStorage)
+    ])
+    assertCurrent()
+    return { summary, storage }
   }
 
   /** Fixed read-only endpoint. The isolated cookie stays in the host session. */
