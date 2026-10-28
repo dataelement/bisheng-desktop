@@ -398,7 +398,7 @@ describe('enterprise service login loop', () => {
     const fetchImpl: EnterpriseFetch = async (input, init) => {
       if (rejectRefresh && String(input).includes('/api/v1/dsh/token') && String(init?.body).includes('refresh_token')) {
         return new Response(JSON.stringify({
-          error: { message: 'Refresh token is invalid.', type: 'authentication_error', code: 'invalid_refresh_token' }
+          error: { message: 'Refresh token is invalid.', type: 'authentication_error', code: 'refresh_token_reused' }
         }), {
           status: 401,
           headers: { 'content-type': 'application/json' }
@@ -406,7 +406,7 @@ describe('enterprise service login loop', () => {
       }
       return globalThis.fetch(input, init)
     }
-    const { service } = await createService(createEnterpriseFetch(fetchImpl))
+    const { service, entries } = await createService(createEnterpriseFetch(fetchImpl))
     const started = await service.startLogin(origin)
     await completeBrowserLogin(origin, started.authorizationUrl)
     await waitFor(() => {
@@ -418,8 +418,9 @@ describe('enterprise service login loop', () => {
     expect(cleared.connected).toBe(false)
     expect(cleared.phase).toBe('idle')
     expect(cleared.models).toEqual([])
-    expect(cleared.errorCode).toBe('invalid_refresh_token')
+    expect(cleared.errorCode).toBe('refresh_token_reused')
     expect(cleared.error).toBe('Refresh token is invalid.')
+    expect(entries).toContainEqual(expect.objectContaining({ event: 'refresh_invalid', code: 'refresh_token_reused' }))
   })
 
   it('clears the session and keeps the reason when the session has expired', async () => {
@@ -438,7 +439,7 @@ describe('enterprise service login loop', () => {
       }
       return globalThis.fetch(input, init)
     }
-    const { service, notes } = await createService(createEnterpriseFetch(fetchImpl))
+    const { service, notes, entries } = await createService(createEnterpriseFetch(fetchImpl))
     const started = await service.startLogin(origin)
     await completeBrowserLogin(origin, started.authorizationUrl)
     await waitFor(() => {
@@ -453,6 +454,7 @@ describe('enterprise service login loop', () => {
     expect(cleared.errorCode).toBe('session_expired')
     expect(cleared.error).toBe('session expired')
     expect(notes).toContain('refresh_invalid')
+    expect(entries).toContainEqual(expect.objectContaining({ event: 'refresh_invalid', code: 'session_expired' }))
   })
 
   it('publishes access_denied when browser sign-in is cancelled', async () => {

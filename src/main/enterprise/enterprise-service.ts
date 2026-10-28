@@ -122,6 +122,7 @@ export interface EnterpriseServiceNote {
   event: string
   status?: number
   requestId?: string
+  code?: string
   originHash?: string
   pluginId?: string
   path?: string
@@ -1565,6 +1566,7 @@ export class EnterpriseService {
     this.options.note?.({
       event,
       ...(details.status ? { status: details.status } : {}),
+      ...(typeof details.code === 'string' && details.code.length > 0 && details.code.length <= 64 ? { code: details.code } : {}),
       ...(sanitizeRequestId(details.requestId) ? { requestId: sanitizeRequestId(details.requestId) } : {}),
       ...(details.originHash ? { originHash: details.originHash } : {}),
       ...(details.pluginId ? { pluginId: details.pluginId } : {}),
@@ -1673,7 +1675,8 @@ function noteFromError(error: unknown): Omit<EnterpriseServiceNote, 'event'> {
   if (error instanceof EnterprisePlatformError) {
     return {
       ...(error.status ? { status: error.status } : {}),
-      ...(sanitizeRequestId(error.requestId) ? { requestId: sanitizeRequestId(error.requestId) } : {})
+      ...(sanitizeRequestId(error.requestId) ? { requestId: sanitizeRequestId(error.requestId) } : {}),
+      ...(typeof error.code === 'string' && error.code.length > 0 && error.code.length <= 64 ? { code: error.code } : {})
     }
   }
   return {}
