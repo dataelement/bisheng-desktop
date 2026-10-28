@@ -19,7 +19,12 @@ function setup({ enabled, publicMarket }) {
     getSnapshot: () => snapshot,
     subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener) }
   }
+  // Keep account-change subscription and disposal faithful to the browser API.
+  const windowEvents = new EventTarget()
+  const fetch = vi.fn(async () => ({ ok: false }))
   const window = {
+    addEventListener: windowEvents.addEventListener.bind(windowEvents),
+    removeEventListener: windowEvents.removeEventListener.bind(windowEvents),
     __dshEnterpriseWorkbenchSnapshot: { known: true, connected: true, allowThirdPartyWorkbenches: publicMarket },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
     __ModuleLoader__: { load({ factory }) {
@@ -36,7 +41,7 @@ function setup({ enabled, publicMarket }) {
       })
     } }
   }
-  vm.runInNewContext(code, { window, setTimeout, clearTimeout, AbortController, fetch: async () => ({ ok: false }) })
+  vm.runInNewContext(code, { window, setTimeout, clearTimeout, AbortController, fetch })
   client.apply({
     locale,
     effect: (callback, label) => {
@@ -53,6 +58,8 @@ function setup({ enabled, publicMarket }) {
   return {
     tab,
     invalidate,
+    fetch,
+    notifyAccountChanged: () => windowEvents.dispatchEvent(new Event('dsh-desktop:enterprise-account-changed')),
     render: () => renderToStaticMarkup(tab.Component()),
     switchLanguage: active => { snapshot = { active, revision: snapshot.revision + 1 }; listeners.forEach(listener => listener()) },
     dispose: () => dispose.reverse().forEach(cleanup => cleanup())
@@ -60,6 +67,18 @@ function setup({ enabled, publicMarket }) {
 }
 
 describe('workbench settings locale', () => {
+  it('refreshes capability on account changes and unsubscribes on disposal', () => {
+    const ui = setup({ enabled: true, publicMarket: true })
+    try {
+      expect(ui.fetch).toHaveBeenCalledTimes(1)
+      ui.notifyAccountChanged()
+      expect(ui.fetch).toHaveBeenCalledTimes(2)
+      expect(ui.fetch).toHaveBeenLastCalledWith('/api/enterprise.state', { credentials: 'same-origin', cache: 'no-store' })
+    } finally { ui.dispose() }
+    ui.notifyAccountChanged()
+    expect(ui.fetch).toHaveBeenCalledTimes(2)
+  })
+
   it.each([
     [false, false], [false, true], [true, false], [true, true]
   ])('updates the tab, accessible switch and help text with enabled=%s publicMarket=%s', (enabled, publicMarket) => {
