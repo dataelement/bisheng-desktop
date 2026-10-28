@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createEnterpriseFetch, type EnterpriseFetch } from '../src/main/enterprise/platform-fetch'
-import { EnterpriseService, type EnterpriseServiceNote, type EnterpriseServiceOptions } from '../src/main/enterprise/enterprise-service'
+import { BACKGROUND_RESUME_DELAY_MS, BACKGROUND_RESUME_JITTER_MS, EnterpriseService, type EnterpriseServiceNote, type EnterpriseServiceOptions } from '../src/main/enterprise/enterprise-service'
 import { startLoginCallbackServer } from '../src/main/enterprise/login-callback-server'
 import {
   ENTERPRISE_VAULT_FILENAME,
@@ -912,5 +912,58 @@ describe('enterprise Work MCP single sign-on', () => {
     await service.logout()
     await expect(service.workMcp(request)).rejects.toThrow('account changed')
     expect(calls).toBe(1)
+  })
+})
+
+describe('enterprise background refresh and system sleep', () => {
+  async function loggedInService() {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    const requests: string[] = []
+    let completedTokens = 0
+    const fetchImpl: EnterpriseFetch = async (input, init) => {
+      requests.push(String(input))
+      const response = await globalThis.fetch(input, init)
+      if (String(input).includes('/token')) completedTokens += 1
+      return response
+    }
+    let now = Date.now()
+    const created = await createService(createEnterpriseFetch(fetchImpl), { now: () => now })
+    const started = await created.service.startLogin(origin)
+    await completeBrowserLogin(origin, started.authorizationUrl)
+    await waitFor(() => created.service.snapshot().phase === 'connected')
+    const tokenCount = () => requests.filter((url) => url.includes('/token')).length
+    const finishedTokens = () => completedTokens
+    return { ...created, requests, tokenCount, finishedTokens, advance: (ms: number) => { now += ms } }
+  }
+
+  it('pauses background refresh while suspended and refreshes after the resume delay', async () => {
+    const { service, tokenCount, finishedTokens, advance } = await loggedInService()
+    const before = tokenCount()
+    service.suspendBackground()
+    advance(5 * 60 * 1000)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+    try {
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
+      expect(tokenCount()).toBe(before)
+      service.resumeBackground()
+      await vi.advanceTimersByTimeAsync(BACKGROUND_RESUME_DELAY_MS - 1)
+      expect(tokenCount()).toBe(before)
+      await vi.advanceTimersByTimeAsync(BACKGROUND_RESUME_JITTER_MS + 1)
+      expect(tokenCount()).toBe(before + 1)
+    } finally {
+      vi.useRealTimers()
+    }
+    await waitFor(() => finishedTokens() === before + 1 && service.snapshot().phase === 'connected')
+  })
+
+  it('still refreshes an explicit request while background refresh is suspended', async () => {
+    const { service, tokenCount } = await loggedInService()
+    const before = tokenCount()
+    service.suspendBackground()
+    await service.refresh()
+    expect(tokenCount()).toBe(before + 1)
+    expect(service.snapshot().phase).toBe('connected')
   })
 })

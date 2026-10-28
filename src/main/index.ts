@@ -19,6 +19,7 @@ import {
   ipcMain,
   Menu,
   nativeTheme,
+  powerMonitor,
   safeStorage,
   shell,
   Tray,
@@ -3451,7 +3452,17 @@ async function bootstrap(): Promise<void> {
       safeStorage,
       fetchImpl: createElectronEnterpriseFetch(net.fetch.bind(net)),
       allowInsecureLoopback: allowInsecureEnterpriseLoopback(),
-      note: (line) => runtime.note(line)
+      note: (line) => runtime.note(line),
+      powerMonitor: {
+        on: (event, listener) => {
+          if (event === 'suspend') powerMonitor.on('suspend', listener)
+          else powerMonitor.on('resume', listener)
+        },
+        removeListener: (event, listener) => {
+          if (event === 'suspend') powerMonitor.removeListener('suspend', listener)
+          else powerMonitor.removeListener('resume', listener)
+        }
+      }
     })
   } catch {
     runtime.note('[enterprise] start_failed')
