@@ -42,6 +42,9 @@ app.whenReady().then(async () => {
   ipcMain.handle('harness:renderer-healthy', () => ({}))
   ipcMain.handle('updates:status', () => ({ phase: 'idle' }))
   ipcMain.handle('safe-mode:action', () => ({ ok: true }))
+  const bannerActions = []
+  ipcMain.handle('safe-mode:manage', () => { bannerActions.push('manage'); return { ok: true } })
+  ipcMain.handle('safe-mode:exit', () => { bannerActions.push('exit'); return { blocked: true } })
   await win.loadURL(origin)
   const show = () => frame.show(`${origin}/safe-mode.html?seq=1&theme=${theme}&state=${encodeURIComponent(JSON.stringify(model()))}`)
   show()
@@ -84,9 +87,52 @@ app.whenReady().then(async () => {
   await until(read, value => value.title === 'Manage plugins')
   assert.equal(await win.webContents.executeJavaScript("document.querySelector('iframe').contentDocument.querySelector('.plugin input').checked"), true)
   frame.close()
+  // The macOS report is the sidebar on the ordinary page, with the manager closed.
+  // Inspect the actual closed shadow tree and exercise its existing IPC actions.
+  await change('zh')
+  await until(() => win.webContents.executeJavaScript("document.querySelector('#dsh-desktop-safe-mode-frame') === null"), Boolean)
+  await win.webContents.executeJavaScript(`
+    document.documentElement.style.cssText = '--dsw-alias-label-primary:#eee;--dsw-alias-label-secondary:#aaa;--dsw-alias-bg-layer-1:#242424;--dsw-alias-border-l2:#444;--dsw-alias-interactive-bg-hover:#333;color-scheme:dark';
+    document.body.style.background = '#141414';
+    document.querySelector('aside').style.background = '#1c1c1c';
+    document.body.style.color = '#eee';
+  `)
+  const descendants = node => [node, ...(node.children || []).flatMap(descendants), ...(node.shadowRoots || []).flatMap(descendants)]
+  const bannerNodes = async () => {
+    const { root: document } = await win.webContents.debugger.sendCommand('DOM.getDocument', { depth: -1, pierce: true })
+    const banner = descendants(document).find(node => {
+      const attributes = node.attributes || []
+      return attributes.some((value, index) => index % 2 === 0 && value === 'id' && attributes[index + 1] === 'dsh-desktop-safe-mode-banner')
+    })
+    assert.ok(banner, 'The sidebar owns a mounted Safe Mode banner')
+    return descendants(banner)
+  }
+  const textContent = node => descendants(node).filter(child => child.nodeType === 3).map(child => child.nodeValue).join('')
+  const nodes = await bannerNodes()
+  const texts = nodes.filter(node => node.nodeType === 3).map(node => node.nodeValue)
+  for (const expected of ['安全模式', '已暂时停用所有第三方插件，可停用有问题的插件后重启。', '管理插件', '退出安全模式']) assert.ok(texts.includes(expected), expected)
+  for (const original of ['Safe Mode', 'Manage plugins', 'Exit Safe Mode']) assert.equal(texts.includes(original), false)
+  writeFileSync(join(output, 'zh-dark-sidebar.png'), (await win.webContents.capturePage()).toPNG())
+  const clickBannerButton = async label => {
+    const button = (await bannerNodes()).find(node => node.nodeName === 'BUTTON' && textContent(node) === label)
+    assert.ok(button, label)
+    const { object } = await win.webContents.debugger.sendCommand('DOM.resolveNode', { nodeId: button.nodeId })
+    await win.webContents.debugger.sendCommand('Runtime.callFunctionOn', { objectId: object.objectId, functionDeclaration: 'function() { this.click() }' })
+    await win.webContents.debugger.sendCommand('Runtime.releaseObject', { objectId: object.objectId })
+  }
+  await clickBannerButton('管理插件')
+  await until(async () => bannerActions.length, count => count === 1)
+  await clickBannerButton('退出安全模式')
+  await until(async () => bannerActions.length, count => count === 2)
+  assert.deepEqual(bannerActions, ['manage', 'exit'])
+  // A recovery-blocked exit keeps the same translated, usable controls.
+  await until(async () => (await bannerNodes()).filter(node => node.nodeName === 'BUTTON').every(node => !(node.attributes || []).includes('disabled')), Boolean)
+  await win.webContents.executeJavaScript("document.querySelector('aside').dataset.dshSidebarWide = 'false'; const settings = document.querySelector('[data-dsh-sidebar-settings]'); settings.replaceWith(settings.cloneNode(true))")
+  await until(() => win.webContents.executeJavaScript("document.querySelector('#dsh-desktop-safe-mode-banner').dataset.compact"), value => value === 'true')
+  assert.match(await bannerText(), /安全模式：管理插件/)
   win.destroy()
   server.close()
-  console.log(JSON.stringify({ result: 'passed', platform: process.platform, checks: ['production-preload', 'isolated-ipc', 'late-locale', 'stale-status-response', 'live-manager-and-banner', 'zh-en', 'light-dark', 'repeat-update', 'selection-preserved'], windowsInstalledAcceptance: 'pending' }))
+  console.log(JSON.stringify({ result: 'passed', platform: process.platform, checks: ['production-preload', 'isolated-ipc', 'late-locale', 'stale-status-response', 'live-manager-and-banner', 'zh-en', 'light-dark', 'repeat-update', 'selection-preserved', 'macos-dark-sidebar', 'banner-visible-copy', 'banner-action-ipc', 'blocked-exit-controls', 'compact-sidebar'], windowsInstalledAcceptance: 'pending' }))
   app.quit()
 }).catch(error => { console.error(error); server.close(); app.exit(1) })
 setTimeout(() => app.exit(2), 30000).unref()
