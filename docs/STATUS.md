@@ -673,3 +673,13 @@ Verification:
 - Implemented: usage retries call the host from an errored Chat session; readiness transitions refresh the same account; summary and storage return separate validated results and localized errors. Expired cookie sessions receive one shared renewal per usage operation. Identity changes invalidate pending reads; logs retain section and HTTP status.
 - Verification: 81 focused regressions and TypeScript checks passed. A temporary-profile macOS Electron 43.0.0 fixture passed native pointer retry, same-epoch ready recovery and both independent failure directions. The final production build passed. The full suite recorded 3,109 passed, 5 skipped and one model-catalog startup failure caused by EADDRINUSE; the isolated final rerun passed. An intermediate rerun overlapped Office resource assembly and was superseded by the sequential successful run.
 - Delivery target: the user explicitly authorized direct publication to `dataelement/bisheng-work:V1.2.0`. The remote version SHA matches the tested baseline, so the repair is eligible for a normal fast-forward update. The affected 13001 account's original response, remote deployment revision, rebuilt release installation, Windows native checks and real-account acceptance remain pending.
+
+
+## 2026-10-29 — Work 后台完成通知与 Windows 应用身份
+
+- 基线：实时核对 `dataelement/bisheng-work:V1.2.0@804205500286b9cd8a44632acfd9154c9615c466`；独立目录 `.worktrees/bisheng-work-completion-notifications`，分支 `codex/work-completion-notifications`。实际安装 Harness `0.2.1-rc.2`、Electron `43.0.0`。
+- 实现：宿主在公开 projection registry 中记录普通 Work 会话的成功轮次，通过现有认证 control stream 同步到客户端；覆盖后台、最小化、连续任务、短任务、重连和重复快照。通知点击恢复窗口并打开对应 Work 会话。取消、失败、子任务与继承历史分别处理；合并到同一快照的成功轮次显示数量摘要。
+- Windows 身份：正式与开发运行时分别使用 `io.bisheng` / `io.bisheng.dev`，与两套 NSIS 安装器一致；使用提测包应用图标。preload 使用具名 contextBridge，主进程校验发送窗口、主 frame 与参数。浏览器 Notification API 保持原生行为。
+- 诊断：现有 `harness.log` 增加 `[desktop-notification]` 阶段记录，区分 requested / shown / failed / clicked、前台消费及权限边界拒绝；保留系统错误信息，限制长度并脱敏 URL 与凭据值。shown 表示 Electron 回调，Windows 可见通知仍属于实机验收。
+- 自动验证：62 项定向回归、类型检查、生产构建通过；真实 AgentLoop + 模型传输夹具连续完成两轮纯文本任务。macOS Electron 隔离配置验证真实 preload/main IPC、图标解码、失败日志落盘、点击窗口/会话路由与清理，通过；系统 toast 对象使用测试替身。完整串行回归通过：317 文件 / 3154 项通过，4 文件 / 5 项按条件跳过。并发运行曾出现企业聊天代理与 Office 重算两项超时，串行完整复跑均通过。
+- 验收边界：Windows 25H2 提测包构建安装、真实账号、系统发送者/应用图标及 NOTICE-001/002/003 实机验证待执行。当前交付为源码修复与回归证据；证据位于修复目录 `artifacts/work-completion-notifications/`。
