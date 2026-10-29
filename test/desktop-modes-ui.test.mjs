@@ -11,6 +11,7 @@ const disposers = []
 afterEach(async () => {
   if (root) await act(async () => root.unmount())
   container?.remove()
+  document.documentElement.removeAttribute('data-dsh-safe-mode-page')
   document.documentElement.removeAttribute('data-dsh-about-open')
   document.body.removeAttribute('data-ds-dark-theme')
   disposers.splice(0).reverse().forEach(dispose => dispose())
@@ -581,6 +582,41 @@ it('dismisses the sign-in prompt and enters Chat when the account becomes availa
   expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
 })
 
+it.each([false, true])('gives the recovery page the pane, including restored state=%s', async (alreadyOpen) => {
+  document.documentElement.toggleAttribute('data-dsh-safe-mode-page', alreadyOpen)
+  const ui = await mount(true)
+  const present = window.dshEnterpriseChat.present
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: !alreadyOpen }))
+  await act(async () => document.documentElement.setAttribute('data-dsh-safe-mode-page', ''))
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
+  const draft = ui.draft()
+  await ui.locale('zh')
+  await act(async () => {
+    window.dispatchEvent(new Event('resize'))
+    document.body.toggleAttribute('data-ds-dark-theme', true)
+  })
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false, locale: 'zh', theme: 'dark' }))
+  // Remote settings are a foreground surface above the recovery iframe.
+  await act(async () => {
+    window.dispatchEvent(new CustomEvent('dsh-desktop:settings-visibility', { detail: { open: true } }))
+    window.dispatchEvent(new CustomEvent('dsh-desktop:settings-surface', { detail: { section: 'tools', bounds: { x: 200, y: 80, width: 500, height: 400 } } }))
+  })
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true, settings: 'tools' }))
+  await act(async () => window.dispatchEvent(new CustomEvent('dsh-desktop:settings-visibility', { detail: { open: false } })))
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
+  await act(async () => document.documentElement.removeAttribute('data-dsh-safe-mode-page'))
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
+  expect(ui.draft()).toBe(draft)
+  await act(async () => document.documentElement.setAttribute('data-dsh-safe-mode-page', ''))
+  await ui.click('work')
+  await act(async () => document.documentElement.removeAttribute('data-dsh-safe-mode-page'))
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
+  await act(async () => root.unmount())
+  root = undefined
+  present.mockClear()
+  await act(async () => document.documentElement.setAttribute('data-dsh-safe-mode-page', ''))
+  expect(present).toHaveBeenCalledTimes(0)
+})
 
 it.each([false, true])('gives About the foreground including initial state=%s', async initial => {
   document.documentElement.toggleAttribute('data-dsh-about-open', initial)
