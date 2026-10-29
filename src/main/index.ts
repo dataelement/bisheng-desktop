@@ -1871,6 +1871,7 @@ async function showAbout(window: BrowserWindow): Promise<void> {
   }
   if (window && !window.isDestroyed() && window.webContents && !window.webContents.isDestroyed()) {
     try {
+      window.webContents.focus()
       window.webContents.send('desktop:show-about', info)
       return
     } catch {

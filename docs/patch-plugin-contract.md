@@ -38,6 +38,10 @@ Harness 0.2.0-rc.2 的 `dsh-client-ui-input-trigger` 将 pointer hover 与 keybo
 
 这是原生窗口展示接缝：Harness slot 位于另一个 renderer。preload 只观察 portal 与 root 的背景隔离属性，按动画帧汇总变化；隐藏时暂停，卸载时释放。语义为普通浮层的 popover 保持原范围。知识空间旧展示入口触发同一个汇总状态刷新。验证入口为 `test/enterprise-modal.test.mjs`、`test/enterprise-chat-view.test.ts` 和跨平台 `scripts/verify-enterprise-modal.mjs`。
 
+### About 弹窗与原生 Chat（2026-10-29）
+
+实际 About 入口通过 `html[data-dsh-about-open]` 声明宿主前景状态，桌面内容贡献项读取现值并观察该属性，将 Chat 和嵌入式设置页交给已有 presentation IPC 管理。关闭时按当前模式与宿主模态状态恢复；观察器和 About 键盘监听分别随组件、文档生命周期释放。主进程在派发 About 前把焦点交给宿主 renderer。该变更属于窗口 UI 接缝，直接修改自有代码并保留当前 IPC 权限边界。验证见 [About 记录](status/about-chat-visibility-20261029.md)。
+
 ## 1. 按能力选扩展方式
 
 产品能力和长期维护的桌面表现优先放在宿主代码或插件中；patch 用于修复上游缺陷或补足必要的扩展接缝。插件不能通过隐藏的 DOM 改写、内部方法替换，把实际的上游耦合伪装成无补丁扩展。
