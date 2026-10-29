@@ -3,6 +3,14 @@
 - 根因：安全模式管理页位于宿主 iframe，Chat 位于独立原生子视图；管理页打开后原生 Chat 继续显示，覆盖正文并遮住部分标题。
 - 实现：桌面内容贡献项读取并订阅已有 `data-dsh-safe-mode-page`，管理页占用内容区时隐藏 Chat；关闭后按当前模式恢复。远程设置页继续作为前景展示，观察器沿用组件生命周期清理。
 - 基线、回归与验收范围见 [验证记录](status/safe-mode-panel-20261029.md)。相关 70 项行为回归、类型检查、JS 语法检查和 macOS Electron 24 组隔离夹具通过；新增 2 项回归在原基线均失败。生产构建与全量回归通过（316 个文件 / 3,134 项通过，4 个文件 / 5 项条件跳过）；安装包及真实账号验收待执行。
+## 2026-10-29 — About 版本信息与原生 Chat 的展示归属
+
+- 根因：实际运行的 About 位于宿主 closed Shadow DOM，Chat 使用原生子视图；打开 About 时原生视图持续覆盖弹窗区域。现由 About 声明前景状态，内容贡献项隐藏 Chat / 嵌入式设置页，关闭后按当前模式和宿主模态状态恢复；主进程把焦点交给宿主，弹窗管理 Tab、关闭与销毁清理。
+- 基线 `bisheng-desktop:V1.2.0@919cc8d`，Harness `0.2.1-rc.2`；详细记录见 [About 验证记录](status/about-chat-visibility-20261029.md)。相关 72 项回归、类型检查、生产构建与 macOS 原生隔离夹具 16 组通过；两项展示回归在旧基线失败。全量回归 3,163 项通过、5 项条件跳过；Windows 安装包和真实账号验收待执行。
+## 2026-10-29 — 删除会话确认按钮中文化
+
+- 基线 `bisheng-desktop:V1.2.0@919cc8d`，Harness `0.2.1-rc.2`。删除确认改用 Harness Modal 与根级弹窗出口，菜单、正文、按钮及状态统一跟随应用语言；删除接口沿用现有链路。
+- 相关 26 项回归、干净安装、类型检查、构建与 macOS Electron 实际前端共享组件验证通过；完整回归 3,167 项通过、5 项条件跳过。详情见[专项记录](status/session-delete-locale-20261029.md)。安装包、真实账号及 Windows 验收待执行。
 
 ## 2026-10-28 — 页面弹窗覆盖桌面侧栏
 
@@ -55,6 +63,8 @@
 - macOS arm64 测试应用通过包内 Harness、原生模块、699 个依赖清单和 Office 转换检查；包内客户端文件与源码逐字节一致。Apple Development 签名测试包 DMG/ZIP 归档与深度签名校验通过，安装后的界面由用户手动验收。证据位于主工作区 `outputs/workspace-label-20261027/`。
 
 ## 2026-10-26 — Chat 登录前说明与账号流程引导
+
+- 2026-10-28：会话列表统一呈现会话、空状态与加载状态；登录由账号入口和 Chat 切换引导承接。直接移除列表组件的登录按钮；相关 32 项测试、类型检查、构建及 macOS 4 组原生组件验证通过。完整回归 3,120 项通过、5 项跳过，2 个基线工作台测试文件存在 11 项模拟窗口事件接口缺失失败。基线和验证记录见 [会话列表登录入口整理](status/history-signin-entry-20261028.md)。
 
 - 点击未登录状态的“聊天”时，先展示 Harness 原生说明弹窗，解释聊天与企业平台的关系；用户选择“登录企业账号”后打开现有账号页，选择“继续使用工作”或关闭时保留当前 Work 与草稿。账号就绪后关闭提示，沿用现有登录成功切回 Chat 流程。
 - 账号页补齐登录用途、企业平台地址来源、浏览器授权与返回客户端提示，以及一次性登录码说明；中英文同步。切换平台确认使用业务描述，账号、授权和服务端协议继续复用现有实现。
@@ -679,3 +689,38 @@ Verification:
 - Implemented: usage retries call the host from an errored Chat session; readiness transitions refresh the same account; summary and storage return separate validated results and localized errors. Expired cookie sessions receive one shared renewal per usage operation. Identity changes invalidate pending reads; logs retain section and HTTP status.
 - Verification: 81 focused regressions and TypeScript checks passed. A temporary-profile macOS Electron 43.0.0 fixture passed native pointer retry, same-epoch ready recovery and both independent failure directions. The final production build passed. The full suite recorded 3,109 passed, 5 skipped and one model-catalog startup failure caused by EADDRINUSE; the isolated final rerun passed. An intermediate rerun overlapped Office resource assembly and was superseded by the sequential successful run.
 - Delivery target: the user explicitly authorized direct publication to `dataelement/bisheng-work:V1.2.0`. The remote version SHA matches the tested baseline, so the repair is eligible for a normal fast-forward update. The affected 13001 account's original response, remote deployment revision, rebuilt release installation, Windows native checks and real-account acceptance remain pending.
+
+## 2026-10-29 — 安全模式插件管理页语言同步
+
+- 目标：用户指定的 BISHENG Work `V1.2.0`。当前仓库名称为 `dataelement/bisheng-desktop`；远端分支两次核对均为 `804205500286b9cd8a44632acfd9154c9615c466`。独立工作树 `.worktrees/bisheng-work-v120-safe-mode-locale`，分支 `codex/v120-safe-mode-locale`。安装依赖 Harness `0.2.1-rc.2`、Electron `43.0.0`；沿用版本分支依赖与锁文件。旧 `dataelement/dsh-desktop` 的 `refs/heads/v0.9.0` 查询返回空，本次采用用户指定的 BISHENG 版本分支。
+- 根因：侧栏固定使用首次状态 IPC 的语言；管理页在语言上报前即可打开，后续仅接收市场检查的局部字段；启动恢复告警在渲染前已固定为某种语言。主界面语言后续生效时，这些展示继续保留初始语言。
+- 实现：侧栏采用活动 Harness 语言并原位更新；主进程语言变化刷新当前页完整模型，页面同步标题、按钮、提示、辅助说明和插件行。恢复告警按渲染时语言生成，原始诊断保留在详细信息中。操作处理中状态、插件勾选及详细信息展开状态保持。
+- 验证：53 项定向回归、类型检查、生产构建、脚本语法及差异检查通过。macOS 真实 Electron 夹具通过生产 preload、隔离 IPC、语言晚到、旧状态响应、中英切换、深浅主题、重复更新和勾选保持；已查看中文页面截图。构建使用脚本重新校验的本地 Office 下载缓存。完整回归 3,136 项通过、5 项跳过，企业服务文件 1 项等待超时；该文件独立复跑 28 项全部通过，其源码与测试保持版本基线。首轮受限环境运行因本机服务访问失败终止，以允许本机端口的重跑记录为交付证据。
+- 验收边界：Windows 安装包构建、Windows 实机复测与目标版本发布待执行。截图中的底层恢复路径异常保持原有恢复保护逻辑，本次处理其语言呈现。
+
+### macOS 安全模式侧栏补充验证
+
+- 用户补充 macOS 深色界面截图，范围为侧栏“安全模式”标题、说明、“管理插件”和“退出安全模式”。这些元素由 PR #100 的跨平台活动语言同步实现覆盖。
+- 2026-10-29 复核 PR #100 仍为 Open，远端 head `02c7a555415244dd6118136b0f213693630d6643`、目标 V1.2.0 基线 `804205500286b9cd8a44632acfd9154c9615c466`，本地工作树一致、Harness `0.2.1-rc.2`。
+- 扩展真实 macOS Electron 夹具：关闭管理页后设置深色主题，读取实际侧栏 closed Shadow DOM，逐项校验四处中文；触发两个实际按钮并检查既有 IPC 请求，验证恢复锁定阻止退出后按钮恢复可用，以及侧栏折叠重绘后的中文辅助说明。全部通过，脚本语法及差异检查通过。
+- 已查看截图 `artifacts/safe-mode-locale/zh-dark-sidebar.png`。生产实现继续使用已验证的跨平台修复；此轮提交补充场景验证。原安装包更新及真实用户配置复测待执行。
+
+## 2026-10-29 — Work 后台完成通知与 Windows 应用身份
+
+- 基线：实时核对 `dataelement/bisheng-work:V1.2.0@804205500286b9cd8a44632acfd9154c9615c466`；独立目录 `.worktrees/bisheng-work-completion-notifications`，分支 `codex/work-completion-notifications`。实际安装 Harness `0.2.1-rc.2`、Electron `43.0.0`。
+- 实现：宿主在公开 projection registry 中记录普通 Work 会话的成功轮次，通过现有认证 control stream 同步到客户端；覆盖后台、最小化、连续任务、短任务、重连和重复快照。通知点击恢复窗口并打开对应 Work 会话。取消、失败、子任务与继承历史分别处理；合并到同一快照的成功轮次显示数量摘要。
+- Windows 身份：正式与开发运行时分别使用 `io.bisheng` / `io.bisheng.dev`，与两套 NSIS 安装器一致；使用提测包应用图标。preload 使用具名 contextBridge，主进程校验发送窗口、主 frame 与参数。浏览器 Notification API 保持原生行为。
+- 诊断：现有 `harness.log` 增加 `[desktop-notification]` 阶段记录，区分 requested / shown / failed / clicked、前台消费及权限边界拒绝；保留系统错误信息，限制长度并脱敏 URL 与凭据值。shown 表示 Electron 回调，Windows 可见通知仍属于实机验收。
+- 自动验证：62 项定向回归、类型检查、生产构建通过；真实 AgentLoop + 模型传输夹具连续完成两轮纯文本任务。macOS Electron 隔离配置验证真实 preload/main IPC、图标解码、失败日志落盘、点击窗口/会话路由与清理，通过；系统 toast 对象使用测试替身。完整串行回归通过：317 文件 / 3154 项通过，4 文件 / 5 项按条件跳过。并发运行曾出现企业聊天代理与 Office 重算两项超时，串行完整复跑均通过。
+- 验收边界：Windows 25H2 提测包构建安装、真实账号、系统发送者/应用图标及 NOTICE-001/002/003 实机验证待执行。当前交付为源码修复与回归证据；证据位于修复目录 `artifacts/work-completion-notifications/`。
+
+## 2026-10-29 — 搜索后会话列表消失
+
+- 根因：输入关键词切换到 SearchResults 时，WorkspaceBrowser 漏传集合渲染接口，触发 `renderSlot is not a function`，导致侧栏渲染崩溃。修复完整传递既有接口，搜索、打开结果与清空恢复沿用原组件流程。
+- 基线 `bisheng-desktop:V1.2.0@919cc8d`，Harness `0.2.1-rc.2`。修复前回归复现异常；修复后相关 11 项及 macOS Electron 4 组组件流程通过，干净安装、类型检查和构建通过。完整回归 3,165 项通过、5 项按环境条件跳过。
+- 真实账号、更新后的安装包及 Windows 验收待执行。详见 [搜索修复记录](status/session-search-20261029.md)。
+## 2026-10-29 — 工作台市场搜索框双层描边
+
+- 搜索框聚焦后以原生主题色改变现有边框，形成单层焦点提示；输入框尺寸稳定，按钮保留键盘焦点轮廓。
+- 基线 `bisheng-desktop:V1.2.0@919cc8d`，Harness `0.2.1-rc.2`。干净安装、类型检查和构建通过；macOS Electron 深浅主题与两种宽度共 4 组交互检查通过，新增验证能捕获修复前的双层描边。完整回归 3,158 项通过、5 项跳过，安全模式启动 1 项因端口占用失败；安全模式与工作台组件串行复测 214 项全部通过。
+- 真实账号、安装包及 Windows 验收待执行。详见 [搜索框焦点修复记录](status/market-search-focus-20261029.md)。

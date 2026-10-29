@@ -12,6 +12,9 @@ export default defineConfig({
     fileParallelism: false,
     include: [
       'test/windows-*.test.{ts,js,mjs}',
+      'test/about-presentation.test.ts',
+      'test/desktop-modes-ui.test.mjs',
+      'test/enterprise-chat-view.test.ts',
       'test/generation-*.test.{ts,js,mjs}',
       'test/profile-*.test.{ts,js,mjs}',
       'test/safe-mode*.test.ts',

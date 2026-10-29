@@ -41,6 +41,9 @@ Harness 0.2.0-rc.2 的 `dsh-client-ui-input-trigger` 将 pointer hover 与 keybo
 ### 安全模式管理页的原生视图展示（2026-10-29）
 
 安全模式 preload 已通过 `html[data-dsh-safe-mode-page]` 声明管理页占用内容区。桌面内容贡献项读取当前属性并仅观察该属性变化，通过现有 presentation IPC 隐藏背景 Chat 子视图；关闭管理页后按当前模式恢复。远程设置仍作为前景内容展示，`#root.inert` 继续管理宿主模态边界。观察器随贡献项卸载释放。该修复直接修改自有插件；验证见 `test/desktop-modes-ui.test.mjs` 与 [macOS 原生验证记录](status/safe-mode-panel-20261029.md)。
+### About 弹窗与原生 Chat（2026-10-29）
+
+实际 About 入口通过 `html[data-dsh-about-open]` 声明宿主前景状态，桌面内容贡献项读取现值并观察该属性，将 Chat 和嵌入式设置页交给已有 presentation IPC 管理。关闭时按当前模式与宿主模态状态恢复；观察器和 About 键盘监听分别随组件、文档生命周期释放。主进程在派发 About 前把焦点交给宿主 renderer。该变更属于窗口 UI 接缝，直接修改自有代码并保留当前 IPC 权限边界。验证见 [About 记录](status/about-chat-visibility-20261029.md)。
 
 ## 1. 按能力选扩展方式
 
@@ -147,6 +150,8 @@ The button keeps its accessible name, configuration action and viewer focus-retu
 `dsh-client-ui-layout` 声明 root/single 的 `desktop.mode.content`，owner 为 `work: ReactNode`、`columns: string`、`resizeHandle: ReactNode`。位置只覆盖第二、三列；贡献项占据这两列并保持 Work 挂载一次。默认 fallback 使用原内容和 frame 坐标的拖拽柄；桌面贡献项使用内容区域坐标的拖拽柄。左侧原生 SidebarRoot 始终挂载。
 
 `dsh-client-ui-workspace` 声明 root/single 的 `sidebar.workspaces.collection`，由 WorkspaceBrowser 内的 SessionTree、FlatList 和 SearchResults 呈现。owner 提供 `mode: projects | flat | search`、`query`、`archivedOnly`、`projects(active): ReactNode` 和只读 `items`。每项包含 id、updatedAt、pinned、blank、`render(active): ReactNode`。项目视图的 items 来自原生 deriveFlat 对未分组 sessionIds 的投影，项目成员与归档过滤继续由 Harness 拥有；原生 renderer 保持行菜单、状态及选择行为。默认 fallback 保持原项目树、单列表或搜索结果。
+
+WorkspaceBrowser 向 SessionTree、FlatList、SearchResults 完整传递同一个 `renderSlot`，搜索结果和结果行沿用宿主集合及行扩展协议。`test/session-search-recovery.test.mjs` 运行已安装组件，覆盖原生 fallback、桌面合并集合、两种分组，以及输入、打开结果、清空、Escape、延迟返回和请求失败；`node scripts/verify-session-search.mjs` 在隔离 Electron 窗口运行同一组件流程。
 
 桌面贡献项将云端历史与上述本地 items 按来源命名空间和更新时间组合，项目节点独立呈现在最近之前。Chat 模式通过 active=false 清除本地选中态；会话行直接呈现标题与时间，来源继续由数据与导航控制。云端搜索匹配已加载的标题；归档专用视图仅呈现有归档元数据的本地记录。`sidebar.history` 已由这个集合接缝替代，SidebarRoot 持续呈现唯一 workspace browser。
 
@@ -333,3 +338,22 @@ The native fixture `node scripts/verify-usage-recovery.mjs` uses an isolated
 Electron profile and the actual settings plugin to verify pointer retry, ready
 transitions and independently failing sections. Real-account acceptance remains
 an environment-specific check.
+
+### 安全模式语言同步（2026-10-29）
+
+安全模式侧栏复用 preload 已消费的 Harness 活动语言。状态 IPC 只决定安全模式是否启用；侧栏在异步状态返回后读取当前语言，并在每次语言变化时原位刷新文字、辅助说明与折叠按钮名称。按钮节点和操作状态由现有挂载生命周期保留。
+
+主进程语言回调刷新当前安全模式页的完整 view model；每轮页面操作拥有自己的刷新回调和加载序号，操作结束时释放。市场检查结果与语言变化复用同一更新通道，保留已取得的检查数据。页面原位刷新文案、问题分组和插件行，保留勾选、焦点、详细信息展开状态和操作处理中状态。启动恢复提示与恢复记录读取错误携带双语说明及原始诊断；显示时选用活动语言，原始诊断放入可展开的详细信息。智能修复请求在点击时读取语言。
+
+此变更属于自有主进程、preload 和恢复页源码，复用 Harness `__DSH_LOCALE__` 与既有安全模式 frame 通道。独立恢复页仍使用主进程系统语言回退。验证入口为 `test/safe-mode-locale.test.mjs` 与 `node scripts/verify-safe-mode-locale.mjs`；后者使用临时 Profile、真实构建 preload、隔离 IPC 及恢复 HTML，Windows 安装版验收单独登记。
+### Work completion notifications (Harness 0.2.1-rc.2, 2026-10-29)
+
+The desktop client UI host registers `desktopWorkCompletion` through the public `sessionProjections` registry. The fold counts successful `turn/end` events after a model step in an ordinary session's own log. Fork-inherited events and subagent sessions retain a zero count. The wire view contains only a monotone completion count, latest turn, event sequence and timestamp; prompt and response text remain in the session. This adds a projection unit to the existing authenticated control stream and preserves its reconnect and cached-baseline semantics. The plugin declares the already shipped Zod dependency and the Harness projection peer.
+
+The desktop client subscribes to the session catalog independently of conversation selection and animation frames. An initial projection establishes the historical baseline; a completion timestamp at or after subscription also admits a fast task that finishes before its first catalog delivery. Later count advances include work completed during a transport interruption. A coalesced advance produces one notification summarizing the number of completed turns. Client lifetime state and the main process's per-session sequence watermark consume repeated snapshots once. Desktop HMR installs one owned subscription and click listener, and releases both on disposal.
+
+The preload exposes `dshDesktopNotifications.completed` and `onClicked` using contextBridge. Main validates the sending WebContents, main frame and scalar payload, then uses native visibility, focus and minimized state to decide delivery. A focused visible window consumes the completion silently; a background, hidden or minimized window requests the Electron notification with the packaged app icon. Clicking shows/restores/focuses the window and opens the corresponding Work session through `uiWorkspace.openSession`. Windows initializes the NSIS identity (`io.bisheng`, or `io.bisheng.dev` for development) before readiness and notification registration. The browser Notification API retains its native implementation and permission state.
+
+Notification audit records go to the existing `harness.log` with `[desktop-notification]`: rejected, foreground, unsupported, requested, shown, failed and clicked. `shown` records Electron's callback; Windows visual acceptance remains a separate gate. Failures retain bounded system error detail with URL and credential-value redaction. Audit facts contain session identifiers and completion metadata only.
+
+Regression coverage: `test/work-completion-notifications.test.mjs` exercises the installed projection registry and a real AgentLoop with a fixture model transport; `test/desktop-notification.test.ts` covers the native policy and toast lifecycle at the Electron API boundary. `node scripts/verify-work-notifications.mjs` launches an isolated real Electron window with context isolation and sandbox enabled, exercises the actual preload/main IPC, icon decoding, file audit and click/session routing, and replaces only the OS toast object. Windows installed-package NOTICE-001/002/003 testing covers native sender identity, icon, visible toast, focus and restoration.

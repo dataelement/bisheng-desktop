@@ -207,23 +207,73 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function DeleteSessionMenuItem({ sessionId, displayTitle, useMenuOpenState, deleteSession }) {
+    const DELETE_SESSION_NS = 'dsh-desktop-delete-session'
+
+    // The shell owns the request: closing a row menu unmounts its occupants.
+    function createSessionDeletion(deleteSession) {
+      let state = null
+      let active = true
+      const listeners = new Set()
+      const publish = (next) => {
+        state = next
+        listeners.forEach(listener => listener())
+      }
+      return {
+        subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener) },
+        getSnapshot: () => state,
+        request: (sessionId, displayTitle) => {
+          if (active && state === null) publish({ sessionId, displayTitle, busy: false, error: null })
+        },
+        close: () => { if (state && state.busy === false) publish(null) },
+        confirm: async () => {
+          if (state === null || state.busy || active === false) return
+          const pending = { ...state, busy: true, error: null }
+          publish(pending)
+          try {
+            await deleteSession(pending.sessionId)
+            if (active && state === pending) publish(null)
+          } catch (reason) {
+            if (active && state === pending) {
+              publish({ ...pending, busy: false, error: reason instanceof Error ? reason.message : String(reason) })
+            }
+          }
+        },
+        dispose: () => { active = false; publish(null); listeners.clear() }
+      }
+    }
+
+    function DeleteSessionMenuItem({ sessionId, displayTitle, useMenuOpenState, deletion, t }) {
       const [, setMenuOpen] = useMenuOpenState()
-      const chinese = document.documentElement.lang?.toLowerCase().startsWith('zh')
-      const label = chinese ? '永久删除会话' : 'Delete session permanently'
-      const warning = chinese
-        ? `确定删除“${displayTitle || sessionId}”？工作区文件会保留。此操作无法撤销。`
-        : `Delete “${displayTitle || sessionId}”? Workspace files are kept. This can’t be undone.`
       return React.createElement(MenuItemButton, {
         danger: true,
         onSelect: () => {
           setMenuOpen(false)
-          if (!window.confirm(warning)) return
-          void Promise.resolve().then(() => deleteSession(sessionId)).catch((reason) => {
-            window.alert(reason instanceof Error ? reason.message : String(reason))
-          })
+          // Let Menu restore its trigger focus before Modal captures return focus.
+          setTimeout(() => deletion.request(sessionId, displayTitle), 0)
         }
-      }, label)
+      }, t('menu'))
+    }
+
+    function DeleteSessionDialog({ deletion, t }) {
+      const request = React.useSyncExternalStore(deletion.subscribe, deletion.getSnapshot)
+      return React.createElement(Modal, {
+        open: request !== null,
+        onClose: deletion.close,
+        title: t('title'),
+        closeLabel: t('close'),
+        description: request ? t('description', { name: request.displayTitle || request.sessionId }) : '',
+        footer: request && React.createElement(React.Fragment, null,
+          React.createElement(Button, {
+            variant: 'outline', disabled: request.busy, onClick: deletion.close,
+            'data-modal-autofocus': true
+          }, t('cancel')),
+          React.createElement(Button, {
+            variant: 'primary', disabled: request.busy, onClick: deletion.confirm
+          }, t(request.busy ? 'pending' : 'confirm')))
+      }, request?.busy && React.createElement('p', { role: 'status' }, t('pending')),
+      request && request.error !== null && React.createElement('div', { role: 'alert' },
+        React.createElement('p', null, t('failed')),
+        React.createElement('p', null, request.error)))
     }
 
     function OpenSessionFolderMenuItem({ sessionId, useMenuOpenState, openInFinder }) {
@@ -511,8 +561,7 @@ window.__ModuleLoader__.load({
           state.historyPhase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => navigation.refreshHistory() }, t('historyError')),
           state.historyPhase === 'loading' && React.createElement('div', { className: 'dshHistoryNotice', role: 'status' }, t('historyLoading')),
           rows.length === 0 && state.historyPhase !== 'loading' && React.createElement('div', { className: 'dshHistoryNotice' }, t(search ? 'recentSearchEmpty' : 'recentEmpty')),
-          state.hasMore && !archivedOnly && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: state.historyPhase === 'loading', onClick: () => navigation.refreshHistory(true) }, t('more')),
-          !state.connected && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => navigation.select('chat') }, t('signIn'))))
+          state.hasMore && !archivedOnly && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: state.historyPhase === 'loading', onClick: () => navigation.refreshHistory(true) }, t('more'))))
     }
     function historyTime(date, t) {
       const time = new Date(date).getTime()
@@ -553,16 +602,17 @@ window.__ModuleLoader__.load({
           const y = rect.y
           const surfaceOpen = settingsOpen || state.approvalsOpen || state.accountDialogOpen
           const remote = surfaceOpen && state.settingsProtocolVersion === 1 && settingsSurface
-          const safeModePageOpen = document.documentElement.hasAttribute('data-dsh-safe-mode-page')
-          const palette = hostPalette()
-          void bridge.present({ visible: appRoot?.inert ? false : (remote ? state.connected && remote.bounds.width > 0 && remote.bounds.height > 0 : mode === 'chat' && !surfaceOpen && !safeModePageOpen), ...(remote ? { settings: remote.section } : {}), ...(palette ? { palette } : {}), bounds: remote ? remote.bounds : { x, y, width: Math.max(0, rect.right - x), height: Math.max(0, rect.y + rect.height - y) }, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light', locale: locale.getSnapshot().active === 'zh' ? 'zh' : 'en' }).catch(() => {})
+const safeModePageOpen = document.documentElement.hasAttribute('data-dsh-safe-mode-page')
+const hostModalOpen = appRoot?.inert || document.documentElement.hasAttribute('data-dsh-about-open')
+const palette = hostPalette()
+void bridge.present({ visible: hostModalOpen ? false : (remote ? state.connected && remote.bounds.width > 0 && remote.bounds.height > 0 : mode === 'chat' && !surfaceOpen && !safeModePageOpen), ...(remote ? { settings: remote.section } : {}), ...(palette ? { palette } : {}), bounds: remote ? remote.bounds : { x, y, width: Math.max(0, rect.right - x), height: Math.max(0, rect.y + rect.height - y) }, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light', locale: locale.getSnapshot().active === 'zh' ? 'zh' : 'en' }).catch(() => {})
         }
         // The native view follows the host's modal interaction boundary.
         // Onboarding makes #root inert while its dialog lives in a body portal.
         const interaction = new MutationObserver(present)
         if (appRoot) interaction.observe(appRoot, { attributes: true, attributeFilter: ['inert'] })
-        // The recovery iframe owns the main pane; native settings can still open above it.
-        interaction.observe(document.documentElement, { attributes: true, attributeFilter: ['data-dsh-safe-mode-page'] })
+// About covers Chat and remote settings. The recovery page covers Chat only.
+interaction.observe(document.documentElement, { attributes: true, attributeFilter: ['data-dsh-about-open', 'data-dsh-safe-mode-page'] })
         const resize = new ResizeObserver(present)
         if (panel.current) resize.observe(panel.current)
         const sidebar = document.querySelector('[data-dsh-sidebar-root]')
@@ -1045,9 +1095,68 @@ window.__ModuleLoader__.load({
       })
     }
 
+    /** Consume successful-turn facts independently of the selected conversation and animation frames. */
+    function installWorkCompletionNotifications(ctx, navigation) {
+      const bridge = window.dshDesktopNotifications
+      if (!bridge) return
+      ctx.effect(() => {
+        const observed = new Map()
+        const startedAt = Date.now()
+        const report = () => {
+          const list = ctx.sessions.list.getSnapshot()
+          if (list.phase !== 'ready') return
+          for (const id of list.ids) {
+            const row = list.byId[id]
+            if (!row || row.origin === 'subagent') continue
+            const completion = row.projectionValues?.desktopWorkCompletion
+            if (!completion) continue
+            const previous = observed.get(id)
+            observed.set(id, Math.max(previous ?? 0, completion.count))
+            // Baselines carry history. A first read can also contain a fast task completed since subscription.
+            if (previous === undefined ? completion.count === 0 || completion.time < startedAt : completion.count <= previous) continue
+            void bridge.completed({ sessionId: id, turn: completion.turn, seq: completion.seq,
+              count: previous === undefined ? 1 : completion.count - previous }).catch(error => {
+              console.error('[desktop-notification] completion delivery failed', error)
+            })
+          }
+        }
+        const unsubscribe = ctx.sessions.list.subscribe(report)
+        report()
+        const unclick = bridge.onClicked(sessionId => {
+          navigation.select('work')
+          ctx.uiWorkspace.openSession(sessionId)
+        })
+        return () => { unsubscribe(); unclick(); observed.clear() }
+      })
+    }
+
     const inject = ['slots', 'locale', 'remote', 'remote.session', 'sessions', 'uiWorkspace', 'layout']
     function apply(ctx) {
+      ctx.effect(() => ctx.locale.register(DELETE_SESSION_NS, {
+        zh: {
+          menu: '永久删除会话', title: '删除会话', close: '关闭', cancel: '取消', confirm: '删除会话',
+          description: '确定删除“{name}”？工作区文件会保留。此操作无法撤销。',
+          pending: '正在删除会话…', failed: '删除失败，请重试。'
+        },
+        en: {
+          menu: 'Delete session permanently', title: 'Delete session', close: 'Close', cancel: 'Cancel', confirm: 'Delete session',
+          description: 'Delete “{name}”? Workspace files are kept. This can’t be undone.',
+          pending: 'Deleting session…', failed: 'Deletion failed. Please try again.'
+        }
+      }))
+      const deletion = createSessionDeletion((sessionId) => {
+        const workspace = ctx.get('uiWorkspace')
+        if (!workspace) throw new Error('Workspace navigation is unavailable')
+        return workspace.deleteSession(sessionId)
+      })
+      ctx.effect(() => () => deletion.dispose())
+      const deletionText = ctx.locale.bind(DELETE_SESSION_NS)
+      ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+        name: 'shell.overlay', id: 'desktop-delete-session-dialog', locale: DELETE_SESSION_NS,
+        inject: () => ({ deletion, t: deletionText })
+      }, DeleteSessionDialog))
       const navigation = installDesktopModes(ctx)
+      installWorkCompletionNotifications(ctx, navigation)
       if (typeof ctx.inject === 'function') ctx.inject(['desktopWorkbenches'], scoped => {
         scoped.effect(() => navigation.bindWorkbench(scoped.desktopWorkbenches))
       })
@@ -1153,13 +1262,8 @@ window.__ModuleLoader__.load({
           name: 'sidebar.workspaces.session.menu.item',
           id: 'desktop-delete-session',
           order: 900,
-          inject: () => ({
-            deleteSession: (sessionId) => {
-              const workspace = ctx.get('uiWorkspace')
-              if (!workspace) throw new Error('Workspace navigation is unavailable')
-              return workspace.deleteSession(sessionId)
-            }
-          })
+          locale: DELETE_SESSION_NS,
+          inject: () => ({ deletion, t: deletionText })
         }, DeleteSessionMenuItem)
       )
       ctx.slots.inject('sidebar.workspaces.session.menu.item', () =>
@@ -1189,6 +1293,7 @@ window.__ModuleLoader__.load({
     exports.skillReferenceSource = skillReferenceSource
     exports.toolReferenceSource = toolReferenceSource
     exports.apply = apply
+    exports.installWorkCompletionNotifications = installWorkCompletionNotifications
     exports.inject = inject
     return module.exports
   }

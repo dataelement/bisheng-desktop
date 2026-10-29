@@ -12,6 +12,7 @@ afterEach(async () => {
   if (root) await act(async () => root.unmount())
   container?.remove()
   document.documentElement.removeAttribute('data-dsh-safe-mode-page')
+  document.documentElement.removeAttribute('data-dsh-about-open')
   document.body.removeAttribute('data-ds-dark-theme')
   disposers.splice(0).reverse().forEach(dispose => dispose())
   delete window.dshEnterpriseChat
@@ -107,7 +108,7 @@ async function mount(connected = false, collection = {}, inert = false, workbenc
     navigate: (...args) => navigate(...args),
     async click(mode) { await act(async () => container.querySelector(`#dsh-mode-${mode}`).click()) },
     async account(next) {
-      snapshot = { connected: next, phase: 'ready', epoch: 1, conversationId: 'new' }
+      snapshot = { connected: next, phase: 'ready', epoch: 1, conversationId: 'new', settingsProtocolVersion: 1 }
       await act(async () => window.dispatchEvent(new CustomEvent('dsh-desktop:enterprise-account-changed')))
     },
     selected: () => container.querySelector('#dsh-panel-chat').hidden ? 'work' : 'chat',
@@ -165,8 +166,11 @@ it('keeps Chat landing navigation available while a workbench is retained in Wor
 })
 
 it('explains Chat sign-in before opening account settings while keeping the Work draft mounted', async () => {
-  const ui = await mount()
+  const ui = await mount(false, { items: [] })
   expect(ui.selected()).toBe('work')
+  const history = container.querySelector('.dshRecentHistory')
+  expect(history.textContent).toBe('recentrecentEmpty')
+  expect(history.querySelectorAll('button')).toHaveLength(0)
   const draft = ui.draft()
   const open = vi.fn()
   window.addEventListener('dsh-desktop:open-settings-section', open)
@@ -245,6 +249,7 @@ it('keeps one shared history across modes and routes records to their owner', as
   await ui.account(false)
   expect(sidebar.textContent).not.toContain('Cloud chat')
   expect(sidebar.textContent).toContain('Local task')
+  expect([...sidebar.querySelectorAll('.dshRecentHistory button')].map(button => button.textContent)).toEqual(['Local task'])
 })
 it('creates cloud chats through the shared New Session action and clears the view for settings', async () => {
   const ui = await mount(true)
@@ -610,5 +615,41 @@ it.each([false, true])('gives the recovery page the pane, including restored sta
   root = undefined
   present.mockClear()
   await act(async () => document.documentElement.setAttribute('data-dsh-safe-mode-page', ''))
+  expect(present).toHaveBeenCalledTimes(0)
+})
+
+it.each([false, true])('gives About the foreground including initial state=%s', async initial => {
+  document.documentElement.toggleAttribute('data-dsh-about-open', initial)
+  const ui = await mount(true)
+  const present = window.dshEnterpriseChat.present
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: !initial }))
+  await act(async () => document.documentElement.setAttribute('data-dsh-about-open', ''))
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
+  await ui.locale('zh')
+  await act(async () => {
+    window.dispatchEvent(new Event('resize'))
+    document.body.setAttribute('data-ds-dark-theme', '')
+    window.dispatchEvent(new CustomEvent('dsh-desktop:settings-visibility', { detail: { open: true } }))
+    window.dispatchEvent(new CustomEvent('dsh-desktop:settings-surface', { detail: { section: 'tools', bounds: { x: 200, y: 80, width: 500, height: 400 } } }))
+  })
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false, settings: 'tools', locale: 'zh', theme: 'dark' }))
+  await act(async () => document.documentElement.removeAttribute('data-dsh-about-open'))
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true, settings: 'tools' }))
+  await act(async () => window.dispatchEvent(new CustomEvent('dsh-desktop:settings-visibility', { detail: { open: false } })))
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
+  await act(async () => document.documentElement.setAttribute('data-dsh-about-open', ''))
+  await ui.click('work')
+  await act(async () => document.documentElement.removeAttribute('data-dsh-about-open'))
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
+  await act(async () => { container.inert = true; document.documentElement.setAttribute('data-dsh-about-open', '') })
+  await ui.click('chat')
+  await act(async () => document.documentElement.removeAttribute('data-dsh-about-open'))
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
+  await act(async () => { container.inert = false })
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
+  await act(async () => root.unmount())
+  root = undefined
+  present.mockClear()
+  await act(async () => document.documentElement.setAttribute('data-dsh-about-open', ''))
   expect(present).toHaveBeenCalledTimes(0)
 })

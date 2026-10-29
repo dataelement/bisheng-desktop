@@ -36,6 +36,10 @@
     "@deepseek-ai/dsh-client-ui-sidebar-documentpreview": "^0.1.7-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.1 || ^0.2.1-rc.1",
     "@deepseek-ai/dsh-api-session-controller": "^0.1.7-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.1 || ^0.2.1-rc.1",
     "@deepseek-ai/dsh-client-ui-workspace": "^0.1.7-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.1 || ^0.2.1-rc.1",
-    "@deepseek-ai/dsh-client-ui-layout": "^0.2.0-rc.2 || ^0.2.1-rc.1"
+    "@deepseek-ai/dsh-client-ui-layout": "^0.2.0-rc.2 || ^0.2.1-rc.1",
+    "@deepseek-ai/dsh-session-projection": "0.2.1-rc.2"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
   }
 }
