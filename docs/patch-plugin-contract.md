@@ -38,6 +38,10 @@ Harness 0.2.0-rc.2 的 `dsh-client-ui-input-trigger` 将 pointer hover 与 keybo
 
 这是原生窗口展示接缝：Harness slot 位于另一个 renderer。preload 只观察 portal 与 root 的背景隔离属性，按动画帧汇总变化；隐藏时暂停，卸载时释放。语义为普通浮层的 popover 保持原范围。知识空间旧展示入口触发同一个汇总状态刷新。验证入口为 `test/enterprise-modal.test.mjs`、`test/enterprise-chat-view.test.ts` 和跨平台 `scripts/verify-enterprise-modal.mjs`。
 
+### 安全模式管理页的原生视图展示（2026-10-29）
+
+安全模式 preload 已通过 `html[data-dsh-safe-mode-page]` 声明管理页占用内容区。桌面内容贡献项读取当前属性并仅观察该属性变化，通过现有 presentation IPC 隐藏背景 Chat 子视图；关闭管理页后按当前模式恢复。远程设置仍作为前景内容展示，`#root.inert` 继续管理宿主模态边界。观察器随贡献项卸载释放。该修复直接修改自有插件；验证见 `test/desktop-modes-ui.test.mjs` 与 [macOS 原生验证记录](status/safe-mode-panel-20261029.md)。
+
 ## 1. 按能力选扩展方式
 
 产品能力和长期维护的桌面表现优先放在宿主代码或插件中；patch 用于修复上游缺陷或补足必要的扩展接缝。插件不能通过隐藏的 DOM 改写、内部方法替换，把实际的上游耦合伪装成无补丁扩展。
