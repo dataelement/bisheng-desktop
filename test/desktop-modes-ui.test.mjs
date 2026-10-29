@@ -163,8 +163,11 @@ it('keeps Chat landing navigation available while a workbench is retained in Wor
 })
 
 it('explains Chat sign-in before opening account settings while keeping the Work draft mounted', async () => {
-  const ui = await mount()
+  const ui = await mount(false, { items: [] })
   expect(ui.selected()).toBe('work')
+  const history = container.querySelector('.dshRecentHistory')
+  expect(history.textContent).toBe('recentrecentEmpty')
+  expect(history.querySelectorAll('button')).toHaveLength(0)
   const draft = ui.draft()
   const open = vi.fn()
   window.addEventListener('dsh-desktop:open-settings-section', open)
@@ -243,6 +246,7 @@ it('keeps one shared history across modes and routes records to their owner', as
   await ui.account(false)
   expect(sidebar.textContent).not.toContain('Cloud chat')
   expect(sidebar.textContent).toContain('Local task')
+  expect([...sidebar.querySelectorAll('.dshRecentHistory button')].map(button => button.textContent)).toEqual(['Local task'])
 })
 it('creates cloud chats through the shared New Session action and clears the view for settings', async () => {
   const ui = await mount(true)

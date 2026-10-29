@@ -511,8 +511,7 @@ window.__ModuleLoader__.load({
           state.historyPhase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => navigation.refreshHistory() }, t('historyError')),
           state.historyPhase === 'loading' && React.createElement('div', { className: 'dshHistoryNotice', role: 'status' }, t('historyLoading')),
           rows.length === 0 && state.historyPhase !== 'loading' && React.createElement('div', { className: 'dshHistoryNotice' }, t(search ? 'recentSearchEmpty' : 'recentEmpty')),
-          state.hasMore && !archivedOnly && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: state.historyPhase === 'loading', onClick: () => navigation.refreshHistory(true) }, t('more')),
-          !state.connected && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => navigation.select('chat') }, t('signIn'))))
+          state.hasMore && !archivedOnly && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: state.historyPhase === 'loading', onClick: () => navigation.refreshHistory(true) }, t('more'))))
     }
     function historyTime(date, t) {
       const time = new Date(date).getTime()
