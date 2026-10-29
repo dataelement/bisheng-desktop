@@ -699,3 +699,9 @@ Verification:
 - 诊断：现有 `harness.log` 增加 `[desktop-notification]` 阶段记录，区分 requested / shown / failed / clicked、前台消费及权限边界拒绝；保留系统错误信息，限制长度并脱敏 URL 与凭据值。shown 表示 Electron 回调，Windows 可见通知仍属于实机验收。
 - 自动验证：62 项定向回归、类型检查、生产构建通过；真实 AgentLoop + 模型传输夹具连续完成两轮纯文本任务。macOS Electron 隔离配置验证真实 preload/main IPC、图标解码、失败日志落盘、点击窗口/会话路由与清理，通过；系统 toast 对象使用测试替身。完整串行回归通过：317 文件 / 3154 项通过，4 文件 / 5 项按条件跳过。并发运行曾出现企业聊天代理与 Office 重算两项超时，串行完整复跑均通过。
 - 验收边界：Windows 25H2 提测包构建安装、真实账号、系统发送者/应用图标及 NOTICE-001/002/003 实机验证待执行。当前交付为源码修复与回归证据；证据位于修复目录 `artifacts/work-completion-notifications/`。
+
+## 2026-10-29 — 工作台市场搜索框双层描边
+
+- 搜索框聚焦后以原生主题色改变现有边框，形成单层焦点提示；输入框尺寸稳定，按钮保留键盘焦点轮廓。
+- 基线 `bisheng-desktop:V1.2.0@919cc8d`，Harness `0.2.1-rc.2`。干净安装、类型检查和构建通过；macOS Electron 深浅主题与两种宽度共 4 组交互检查通过，新增验证能捕获修复前的双层描边。完整回归 3,158 项通过、5 项跳过，安全模式启动 1 项因端口占用失败；安全模式与工作台组件串行复测 214 项全部通过。
+- 真实账号、安装包及 Windows 验收待执行。详见 [搜索框焦点修复记录](status/market-search-focus-20261029.md)。
