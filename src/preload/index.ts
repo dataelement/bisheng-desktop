@@ -1,3 +1,4 @@
+import { renderSafeModeBannerLocale, type SafeModeBannerElements } from './safe-mode-locale'
 import type { EnterpriseChatPresentation, EnterpriseChatViewState } from '../shared/enterprise-chat-view'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { UpdateStatus } from '../shared/contracts'
@@ -70,6 +71,7 @@ let sidebarSettingsArea: HTMLElement | undefined
 let sidebarRoot: HTMLElement | undefined
 /** The Safe Mode card; it lives in the sidebar just above the settings row. */
 let safeModeBannerHost: HTMLElement | undefined
+let safeModeBannerElements: SafeModeBannerElements | undefined
 let mobileButton: HTMLButtonElement | undefined
 let domSyncScheduled = false
 let bootScanSettled = false
@@ -199,6 +201,9 @@ function publishLocale(next: UpdateLocale): void {
 function applyLiveLocale(next: UpdateLocale, publish: boolean): void {
   if (next === locale) return
   locale = next
+  if (safeModeBannerElements) renderSafeModeBannerLocale(safeModeBannerElements, locale)
+  const frame = safeModeFrameHost?.querySelector('iframe')
+  if (frame) frame.title = locale === 'zh' ? '安全模式' : 'Safe Mode'
   renderMobileButton()
   render()
   renderAbout()
@@ -322,10 +327,8 @@ async function mountSafeModeBanner(): Promise<void> {
   try {
     const status = (await ipcRenderer.invoke('safe-mode:status')) as {
       active?: boolean
-      locale?: 'en' | 'zh'
     }
     if (status.active !== true) return
-    const safeModeLocale = status.locale === 'zh' ? 'zh' : 'en'
 
     const host = document.createElement('div')
     host.id = SAFE_MODE_BANNER_ID
@@ -363,25 +366,17 @@ async function mountSafeModeBanner(): Promise<void> {
     dot.className = 'dot'
     const label = document.createElement('span')
     label.className = 'title'
-    label.textContent = safeModeLocale === 'zh' ? '安全模式' : 'Safe Mode'
     const description = document.createElement('span')
     description.className = 'description'
-    description.textContent = safeModeLocale === 'zh'
-      ? '已暂时停用所有第三方插件，可停用有问题的插件后重启。'
-      : 'All third-party plugins are temporarily disabled. Disable a problematic plugin, then restart.'
     const actions = document.createElement('span')
     actions.className = 'actions'
     const manage = document.createElement('button')
     manage.type = 'button'
-    manage.textContent = safeModeLocale === 'zh' ? '管理插件' : 'Manage plugins'
-    manage.setAttribute('aria-label', safeModeLocale === 'zh' ? '停用或启用第三方插件' : 'Disable or re-enable third-party plugins')
     manage.addEventListener('click', () => {
       void ipcRenderer.invoke('safe-mode:manage')
     })
     const exit = document.createElement('button')
     exit.type = 'button'
-    exit.textContent = safeModeLocale === 'zh' ? '退出安全模式' : 'Exit Safe Mode'
-    exit.setAttribute('aria-label', safeModeLocale === 'zh' ? '退出安全模式并重启' : 'Exit Safe Mode and restart')
     exit.addEventListener('click', () => {
       manage.disabled = true
       exit.disabled = true
@@ -401,13 +396,13 @@ async function mountSafeModeBanner(): Promise<void> {
     const compact = document.createElement('button')
     compact.type = 'button'
     compact.className = 'compact'
-    compact.title = safeModeLocale === 'zh' ? '安全模式：管理插件' : 'Safe Mode: manage plugins'
-    compact.setAttribute('aria-label', compact.title)
     compact.appendChild(dot.cloneNode(true))
     compact.addEventListener('click', () => {
       void ipcRenderer.invoke('safe-mode:manage')
     })
     shadow.append(style, bar, compact)
+    safeModeBannerElements = { label, description, manage, exit, compact }
+    renderSafeModeBannerLocale(safeModeBannerElements, locale)
     safeModeBannerHost = host
     placeSafeModeBanner()
   } catch (error) {

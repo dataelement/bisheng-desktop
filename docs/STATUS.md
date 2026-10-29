@@ -676,6 +676,20 @@ Verification:
 - Verification: 81 focused regressions and TypeScript checks passed. A temporary-profile macOS Electron 43.0.0 fixture passed native pointer retry, same-epoch ready recovery and both independent failure directions. The final production build passed. The full suite recorded 3,109 passed, 5 skipped and one model-catalog startup failure caused by EADDRINUSE; the isolated final rerun passed. An intermediate rerun overlapped Office resource assembly and was superseded by the sequential successful run.
 - Delivery target: the user explicitly authorized direct publication to `dataelement/bisheng-work:V1.2.0`. The remote version SHA matches the tested baseline, so the repair is eligible for a normal fast-forward update. The affected 13001 account's original response, remote deployment revision, rebuilt release installation, Windows native checks and real-account acceptance remain pending.
 
+## 2026-10-29 — 安全模式插件管理页语言同步
+
+- 目标：用户指定的 BISHENG Work `V1.2.0`。当前仓库名称为 `dataelement/bisheng-desktop`；远端分支两次核对均为 `804205500286b9cd8a44632acfd9154c9615c466`。独立工作树 `.worktrees/bisheng-work-v120-safe-mode-locale`，分支 `codex/v120-safe-mode-locale`。安装依赖 Harness `0.2.1-rc.2`、Electron `43.0.0`；沿用版本分支依赖与锁文件。旧 `dataelement/dsh-desktop` 的 `refs/heads/v0.9.0` 查询返回空，本次采用用户指定的 BISHENG 版本分支。
+- 根因：侧栏固定使用首次状态 IPC 的语言；管理页在语言上报前即可打开，后续仅接收市场检查的局部字段；启动恢复告警在渲染前已固定为某种语言。主界面语言后续生效时，这些展示继续保留初始语言。
+- 实现：侧栏采用活动 Harness 语言并原位更新；主进程语言变化刷新当前页完整模型，页面同步标题、按钮、提示、辅助说明和插件行。恢复告警按渲染时语言生成，原始诊断保留在详细信息中。操作处理中状态、插件勾选及详细信息展开状态保持。
+- 验证：53 项定向回归、类型检查、生产构建、脚本语法及差异检查通过。macOS 真实 Electron 夹具通过生产 preload、隔离 IPC、语言晚到、旧状态响应、中英切换、深浅主题、重复更新和勾选保持；已查看中文页面截图。构建使用脚本重新校验的本地 Office 下载缓存。完整回归 3,136 项通过、5 项跳过，企业服务文件 1 项等待超时；该文件独立复跑 28 项全部通过，其源码与测试保持版本基线。首轮受限环境运行因本机服务访问失败终止，以允许本机端口的重跑记录为交付证据。
+- 验收边界：Windows 安装包构建、Windows 实机复测与目标版本发布待执行。截图中的底层恢复路径异常保持原有恢复保护逻辑，本次处理其语言呈现。
+
+### macOS 安全模式侧栏补充验证
+
+- 用户补充 macOS 深色界面截图，范围为侧栏“安全模式”标题、说明、“管理插件”和“退出安全模式”。这些元素由 PR #100 的跨平台活动语言同步实现覆盖。
+- 2026-10-29 复核 PR #100 仍为 Open，远端 head `02c7a555415244dd6118136b0f213693630d6643`、目标 V1.2.0 基线 `804205500286b9cd8a44632acfd9154c9615c466`，本地工作树一致、Harness `0.2.1-rc.2`。
+- 扩展真实 macOS Electron 夹具：关闭管理页后设置深色主题，读取实际侧栏 closed Shadow DOM，逐项校验四处中文；触发两个实际按钮并检查既有 IPC 请求，验证恢复锁定阻止退出后按钮恢复可用，以及侧栏折叠重绘后的中文辅助说明。全部通过，脚本语法及差异检查通过。
+- 已查看截图 `artifacts/safe-mode-locale/zh-dark-sidebar.png`。生产实现继续使用已验证的跨平台修复；此轮提交补充场景验证。原安装包更新及真实用户配置复测待执行。
 
 ## 2026-10-29 — Work 后台完成通知与 Windows 应用身份
 
