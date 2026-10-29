@@ -50,6 +50,8 @@
 
 ## 2026-10-26 — Chat 登录前说明与账号流程引导
 
+- 2026-10-28：会话列表统一呈现会话、空状态与加载状态；登录由账号入口和 Chat 切换引导承接。直接移除列表组件的登录按钮；相关 32 项测试、类型检查、构建及 macOS 4 组原生组件验证通过。完整回归 3,120 项通过、5 项跳过，2 个基线工作台测试文件存在 11 项模拟窗口事件接口缺失失败。基线和验证记录见 [会话列表登录入口整理](status/history-signin-entry-20261028.md)。
+
 - 点击未登录状态的“聊天”时，先展示 Harness 原生说明弹窗，解释聊天与企业平台的关系；用户选择“登录企业账号”后打开现有账号页，选择“继续使用工作”或关闭时保留当前 Work 与草稿。账号就绪后关闭提示，沿用现有登录成功切回 Chat 流程。
 - 账号页补齐登录用途、企业平台地址来源、浏览器授权与返回客户端提示，以及一次性登录码说明；中英文同步。切换平台确认使用业务描述，账号、授权和服务端协议继续复用现有实现。
 - 基线 `dataelement/bisheng-work:V1.2.0` 的 `91123a8d523611fb46066bcb4d0ab995431b91e1`，包含已合并的 #78；修复分支 `codex/v120-chat-signin-guidance`，目录 `.worktrees/bisheng-work-capabilities-v120-integration`，Harness `0.2.1-rc.2`。
@@ -688,3 +690,12 @@ Verification:
 - 2026-10-29 复核 PR #100 仍为 Open，远端 head `02c7a555415244dd6118136b0f213693630d6643`、目标 V1.2.0 基线 `804205500286b9cd8a44632acfd9154c9615c466`，本地工作树一致、Harness `0.2.1-rc.2`。
 - 扩展真实 macOS Electron 夹具：关闭管理页后设置深色主题，读取实际侧栏 closed Shadow DOM，逐项校验四处中文；触发两个实际按钮并检查既有 IPC 请求，验证恢复锁定阻止退出后按钮恢复可用，以及侧栏折叠重绘后的中文辅助说明。全部通过，脚本语法及差异检查通过。
 - 已查看截图 `artifacts/safe-mode-locale/zh-dark-sidebar.png`。生产实现继续使用已验证的跨平台修复；此轮提交补充场景验证。原安装包更新及真实用户配置复测待执行。
+
+## 2026-10-29 — Work 后台完成通知与 Windows 应用身份
+
+- 基线：实时核对 `dataelement/bisheng-work:V1.2.0@804205500286b9cd8a44632acfd9154c9615c466`；独立目录 `.worktrees/bisheng-work-completion-notifications`，分支 `codex/work-completion-notifications`。实际安装 Harness `0.2.1-rc.2`、Electron `43.0.0`。
+- 实现：宿主在公开 projection registry 中记录普通 Work 会话的成功轮次，通过现有认证 control stream 同步到客户端；覆盖后台、最小化、连续任务、短任务、重连和重复快照。通知点击恢复窗口并打开对应 Work 会话。取消、失败、子任务与继承历史分别处理；合并到同一快照的成功轮次显示数量摘要。
+- Windows 身份：正式与开发运行时分别使用 `io.bisheng` / `io.bisheng.dev`，与两套 NSIS 安装器一致；使用提测包应用图标。preload 使用具名 contextBridge，主进程校验发送窗口、主 frame 与参数。浏览器 Notification API 保持原生行为。
+- 诊断：现有 `harness.log` 增加 `[desktop-notification]` 阶段记录，区分 requested / shown / failed / clicked、前台消费及权限边界拒绝；保留系统错误信息，限制长度并脱敏 URL 与凭据值。shown 表示 Electron 回调，Windows 可见通知仍属于实机验收。
+- 自动验证：62 项定向回归、类型检查、生产构建通过；真实 AgentLoop + 模型传输夹具连续完成两轮纯文本任务。macOS Electron 隔离配置验证真实 preload/main IPC、图标解码、失败日志落盘、点击窗口/会话路由与清理，通过；系统 toast 对象使用测试替身。完整串行回归通过：317 文件 / 3154 项通过，4 文件 / 5 项按条件跳过。并发运行曾出现企业聊天代理与 Office 重算两项超时，串行完整复跑均通过。
+- 验收边界：Windows 25H2 提测包构建安装、真实账号、系统发送者/应用图标及 NOTICE-001/002/003 实机验证待执行。当前交付为源码修复与回归证据；证据位于修复目录 `artifacts/work-completion-notifications/`。

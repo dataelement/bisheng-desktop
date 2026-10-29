@@ -511,8 +511,7 @@ window.__ModuleLoader__.load({
           state.historyPhase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => navigation.refreshHistory() }, t('historyError')),
           state.historyPhase === 'loading' && React.createElement('div', { className: 'dshHistoryNotice', role: 'status' }, t('historyLoading')),
           rows.length === 0 && state.historyPhase !== 'loading' && React.createElement('div', { className: 'dshHistoryNotice' }, t(search ? 'recentSearchEmpty' : 'recentEmpty')),
-          state.hasMore && !archivedOnly && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: state.historyPhase === 'loading', onClick: () => navigation.refreshHistory(true) }, t('more')),
-          !state.connected && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => navigation.select('chat') }, t('signIn'))))
+          state.hasMore && !archivedOnly && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: state.historyPhase === 'loading', onClick: () => navigation.refreshHistory(true) }, t('more'))))
     }
     function historyTime(date, t) {
       const time = new Date(date).getTime()
@@ -1042,9 +1041,45 @@ window.__ModuleLoader__.load({
       })
     }
 
+    /** Consume successful-turn facts independently of the selected conversation and animation frames. */
+    function installWorkCompletionNotifications(ctx, navigation) {
+      const bridge = window.dshDesktopNotifications
+      if (!bridge) return
+      ctx.effect(() => {
+        const observed = new Map()
+        const startedAt = Date.now()
+        const report = () => {
+          const list = ctx.sessions.list.getSnapshot()
+          if (list.phase !== 'ready') return
+          for (const id of list.ids) {
+            const row = list.byId[id]
+            if (!row || row.origin === 'subagent') continue
+            const completion = row.projectionValues?.desktopWorkCompletion
+            if (!completion) continue
+            const previous = observed.get(id)
+            observed.set(id, Math.max(previous ?? 0, completion.count))
+            // Baselines carry history. A first read can also contain a fast task completed since subscription.
+            if (previous === undefined ? completion.count === 0 || completion.time < startedAt : completion.count <= previous) continue
+            void bridge.completed({ sessionId: id, turn: completion.turn, seq: completion.seq,
+              count: previous === undefined ? 1 : completion.count - previous }).catch(error => {
+              console.error('[desktop-notification] completion delivery failed', error)
+            })
+          }
+        }
+        const unsubscribe = ctx.sessions.list.subscribe(report)
+        report()
+        const unclick = bridge.onClicked(sessionId => {
+          navigation.select('work')
+          ctx.uiWorkspace.openSession(sessionId)
+        })
+        return () => { unsubscribe(); unclick(); observed.clear() }
+      })
+    }
+
     const inject = ['slots', 'locale', 'remote', 'remote.session', 'sessions', 'uiWorkspace', 'layout']
     function apply(ctx) {
       const navigation = installDesktopModes(ctx)
+      installWorkCompletionNotifications(ctx, navigation)
       if (typeof ctx.inject === 'function') ctx.inject(['desktopWorkbenches'], scoped => {
         scoped.effect(() => navigation.bindWorkbench(scoped.desktopWorkbenches))
       })
@@ -1186,6 +1221,7 @@ window.__ModuleLoader__.load({
     exports.skillReferenceSource = skillReferenceSource
     exports.toolReferenceSource = toolReferenceSource
     exports.apply = apply
+    exports.installWorkCompletionNotifications = installWorkCompletionNotifications
     exports.inject = inject
     return module.exports
   }

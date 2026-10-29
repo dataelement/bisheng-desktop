@@ -160,6 +160,7 @@ import {
   type DesktopStorageAction
 } from './state/desktop-storage'
 import { registerDesktopNotificationBridge } from './desktop-notification'
+import { configureNotificationIdentity } from './notification-identity'
 import {
   raiseWindowWithoutStealingFocus,
   type WindowFocusIntent
@@ -554,6 +555,7 @@ function applyWindowChromeTheme(window: BrowserWindow, isDark: boolean): void {
 }
 
 function configureAppIdentity(): void {
+  configureNotificationIdentity(app, process.platform, developmentBuild)
   if (developmentBuild) {
     app.setName('BISHENG Dev')
     app.setPath('userData', process.env.BISHENG_DEV_USER_DATA || join(app.getPath('appData'), 'bisheng-dev'))
@@ -1685,7 +1687,8 @@ async function uninstallMarketAndRestart(): Promise<{ ok: boolean }> {
 }
 
 function registerHarnessHandlers(): void {
-  registerDesktopNotificationBridge(() => mainWindow, desktopIconPath)
+  const disposeNotifications = registerDesktopNotificationBridge(() => mainWindow, desktopIconPath, harnessLocale)
+  app.once('will-quit', disposeNotifications)
   ipcMain.removeAllListeners('dsh:storage-load-sync')
   ipcMain.on('dsh:storage-load-sync', (event) => {
     event.returnValue = desktopStorageManager?.getAll() ?? {}
