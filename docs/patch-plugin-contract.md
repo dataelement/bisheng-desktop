@@ -329,3 +329,11 @@ The native fixture `node scripts/verify-usage-recovery.mjs` uses an isolated
 Electron profile and the actual settings plugin to verify pointer retry, ready
 transitions and independently failing sections. Real-account acceptance remains
 an environment-specific check.
+
+### 安全模式语言同步（2026-10-29）
+
+安全模式侧栏复用 preload 已消费的 Harness 活动语言。状态 IPC 只决定安全模式是否启用；侧栏在异步状态返回后读取当前语言，并在每次语言变化时原位刷新文字、辅助说明与折叠按钮名称。按钮节点和操作状态由现有挂载生命周期保留。
+
+主进程语言回调刷新当前安全模式页的完整 view model；每轮页面操作拥有自己的刷新回调和加载序号，操作结束时释放。市场检查结果与语言变化复用同一更新通道，保留已取得的检查数据。页面原位刷新文案、问题分组和插件行，保留勾选、焦点、详细信息展开状态和操作处理中状态。启动恢复提示与恢复记录读取错误携带双语说明及原始诊断；显示时选用活动语言，原始诊断放入可展开的详细信息。智能修复请求在点击时读取语言。
+
+此变更属于自有主进程、preload 和恢复页源码，复用 Harness `__DSH_LOCALE__` 与既有安全模式 frame 通道。独立恢复页仍使用主进程系统语言回退。验证入口为 `test/safe-mode-locale.test.mjs` 与 `node scripts/verify-safe-mode-locale.mjs`；后者使用临时 Profile、真实构建 preload、隔离 IPC 及恢复 HTML，Windows 安装版验收单独登记。
