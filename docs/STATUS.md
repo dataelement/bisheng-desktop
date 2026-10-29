@@ -2,6 +2,10 @@
 
 - 根因：实际运行的 About 位于宿主 closed Shadow DOM，Chat 使用原生子视图；打开 About 时原生视图持续覆盖弹窗区域。现由 About 声明前景状态，内容贡献项隐藏 Chat / 嵌入式设置页，关闭后按当前模式和宿主模态状态恢复；主进程把焦点交给宿主，弹窗管理 Tab、关闭与销毁清理。
 - 基线 `bisheng-desktop:V1.2.0@919cc8d`，Harness `0.2.1-rc.2`；详细记录见 [About 验证记录](status/about-chat-visibility-20261029.md)。相关 72 项回归、类型检查、生产构建与 macOS 原生隔离夹具 16 组通过；两项展示回归在旧基线失败。全量回归 3,163 项通过、5 项条件跳过；Windows 安装包和真实账号验收待执行。
+## 2026-10-29 — 删除会话确认按钮中文化
+
+- 基线 `bisheng-desktop:V1.2.0@919cc8d`，Harness `0.2.1-rc.2`。删除确认改用 Harness Modal 与根级弹窗出口，菜单、正文、按钮及状态统一跟随应用语言；删除接口沿用现有链路。
+- 相关 26 项回归、干净安装、类型检查、构建与 macOS Electron 实际前端共享组件验证通过；完整回归 3,167 项通过、5 项条件跳过。详情见[专项记录](status/session-delete-locale-20261029.md)。安装包、真实账号及 Windows 验收待执行。
 
 ## 2026-10-28 — 页面弹窗覆盖桌面侧栏
 
@@ -704,3 +708,14 @@ Verification:
 - 诊断：现有 `harness.log` 增加 `[desktop-notification]` 阶段记录，区分 requested / shown / failed / clicked、前台消费及权限边界拒绝；保留系统错误信息，限制长度并脱敏 URL 与凭据值。shown 表示 Electron 回调，Windows 可见通知仍属于实机验收。
 - 自动验证：62 项定向回归、类型检查、生产构建通过；真实 AgentLoop + 模型传输夹具连续完成两轮纯文本任务。macOS Electron 隔离配置验证真实 preload/main IPC、图标解码、失败日志落盘、点击窗口/会话路由与清理，通过；系统 toast 对象使用测试替身。完整串行回归通过：317 文件 / 3154 项通过，4 文件 / 5 项按条件跳过。并发运行曾出现企业聊天代理与 Office 重算两项超时，串行完整复跑均通过。
 - 验收边界：Windows 25H2 提测包构建安装、真实账号、系统发送者/应用图标及 NOTICE-001/002/003 实机验证待执行。当前交付为源码修复与回归证据；证据位于修复目录 `artifacts/work-completion-notifications/`。
+
+## 2026-10-29 — 搜索后会话列表消失
+
+- 根因：输入关键词切换到 SearchResults 时，WorkspaceBrowser 漏传集合渲染接口，触发 `renderSlot is not a function`，导致侧栏渲染崩溃。修复完整传递既有接口，搜索、打开结果与清空恢复沿用原组件流程。
+- 基线 `bisheng-desktop:V1.2.0@919cc8d`，Harness `0.2.1-rc.2`。修复前回归复现异常；修复后相关 11 项及 macOS Electron 4 组组件流程通过，干净安装、类型检查和构建通过。完整回归 3,165 项通过、5 项按环境条件跳过。
+- 真实账号、更新后的安装包及 Windows 验收待执行。详见 [搜索修复记录](status/session-search-20261029.md)。
+## 2026-10-29 — 工作台市场搜索框双层描边
+
+- 搜索框聚焦后以原生主题色改变现有边框，形成单层焦点提示；输入框尺寸稳定，按钮保留键盘焦点轮廓。
+- 基线 `bisheng-desktop:V1.2.0@919cc8d`，Harness `0.2.1-rc.2`。干净安装、类型检查和构建通过；macOS Electron 深浅主题与两种宽度共 4 组交互检查通过，新增验证能捕获修复前的双层描边。完整回归 3,158 项通过、5 项跳过，安全模式启动 1 项因端口占用失败；安全模式与工作台组件串行复测 214 项全部通过。
+- 真实账号、安装包及 Windows 验收待执行。详见 [搜索框焦点修复记录](status/market-search-focus-20261029.md)。
