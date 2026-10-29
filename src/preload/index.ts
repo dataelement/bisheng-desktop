@@ -1,3 +1,4 @@
+import { createAboutPresentation } from './about-presentation'
 import { renderSafeModeBannerLocale, type SafeModeBannerElements } from './safe-mode-locale'
 import type { EnterpriseChatPresentation, EnterpriseChatViewState } from '../shared/enterprise-chat-view'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
@@ -63,6 +64,8 @@ interface AboutInfo {
 }
 let aboutHost: HTMLElement | null = null
 let aboutShadow: ShadowRoot | null = null
+const aboutPresentation = createAboutPresentation(document, window)
+window.addEventListener('unload', () => aboutPresentation.dispose(), { once: true })
 let aboutOpen = false
 let aboutInfo: AboutInfo | null = null
 let receivedStatusEvent = false
@@ -899,6 +902,7 @@ function renderAbout(): void {
   if (!aboutHost || !aboutShadow) return
   if (!aboutOpen || !aboutInfo) {
     aboutHost.style.display = 'none'
+    aboutPresentation.close()
     const existing = aboutShadow.querySelector('.about-overlay')
     if (existing) existing.remove()
     return
@@ -956,6 +960,7 @@ function renderAbout(): void {
   card.appendChild(body)
 
   overlay.replaceChildren(card)
+  aboutPresentation.show(closeBtn)
 }
 function dismissCurrent(): void {
   if (!currentStatus) return

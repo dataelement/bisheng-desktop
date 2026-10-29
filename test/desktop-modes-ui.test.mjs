@@ -11,6 +11,8 @@ const disposers = []
 afterEach(async () => {
   if (root) await act(async () => root.unmount())
   container?.remove()
+  document.documentElement.removeAttribute('data-dsh-about-open')
+  document.body.removeAttribute('data-ds-dark-theme')
   disposers.splice(0).reverse().forEach(dispose => dispose())
   delete window.dshEnterpriseChat
   delete window.__ModuleLoader__
@@ -28,7 +30,7 @@ async function mount(connected = false, collection = {}, inert = false, workbenc
     effect(fn) { disposeWorkbench = fn() }
   })
   disposers.push(() => disposeWorkbench?.())
-  let snapshot = { connected, phase: 'ready', epoch: 1, conversationId: 'new' }
+  let snapshot = { connected, phase: 'ready', epoch: 1, conversationId: 'new', settingsProtocolVersion: 1 }
   let chatListener
   window.dshEnterpriseChat = {
     subscribe: fn => { chatListener = fn; return () => { chatListener = undefined } },
@@ -105,7 +107,7 @@ async function mount(connected = false, collection = {}, inert = false, workbenc
     navigate: (...args) => navigate(...args),
     async click(mode) { await act(async () => container.querySelector(`#dsh-mode-${mode}`).click()) },
     async account(next) {
-      snapshot = { connected: next, phase: 'ready', epoch: 1, conversationId: 'new' }
+      snapshot = { connected: next, phase: 'ready', epoch: 1, conversationId: 'new', settingsProtocolVersion: 1 }
       await act(async () => window.dispatchEvent(new CustomEvent('dsh-desktop:enterprise-account-changed')))
     },
     selected: () => container.querySelector('#dsh-panel-chat').hidden ? 'work' : 'chat',
@@ -577,4 +579,41 @@ it('dismisses the sign-in prompt and enters Chat when the account becomes availa
   expect(document.querySelector('[role=dialog]')).toBeNull()
   expect(ui.selected()).toBe('chat')
   expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
+})
+
+
+it.each([false, true])('gives About the foreground including initial state=%s', async initial => {
+  document.documentElement.toggleAttribute('data-dsh-about-open', initial)
+  const ui = await mount(true)
+  const present = window.dshEnterpriseChat.present
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: !initial }))
+  await act(async () => document.documentElement.setAttribute('data-dsh-about-open', ''))
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
+  await ui.locale('zh')
+  await act(async () => {
+    window.dispatchEvent(new Event('resize'))
+    document.body.setAttribute('data-ds-dark-theme', '')
+    window.dispatchEvent(new CustomEvent('dsh-desktop:settings-visibility', { detail: { open: true } }))
+    window.dispatchEvent(new CustomEvent('dsh-desktop:settings-surface', { detail: { section: 'tools', bounds: { x: 200, y: 80, width: 500, height: 400 } } }))
+  })
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false, settings: 'tools', locale: 'zh', theme: 'dark' }))
+  await act(async () => document.documentElement.removeAttribute('data-dsh-about-open'))
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true, settings: 'tools' }))
+  await act(async () => window.dispatchEvent(new CustomEvent('dsh-desktop:settings-visibility', { detail: { open: false } })))
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
+  await act(async () => document.documentElement.setAttribute('data-dsh-about-open', ''))
+  await ui.click('work')
+  await act(async () => document.documentElement.removeAttribute('data-dsh-about-open'))
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
+  await act(async () => { container.inert = true; document.documentElement.setAttribute('data-dsh-about-open', '') })
+  await ui.click('chat')
+  await act(async () => document.documentElement.removeAttribute('data-dsh-about-open'))
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
+  await act(async () => { container.inert = false })
+  expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
+  await act(async () => root.unmount())
+  root = undefined
+  present.mockClear()
+  await act(async () => document.documentElement.setAttribute('data-dsh-about-open', ''))
+  expect(present).toHaveBeenCalledTimes(0)
 })
