@@ -144,6 +144,8 @@ The button keeps its accessible name, configuration action and viewer focus-retu
 
 `dsh-client-ui-workspace` 声明 root/single 的 `sidebar.workspaces.collection`，由 WorkspaceBrowser 内的 SessionTree、FlatList 和 SearchResults 呈现。owner 提供 `mode: projects | flat | search`、`query`、`archivedOnly`、`projects(active): ReactNode` 和只读 `items`。每项包含 id、updatedAt、pinned、blank、`render(active): ReactNode`。项目视图的 items 来自原生 deriveFlat 对未分组 sessionIds 的投影，项目成员与归档过滤继续由 Harness 拥有；原生 renderer 保持行菜单、状态及选择行为。默认 fallback 保持原项目树、单列表或搜索结果。
 
+WorkspaceBrowser 向 SessionTree、FlatList、SearchResults 完整传递同一个 `renderSlot`，搜索结果和结果行沿用宿主集合及行扩展协议。`test/session-search-recovery.test.mjs` 运行已安装组件，覆盖原生 fallback、桌面合并集合、两种分组，以及输入、打开结果、清空、Escape、延迟返回和请求失败；`node scripts/verify-session-search.mjs` 在隔离 Electron 窗口运行同一组件流程。
+
 桌面贡献项将云端历史与上述本地 items 按来源命名空间和更新时间组合，项目节点独立呈现在最近之前。Chat 模式通过 active=false 清除本地选中态；会话行直接呈现标题与时间，来源继续由数据与导航控制。云端搜索匹配已加载的标题；归档专用视图仅呈现有归档元数据的本地记录。`sidebar.history` 已由这个集合接缝替代，SidebarRoot 持续呈现唯一 workspace browser。
 
 `uiWorkspace.registerNavigationHandler(handler)` 为多订阅者的导航接缝，handler 接收 `open | new` 和可选 workspaceId。`new` 返回 true 表示全局新建已由 Chat 接管；`open` 只通知呈现模式，原 Work 导航和工作台 starter/opener 继续处理。本地任务查询、持久化和执行由原 Harness 服务负责。解绑按 Cordis/React 生命周期执行。

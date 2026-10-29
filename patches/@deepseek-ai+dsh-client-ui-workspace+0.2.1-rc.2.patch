@@ -1,5 +1,5 @@
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js b/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js
-index 5cca45b..3f48e75 100644
+index 5cca45b..f714d5f 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js
 @@ -1096,6 +1096,7 @@ window.__ModuleLoader__.load({
@@ -524,7 +524,14 @@ index 5cca45b..3f48e75 100644
  							useSessionStatus,
  							open: openSearchResult,
  							onUnarchive: onSessionUnarchive,
-@@ -3980,6 +4173,8 @@ window.__ModuleLoader__.load({
+@@ -3974,12 +4167,15 @@ window.__ModuleLoader__.load({
+ 							query: normalizedQuery,
+ 							remote: remoteSearch,
+ 							resultLimit: searchResultLimit,
++							renderSlot,
+ 							t
+ 						}) : groupBy === "flat" ? (0, react_jsx_runtime.jsx)(FlatList, {
+ 							usePanelInfo,
  							list,
  							sessionIds: orderedFlatSessionIds,
  							rowState,
@@ -533,7 +540,7 @@ index 5cca45b..3f48e75 100644
  							onLeaveArchivedOnly: leaveArchivedOnly,
  							workspaceReady,
  							animationResetKey: `${groupBy}/${orderBy}/${archivedFilter}`,
-@@ -4007,6 +4202,8 @@ window.__ModuleLoader__.load({
+@@ -4007,6 +4203,8 @@ window.__ModuleLoader__.load({
  							setGroupExpanded: actions.setGroupExpanded,
  							setSessionOrder: saveSessionOrder,
  							rowState,
@@ -542,7 +549,7 @@ index 5cca45b..3f48e75 100644
  							onLeaveArchivedOnly: leaveArchivedOnly,
  							startSession,
  							open: guardedOpen,
-@@ -4026,7 +4223,8 @@ window.__ModuleLoader__.load({
+@@ -4026,7 +4224,8 @@ window.__ModuleLoader__.load({
  							onDeleteRequest: (workspaceId, title) => {
  								setDeleteTarget({
  									workspaceId,
@@ -552,7 +559,7 @@ index 5cca45b..3f48e75 100644
  								});
  								setDeleteError(null);
  							}
-@@ -4856,6 +5054,7 @@ window.__ModuleLoader__.load({
+@@ -4856,6 +5055,7 @@ window.__ModuleLoader__.load({
  			"status.compact.planReview": "计划待审",
  			"status.compact.answer": "待回答",
  			"status.completed": "已完成",
@@ -560,7 +567,7 @@ index 5cca45b..3f48e75 100644
  			"hover.created": "创建于 {time}",
  			"hover.copied": "已复制",
  			"date.ymd": "{y}年{m}月{d}日",
-@@ -4978,6 +5177,7 @@ window.__ModuleLoader__.load({
+@@ -4978,6 +5178,7 @@ window.__ModuleLoader__.load({
  			"status.compact.planReview": "Plan review",
  			"status.compact.answer": "Answer",
  			"status.completed": "Completed",
@@ -568,7 +575,7 @@ index 5cca45b..3f48e75 100644
  			"hover.created": "Created {time}",
  			"hover.copied": "Copied",
  			"date.ymd": "{y}-{m}-{d}",
-@@ -5179,6 +5379,8 @@ window.__ModuleLoader__.load({
+@@ -5179,6 +5380,8 @@ window.__ModuleLoader__.load({
  				}
  			});
  			const browserInjected = () => ({
@@ -577,7 +584,7 @@ index 5cca45b..3f48e75 100644
  				startSession: (workspaceId, options) => {
  					uiWorkspace.startSession(workspaceId, options);
  				},
-@@ -5193,7 +5395,7 @@ window.__ModuleLoader__.load({
+@@ -5193,7 +5396,7 @@ window.__ModuleLoader__.load({
  					await workspaces.rename(workspaceId, title);
  				},
  				deleteWorkspace: async (workspaceId) => {
@@ -586,7 +593,7 @@ index 5cca45b..3f48e75 100644
  				},
  				insertWorkspaceBefore: async (workspaceId, beforeWorkspaceId) => {
  					await workspaces.insertBefore(workspaceId, beforeWorkspaceId);
-@@ -5209,6 +5411,8 @@ window.__ModuleLoader__.load({
+@@ -5209,6 +5412,8 @@ window.__ModuleLoader__.load({
  				hooks: {
  					directoryFlow: browserFlowSource,
  					hostInfo,
@@ -595,7 +602,7 @@ index 5cca45b..3f48e75 100644
  					workspaceShortcuts: shortcutControls.state,
  					shortcuts: ctx.shortcuts.catalog
  				}
-@@ -5220,6 +5424,8 @@ window.__ModuleLoader__.load({
+@@ -5220,6 +5425,8 @@ window.__ModuleLoader__.load({
  			ctx.slots.inject("sidebar.workspaces", () => ctx.slots.register({
  				name: "sidebar.workspaces",
  				children: {
