@@ -7,7 +7,7 @@ import { skillContentHash } from '../packages/dsh-desktop-enterprise/work-skills
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { requestImageDimensions } from '@deepseek-ai/dsh-attachment'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { apply as applyEnterprise } from '../packages/dsh-desktop-enterprise/index.js'
 import { startEnterpriseCredentialBroker } from '../src/main/enterprise/credential-broker'
@@ -29,7 +29,7 @@ type RegisteredRoute = {
 
 function createPluginContext(
   llm?: { registerAdapter: (...args: never[]) => unknown },
-  services?: { get?: (name: string) => unknown }
+  services?: { get?: (name: string) => unknown, logger?: { debug: (...args: unknown[]) => void } }
 ) {
   const routes: RegisteredRoute[] = []
   applyEnterprise({
@@ -58,6 +58,7 @@ function createPluginContext(
       }
     },
     ...(services?.get ? { get: services.get } : {}),
+    ...(services?.logger ? { logger: services.logger } : {}),
     ...(llm ? { llm } : {})
   } as never)
   return routes
@@ -131,6 +132,7 @@ afterEach(async () => {
   delete process.env.DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY
   delete process.env.DSH_DESKTOP_ENTERPRISE_ALLOW_INSECURE_LOOPBACK
   while (adapterCleanups.length > 0) await adapterCleanups.pop()?.()
+  vi.unstubAllGlobals()
 })
 
 function memorySafeStorage(): SafeStorageCryptoAdapter {
@@ -190,6 +192,38 @@ describe('enterprise adapter without a Broker', () => {
       ok: false,
       error: 'Enterprise login is not available yet.'
     })
+  })
+})
+
+describe('enterprise broker failure diagnostics', () => {
+  it('explains missing broker configuration without changing the login response', async () => {
+    const logger = { debug: vi.fn() }
+    const routes = createPluginContext(undefined, { logger })
+    const response = await invoke(routes, '/api/enterprise.login.start', 'POST', { base: 'https://enterprise.example' })
+    expect(response.status).toBe(503)
+    await expect(response.json()).resolves.toEqual({ ok: false, error: 'Enterprise login is not available yet.' })
+    const log = JSON.stringify(logger.debug.mock.calls)
+    expect(log).toContain('BROKER_URL_MISSING')
+    expect(log).toContain('BROKER_NOT_CONFIGURED')
+    expect(log).toContain('broker.json.configuration')
+  })
+
+  it('records the original network cause before replacing a broker failure with friendly copy', async () => {
+    process.env.DSH_DESKTOP_ENTERPRISE_BROKER_URL = 'http://127.0.0.1:54321'
+    process.env.DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY = 'fixture-private-owner-capability'
+    const logger = { debug: vi.fn() }
+    const cause = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' })
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed', { cause })))
+    const routes = createPluginContext(undefined, { logger })
+    const response = await invoke(routes, '/api/enterprise.login.start', 'POST', { base: 'https://enterprise.example' })
+    expect(response.status).toBe(503)
+    await expect(response.json()).resolves.toEqual({ ok: false, error: 'Enterprise login is not available yet.' })
+    const log = JSON.stringify(logger.debug.mock.calls)
+    expect(log).toContain('broker.json.request')
+    expect(log).toContain('fetch failed')
+    expect(log).toContain('ECONNREFUSED')
+    expect(log).not.toContain('fixture-private-owner-capability')
+    expect(log).not.toContain('https://enterprise.example')
   })
 })
 

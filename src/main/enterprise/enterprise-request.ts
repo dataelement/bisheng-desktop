@@ -18,9 +18,10 @@ export class EnterprisePlatformError extends Error {
       type?: string
       requestId?: string
       uncertain?: boolean
+      cause?: unknown
     } = {}
   ) {
-    super(message)
+    super(message, { cause: options.cause })
     this.name = 'EnterprisePlatformError'
     this.status = options.status
     this.code = options.code
@@ -145,7 +146,9 @@ export async function requestEnterpriseStream(
   } catch (error) {
     if (options.signal?.aborted) throw error
     throw new EnterprisePlatformError('Could not reach the BiSheng platform.', {
-      code: 'network_error'
+      code: 'network_error',
+      requestId,
+      cause: error
     })
   }
 }
@@ -197,6 +200,8 @@ export async function requestEnterpriseJson(
     if (options.signal?.aborted) throw error
     throw new EnterprisePlatformError('Could not reach the BiSheng platform.', {
       code: 'network_error',
+      requestId,
+      cause: error,
       uncertain: options.uncertainOnTransport === true
     })
   }

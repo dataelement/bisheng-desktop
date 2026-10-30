@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { logEnterpriseFailure } from 'dsh-desktop-enterprise/error-diagnostics'
 import { parseWorkSkillRequest, readSkillBytes } from './work-skills'
 import { parseWorkResourceRequest, readResourceJson } from './work-resources'
 import { parseWorkMcpRequest, sendWorkMcp } from './work-mcp'
@@ -126,6 +127,7 @@ export interface EnterpriseServiceNote {
   pluginId?: string
   path?: string
   duration?: number
+  diagnostic?: string
 }
 
 export interface EnterpriseServiceOptions {
@@ -808,6 +810,13 @@ export class EnterpriseService {
       )
     } catch (error) {
       const classified = desktopChatAbortError(upstreamSignal.reason)
+      if (!callerSignal.aborted) {
+        logEnterpriseFailure({ debug: (_format: string, diagnostic: unknown) => {
+          if (typeof diagnostic === 'string') this.note('model_request_failed', { diagnostic })
+        } }, 'model_request', classified
+          ? { ...classified, name: classified.name, message: classified.message, cause: error }
+          : error, { protocol: 'protocol' in parsed ? 'responses' : 'chat' })
+      }
       if (classified !== undefined) throw classified
       throw error
     } finally {
@@ -821,13 +830,27 @@ export class EnterpriseService {
       return
     }
     const contentType = upstream.headers.get('content-type')
-    if (!upstream.ok || !isSseContentType(contentType)) {
-      const text = await this.boundedResponseText(upstream)
-      this.handleChatStatus(upstream.status, text, parsed.model, epoch)
-      this.writeForwarded(response, upstream, text)
-      return
+    const diagnosticContext = {
+      protocol: 'protocol' in parsed ? 'responses' : 'chat',
+      status: upstream.status,
+      requestId: sanitizeRequestId(upstream.headers.get('x-request-id') ?? undefined)
     }
-    await this.pipeSse(upstream, response, lifetime, 'protocol' in parsed)
+    try {
+      if (!upstream.ok || !isSseContentType(contentType)) {
+        const text = await this.boundedResponseText(upstream)
+        this.handleChatStatus(upstream.status, text, parsed.model, epoch, diagnosticContext)
+        this.writeForwarded(response, upstream, text)
+        return
+      }
+      await this.pipeSse(upstream, response, lifetime, 'protocol' in parsed)
+    } catch (error) {
+      if (!callerSignal.aborted) {
+        logEnterpriseFailure({ debug: (_format: string, diagnostic: unknown) => {
+          if (typeof diagnostic === 'string') this.note('model_request_failed', { diagnostic })
+        } }, upstream.ok && isSseContentType(contentType) ? 'model_stream_forward' : 'model_error_response', error, diagnosticContext)
+      }
+      throw error
+    }
     if (this.epoch === epoch) void this.syncUsage(epoch, parsed.model)
   }
 
@@ -1224,11 +1247,14 @@ export class EnterpriseService {
     return this.session.access_token
   }
 
-  private handleChatStatus(status: number, text: string, model: string, epoch: number): void {
+  private handleChatStatus(status: number, text: string, model: string, epoch: number, context: { protocol: string, requestId?: string }): void {
     let code: string | undefined
+    let failure: unknown = { message: 'Unexpected enterprise model response.' }
     try {
-      const payload = JSON.parse(text) as { error?: { code?: string } }
+      const payload = JSON.parse(text) as { error?: { code?: string, message?: string } }
       code = payload.error?.code
+      // Project only error metadata; never pass the response body to diagnostics.
+      failure = { code, message: payload.error?.message }
     } catch {
       code = undefined
     }
@@ -1238,6 +1264,9 @@ export class EnterpriseService {
     if (status === 429) {
       void this.syncUsage(epoch, model)
     }
+    logEnterpriseFailure({ debug: (_format: string, diagnostic: unknown) => {
+      if (typeof diagnostic === 'string') this.note('model_request_failed', { diagnostic })
+    } }, 'model_error_response', failure, { ...context, status })
     this.note('chat_upstream', { status })
   }
 
@@ -1569,7 +1598,8 @@ export class EnterpriseService {
       ...(details.originHash ? { originHash: details.originHash } : {}),
       ...(details.pluginId ? { pluginId: details.pluginId } : {}),
       ...(details.path ? { path: details.path } : {}),
-      ...(details.duration !== undefined ? { duration: details.duration } : {})
+      ...(details.duration !== undefined ? { duration: details.duration } : {}),
+      ...(details.diagnostic ? { diagnostic: details.diagnostic } : {})
     })
   }
 

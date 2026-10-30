@@ -1,4 +1,5 @@
 import { normalizeAuditContext } from './contract.js'
+import { logEnterpriseFailure } from './error-diagnostics.js'
 import { CONTENT_SAFETY_ERROR_COPY, resolveContentSafetyError } from './error-copy.js'
 import {
   LlmAdapter,
@@ -469,8 +470,12 @@ export function requestFailure(status, requestId, payload, localizeContentSafety
   )
 }
 
-export async function responseFailure(response, localizeContentSafety) {
+export async function responseFailure(response, localizeContentSafety, logger) {
   const payload = await response.json().catch(() => ({}))
+  logEnterpriseFailure(logger, 'chat.http', {
+    name: 'EnterpriseHttpError', message: rawChatMessage(payload), code: platformChatCode(payload),
+    status: response.status, requestId: requestIdFrom(response.headers.get('x-request-id'), payload)
+  }, { protocol: 'chat', status: response.status })
   return requestFailure(response.status, response.headers.get('x-request-id') ?? undefined, payload, localizeContentSafety)
 }
 
@@ -553,6 +558,7 @@ export class EnterpriseLlmAdapter extends LlmAdapter {
    * @param {Function} [options.readImage]
    * @param {(code: string, defaultMessage: string) => string} [options.localizeContentSafety] Current UI locale's fixed safety copy.
    * @param {Function} [options.contentSafetyFormatterFor] Synchronous factory captured once per protocol stream.
+   * @param {{ debug?: Function }} [options.logger]
    * @param {Function} [options.onComplete]
    */
   constructor(options) {
@@ -591,6 +597,23 @@ export class EnterpriseLlmAdapter extends LlmAdapter {
   }
 
   async *stream(options) {
+    const diagnostic = { stage: 'chat.prepare' }
+    try {
+      for await (const chunk of this.streamWithDiagnostics(options, diagnostic)) {
+        if (chunk.type === 'finish' && chunk.reason?.kind === 'error' && !diagnostic.logged && !options.signal?.aborted) {
+          logEnterpriseFailure(this.options.logger, diagnostic.stage, chunk.reason.failure, { protocol: diagnostic.protocol ?? 'chat', status: diagnostic.status })
+        }
+        yield chunk
+      }
+    } catch (error) {
+      if (!diagnostic.logged && !options.signal?.aborted) {
+        logEnterpriseFailure(this.options.logger, diagnostic.stage, error, { protocol: diagnostic.protocol ?? 'chat', status: diagnostic.status })
+      }
+      throw error
+    }
+  }
+
+  async *streamWithDiagnostics(options, diagnostic) {
     const model = this.options.models().find((candidate) => candidate.id === options.model)
     if (!model) throw new LlmError(`BiSheng provider has no authorized model "${options.model}".`, 'UNKNOWN_MODEL')
     let session
@@ -603,6 +626,8 @@ export class EnterpriseLlmAdapter extends LlmAdapter {
     if (model.capabilities.responses === true) {
       const connectionKey = this.options.connectionKey?.()
       const { streamEnterpriseResponses } = await import('./responses.js')
+      diagnostic.protocol = 'responses'
+      diagnostic.stage = 'responses.stream'
       yield* streamEnterpriseResponses(options, model, this.options, connectionKey, session)
       return
     }
@@ -636,12 +661,20 @@ export class EnterpriseLlmAdapter extends LlmAdapter {
       ...(sourceItems.length || truncated ? { message_sources: { items: sourceItems, truncated } } : {})
     }, auditFields, request.messages.length)
     if (auditContext) request.audit_context = auditContext
+    diagnostic.stage = 'chat.request'
     const response = await this.options.request(
       request,
       options.signal,
       headers
     )
-    if (!response.ok) throw await responseFailure(response, localizeContentSafety)
+    diagnostic.status = response.status
+    diagnostic.stage = 'chat.http'
+    if (!response.ok) {
+      const failure = await responseFailure(response, localizeContentSafety, options.signal?.aborted ? undefined : this.options.logger)
+      diagnostic.logged = true
+      throw failure
+    }
+    diagnostic.stage = 'chat.stream'
     const contentType = response.headers.get('content-type') ?? ''
     if (!contentType.toLowerCase().startsWith('text/event-stream')) {
       throw new LlmError('BiSheng returned a non-SSE model response.', 'INVALID_RESPONSE', {
@@ -675,6 +708,13 @@ export class EnterpriseLlmAdapter extends LlmAdapter {
         throw new LlmError('BiSheng event stream contains invalid JSON.', 'INVALID_RESPONSE')
       }
       if (event.event === 'error' || payload?.error) {
+        if (!options.signal?.aborted) {
+          logEnterpriseFailure(this.options.logger, 'chat.sse', {
+            name: 'EnterpriseStreamError', message: rawChatMessage(payload), code: platformChatCode(payload),
+            status: response.status, requestId: requestIdFrom(response.headers.get('x-request-id'), payload)
+          }, { protocol: 'chat', status: response.status })
+        }
+        diagnostic.logged = true
         for (const block of blocks) {
           if (block.type === 'text') yield { type: 'block-end', index: block.index, block: { type: 'text', text: block.text } }
           else if (block.type === 'reasoning') yield { type: 'block-end', index: block.index, block: { type: 'reasoning', text: block.text } }

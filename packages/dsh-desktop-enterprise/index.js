@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { logEnterpriseFailure } from './error-diagnostics.js'
 import { CONTENT_SAFETY_ERROR_COPY } from './error-copy.js'
 import { createContentSafetyLocaleScope } from './content-safety-locale.js'
 import { applyEnterpriseSkills } from './work-skills.js'
@@ -71,16 +72,22 @@ function inspectedBase(base) {
   }
 }
 
-function brokerConfig() {
+function brokerConfig(logger) {
   const urlValue = process.env.DSH_DESKTOP_ENTERPRISE_BROKER_URL
   const capability = process.env.DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY
   // Consume the owner secret before any market plugin is imported. This is not a Node sandbox.
   delete process.env.DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY
-  if (!urlValue || !capability) return undefined
+  if (!urlValue || !capability) {
+    logEnterpriseFailure(logger, 'broker.configuration', Object.assign(new Error('Enterprise broker configuration is incomplete.'), {
+      code: !urlValue ? 'BROKER_URL_MISSING' : 'BROKER_CAPABILITY_MISSING'
+    }))
+    return undefined
+  }
   let url
   try {
     url = new URL(urlValue)
   } catch {
+    logEnterpriseFailure(logger, 'broker.configuration', Object.assign(new Error('Enterprise broker URL is invalid.'), { code: 'BROKER_URL_INVALID' }))
     return undefined
   }
   if (
@@ -91,6 +98,7 @@ function brokerConfig() {
     || url.search
     || url.hash
   ) {
+    logEnterpriseFailure(logger, 'broker.configuration', Object.assign(new Error('Enterprise broker URL is outside the allowed loopback boundary.'), { code: 'BROKER_URL_REJECTED' }))
     return undefined
   }
   return { origin: url.origin, capability }
@@ -130,12 +138,17 @@ function registerJsonRoute(connection, path, methods, handler) {
   })
 }
 
-function unavailable() {
-  throw Object.assign(new Error('Enterprise login is not available yet.'), { status: 503 })
+function unavailable(logger, stage, cause, context = {}) {
+  const error = Object.assign(new Error('Enterprise login is not available yet.', cause === undefined ? undefined : { cause }), {
+    status: 503, code: cause === undefined ? 'BROKER_NOT_CONFIGURED' : 'BROKER_TRANSPORT_FAILED'
+  })
+  logEnterpriseFailure(logger, stage, error, context)
+  throw error
 }
 
-async function brokerChat(broker, body, signal, attribution, connectionKey) {
-  if (!broker) unavailable()
+async function brokerChat(broker, body, signal, attribution, connectionKey, logger) {
+  const path = connectionKey === undefined ? '/v1/chat' : '/v1/responses'
+  if (!broker) unavailable(logger, 'broker.model.configuration', undefined, { path })
   let response
   try {
     response = await fetch(new URL(connectionKey === undefined ? '/v1/chat' : '/v1/responses', `${broker.origin}/`), {
@@ -150,13 +163,13 @@ async function brokerChat(broker, body, signal, attribution, connectionKey) {
     })
   } catch (error) {
     if (signal?.aborted) throw error
-    unavailable()
+    unavailable(logger, 'broker.model.request', error, { path })
   }
   return response
 }
 
-async function requestBrokerJson(broker, path, body, signal) {
-  if (!broker) unavailable()
+async function requestBrokerJson(broker, path, body, signal, logger) {
+  if (!broker) unavailable(logger, 'broker.json.configuration', undefined, { path })
   let response
   try {
     response = await fetch(new URL(path, `${broker.origin}/`), {
@@ -169,23 +182,28 @@ async function requestBrokerJson(broker, path, body, signal) {
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) })
     })
-  } catch {
+  } catch (error) {
     signal?.throwIfAborted()
-    unavailable()
+    unavailable(logger, 'broker.json.request', error, { path })
   }
-  const payload = await response.json().catch(() => ({}))
+  const payload = await response.json().catch(error => {
+    logEnterpriseFailure(logger, 'broker.json.decode', error, { path, status: response.status })
+    return {}
+  })
   if (!response.ok) {
-    throw Object.assign(new Error(typeof payload.error === 'string' ? payload.error : `Enterprise request failed (${response.status}).`), {
+    const error = Object.assign(new Error(typeof payload.error === 'string' ? payload.error : `Enterprise request failed (${response.status}).`), {
       status: response.status,
       ...(typeof payload.errorCode === 'string' && payload.errorCode ? { errorCode: payload.errorCode } : {})
     })
+    logEnterpriseFailure(logger, 'broker.json.http', error, { path, status: response.status })
+    throw error
   }
   return payload
 }
 
 export function apply(ctx) {
-  const broker = brokerConfig()
-  const brokerJson = (path, body, signal) => requestBrokerJson(broker, path, body, signal)
+  const broker = brokerConfig(ctx.logger)
+  const brokerJson = (path, body, signal) => requestBrokerJson(broker, path, body, signal, ctx.logger)
   const connection = Reflect.get(ctx, 'connection')
   let market
   let workbenches
@@ -482,6 +500,7 @@ function startEnterpriseLlm(ctx, llm, broker) {
     note: (reason, details) => console.warn('[enterprise-audit-title]', JSON.stringify({ reason, ...details }))
   })
   const adapter = new EnterpriseLlmAdapter({
+    logger: ctx.logger,
     providerName: () => latest.tenant?.name || latest.user?.display_name || 'BiSheng Enterprise',
     models: () => modelsAvailable ? models : [],
     auditFields: () => latest.connected ? latest.audit_context?.fields ?? [] : [],
@@ -497,8 +516,8 @@ function startEnterpriseLlm(ctx, llm, broker) {
         return undefined
       }
     },
-    request: (body, signal, headers) => brokerChat(broker, body, signal, pickAttributionHeaders(headers)),
-    requestResponses: (body, signal, headers, connectionKey) => brokerChat(broker, body, signal, pickAttributionHeaders(headers), connectionKey),
+    request: (body, signal, headers) => brokerChat(broker, body, signal, pickAttributionHeaders(headers), undefined, ctx.logger),
+    requestResponses: (body, signal, headers, connectionKey) => brokerChat(broker, body, signal, pickAttributionHeaders(headers), connectionKey, ctx.logger),
     connectionKey: () => latest.connectionKey,
     contentSafetyFormatterFor: options => safetyLocaleScope.formatterFor(options),
     onReplayDegrade: (reason) => ctx.logger?.info?.(`Enterprise Responses replay degraded: ${reason}`),
@@ -527,7 +546,7 @@ function startEnterpriseLlm(ctx, llm, broker) {
   const poll = async () => {
     if (stopped) return
     try {
-      ingest(broker ? await requestBrokerJson(broker, '/v1/state') : disabledState())
+      ingest(broker ? await requestBrokerJson(broker, '/v1/state', undefined, undefined, ctx.logger) : disabledState())
     } catch {
       // Keep the last published catalog until the next local snapshot.
     }
@@ -545,7 +564,8 @@ function startEnterpriseLlm(ctx, llm, broker) {
       if (stopped) return
       try {
         ingest(state)
-      } catch {
+      } catch (error) {
+        logEnterpriseFailure(ctx.logger, 'model.catalog.register', error)
         // Settings reads must not fail if adapter registration throws.
       }
     },

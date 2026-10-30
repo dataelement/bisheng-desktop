@@ -1,8 +1,8 @@
 import { Logger } from '@deepseek-ai/cordis'
 
 /**
- * Write Harness's runtime warnings and errors to stderr, where the desktop
- * already records everything into harness.log.
+ * Write Harness's runtime warnings, errors and bounded enterprise failure
+ * diagnostics to stderr, where the desktop records everything into harness.log.
  *
  * Cordis's `ctx.logger` only keeps an in-memory ring of recent messages;
  * nothing in the shipped composition exports them anywhere. So an error that
@@ -35,7 +35,7 @@ const WINDOW_LIMIT = 100
 
 /**
  * Render one message as prefixed lines.
- * @param type - `error` or `warn`, or `session-error` for activation failures.
+ * @param type - `error`, `warn`, enterprise `debug`, or `session-error` for activation failures.
  * @param source - the logger name, or the session id.
  * @param text - the message, possibly spanning lines (a stack trace).
  * @returns the lines to write, each carrying the prefix.
@@ -79,9 +79,12 @@ export function apply(ctx) {
   })
   const exporter = {
     colors: 0,
-    levels: { default: EXPORT_LEVEL },
+    // Only the bounded, redacted enterprise failure channel admits debug.
+    levels: { default: EXPORT_LEVEL, 'enterprise-failure': 3 },
     export(message) {
-      if (message.type !== 'error' && message.type !== 'warn') return
+      const enterpriseFailure = message.type === 'debug' && message.name === 'enterprise-failure'
+        && message.args[0] === '[enterprise-failure] %s'
+      if (message.type !== 'error' && message.type !== 'warn' && !enterpriseFailure) return
       emit(bridgeLines(message.type, message.name, Logger.format(exporter, message)))
     }
   }
@@ -101,6 +104,6 @@ export function apply(ctx) {
   })
   // One line per launch: a log without it predates the bridge, so the
   // absence of runtime errors there proves nothing. It is a notice, not a
-  // problem, so it goes to stdout; stderr carries only warnings and errors.
+  // problem, so it goes to stdout; stderr carries failures and their diagnostics.
   process.stdout.write(`${BRIDGE_READY_LINE}\n`)
 }
