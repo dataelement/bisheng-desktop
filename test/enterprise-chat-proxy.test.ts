@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createEnterpriseFetch, type EnterpriseFetch } from '../src/main/enterprise/platform-fetch'
 import { CHAT_HEADER_TIMEOUT_MS } from '../src/main/enterprise/enterprise-chat'
-import { EnterpriseService, type EnterpriseServiceNote } from '../src/main/enterprise/enterprise-service'
+import { EnterpriseService } from '../src/main/enterprise/enterprise-service'
 import {
   ENTERPRISE_VAULT_FILENAME,
   type SafeStorageCryptoAdapter,
@@ -84,14 +84,13 @@ class FakeResponse extends EventEmitter {
   }
 }
 
-async function createService(fetchImpl: EnterpriseFetch = createEnterpriseFetch(globalThis.fetch), note?: (entry: EnterpriseServiceNote) => void) {
+async function createService(fetchImpl: EnterpriseFetch = createEnterpriseFetch(globalThis.fetch)) {
   const directory = await mkdtemp(join(tmpdir(), 'enterprise-chat-'))
   const vault = new SecureEnterpriseCredentialVault(join(directory, ENTERPRISE_VAULT_FILENAME), memorySafeStorage())
   const service = new EnterpriseService({
     vault,
     fetchImpl,
-    allowInsecureLoopback: true,
-    note
+    allowInsecureLoopback: true
   })
   await service.restore()
   cleanups.push(async () => service.stop())
@@ -125,50 +124,6 @@ async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<voi
 }
 
 describe('enterprise chat SSE proxy', () => {
-  it.each(['model_request', 'model_stream_forward', 'model_error_response', 'model_http_error'])('records safe diagnostics for %s without replacing the failure', async (stage) => {
-    const platform = createMockEnterpriseServer({ port: 0 })
-    const origin = await platform.listen()
-    cleanups.push(async () => platform.close())
-    const cause = Object.assign(new Error('socket closed'), { code: 'ECONNRESET' })
-    const original = new TypeError('fetch failed', { cause })
-    Object.assign(original, { headers: { authorization: 'Bearer hidden-token' }, body: 'private-model-content' })
-    const notes: EnterpriseServiceNote[] = []
-    const fetchImpl: EnterpriseFetch = async (input, init) => {
-      if (String(input).includes('/chat/completions')) {
-        if (stage === 'model_request') throw original
-        if (stage === 'model_http_error') return new Response(JSON.stringify({
-          error: { code: 'upstream_error', message: 'provider failed', headers: { authorization: 'Bearer hidden-token' } },
-          body: 'private-model-content'
-        }), { status: 502, headers: { 'content-type': 'application/json', 'x-request-id': 'req-stream-failure' } })
-        return new Response(new ReadableStream({ start(controller) { controller.error(original) } }), {
-          status: stage === 'model_error_response' ? 502 : 200,
-          headers: { 'content-type': stage === 'model_error_response' ? 'application/json' : 'text/event-stream', 'x-request-id': 'req-stream-failure' }
-        })
-      }
-      return globalThis.fetch(input, init)
-    }
-    const service = await createService(createEnterpriseFetch(fetchImpl), entry => notes.push(entry))
-    const started = await service.startLogin(origin)
-    await completeBrowserLogin(origin, started.authorizationUrl)
-    await waitFor(() => service.snapshot().phase === 'connected' && service.snapshot().modelsAvailable === true)
-    const response = new FakeResponse()
-    const pending = service.proxyChat(chatPayload(), response as never, new AbortController().signal)
-    if (stage === 'model_request') await expect(pending).rejects.toMatchObject({ code: 'network_error', cause: original })
-    else if (stage === 'model_http_error') await pending
-    else await expect(pending).rejects.toBe(original)
-    const note = notes.find(entry => entry.event === 'model_request_failed')
-    expect(note?.diagnostic).toBeTypeOf('string')
-    const diagnostic = JSON.parse(note?.diagnostic ?? '{}')
-    expect(diagnostic).toMatchObject({ stage: stage === 'model_http_error' ? 'model_error_response' : stage, protocol: 'chat' })
-    if (stage === 'model_http_error') expect(diagnostic.error).toMatchObject({ code: 'upstream_error', message: 'provider failed' })
-    else expect(note?.diagnostic).toContain('ECONNRESET')
-    if (stage !== 'model_request') {
-      expect(String(diagnostic.status)).toBe(stage === 'model_stream_forward' ? '200' : '502')
-      expect(diagnostic.requestId).toBe('req-stream-failure')
-    } else expect(diagnostic.error.requestId).toBeTypeOf('string')
-    expect(note?.diagnostic).not.toMatch(/hidden-token|private-model-content|authorization/u)
-  })
-
   it('forwards raw SSE frames without leaking tokens', async () => {
     const platform = createMockEnterpriseServer({ port: 0 })
     const origin = await platform.listen()

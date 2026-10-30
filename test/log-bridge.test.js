@@ -3,7 +3,6 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as bridge from '../packages/dsh-desktop-log-bridge/index.js'
-import { logEnterpriseFailure } from '../packages/dsh-desktop-enterprise/error-diagnostics.js'
 import { patchPath } from './patch-path'
 
 const { BRIDGE_READY_LINE, bridgeLines, createLimitedWriter } = bridge
@@ -45,18 +44,6 @@ describe('desktop log bridge', () => {
     // The whole stack follows, every line prefixed; nothing at info level.
     expect(lines().every((line) => line.startsWith('[harness-log] '))).toBe(true)
     expect(lines().join('\n')).not.toContain('routine')
-  })
-
-  it('persists the redacted enterprise debug channel while ignoring unrelated debug output', async () => {
-    const { ctx, lines } = await bridged()
-    logEnterpriseFailure(ctx.logger, 'model.request', new TypeError('fetch failed', {
-      cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' })
-    }))
-    ctx.logger('enterprise-failure').debug('unstructured request body must stay hidden')
-    ctx.logger('other-plugin').debug('[enterprise-failure] %s', 'untrusted debug channel')
-    expect(lines()).toHaveLength(1)
-    expect(lines()[0]).toContain('[harness-log] debug enterprise-failure: [enterprise-failure]')
-    expect(lines()[0]).toContain('ECONNREFUSED')
   })
 
   it('recovers errors logged before it loaded, which are still in the ring', async () => {

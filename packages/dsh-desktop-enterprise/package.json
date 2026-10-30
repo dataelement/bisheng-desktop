@@ -13,10 +13,6 @@
     },
     "./client": "./client.js",
     "./contract": "./contract.js",
-    "./error-diagnostics": {
-      "types": "./error-diagnostics.d.ts",
-      "default": "./error-diagnostics.js"
-    },
     "./deep-link": {
       "types": "./deep-link.d.ts",
       "default": "./deep-link.js"

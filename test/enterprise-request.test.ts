@@ -1,21 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { requestEnterpriseJson, requestEnterpriseStream } from '../src/main/enterprise/enterprise-request'
+import { requestEnterpriseStream } from '../src/main/enterprise/enterprise-request'
 
 describe('enterprise stream conversation metadata', () => {
-  it.each(['stream', 'json'])('preserves transport cause and request ID for %s requests', async (kind) => {
-    const cause = Object.assign(new Error('socket closed'), { code: 'ECONNRESET' })
-    const original = new TypeError('fetch failed', { cause })
-    const fetchImpl = vi.fn(async (_input: string, _init?: RequestInit): Promise<Response> => { throw original })
-    const pending = kind === 'stream'
-      ? requestEnterpriseStream(fetchImpl, 'https://bisheng.example.com', '/api/v1/dsh/chat/completions', { body: {}, accessToken: 'test-token' })
-      : requestEnterpriseJson(fetchImpl, 'https://bisheng.example.com', '/api/v1/dsh/models')
-    await expect(pending).rejects.toMatchObject({
-      code: 'network_error', cause: original,
-      requestId: expect.any(String)
-    })
-    await expect(pending).rejects.toHaveProperty('requestId', new Headers(fetchImpl.mock.calls[0]?.[1]?.headers).get('x-request-id'))
-  })
-
   it.each(['/api/v1/dsh/chat/completions', '/api/v1/dsh/responses'])(
     'projects legacy attribution into the body for %s without changing model input', async (path) => {
       const messages = [{ role: 'user', content: 'hello' }]
