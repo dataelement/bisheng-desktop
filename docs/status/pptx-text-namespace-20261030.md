@@ -2,7 +2,7 @@
 
 ## 反馈与基线
 
-飞书缺陷记录 `reczz28TUpMpX0DB`：Windows x64、BISHENG 1.2.0-test4，导入三页模板及重新选择文件均报 `Imported paragraph serialization failed`。原文件在 PowerPoint 16.0.20527.20088 可以打开。
+用户反馈：Windows x64、BISHENG 1.2.0-test4，导入三页模板及重新选择文件均报 `Imported paragraph serialization failed`。原文件在 PowerPoint 16.0.20527.20088 可以打开。
 
 本次按用户指定的 `dataelement/bisheng-desktop:V1.2.0` 修复，起点 `e928c8c3bd5d2f188f17b7d93e0fbd7bc13eaf90`，分支 `codex/v120-pptx-text-namespace`，独立工作树 `bisheng-work-v120-pptx-text-namespace`。安装的 Harness 为 `0.2.1-rc.2`，Electron 为 `43.0.0`，使用该版本的锁文件。
 
