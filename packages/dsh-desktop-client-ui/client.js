@@ -466,11 +466,27 @@ window.__ModuleLoader__.load({
         start() {
           active = true
           const poll = async () => { if (!document.hidden) await sync(); if (active) timer = setTimeout(poll, 1500) }
-          const account = () => { void sync(true) }
-          const disposeNavigation = ctx.uiWorkspace.registerNavigationHandler((intent, workspaceId) => {
-            if (intent === 'new' && workspaceId === undefined && value.mode === 'chat') { void open('new'); return true }
-            select('work')
-          })
+const account = () => { void sync(true) }
+// Older workspace hosts omit this registration. Failing here used to skip
+// the enterprise menu sync, so More never received knowledge and the other pages.
+const hasNavigationHandler = typeof ctx.uiWorkspace.registerNavigationHandler === 'function'
+const disposeNavigation = hasNavigationHandler
+  ? ctx.uiWorkspace.registerNavigationHandler((intent, workspaceId) => {
+    if (intent === 'new' && workspaceId === undefined && value.mode === 'chat') { void open('new'); return true }
+    select('work')
+  })
+  : () => {}
+// This host never notifies session opens. A history click still replaces
+// the work session, so reveal that column when chat is covering it.
+const originalOpenSession = ctx.uiWorkspace.openSession
+const revealWorkSession = hasNavigationHandler || typeof originalOpenSession !== 'function'
+  ? null
+  : function (target, source) {
+    const result = originalOpenSession.call(this, target, source)
+    if (typeof target === 'string' && value.mode === 'chat') select('work')
+    return result
+  }
+if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
           const settings = (event) => publish({ settingsOpen: event.detail?.open === true, ...(event.detail?.open ? {} : { settingsSurface: undefined }) })
           const approvals = (event) => publish({ approvalsOpen: event.detail?.open === true })
           // A sidebar account dialog is drawn by the renderer, so the native view yields the region.
@@ -517,6 +533,7 @@ window.__ModuleLoader__.load({
             active = false; revision++; historyRequest++; clearTimeout(timer); unsubscribe(); unsubscribeSessions(); unsubscribeWork(); unsubscribeChat?.()
             window.removeEventListener('dsh-desktop:enterprise-account-changed', account)
             disposeNavigation()
+            if (revealWorkSession && ctx.uiWorkspace.openSession === revealWorkSession) ctx.uiWorkspace.openSession = originalOpenSession
             window.removeEventListener('dsh-desktop:settings-visibility', settings)
             window.removeEventListener('dsh-desktop:approvals-visibility', approvals)
             window.removeEventListener('dsh-desktop:account-dialog-visibility', accountDialog)
@@ -1097,7 +1114,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           .dshWorkKnowledgeFooter button{height:32px;padding:0 16px;border-radius:6px;font:inherit;white-space:nowrap}
           .dshWorkKnowledgeCancel{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary)}
           .dshWorkKnowledgeConfirm{background:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary-foreground);border:1px solid var(--dsw-alias-state-business-primary)}
-          .dshWorkKnowledgeConfirm:hover:not(:disabled){background:var(--dsw-alias-state-business-secondary)}
+          .dshWorkKnowledgeConfirm:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 88%,var(--dsw-alias-label-primary))}
           .dshWorkKnowledgeConfirm:disabled{opacity:.5}
           .dshWorkResourceError{padding:8px 12px;color:var(--dsw-alias-state-error-primary);font-size:12px}
           @media(max-width:1023px){.dshWorkKnowledgeDialog{width:min(400px,100%)}}
