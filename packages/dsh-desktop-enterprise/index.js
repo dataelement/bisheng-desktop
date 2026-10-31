@@ -76,11 +76,15 @@ function brokerConfig() {
   const capability = process.env.DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY
   // Consume the owner secret before any market plugin is imported. This is not a Node sandbox.
   delete process.env.DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY
-  if (!urlValue || !capability) return undefined
+  if (!urlValue || !capability) {
+    console.warn('[enterprise] broker configuration missing', { urlConfigured: Boolean(urlValue), capabilityConfigured: Boolean(capability) })
+    return undefined
+  }
   let url
   try {
     url = new URL(urlValue)
   } catch {
+    console.warn('[enterprise] broker URL is invalid')
     return undefined
   }
   if (
@@ -91,6 +95,7 @@ function brokerConfig() {
     || url.search
     || url.hash
   ) {
+    console.warn('[enterprise] broker URL must be an HTTP loopback origin without credentials, query or hash')
     return undefined
   }
   return { origin: url.origin, capability }
@@ -150,6 +155,7 @@ async function brokerChat(broker, body, signal, attribution, connectionKey) {
     })
   } catch (error) {
     if (signal?.aborted) throw error
+    console.warn('[enterprise] broker model request failed', error)
     unavailable()
   }
   return response
@@ -169,8 +175,9 @@ async function requestBrokerJson(broker, path, body, signal) {
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) })
     })
-  } catch {
+  } catch (error) {
     signal?.throwIfAborted()
+    console.warn('[enterprise] broker request failed', { path }, error)
     unavailable()
   }
   const payload = await response.json().catch(() => ({}))
