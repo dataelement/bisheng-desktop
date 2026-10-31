@@ -405,18 +405,30 @@ window.__ModuleLoader__.load({
         try { await window.dshEnterpriseChat.open(id); if (active && epoch === value.epoch) { publish({ conversationId: id }); void refreshHistory() } }
         catch { if (active && epoch === value.epoch) publish({ phase: 'error' }) }
       }
-      const sync = async () => {
+      // Account notifications also follow ordinary enterprise reads. The host epoch,
+      // shared by history responses and state updates, owns the in-memory history.
+      const applyState = (next, refresh = false) => {
+        const identityChanged = next.epoch !== value.epoch
+        const signedIn = next.connected && !value.connected
+        const conversationChanged = next.conversationId !== value.conversationId
+        const clearHistory = identityChanged || !next.connected
+        if (clearHistory) { historyRequest++; lastHistory = 0 }
+        publish({
+          ...next,
+          ...(clearHistory ? { items: [], page: 0, hasMore: false, historyPhase: 'idle' } : {}),
+          signInPromptOpen: next.connected ? false : value.signInPromptOpen,
+          pageId: next.navigation?.entries.find(entry => entry.active)?.id,
+          mode: next.connected ? signedIn ? 'chat' : value.mode : 'work'
+        })
+        if (signedIn) window.dispatchEvent(new CustomEvent('dsh-desktop:close-settings'))
+        if (next.connected && next.phase === 'ready' && (refresh || identityChanged || signedIn || conversationChanged || Date.now() - lastHistory > 30000)) void refreshHistory()
+      }
+      const sync = async (refresh = false) => {
         const request = ++revision
         try {
           const next = await window.dshEnterpriseChat?.state()
           if (!active || request !== revision || !next) return
-          const identityChanged = next.epoch !== value.epoch
-          const signedIn = next.connected && !value.connected
-          const conversationChanged = next.conversationId !== value.conversationId
-          if (identityChanged || !next.connected) { historyRequest++; publish({ items: [], page: 0, hasMore: false, historyPhase: 'idle' }); lastHistory = 0 }
-          publish({ ...next, signInPromptOpen: next.connected ? false : value.signInPromptOpen, pageId: next.navigation?.entries.find(entry => entry.active)?.id, mode: next.connected ? signedIn ? 'chat' : value.mode : 'work' })
-          if (signedIn) window.dispatchEvent(new CustomEvent('dsh-desktop:close-settings'))
-          if (next.connected && next.phase === 'ready' && (conversationChanged || Date.now() - lastHistory > 30000)) void refreshHistory()
+          applyState(next, refresh === true)
         } catch { if (active && request === revision) publish({ phase: 'error' }) }
       }
       return {
@@ -454,27 +466,27 @@ window.__ModuleLoader__.load({
         start() {
           active = true
           const poll = async () => { if (!document.hidden) await sync(); if (active) timer = setTimeout(poll, 1500) }
-          const account = () => { historyRequest++; publish({ items: [], page: 0, historyPhase: 'idle' }); lastHistory = 0; void sync() }
-          // Older workspace hosts omit this registration. Failing here used to skip
-          // the enterprise menu sync, so More never received knowledge and the other pages.
-          const hasNavigationHandler = typeof ctx.uiWorkspace.registerNavigationHandler === 'function'
-          const disposeNavigation = hasNavigationHandler
-            ? ctx.uiWorkspace.registerNavigationHandler((intent, workspaceId) => {
-              if (intent === 'new' && workspaceId === undefined && value.mode === 'chat') { void open('new'); return true }
-              select('work')
-            })
-            : () => {}
-          // This host never notifies session opens. A history click still replaces
-          // the work session, so reveal that column when chat is covering it.
-          const originalOpenSession = ctx.uiWorkspace.openSession
-          const revealWorkSession = hasNavigationHandler || typeof originalOpenSession !== 'function'
-            ? null
-            : function (target, source) {
-              const result = originalOpenSession.call(this, target, source)
-              if (typeof target === 'string' && value.mode === 'chat') select('work')
-              return result
-            }
-          if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
+const account = () => { void sync(true) }
+// Older workspace hosts omit this registration. Failing here used to skip
+// the enterprise menu sync, so More never received knowledge and the other pages.
+const hasNavigationHandler = typeof ctx.uiWorkspace.registerNavigationHandler === 'function'
+const disposeNavigation = hasNavigationHandler
+  ? ctx.uiWorkspace.registerNavigationHandler((intent, workspaceId) => {
+    if (intent === 'new' && workspaceId === undefined && value.mode === 'chat') { void open('new'); return true }
+    select('work')
+  })
+  : () => {}
+// This host never notifies session opens. A history click still replaces
+// the work session, so reveal that column when chat is covering it.
+const originalOpenSession = ctx.uiWorkspace.openSession
+const revealWorkSession = hasNavigationHandler || typeof originalOpenSession !== 'function'
+  ? null
+  : function (target, source) {
+    const result = originalOpenSession.call(this, target, source)
+    if (typeof target === 'string' && value.mode === 'chat') select('work')
+    return result
+  }
+if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
           const settings = (event) => publish({ settingsOpen: event.detail?.open === true, ...(event.detail?.open ? {} : { settingsSurface: undefined }) })
           const approvals = (event) => publish({ approvalsOpen: event.detail?.open === true })
           // A sidebar account dialog is drawn by the renderer, so the native view yields the region.
@@ -507,7 +519,7 @@ window.__ModuleLoader__.load({
           const unsubscribeSessions = ctx.sessions.list.subscribe(workState)
           const unsubscribeChat = window.dshEnterpriseChat?.subscribe?.((next) => {
             revision++
-            publish({ ...next, signInPromptOpen: next.connected ? false : value.signInPromptOpen, pageId: next.navigation?.entries.find(entry => entry.active)?.id })
+            applyState(next)
           })
           workState(); panel()
           window.addEventListener('dsh-desktop:enterprise-account-changed', account)
@@ -562,6 +574,7 @@ window.__ModuleLoader__.load({
     /** Cloud identities stay namespaced; project ownership is projected by Harness. */
     function SharedCollection({ projects, items, mode, query, archivedOnly, navigation, t }) {
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
+      const initialHistoryLoading = state.historyPhase === 'loading' && state.page === 0
       const search = query.trim().toLocaleLowerCase()
       const local = items.map(item => ({ ...item, key: `work:${item.id}`, kind: 'work' }))
       const cloud = archivedOnly ? [] : state.items.filter(item => (item.title || t('newChat')).toLocaleLowerCase().includes(search))
@@ -576,8 +589,8 @@ window.__ModuleLoader__.load({
             ? React.createElement('div', { key: item.key, 'data-history-kind': 'work' }, item.render(state.mode === 'work'))
             : React.createElement(CloudHistoryRow, { key: item.key, item, selected: state.mode === 'chat' && !state.pageId && state.conversationId === item.id, navigation, t })),
           state.historyPhase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => navigation.refreshHistory() }, t('historyError')),
-          state.historyPhase === 'loading' && React.createElement('div', { className: 'dshHistoryNotice', role: 'status' }, t('historyLoading')),
-          rows.length === 0 && state.historyPhase !== 'loading' && React.createElement('div', { className: 'dshHistoryNotice' }, t(search ? 'recentSearchEmpty' : 'recentEmpty')),
+          initialHistoryLoading && React.createElement('div', { className: 'dshHistoryNotice', role: 'status' }, t('historyLoading')),
+          rows.length === 0 && !initialHistoryLoading && React.createElement('div', { className: 'dshHistoryNotice' }, t(search ? 'recentSearchEmpty' : 'recentEmpty')),
           state.hasMore && !archivedOnly && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: state.historyPhase === 'loading', onClick: () => navigation.refreshHistory(true) }, t('more'))))
     }
     function historyTime(date, t) {
