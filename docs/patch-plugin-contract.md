@@ -34,7 +34,7 @@ Harness 0.2.0-rc.2 的 `dsh-client-ui-input-trigger` 将 pointer hover 与 keybo
 
 ### 嵌入页面的窗口级模态展示（2026-10-28）
 
-页面 body portal 的模态状态由 presentation preload 汇总，经当前账号、主 frame、origin 与 pathname 校验传给 `EnterpriseChatView`。弹窗期间子视图覆盖窗口，`#root` 保留内容区坐标，透明背景让原生侧栏透出相同蒙版。关闭最后一个 portal 后恢复内容区；多层弹窗及退场动画共用该生命周期。设置内容页继续采用宿主设置容器范围。
+页面 body portal 的模态状态由 presentation preload 汇总，经当前账号、主 frame、origin 与 pathname 校验传给 `EnterpriseChatView`。弹窗期间子视图覆盖窗口，`#root` 保留内容区坐标，透明背景保留原生侧栏与页面原色，网页弹窗组件统一决定展示样式。关闭最后一个 portal 后恢复内容区；多层弹窗及退场动画共用该生命周期。设置内容页继续采用宿主设置容器范围。
 
 这是原生窗口展示接缝：Harness slot 位于另一个 renderer。preload 只观察 portal 与 root 的背景隔离属性，按动画帧汇总变化；隐藏时暂停，卸载时释放。语义为普通浮层的 popover 保持原范围。知识空间旧展示入口触发同一个汇总状态刷新。验证入口为 `test/enterprise-modal.test.mjs`、`test/enterprise-chat-view.test.ts` 和跨平台 `scripts/verify-enterprise-modal.mjs`。
 
@@ -374,3 +374,8 @@ existing ownership. Source changes stay in the host plugin and use the establish
 IPC. Run `node scripts/verify-host-dialog.mjs` for the real Harness components,
 styles and Electron WebContentsView fixture; session deletion uses a fixture service.
 Windows installed-package and real-account acceptance remain separate checks.
+### Work 添加菜单的可见边界（Harness 0.2.1-rc.2，2026-10-30）
+
+菜单本身拥有定位与可见高度，读取当前定位锚点、滚动及裁切祖先的交集，按行高调整设计高度。空间充足时沿用输入框上方位置；紧凑窗口中在内容区内展开完整菜单行。ResizeObserver 与窗口/滚动事件同步更新布局，关闭时清理。此逻辑直接替换 input-trigger 组件的固定顶部假设，通过现有版本兼容文件分发。
+
+行为覆盖在 `test/input-trigger-bounds.test.mjs` 和 `test/input-trigger-scroll.test.mjs`；真实 Electron 入口为 `node scripts/verify-composer-menu-bounds.mjs`。上游菜单提供同等动态裁切布局后移除此兼容段并保留回归，验收证据见 [本轮记录](status/composer-menu-bounds-20261030.md)。
