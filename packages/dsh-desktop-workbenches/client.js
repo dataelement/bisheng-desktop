@@ -2285,7 +2285,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           h('div', { className: 'dshWbTabs' }, h('div', { role: 'tablist', 'aria-label': tr('工作台集合') },
             (publicMarket || enterpriseAsMarket) && h(Button, { id: 'dsh-workbench-market-tab', role: 'tab', tabIndex: visibleTab === 'market' ? 0 : -1, 'aria-selected': visibleTab === 'market', 'aria-controls': 'dsh-workbench-market-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('market') }, tr('工作台市场')),
             publicMarket && h(Button, { id: 'dsh-workbench-favorites-tab', role: 'tab', tabIndex: visibleTab === 'favorites' ? 0 : -1, 'aria-selected': visibleTab === 'favorites', 'aria-controls': 'dsh-workbench-favorites-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('favorites') }, `${tr('我的收藏')} (${favorites.length})`),
-            enterpriseVisible && publicMarket && h(Button, { id: 'dsh-workbench-enterprise-tab', role: 'tab', tabIndex: visibleTab === 'enterprise' ? 0 : -1, 'aria-selected': visibleTab === 'enterprise', 'aria-controls': 'dsh-workbench-enterprise-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('enterprise') }, '来自企业'),
+            enterpriseVisible && publicMarket && h(Button, { id: 'dsh-workbench-enterprise-tab', role: 'tab', tabIndex: visibleTab === 'enterprise' ? 0 : -1, 'aria-selected': visibleTab === 'enterprise', 'aria-controls': 'dsh-workbench-enterprise-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('enterprise') }, service.ctx.locale.bind('workbench.enterprise')('tab')),
             h(Button, { id: 'dsh-workbench-mine-tab', role: 'tab', tabIndex: visibleTab === 'mine' ? 0 : -1, 'aria-selected': visibleTab === 'mine', 'aria-controls': 'dsh-workbench-mine-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('mine') }, `${tr('已安装')} (${installedEntries.length})`))),
           h('div', { className: 'dshWbBrowseTools' },
             h('span', { className: 'dshWbRefreshHint' }, h(Button, { className: 'dshWbBtn dshWbRefresh', 'aria-describedby': 'dsh-workbench-refresh-tooltip', 'aria-label': checkingUpdates ? tr('正在检查更新') : tab === 'mine' ? tr('检查更新') : tr('刷新目录'), 'aria-busy': catalogRefreshing || checkingUpdates, disabled: catalogRefreshing || checkingUpdates, onClick: () => service.run(visibleTab === 'mine' ? service.checkUpdates() : showingEnterprise ? service.refreshEnterpriseCatalog() : service.refreshCatalog()) }, h(MarketIcon, { name: 'refresh', size: 17 })), h('span', { id: 'dsh-workbench-refresh-tooltip', className: 'dshWbControlTooltip', role: 'tooltip' }, checkingUpdates ? tr('正在检查更新') : tab === 'mine' ? tr('检查更新') : tr('刷新目录'))),
@@ -2715,11 +2715,13 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
       }, 'workbenches: enterprise capability')
       ctx.effect(() => ctx.locale?.register?.('workbench.enterprise', {
         zh: {
+          tab: '来自企业',
           loading: '正在读取企业工作台…', empty: '企业还没有可展示的工作台', unavailable: '企业工作台服务暂不可用',
           failed: '暂时无法读取企业工作台', verify: '核对原包', verified: '原包完整性核对通过。',
           install: '安装', installing: '正在安装…', installed: '已安装', restart: '重启后生效'
         },
         en: {
+          tab: 'From enterprise',
           loading: 'Loading enterprise workbenches…', empty: 'Your enterprise has not published a workbench yet.', unavailable: 'The enterprise workbench service is unavailable.',
           failed: 'Enterprise workbenches could not be loaded.', verify: 'Verify package', verified: 'The package integrity check passed.',
           install: 'Install', installing: 'Installing…', installed: 'Installed', restart: 'Restart to use'
