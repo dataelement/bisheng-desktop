@@ -358,6 +358,22 @@ Notification audit records go to the existing `harness.log` with `[desktop-notif
 
 Regression coverage: `test/work-completion-notifications.test.mjs` exercises the installed projection registry and a real AgentLoop with a fixture model transport; `test/desktop-notification.test.ts` covers the native policy and toast lifecycle at the Electron API boundary. `node scripts/verify-work-notifications.mjs` launches an isolated real Electron window with context isolation and sandbox enabled, exercises the actual preload/main IPC, icon decoding, file audit and click/session routing, and replaces only the OS toast object. Windows installed-package NOTICE-001/002/003 testing covers native sender identity, icon, visible toast, focus and restoration.
 
+### Host confirmation dialogs and native Chat (2026-10-31)
+
+The desktop content owner observes visible modal semantics in host body portals.
+Harness Modal owns dialog content, locale, focus and dismissal; DesktopModes owns
+native Chat presentation. A visible modal makes the existing present channel hide
+the WebContentsView. The final dismissal recomputes presentation from the current
+mode and surface state, preserving conversation and Work state.
+
+The observer reads existing portals on mount, tracks their visibility and modal
+attributes, and releases all subscriptions on unmount. It observes portal subtrees
+and body child changes; streaming conversation mutations inside the app root remain
+outside this subscription. Root inert and the About shadow-DOM signal keep their
+existing ownership. Source changes stay in the host plugin and use the established
+IPC. Run `node scripts/verify-host-dialog.mjs` for the real Harness components,
+styles and Electron WebContentsView fixture; session deletion uses a fixture service.
+Windows installed-package and real-account acceptance remain separate checks.
 ### Work 添加菜单的可见边界（Harness 0.2.1-rc.2，2026-10-30）
 
 菜单本身拥有定位与可见高度，读取当前定位锚点、滚动及裁切祖先的交集，按行高调整设计高度。空间充足时沿用输入框上方位置；紧凑窗口中在内容区内展开完整菜单行。ResizeObserver 与窗口/滚动事件同步更新布局，关闭时清理。此逻辑直接替换 input-trigger 组件的固定顶部假设，通过现有版本兼容文件分发。
