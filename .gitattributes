@@ -4,3 +4,9 @@ patches/*.patch whitespace=-space-before-tab
 
 # Preserve pinned third-party inputs byte-for-byte, including upstream whitespace.
 packages/ppt-runtime/upstream/** -whitespace
+
+# Office template text is hashed and packaged as LF. Git for Windows enables
+# autocrlf, which would rewrite OFL.txt and fail the notice-font license check.
+packages/dsh-desktop-office/sources/**/*.txt text eol=lf
+packages/dsh-desktop-office/sources/**/*.md text eol=lf
+packages/dsh-desktop-office/sources/**/*.json text eol=lf
