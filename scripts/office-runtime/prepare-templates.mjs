@@ -80,6 +80,21 @@ async function files(root, prefix = '') {
   return result
 }
 
+/**
+ * Git for Windows checks text out as CRLF. The notice OFL is pinned to the LF
+ * bytes, so the staged copy is canonicalized before it is hashed or packaged.
+ */
+export async function canonicalizeOfficeText(root) {
+  for (const name of await files(root)) {
+    if (!name.endsWith('.txt') && !name.endsWith('.md') && !name.endsWith('.json')) continue
+    const path = join(root, name)
+    const data = await readFile(path)
+    const text = data.toString('latin1')
+    const canonical = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    if (canonical !== text) await writeFile(path, canonical, 'latin1')
+  }
+}
+
 /** Generate all previews with the same installed Kit used by Office tasks. */
 export async function prepareOfficeTemplates({ runtime = join(project, '.build/office-runtime'), cache = join(project, '.build/office-template-cache') } = {}) {
   const manifest = JSON.parse(await readFile(join(runtime, 'primary-runtime/runtime.json'), 'utf8'))
@@ -103,6 +118,7 @@ export async function prepareOfficeTemplates({ runtime = join(project, '.build/o
     try {
       const legacy = JSON.parse(await readFile(join(sources, 'catalog.json'), 'utf8'))
       for (const item of legacy) await cp(join(sources, item.source), join(staging, item.id), { recursive: true })
+      await canonicalizeOfficeText(staging)
       const ordered = [legacy.find(x => x.id === 'government-notice'),
         ...legacy.filter(x => x.mode === 'word' && x.id !== 'government-notice'), ...legacy.filter(x => x.mode === 'excel')]
       const catalog = []
