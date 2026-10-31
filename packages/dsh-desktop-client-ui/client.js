@@ -1084,7 +1084,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           .dshWorkKnowledgeFooter button{height:32px;padding:0 16px;border-radius:6px;font:inherit;white-space:nowrap}
           .dshWorkKnowledgeCancel{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary)}
           .dshWorkKnowledgeConfirm{background:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary-foreground);border:1px solid var(--dsw-alias-state-business-primary)}
-          .dshWorkKnowledgeConfirm:hover:not(:disabled){background:var(--dsw-alias-state-business-secondary)}
+          .dshWorkKnowledgeConfirm:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 88%,var(--dsw-alias-label-primary))}
           .dshWorkKnowledgeConfirm:disabled{opacity:.5}
           .dshWorkResourceError{padding:8px 12px;color:var(--dsw-alias-state-error-primary);font-size:12px}
           @media(max-width:1023px){.dshWorkKnowledgeDialog{width:min(400px,100%)}}
