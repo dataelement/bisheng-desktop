@@ -1165,7 +1165,7 @@ async function showSplash(): Promise<void> {
   const navigationVersion = ++mainWindowNavigationVersion
   window.webContents.stop()
   const loaded = await loadDesktopResource(window, desktopResourcePath('splash.html'), {
-    query: { theme: nativeTheme.shouldUseDarkColors ? 'dark' : 'light' }
+    query: { theme: nativeTheme.shouldUseDarkColors ? 'dark' : 'light', locale: harnessLocale() }
   })
   if (!loaded) return
   if (quitting || gpuFallbackRelaunching || window.isDestroyed() || navigationVersion !== mainWindowNavigationVersion) return

@@ -1,3 +1,10 @@
+## 2026-11-02 — 安全模式重启 Loading 页跟随 Desktop 语言
+
+- Loading 页现在通过主进程接收当前 Desktop 语言，按同一语言呈现标题、说明和 HTML lang；首次启动沿用宿主系统语言回退规则。
+- 修复前新增 8 项回归中 6 项失败；修复后专项 73 项、类型检查、生产构建和 macOS Electron 页面 4 组通过。完整串行回归 326 个文件 / 3,223 项通过，4 个文件 / 5 项按条件跳过。
+- 基线 `V1.2.0@09c22fe34e5c89193c15387685810fbaa45e73fc`，Harness `0.2.1-rc.2`，Electron `43.0.0`。安全模式 Profile 内的语言继承由配套 PR #118 处理。
+- Windows 安装包及实机安全模式重启验收待执行，详见 [验证记录](status/splash-locale-20261102.md)。
+
 ## 2026-10-31 — 删除会话确认弹窗与原生 Chat 联动
 
 - 根因：Harness Modal 使用 body portal，宿主此前只识别 root inert 和 About 标记，原生 Chat 继续覆盖确认弹窗。桌面内容组件现在订阅可见的宿主模态弹窗；所有弹窗关闭后按当前 Chat / Work / 设置状态恢复视图。
