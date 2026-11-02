@@ -1,3 +1,9 @@
+## 2026-11-02 — 安全模式重启 Loading 页跟随 Desktop 语言
+
+- Loading 页现在通过主进程接收当前 Desktop 语言，按同一语言呈现标题、说明和 HTML lang；首次启动沿用宿主系统语言回退规则。
+- 修复前新增 8 项回归中 6 项失败；修复后专项 73 项、类型检查、生产构建和 macOS Electron 页面 4 组通过。完整串行回归 326 个文件 / 3,223 项通过，4 个文件 / 5 项按条件跳过。
+- 基线 `V1.2.0@09c22fe34e5c89193c15387685810fbaa45e73fc`，Harness `0.2.1-rc.2`，Electron `43.0.0`。安全模式 Profile 内的语言继承由配套 PR #118 处理。
+- Windows 安装包及实机安全模式重启验收待执行，详见 [验证记录](status/splash-locale-20261102.md)。
 ## 2026-11-02 — 会话搜索统一空态归属
 
 - 目标 `V1.2.0@09c22fe34e5c89193c15387685810fbaa45e73fc`，分支 `codex/v120-session-search-empty`，Harness `0.2.1-rc.2`。独立目录 `bisheng-session-search-empty-20261102`。
