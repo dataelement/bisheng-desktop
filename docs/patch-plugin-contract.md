@@ -1,5 +1,9 @@
 # Patch 与 Plugin 规范
 
+### PPT 首条消息模板卡片（Harness 0.2.1-rc.2）
+
+`dsh-client-ui-chat` 的 `conversation.chat.userMessageFooter` 补丁从 session 快照读取历史分页状态，从 chat 快照读取消息节点；历史加载完整后才把 PPT 插件卡片挂到首条用户消息或发送回显。上游提供等价的首条消息 footer slot 后移除该补丁。行为回归见 `test/ppt-opening-footer.test.mjs`。
+
 适用于 DSH Desktop 对 Harness 的宿主定制，以及为这些定制维护的第三方补丁。本文是跨目录规则的唯一维护位置；包加载和补丁重放的具体要求分别见 `packages/AGENTS.md`、`patches/AGENTS.md`。preload 能否直接改页面 DOM 的判定见 `src/preload/AGENTS.md`，不在本文重复。
 
 ### Chat 登录前说明（2026-10-26）
