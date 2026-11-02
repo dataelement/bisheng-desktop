@@ -1,10 +1,11 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EnterpriseChatView } from '../src/main/enterprise/chat-view'
+import { EnterprisePlatformError } from '../src/main/enterprise/enterprise-request'
 import { parseChatPresentation } from '../src/shared/enterprise-chat-view'
 import { parseWebSession } from '../src/main/enterprise/web-session'
 
-const fake = vi.hoisted(() => ({ views: [] as any[], sessions: [] as any[] }))
+const fake = vi.hoisted(() => ({ views: [] as any[], sessions: [] as any[], hangLoads: false, loadFailures: 0, loadErrorCode: 'ERR_CONNECTION_RESET' }))
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events')
   return {
@@ -21,14 +22,21 @@ vi.mock('electron', async () => {
       setBackgroundColor = vi.fn()
       constructor(public options: any) {
         let url = ''
-        this.webContents = Object.assign(new EventEmitter(), { id: fake.views.length + 100, session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), focus: vi.fn(), send: vi.fn(), mainFrame: {}, getURL: () => url, getZoomFactor: () => 1, close: vi.fn(), executeJavaScript: vi.fn(async () => {}), insertCSS: vi.fn(async () => 'key'), loadURL: vi.fn(async (next) => { url = next; this.webContents.emit('did-finish-load') }) })
+        this.webContents = Object.assign(new EventEmitter(), { id: fake.views.length + 100, session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), focus: vi.fn(), send: vi.fn(), mainFrame: {}, getURL: () => url, getZoomFactor: () => 1, close: vi.fn(), executeJavaScript: vi.fn(async () => {}), insertCSS: vi.fn(async () => 'key'), loadURL: vi.fn(async (next: string) => {
+          if (fake.hangLoads) return await new Promise<void>(() => {})
+          if (fake.loadFailures > 0) { fake.loadFailures -= 1; throw Object.assign(new Error('load failed'), { code: fake.loadErrorCode }) }
+          url = next
+          this.webContents.emit('did-finish-load')
+        }) })
         fake.views.push(this)
       }
     }
   }
 })
 
-afterEach(() => { fake.views.length = 0; fake.sessions.length = 0 })
+afterEach(() => { fake.views.length = 0; fake.sessions.length = 0; fake.hangLoads = false; fake.loadFailures = 0; fake.loadErrorCode = 'ERR_CONNECTION_RESET' })
+const networkError = () => new EnterprisePlatformError('Could not reach the BiSheng platform.', { code: 'network_error' })
+const elapse = async (ms: number) => { await vi.advanceTimersByTimeAsync(ms); await flush() }
 const presentation = { visible: true, theme: 'dark', bounds: { x: 0, y: 56, width: 1100, height: 700 } }
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve() }
 function fixture() {
@@ -348,23 +356,30 @@ it('turns a stalled module navigation into a rejected open instead of a document
   } finally { f.host.dispose(); vi.useRealTimers() }
 })
 
-it('fails the session exchange when the first document load stalls, so Reconnect becomes available', async () => {
+it('retries a stalled first document load and exposes Reconnect only after the attempts are exhausted', async () => {
   vi.useFakeTimers()
   const f = fixture()
   const note = vi.fn()
   const host = new EnterpriseChatView(f.enterprise as any, note)
+  fake.hangLoads = true
   try {
     host.present(f.owner, presentation)
-    // The view exists after the web-session exchange resolves; its first document load then hangs.
-    await Promise.resolve()
-    const view = fake.views[0]
-    view.webContents.loadURL.mockImplementation(() => new Promise<void>(() => {}))
     await flush()
-    await vi.advanceTimersByTimeAsync(45_000)
-    await flush()
+    expect(host.snapshot().phase).toBe('loading')
+    await elapse(45_000)
+    expect(host.snapshot().phase).toBe('loading')
+    expect(note).toHaveBeenCalledWith('[enterprise-chat] session_retry stage=load attempt=1 status=timeout')
+    expect(fake.views[0].webContents.close).toHaveBeenCalled()
+    await elapse(2_400)
+    await elapse(45_000)
+    await elapse(6_000)
+    await elapse(45_000)
+    await elapse(12_000)
+    await elapse(45_000)
     expect(host.snapshot().phase).toBe('error')
-    expect(note).toHaveBeenCalledWith('[enterprise-chat] session_failed status=timeout')
-  } finally { host.dispose(); vi.useRealTimers() }
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(4)
+    expect(note).toHaveBeenCalledWith('[enterprise-chat] session_failed stage=load status=timeout')
+  } finally { host.dispose(); f.host.dispose(); vi.useRealTimers() }
 })
 
 it('opens content-only settings, waits for the current main frame and restores the previous page', async () => {
@@ -635,5 +650,224 @@ it('discards delayed 401 responses after logout before renewing a session', asyn
     finishers.forEach(finish => finish(new Response('expired', { status: 401 })))
     await rejected
     expect(f.enterprise.webSession).toHaveBeenCalledTimes(1)
+  } finally { f.host.dispose() }
+})
+
+it('keeps a ready workspace across a transient renewal and ignores publishes until the backoff', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0]
+    const loads = view.webContents.loadURL.mock.calls.length
+    f.enterprise.webSession.mockRejectedValueOnce(networkError())
+    await elapse(270_000)
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(2)
+    expect(f.host.snapshot().phase).toBe('ready')
+    expect(view.webContents.close).not.toHaveBeenCalled()
+    expect(view.webContents.loadURL).toHaveBeenCalledTimes(loads)
+    f.change({ connected: true, connectionKey: 'tenant-a' })
+    f.host.present(f.owner, presentation)
+    await elapse(1_599)
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(2)
+    await elapse(801)
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(3)
+    expect(f.host.snapshot().phase).toBe('ready')
+    expect(fake.sessions[0].cookies.set).toHaveBeenCalledTimes(2)
+    expect(view.webContents.loadURL).toHaveBeenCalledTimes(loads)
+    const renewed = f.enterprise.webSession.mock.calls.length
+    await elapse(36_000)
+    expect(f.enterprise.webSession.mock.calls.length).toBe(renewed)
+  } finally { f.host.dispose(); vi.useRealTimers() }
+})
+
+it('spaces later renewal failures at 2s, 5s, 10s and then 30s until the platform returns', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    f.enterprise.webSession.mockRejectedValue(networkError())
+    await elapse(270_000)
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(2)
+    for (const gap of [2_400, 6_000, 12_000, 36_000, 36_000]) {
+      const before = f.enterprise.webSession.mock.calls.length
+      await elapse(gap)
+      expect(f.enterprise.webSession.mock.calls.length).toBe(before + 1)
+      expect(f.host.snapshot().phase).toBe('ready')
+      expect(fake.views[0].webContents.close).not.toHaveBeenCalled()
+    }
+    f.enterprise.webSession.mockImplementation(async () => ({ base: 'https://enterprise.example', cookie: 'renewed-cookie', cookieName: 'bs_credits_3007', connectionKey: 'tenant-a', expiresAt: Date.now() + 300_000 }))
+    await elapse(36_000)
+    expect(f.host.snapshot().phase).toBe('ready')
+    expect(fake.views).toHaveLength(1)
+    expect(fake.sessions[0].cookies.set).toHaveBeenLastCalledWith(expect.objectContaining({ value: 'renewed-cookie' }))
+  } finally { f.host.dispose(); vi.useRealTimers() }
+})
+
+it('reloads the workspace when a renewal lands after the document left it', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    f.enterprise.webSession.mockRejectedValueOnce(networkError())
+    await elapse(270_000)
+    const view = fake.views[0]
+    await view.webContents.loadURL('https://enterprise.example/login')
+    expect(f.host.snapshot().phase).toBe('loading')
+    await elapse(2_400)
+    expect(f.host.snapshot().phase).toBe('ready')
+    expect(view.webContents.loadURL).toHaveBeenLastCalledWith('https://enterprise.example/workspace/?embed=dsh&dshTheme=dark')
+    expect(view.webContents.close).not.toHaveBeenCalled()
+  } finally { f.host.dispose(); vi.useRealTimers() }
+})
+
+it('drops an open workspace immediately when renewal reports an identity failure', async () => {
+  vi.useFakeTimers()
+  try {
+    for (const failure of [new Error('Enterprise account changed.'), Object.assign(new Error('Enterprise models are unavailable.'), { status: 409 })]) {
+      const f = fixture()
+      try {
+        f.host.present(f.owner, presentation)
+        await flush()
+        const view = fake.views.at(-1)
+        f.enterprise.webSession.mockRejectedValueOnce(failure)
+        await elapse(270_000)
+        expect(f.host.snapshot().phase).toBe('error')
+        expect(view.webContents.close).toHaveBeenCalled()
+        const calls = f.enterprise.webSession.mock.calls.length
+        await elapse(10_000)
+        expect(f.enterprise.webSession.mock.calls.length).toBe(calls)
+      } finally { f.host.dispose() }
+    }
+  } finally { vi.useRealTimers() }
+})
+
+it('cancels renewal backoff on manual reconnect, logout, account switch and dispose', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    f.enterprise.webSession.mockRejectedValueOnce(networkError())
+    await elapse(270_000)
+    f.host.retry()
+    await flush()
+    expect(f.host.snapshot().phase).toBe('ready')
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(3)
+
+    f.enterprise.webSession.mockRejectedValueOnce(networkError())
+    await elapse(270_000)
+    const scheduled = f.enterprise.webSession.mock.calls.length
+    f.change({ connected: false, connectionKey: 'tenant-a' })
+    await elapse(3_000)
+    expect(f.enterprise.webSession.mock.calls.length).toBe(scheduled)
+  } finally { f.host.dispose(); vi.useRealTimers() }
+
+  vi.useFakeTimers()
+  const switched = fixture()
+  try {
+    switched.host.present(switched.owner, presentation)
+    await flush()
+    switched.enterprise.webSession.mockRejectedValueOnce(networkError())
+    await elapse(270_000)
+    switched.change({ connected: true, connectionKey: 'tenant-b' })
+    await flush()
+    const calls = switched.enterprise.webSession.mock.calls.length
+    await elapse(2_400)
+    expect(switched.enterprise.webSession.mock.calls.length).toBe(calls)
+    expect(switched.enterprise.webSession).toHaveBeenLastCalledWith('tenant-b')
+  } finally { switched.host.dispose(); vi.useRealTimers() }
+
+  vi.useFakeTimers()
+  const disposed = fixture()
+  try {
+    disposed.host.present(disposed.owner, presentation)
+    await flush()
+    disposed.enterprise.webSession.mockRejectedValueOnce(networkError())
+    await elapse(270_000)
+    const calls = disposed.enterprise.webSession.mock.calls.length
+    disposed.host.dispose()
+    await elapse(3_000)
+    expect(disposed.enterprise.webSession.mock.calls.length).toBe(calls)
+  } finally { vi.useRealTimers() }
+})
+
+it('retries the first connection in the background and then shows Chat', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  try {
+    f.enterprise.webSession.mockRejectedValueOnce(networkError())
+    f.host.present(f.owner, presentation)
+    await flush()
+    expect(f.host.snapshot().phase).toBe('loading')
+    expect(fake.views).toHaveLength(0)
+    f.host.present(f.owner, presentation)
+    f.change({ connected: true, connectionKey: 'tenant-a' })
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(1)
+    await elapse(2_400)
+    expect(f.host.snapshot().phase).toBe('ready')
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(2)
+  } finally { f.host.dispose(); vi.useRealTimers() }
+})
+
+it('shows the error page when the first connection keeps failing', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  try {
+    f.enterprise.webSession.mockRejectedValue(networkError())
+    f.host.present(f.owner, presentation)
+    await flush()
+    expect(f.host.snapshot().phase).toBe('loading')
+    await elapse(2_400)
+    await elapse(6_000)
+    await elapse(12_000)
+    expect(f.host.snapshot().phase).toBe('error')
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(4)
+    expect(f.owner.webContents.send).toHaveBeenCalledWith('enterprise-chat:changed', expect.objectContaining({ phase: 'error' }))
+  } finally { f.host.dispose(); vi.useRealTimers() }
+})
+
+it('discards a half-initialized view and opens a new one on the next attempt', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  fake.loadFailures = 1
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    expect(f.host.snapshot().phase).toBe('loading')
+    expect(fake.views[0].webContents.close).toHaveBeenCalled()
+    await elapse(2_400)
+    expect(fake.views).toHaveLength(2)
+    expect(f.host.snapshot().phase).toBe('ready')
+    expect(fake.views[1].webContents.close).not.toHaveBeenCalled()
+  } finally { f.host.dispose(); vi.useRealTimers() }
+})
+
+it('treats an aborted document load as terminal', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  fake.loadFailures = 1
+  fake.loadErrorCode = 'ERR_ABORTED'
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    expect(f.host.snapshot().phase).toBe('error')
+    const calls = f.enterprise.webSession.mock.calls.length
+    await elapse(3_000)
+    expect(f.enterprise.webSession.mock.calls.length).toBe(calls)
+    expect(fake.views).toHaveLength(1)
+  } finally { f.host.dispose(); vi.useRealTimers() }
+})
+
+it('keeps an unexpected login redirect as an error outside renewal backoff', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    await fake.views[0].webContents.loadURL('https://enterprise.example/login')
+    expect(f.host.snapshot().phase).toBe('error')
   } finally { f.host.dispose() }
 })
