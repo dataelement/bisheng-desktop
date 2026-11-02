@@ -5,7 +5,7 @@ import { EnterprisePlatformError } from '../src/main/enterprise/enterprise-reque
 import { parseChatPresentation } from '../src/shared/enterprise-chat-view'
 import { parseWebSession } from '../src/main/enterprise/web-session'
 
-const fake = vi.hoisted(() => ({ views: [] as any[], sessions: [] as any[], hangLoads: false, loadFailures: 0, loadErrorCode: 'ERR_CONNECTION_RESET' }))
+const fake = vi.hoisted(() => ({ views: [] as any[], sessions: [] as any[], hangLoads: false, loadFailures: 0, loadErrorCode: 'ERR_CONNECTION_RESET', emitCloseAsGone: false }))
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events')
   return {
@@ -22,7 +22,7 @@ vi.mock('electron', async () => {
       setBackgroundColor = vi.fn()
       constructor(public options: any) {
         let url = ''
-        this.webContents = Object.assign(new EventEmitter(), { id: fake.views.length + 100, session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), focus: vi.fn(), send: vi.fn(), mainFrame: {}, getURL: () => url, getZoomFactor: () => 1, close: vi.fn(), executeJavaScript: vi.fn(async () => {}), insertCSS: vi.fn(async () => 'key'), loadURL: vi.fn(async (next: string) => {
+        this.webContents = Object.assign(new EventEmitter(), { id: fake.views.length + 100, session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), focus: vi.fn(), send: vi.fn(), mainFrame: {}, getURL: () => url, getZoomFactor: () => 1, close: vi.fn(() => { if (fake.emitCloseAsGone) { const contents = this.webContents; setTimeout(() => contents.emit('render-process-gone'), 0) } }), executeJavaScript: vi.fn(async () => {}), insertCSS: vi.fn(async () => 'key'), loadURL: vi.fn(async (next: string) => {
           if (fake.hangLoads) return await new Promise<void>(() => {})
           if (fake.loadFailures > 0) { fake.loadFailures -= 1; throw Object.assign(new Error('load failed'), { code: fake.loadErrorCode }) }
           url = next
@@ -34,7 +34,7 @@ vi.mock('electron', async () => {
   }
 })
 
-afterEach(() => { fake.views.length = 0; fake.sessions.length = 0; fake.hangLoads = false; fake.loadFailures = 0; fake.loadErrorCode = 'ERR_CONNECTION_RESET' })
+afterEach(() => { fake.views.length = 0; fake.sessions.length = 0; fake.hangLoads = false; fake.loadFailures = 0; fake.loadErrorCode = 'ERR_CONNECTION_RESET'; fake.emitCloseAsGone = false })
 const networkError = () => new EnterprisePlatformError('Could not reach the BiSheng platform.', { code: 'network_error' })
 const elapse = async (ms: number) => { await vi.advanceTimersByTimeAsync(ms); await flush() }
 const presentation = { visible: true, theme: 'dark', bounds: { x: 0, y: 56, width: 1100, height: 700 } }
@@ -863,11 +863,78 @@ it('treats an aborted document load as terminal', async () => {
 })
 
 it('keeps an unexpected login redirect as an error outside renewal backoff', async () => {
+  vi.useFakeTimers()
   const f = fixture()
   try {
     f.host.present(f.owner, presentation)
     await flush()
     await fake.views[0].webContents.loadURL('https://enterprise.example/login')
     expect(f.host.snapshot().phase).toBe('error')
-  } finally { f.host.dispose() }
+    const calls = f.enterprise.webSession.mock.calls.length
+    await elapse(270_000)
+    expect(f.enterprise.webSession.mock.calls.length).toBe(calls)
+  } finally { f.host.dispose(); vi.useRealTimers() }
+})
+
+it('shows Reconnect when the platform stays down after Chat leaves the workspace', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    f.enterprise.webSession.mockRejectedValue(networkError())
+    await elapse(270_000)
+    const view = fake.views[0]
+    await view.webContents.loadURL('https://enterprise.example/login')
+    expect(f.host.snapshot().phase).toBe('loading')
+    await elapse(2_400)
+    await elapse(2_400)
+    await elapse(6_000)
+    await elapse(12_000)
+    expect(f.host.snapshot().phase).toBe('error')
+    expect(view.webContents.close).toHaveBeenCalled()
+    expect(f.owner.webContents.send).toHaveBeenCalledWith('enterprise-chat:changed', expect.objectContaining({ phase: 'error' }))
+    const calls = f.enterprise.webSession.mock.calls.length
+    await elapse(36_000)
+    expect(f.enterprise.webSession.mock.calls.length).toBe(calls)
+  } finally { f.host.dispose(); vi.useRealTimers() }
+})
+
+it('reloads the workspace when a later off-workspace retry succeeds', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    f.enterprise.webSession.mockRejectedValueOnce(networkError())
+    await elapse(270_000)
+    f.enterprise.webSession.mockRejectedValueOnce(networkError())
+    const view = fake.views[0]
+    await view.webContents.loadURL('https://enterprise.example/login')
+    await elapse(2_400)
+    expect(f.host.snapshot().phase).toBe('loading')
+    expect(view.webContents.close).not.toHaveBeenCalled()
+    await elapse(2_400)
+    expect(f.host.snapshot().phase).toBe('ready')
+    expect(view.webContents.loadURL).toHaveBeenLastCalledWith('https://enterprise.example/workspace/?embed=dsh&dshTheme=dark')
+    expect(view.webContents.close).not.toHaveBeenCalled()
+  } finally { f.host.dispose(); vi.useRealTimers() }
+})
+
+it('ignores render-process-gone emitted by closing the previous view', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  fake.loadFailures = 1
+  fake.emitCloseAsGone = true
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    const closed = fake.views[0]
+    await elapse(2_400)
+    expect(f.host.snapshot().phase).toBe('ready')
+    expect(fake.views).toHaveLength(2)
+    closed.webContents.emit('render-process-gone')
+    expect(f.host.snapshot().phase).toBe('ready')
+    expect(fake.views[1].webContents.close).not.toHaveBeenCalled()
+  } finally { f.host.dispose(); vi.useRealTimers() }
 })

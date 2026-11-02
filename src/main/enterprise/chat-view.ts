@@ -86,6 +86,10 @@ export class EnterpriseChatView {
   private backoffScheduled = false
   /** True after a workspace document has been ready, so later redirects stay on the renewal schedule. */
   private renewalMode = false
+  /** Finite recovery budget after the document leaves /workspace. Independent of the on-workspace renewal counter. */
+  private offWorkspaceAttempt = 0
+  /** Set while a recovery load is in flight, so its login redirect is not treated as a terminal navigation. */
+  private offWorkspaceRecovery = false
   private unsubscribe: () => void
   private state: EnterpriseChatViewState = { phase: 'idle' }
   private presentation?: EnterpriseChatPresentation
@@ -500,20 +504,24 @@ export class EnterpriseChatView {
         view.webContents.on('will-navigate', allowNavigation)
         view.webContents.on('will-redirect', allowNavigation)
         view.webContents.on('will-attach-webview', (event) => event.preventDefault())
-        view.webContents.on('render-process-gone', () => { this.clear(); this.state = { phase: 'error' }; this.note('[enterprise-chat] renderer_gone'); this.notify() })
+        view.webContents.on('render-process-gone', () => {
+          if (generation !== this.generation || this.view !== view) return
+          this.clear(); this.state = { phase: 'error' }; this.note('[enterprise-chat] renderer_gone'); this.notify()
+        })
         view.webContents.on('did-finish-load', () => {
           if (generation !== this.generation) return
           if (new URL(view.webContents.getURL()).pathname.startsWith('/workspace')) {
             // Host-owned module styles live in this document until the next full load replaces it.
             void view.webContents.insertCSS(`${MODULE_THEME_CSS}\n${chatLayoutCss(process.platform)}`).catch(() => this.note('[enterprise-chat] module_style_failed'))
             this.state = { phase: 'ready' }; void this.syncSettings(); this.layout(); this.notify()
-          } else if (this.backoffScheduled) {
+          } else if (this.backoffScheduled || this.offWorkspaceRecovery) {
             this.renewalMode = true
             this.state = { phase: 'loading' }
             this.layout()
             this.note('[enterprise-chat] renewal_left_workspace')
             this.notify()
           } else {
+            this.cancelTimer()
             this.state = { phase: 'error' }; this.layout(); this.note('[enterprise-chat] unexpected_login_redirect'); this.notify()
           }
         })
@@ -527,9 +535,20 @@ export class EnterpriseChatView {
       await view.webContents.session.cookies.set({ url: credential.base, name: credential.cookieName, value: credential.cookie, path: '/', httpOnly: true, secure: new URL(credential.base).protocol === 'https:', sameSite: 'lax', expirationDate: credential.expiresAt / 1000 })
       if (generation !== this.generation) return
       stage = this.renewalMode ? 'renew' : 'load'
-      if (!this.onWorkspace()) await loadWithin(view.webContents.loadURL(this.entryURL('/workspace/', credential.base)), DOCUMENT_LOAD_TIMEOUT_MS)
+      if (!this.onWorkspace()) {
+        this.offWorkspaceRecovery = this.renewalMode
+        try {
+          await loadWithin(view.webContents.loadURL(this.entryURL('/workspace/', credential.base)), DOCUMENT_LOAD_TIMEOUT_MS)
+        } finally { this.offWorkspaceRecovery = false }
+      }
       if (generation !== this.generation) return
       if (!this.onWorkspace()) {
+        if (this.renewalMode && this.view && !this.view.webContents.isDestroyed()) {
+          const redirect = new Error('Chat left the workspace.')
+          if (!this.continueOffWorkspace(key, redirect, 'renew')) this.failExchange(key, redirect, 'renew')
+          return
+        }
+        this.cancelTimer()
         if (this.state.phase !== 'error') {
           this.state = { phase: 'error' }
           this.layout()
@@ -541,6 +560,7 @@ export class EnterpriseChatView {
       this.renewalMode = true
       this.initialAttempt = 0
       this.renewalAttempt = 0
+      this.offWorkspaceAttempt = 0
       if (this.state.phase !== 'ready') {
         this.state = { phase: 'ready' }
         this.notify()
@@ -560,6 +580,12 @@ export class EnterpriseChatView {
     if (!view || view.webContents.isDestroyed()) return false
     try { return new URL(view.webContents.getURL()).pathname.startsWith('/workspace') }
     catch { return false }
+  }
+
+  private cancelTimer(): void {
+    clearTimeout(this.timer)
+    this.timer = undefined
+    this.backoffScheduled = false
   }
 
   /** One timer owns both the normal renewal and failure backoff. The callback drops its own mutex before connecting. */
@@ -593,9 +619,10 @@ export class EnterpriseChatView {
     }
     if (keepDocument) {
       if (!this.onWorkspace()) {
-        this.state = { phase: 'loading' }
-        this.layout()
+        if (!this.continueOffWorkspace(key, error, stage)) this.failExchange(key, error, stage)
+        return
       }
+      this.offWorkspaceAttempt = 0
       this.note(`[enterprise-chat] session_renew_failed stage=${stage} ${exchangeErrorLabel(error)}`)
       const delay = backoffDelay(backoffStep(RENEWAL_BACKOFF_MS, this.renewalAttempt))
       this.renewalAttempt += 1
@@ -621,6 +648,19 @@ export class EnterpriseChatView {
     this.notify()
   }
 
+  /** did-finish-load must not reset this counter; only success and clear() do. */
+  private continueOffWorkspace(key: string, error: unknown, stage: ExchangeStage): boolean {
+    if (this.offWorkspaceAttempt >= INITIAL_BACKOFF_MS.length) return false
+    const delay = backoffDelay(backoffStep(INITIAL_BACKOFF_MS, this.offWorkspaceAttempt))
+    this.offWorkspaceAttempt += 1
+    this.state = { phase: 'loading' }
+    this.layout()
+    this.note(`[enterprise-chat] session_renew_failed stage=${stage} ${exchangeErrorLabel(error)}`)
+    this.armTimer(delay, key, true)
+    this.notify()
+    return true
+  }
+
   private clear(): void {
     this.modalOpen = false
     this.dialogViewport = undefined
@@ -635,6 +675,8 @@ export class EnterpriseChatView {
     this.generation += 1
     this.initialAttempt = 0
     this.renewalAttempt = 0
+    this.offWorkspaceAttempt = 0
+    this.offWorkspaceRecovery = false
     this.backoffScheduled = false
     this.renewalMode = false
     clearTimeout(this.timer)
