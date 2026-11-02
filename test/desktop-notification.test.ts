@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
 import { registerDesktopNotificationBridge } from '../src/main/desktop-notification'
@@ -30,7 +31,7 @@ function fixture(locale: 'en' | 'zh' = 'zh') {
     isMinimized: vi.fn(() => false), restore: vi.fn(), show: vi.fn(), focus: vi.fn()
   }
   const audit = vi.fn()
-  const icon = new URL('../build/app-icon.png', import.meta.url).pathname
+  const icon = fileURLToPath(new URL('../build/app-icon.png', import.meta.url))
   // Fixture implements exactly the BrowserWindow/IPC members consumed by this module.
   cleanups.push(registerDesktopNotificationBridge(() => window as unknown as BrowserWindow, () => icon, () => locale, audit))
   const receive = mock.handle.mock.calls.at(-1)?.[1] as (event: IpcMainInvokeEvent, value: unknown) => string
