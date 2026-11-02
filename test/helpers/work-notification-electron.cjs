@@ -32,13 +32,13 @@ app.whenReady().then(async () => {
   await win.webContents.executeJavaScript('window.__ModuleLoader__ = { load: value => { window.plugin = value.factory(() => ({})) } }; void 0;')
   await win.webContents.executeJavaScript(readFileSync(join(root, 'packages/dsh-desktop-client-ui/client.js'), 'utf8'))
   await win.webContents.executeJavaScript(`
-    window.state = { phase: 'ready', ids: ['work'], byId: { work: { projectionValues: { desktopWorkCompletion: {count:0,turn:0,seq:-1,time:0} } } } };
+    window.state = { phase: 'pending', ids: [], byId: {}, projectionsBySession: { work: { values: { desktopWorkCompletion: {count:0,turn:0,seq:-1,time:0} } } } };
     window.cleanups = []; window.opened = []; window.listeners = new Set();
     plugin.installWorkCompletionNotifications({ effect: fn => cleanups.push(fn()),
       sessions: { list: { getSnapshot: () => state, subscribe: fn => {listeners.add(fn); return () => listeners.delete(fn)} } },
       uiWorkspace: { openSession: id => opened.push(id) }
     }, { select: mode => { window.selectedMode = mode } });
-    state.byId.work.projectionValues.desktopWorkCompletion = {count:1,turn:1,seq:8,time:Date.now()};
+    state.projectionsBySession.work.values.desktopWorkCompletion = {count:1,turn:1,seq:8,time:Date.now()};
     listeners.forEach(fn => fn());
   `)
   await new Promise(resolve => setTimeout(resolve, 150))
@@ -51,14 +51,34 @@ app.whenReady().then(async () => {
   instances[0].emit('failed', {}, 'fixture HRESULT 0x80070490')
   assert.equal(logs.at(-1).stage, 'failed')
   assert.match(readFileSync(join(dir, 'logs/harness.log'), 'utf8'), /fixture HRESULT 0x80070490/)
-  instances[0].emit('click')
+  const cover = new BrowserWindow({ width: 240, height: 160, show: false, skipTaskbar: true,
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } })
+  await cover.loadURL('data:text/html,<title>Foreground application fixture</title>')
+  for (const [index, mode] of ['background', 'minimized'].entries()) {
+    win.showInactive(); cover.show(); cover.focus()
+    await new Promise(resolve => setTimeout(resolve, 100))
+    if (mode === 'minimized') win.minimize()
+    await new Promise(resolve => setTimeout(resolve, 100))
+    assert.equal(win.isFocused(), false, mode)
+    assert.equal(win.isMinimized(), mode === 'minimized', mode)
+    const count = index + 2
+    await win.webContents.executeJavaScript(`
+      state.projectionsBySession.work.values.desktopWorkCompletion = {count:${count},turn:${count},seq:${count * 8},time:Date.now()};
+      listeners.forEach(fn => fn());
+    `)
+    await new Promise(resolve => setTimeout(resolve, 100))
+    assert.equal(instances.length, count, mode)
+  }
+  instances.at(-1).emit('click')
   await new Promise(resolve => setTimeout(resolve, 100))
   assert.equal(win.isVisible(), true)
+  assert.equal(win.isMinimized(), false)
+  assert.equal(win.isFocused(), true)
   assert.deepEqual(await win.webContents.executeJavaScript('({opened, mode: selectedMode})'), { opened: ['work'], mode: 'work' })
   await win.webContents.executeJavaScript('cleanups.forEach(fn => fn())')
   assert.equal(await win.webContents.executeJavaScript('listeners.size'), 0)
-  dispose(); win.destroy()
-  console.log(JSON.stringify({ result: 'passed', platform: process.platform, checks: ['host-client-completion', 'isolated-preload-ipc', 'packaged-icon', 'duplicate-snapshot', 'failure-audit', 'click-window-and-session', 'disposal'], osToast: 'fixture; Windows native acceptance remains required' }))
+  dispose(); cover.destroy(); win.destroy()
+  console.log(JSON.stringify({ result: 'passed', platform: process.platform, checks: ['catalog-independent-completion', 'background-window', 'minimized-window', 'isolated-preload-ipc', 'packaged-icon', 'duplicate-snapshot', 'failure-audit', 'click-window-and-session', 'disposal'], osToast: 'fixture; Windows native acceptance remains required' }))
   app.quit()
 }).catch(error => { console.error(error); app.exit(1) })
 setTimeout(() => app.exit(2), 20000).unref()
