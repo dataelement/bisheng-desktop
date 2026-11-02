@@ -1,3 +1,10 @@
+## 2026-11-02 — 会话搜索统一空态归属
+
+- 目标 `V1.2.0@09c22fe34e5c89193c15387685810fbaa45e73fc`，分支 `codex/v120-session-search-empty`，Harness `0.2.1-rc.2`。独立目录 `bisheng-session-search-empty-20261102`。
+- 搜索组件与桌面共享列表此前各自绘制空态。现在默认结果及其空态归入 collection fallback，共享列表按本地与云端合并结果统一判断；通过 `searchPending` 等待搜索完成，保留云端首屏加载提示、归档和搜索恢复。
+- 干净安装、安装重放、类型检查、生产构建、JS 语法及差异检查通过。新增回归在旧实现复现 5 项失败；搜索与 Desktop 模式 62 项通过。macOS / Electron 43 实际组件 16 组通过，深浅主题截图已检查，同一入口在旧代码复现两条空态。
+- 完整回归 3,220 项通过、5 项条件跳过；1 项受依赖目录 `.DS_Store` 干扰。移开并保留缓存后，运行时兼容、搜索和 Desktop 模式组合 66 项复测通过。真实企业账号与正式安装版验收待执行；详见 [验证记录](status/session-search-empty-20261102.md)。
+
 ## 2026-10-31 — 删除会话确认弹窗与原生 Chat 联动
 
 - 根因：Harness Modal 使用 body portal，宿主此前只识别 root inert 和 About 标记，原生 Chat 继续覆盖确认弹窗。桌面内容组件现在订阅可见的宿主模态弹窗；所有弹窗关闭后按当前 Chat / Work / 设置状态恢复视图。
