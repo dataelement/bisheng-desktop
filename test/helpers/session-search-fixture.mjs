@@ -1,10 +1,13 @@
-import React from 'react'
-import { createRoot } from 'react-dom/client'
-import * as jsx from 'react/jsx-runtime'
+import defaultReact from 'react'
+import * as defaultReactDOM from 'react-dom/client'
+import * as defaultJsx from 'react/jsx-runtime'
 
-// Load the shipped components; only host stores and visual primitives are fixtures.
-export function createSessionSearchFixture(workspaceSource, desktopSource, { groupBy = 'flat', shared = true, searchSessions = async () => ({ items: [], hasMore: false }) } = {}) {
-  const primitives = new Proxy({}, { get: (_, name) => name === 'relativeTime'
+// Host stores and search transport are fixtures; native checks supply shipped shared modules.
+export function createSessionSearchFixture(workspaceSource, desktopSource, { groupBy = 'flat', shared = true, archivedOnly = false, locale, runtime = {}, searchSessions = async () => ({ items: [], hasMore: false }) } = {}) {
+  const React = runtime.react || defaultReact
+  const { createRoot } = runtime['react-dom/client'] || defaultReactDOM
+  const jsx = runtime['react/jsx-runtime'] || defaultJsx
+  const primitives = runtime['@deepseek-ai/dsh-client-ui-primitives'] || new Proxy({}, { get: (_, name) => name === 'relativeTime'
     ? () => ({ unit: 'day', n: 1 })
     : name.startsWith('Icon') ? () => null
       : ({ children, anchor }) => React.createElement(React.Fragment, null, anchor || children) })
@@ -24,15 +27,19 @@ export function createSessionSearchFixture(workspaceSource, desktopSource, { gro
     finally { window.__ModuleLoader__ = previous }
     return runtime
   }
-  const { WorkspaceBrowser, createWorkspaceShortcutControls } = load(workspaceSource, 'exports.WorkspaceBrowser = WorkspaceBrowser; exports.createWorkspaceShortcutControls = createWorkspaceShortcutControls')
-  const { SharedCollection } = load(desktopSource, 'exports.SharedCollection = SharedCollection')
+  const { WorkspaceBrowser, createWorkspaceShortcutControls, zh, en } = load(workspaceSource, 'exports.WorkspaceBrowser = WorkspaceBrowser; exports.createWorkspaceShortcutControls = createWorkspaceShortcutControls; exports.zh = zh; exports.en = en')
+  const { SharedCollection, MODES_COPY } = load(desktopSource, 'exports.SharedCollection = SharedCollection; exports.MODES_COPY = MODES_COPY')
+  const workspaceCopy = locale === 'zh' ? zh : en
+  const t = key => locale ? workspaceCopy[key] || key : key
+  const desktopT = key => locale ? MODES_COPY[locale][key] || key : key
   const controls = createWorkspaceShortcutControls()
   const catalog = { phase: 'ready', projectionsBySession: {}, ids: ['one', 'two'], byId: Object.fromEntries(['one', 'two'].map(id => [id, { id, title: `会话 ${id}`, updatedAt: 1, blank: false, retainedBy: {} }])) }
   const workspaces = { phase: 'ready', state: 'ready', items: [], archivedSessionIds: [], pinnedSessionIds: [] }
-  const view = { groupBy, orderBy: 'updated', archivedFilter: 'default', groupExpansion: { '': true }, sessionOrderByAccount: {}, unreadSessionIds: [] }
-  const cloud = { mode: 'work', historyPhase: 'ready', items: [{ id: 'cloud', title: '云端会话', updatedAt: '2026-01-01T00:00:00Z' }] }
+  const view = { groupBy, orderBy: 'updated', archivedFilter: archivedOnly ? 'only' : 'default', groupExpansion: { '': true }, sessionOrderByAccount: {}, unreadSessionIds: [] }
+  let cloud = { mode: 'work', page: 1, historyPhase: 'ready', items: [{ id: 'cloud', title: '云端会话', updatedAt: '2026-01-01T00:00:00Z' }] }
+  const cloudListeners = new Set()
   const opened = []
-  const navigation = { snapshot: () => cloud, subscribe: () => () => {}, open: id => opened.push(`chat:${id}`) }
+  const navigation = { snapshot: () => cloud, subscribe: fn => { cloudListeners.add(fn); return () => cloudListeners.delete(fn) }, open: id => opened.push(`chat:${id}`) }
   const actions = Object.fromEntries(['retainAccountKeys', 'syncSessionOrders', 'setGroupExpanded', 'setSessionOrder'].map(name => [name, () => {}]))
   const props = {
     wide: true,
@@ -56,23 +63,24 @@ export function createSessionSearchFixture(workspaceSource, desktopSource, { gro
     open: id => opened.push(`work:${id}`),
     actions,
     renderSlot: (name, props, options) => shared && name === 'sidebar.workspaces.collection'
-      ? React.createElement(SharedCollection, { ...props, navigation, t: key => key })
+      ? React.createElement(SharedCollection, { ...props, navigation, t: desktopT })
       : options?.fallback,
-    t: key => key
+    t
   }
   const host = document.createElement('div')
   document.body.append(host)
   const root = createRoot(host)
   return {
-    host, catalog, cloud, opened,
+    host, catalog, get cloud() { return cloud }, opened,
+    updateCloud(patch) { cloud = { ...cloud, ...patch }; cloudListeners.forEach(fn => fn()) },
     mount: () => root.render(React.createElement(WorkspaceBrowser, props)),
-    openSearch: () => host.querySelector('[aria-label="search.sessions.aria"]').click(),
+    openSearch: () => host.querySelector(`[aria-label="${t('search.sessions.aria')}"]`).click(),
     type(query) {
-      const input = host.querySelector('input[placeholder="search.placeholder"]')
+      const input = host.querySelector(`input[placeholder="${t('search.placeholder')}"]`)
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, query)
       input.dispatchEvent(new Event('input', { bubbles: true }))
     },
-    clear: () => host.querySelector('[aria-label="search.clear"]').click(),
+    clear: () => host.querySelector(`[aria-label="${t('search.clear')}"]`).click(),
     escape: () => host.querySelector('input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })),
     unmount() { root.unmount(); host.remove() }
   }

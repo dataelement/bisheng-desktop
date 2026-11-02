@@ -572,9 +572,10 @@ if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
         React.createElement('time', { dateTime: new Date(item.updatedAt).toISOString() }, historyTime(item.updatedAt, t)))
     }
     /** Cloud identities stay namespaced; project ownership is projected by Harness. */
-    function SharedCollection({ projects, items, mode, query, archivedOnly, navigation, t }) {
+    function SharedCollection({ projects, items, mode, query, archivedOnly, searchPending = false, navigation, t }) {
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
       const initialHistoryLoading = state.historyPhase === 'loading' && state.page === 0
+      const resultsPending = initialHistoryLoading || (mode === 'search' && searchPending)
       const search = query.trim().toLocaleLowerCase()
       const local = items.map(item => ({ ...item, key: `work:${item.id}`, kind: 'work' }))
       const cloud = archivedOnly ? [] : state.items.filter(item => (item.title || t('newChat')).toLocaleLowerCase().includes(search))
@@ -590,7 +591,7 @@ if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
             : React.createElement(CloudHistoryRow, { key: item.key, item, selected: state.mode === 'chat' && !state.pageId && state.conversationId === item.id, navigation, t })),
           state.historyPhase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => navigation.refreshHistory() }, t('historyError')),
           initialHistoryLoading && React.createElement('div', { className: 'dshHistoryNotice', role: 'status' }, t('historyLoading')),
-          rows.length === 0 && !initialHistoryLoading && React.createElement('div', { className: 'dshHistoryNotice' }, t(search ? 'recentSearchEmpty' : 'recentEmpty')),
+          rows.length === 0 && !resultsPending && React.createElement('div', { className: 'dshHistoryNotice' }, t(search ? 'recentSearchEmpty' : 'recentEmpty')),
           state.hasMore && !archivedOnly && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: state.historyPhase === 'loading', onClick: () => navigation.refreshHistory(true) }, t('more'))))
     }
     function historyTime(date, t) {

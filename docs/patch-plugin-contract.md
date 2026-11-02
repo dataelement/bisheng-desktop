@@ -379,3 +379,9 @@ Windows installed-package and real-account acceptance remain separate checks.
 菜单本身拥有定位与可见高度，读取当前定位锚点、滚动及裁切祖先的交集，按行高调整设计高度。空间充足时沿用输入框上方位置；紧凑窗口中在内容区内展开完整菜单行。ResizeObserver 与窗口/滚动事件同步更新布局，关闭时清理。此逻辑直接替换 input-trigger 组件的固定顶部假设，通过现有版本兼容文件分发。
 
 行为覆盖在 `test/input-trigger-bounds.test.mjs` 和 `test/input-trigger-scroll.test.mjs`；真实 Electron 入口为 `node scripts/verify-composer-menu-bounds.mjs`。上游菜单提供同等动态裁切布局后移除此兼容段并保留回归，验收证据见 [本轮记录](status/composer-menu-bounds-20261030.md)。
+
+### 会话搜索空态归属（Harness 0.2.1-rc.2，2026-11-02）
+
+`sidebar.workspaces.collection` 的搜索贡献项拥有合并后列表的空态。搜索组件通过可选 owner 字段 `searchPending` 传递本地历史搜索进度；桌面贡献项按本地与云端结果总数、搜索进度和云端首屏加载状态决定空态。上游原有“无匹配会话”随默认结果行一起放入 slot fallback，保留无贡献项时的独立搜索体验。搜索加载提示、结果数量上限提示与远程搜索生命周期继续由搜索组件管理。
+
+本次直接修正已有搜索组件与共享列表的渲染条件，发行安装使用现有 `dsh-client-ui-workspace@0.2.1-rc.2` 重放文件保存修改；宿主改动位于 `packages/dsh-desktop-client-ui/client.js`。当前 single/root slot 的挂载次数、筛选范围、归档和行操作保持原契约。上游提供等价的完整搜索列表组合协议后迁移并移除该兼容段。行为回归见 `test/session-search-recovery.test.mjs`，macOS 原生组件验证见 `scripts/verify-session-search-empty.mjs`；目录与搜索接口使用隔离数据。
