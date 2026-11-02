@@ -8,9 +8,55 @@ import { chatDialogViewportScript } from './chat-dialog-viewport'
 import { chatLocaleScript } from './chat-locale'
 import { chatLayoutCss } from './chat-layout'
 import { parseUsageSummary, parseUsageStorage, type EnterpriseUsage, type UsageSection } from '../../shared/enterprise-usage'
+import { EnterprisePlatformError, isEnterprisePlatformError } from './enterprise-request'
 
 /** Remote Chat gets its own in-memory browser session and a presentation-only preload. */
 const DOCUMENT_LOAD_TIMEOUT_MS = 45_000
+const INITIAL_BACKOFF_MS = [2_000, 5_000, 10_000]
+const RENEWAL_BACKOFF_MS = [2_000, 5_000, 10_000, 30_000]
+const RETRYABLE_NETWORK_CODES = new Set([
+  'ERR_CONNECTION_RESET',
+  'ERR_CONNECTION_REFUSED',
+  'ERR_INTERNET_DISCONNECTED',
+  'ERR_NETWORK_CHANGED',
+  'ERR_NAME_NOT_RESOLVED',
+  'ERR_TIMED_OUT',
+])
+
+type ExchangeStage = 'session' | 'cookie' | 'load' | 'renew'
+
+/**
+ * Retry only listed transport failures. isTransientPlatformError treats every Error as transient,
+ * which would also retry identity changes and keep a dead session alive.
+ */
+function isRetryableChatExchangeError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  if (error.message === 'Enterprise account changed.' || error.message === 'Enterprise login required.') return false
+  const status = (error instanceof EnterprisePlatformError || 'status' in error) ? (error as { status?: unknown }).status : undefined
+  if (status === 401 || status === 409) return false
+  if (status === 'timeout') return true
+  if (typeof status === 'number' && (status === 408 || status === 429 || status >= 500)) return true
+  if (isEnterprisePlatformError(error) && (error.code === 'network_error' || error.uncertain)) return true
+  const code = (error as { code?: unknown }).code
+  return typeof code === 'string' && RETRYABLE_NETWORK_CODES.has(code)
+}
+
+function exchangeErrorLabel(error: unknown): string {
+  const value = error && typeof error === 'object' ? error as { status?: unknown, code?: unknown } : {}
+  const status = typeof value.status === 'number' || typeof value.status === 'string' ? String(value.status).slice(0, 16) : 'transport'
+  const code = typeof value.code === 'string' && /^[A-Za-z0-9_-]{1,64}$/u.test(value.code) ? value.code : ''
+  return `status=${status}${code ? ` code=${code}` : ''}`
+}
+
+function backoffStep(steps: readonly number[], attempt: number): number {
+  const index = Math.min(Math.max(attempt, 0), steps.length - 1)
+  return steps[index] ?? 30_000
+}
+
+/** Spread retries so chat renewal does not line up with the work poll or other windows. */
+function backoffDelay(baseMs: number): number {
+  return Math.round(baseMs * (0.8 + Math.random() * 0.4))
+}
 
 /** A document load that never settles (platform stalls mid-deploy) must not pin the exchange forever. */
 async function loadWithin<T>(operation: Promise<T>, ms: number): Promise<T> {
@@ -35,6 +81,15 @@ export class EnterpriseChatView {
   private generation = 0
   private timer?: NodeJS.Timeout
   private pending?: Promise<void>
+  private initialAttempt = 0
+  private renewalAttempt = 0
+  private backoffScheduled = false
+  /** True after a workspace document has been ready, so later redirects stay on the renewal schedule. */
+  private renewalMode = false
+  /** Finite recovery budget after the document leaves /workspace. Independent of the on-workspace renewal counter. */
+  private offWorkspaceAttempt = 0
+  /** Set while a recovery load is in flight, so its login redirect is not treated as a terminal navigation. */
+  private offWorkspaceRecovery = false
   private unsubscribe: () => void
   private state: EnterpriseChatViewState = { phase: 'idle' }
   private presentation?: EnterpriseChatPresentation
@@ -319,6 +374,7 @@ export class EnterpriseChatView {
   }
 
   private connect(): Promise<void> {
+    if (this.backoffScheduled) return this.pending ?? Promise.resolve()
     if (this.pending) return this.pending
     const state = this.enterprise.snapshot()
     if (!state.connected || !state.connectionKey || !this.owner || this.owner.isDestroyed()) return Promise.resolve()
@@ -335,6 +391,7 @@ export class EnterpriseChatView {
   }
 
   private async exchange(key: string, generation: number): Promise<void> {
+    let stage: ExchangeStage = 'session'
     try {
       const credential = await this.enterprise.webSession(key)
       if (generation !== this.generation || this.key !== key || !this.owner || this.owner.isDestroyed()) return
@@ -447,15 +504,25 @@ export class EnterpriseChatView {
         view.webContents.on('will-navigate', allowNavigation)
         view.webContents.on('will-redirect', allowNavigation)
         view.webContents.on('will-attach-webview', (event) => event.preventDefault())
-        view.webContents.on('render-process-gone', () => { this.clear(); this.state = { phase: 'error' }; this.note('[enterprise-chat] renderer_gone'); this.notify() })
+        view.webContents.on('render-process-gone', () => {
+          if (generation !== this.generation || this.view !== view) return
+          this.clear(); this.state = { phase: 'error' }; this.note('[enterprise-chat] renderer_gone'); this.notify()
+        })
         view.webContents.on('did-finish-load', () => {
           if (generation !== this.generation) return
           if (new URL(view.webContents.getURL()).pathname.startsWith('/workspace')) {
             // Host-owned module styles live in this document until the next full load replaces it.
             void view.webContents.insertCSS(`${MODULE_THEME_CSS}\n${chatLayoutCss(process.platform)}`).catch(() => this.note('[enterprise-chat] module_style_failed'))
             this.state = { phase: 'ready' }; void this.syncSettings(); this.layout(); this.notify()
+          } else if (this.backoffScheduled || this.offWorkspaceRecovery) {
+            this.renewalMode = true
+            this.state = { phase: 'loading' }
+            this.layout()
+            this.note('[enterprise-chat] renewal_left_workspace')
+            this.notify()
           } else {
-            this.state = { phase: 'error' }; this.layout(); this.note('[enterprise-chat] unexpected_login_redirect')
+            this.cancelTimer()
+            this.state = { phase: 'error' }; this.layout(); this.note('[enterprise-chat] unexpected_login_redirect'); this.notify()
           }
         })
         this.isolated = isolated
@@ -463,23 +530,135 @@ export class EnterpriseChatView {
         this.owner.contentView.addChildView(view)
       }
       const view = this.view
+      if (!view) throw new Error('Enterprise page unavailable.')
+      stage = 'cookie'
       await view.webContents.session.cookies.set({ url: credential.base, name: credential.cookieName, value: credential.cookie, path: '/', httpOnly: true, secure: new URL(credential.base).protocol === 'https:', sameSite: 'lax', expirationDate: credential.expiresAt / 1000 })
       if (generation !== this.generation) return
-      if (!view.webContents.getURL()) await loadWithin(view.webContents.loadURL(this.entryURL('/workspace/', credential.base)), DOCUMENT_LOAD_TIMEOUT_MS)
-      else { this.state = { phase: 'ready' }; this.layout() }
+      stage = this.renewalMode ? 'renew' : 'load'
+      if (!this.onWorkspace()) {
+        this.offWorkspaceRecovery = this.renewalMode
+        try {
+          await loadWithin(view.webContents.loadURL(this.entryURL('/workspace/', credential.base)), DOCUMENT_LOAD_TIMEOUT_MS)
+        } finally { this.offWorkspaceRecovery = false }
+      }
+      if (generation !== this.generation) return
+      if (!this.onWorkspace()) {
+        if (this.renewalMode && this.view && !this.view.webContents.isDestroyed()) {
+          const redirect = new Error('Chat left the workspace.')
+          if (!this.continueOffWorkspace(key, redirect, 'renew')) this.failExchange(key, redirect, 'renew')
+          return
+        }
+        this.cancelTimer()
+        if (this.state.phase !== 'error') {
+          this.state = { phase: 'error' }
+          this.layout()
+          this.note('[enterprise-chat] unexpected_login_redirect')
+          this.notify()
+        }
+        return
+      }
+      this.renewalMode = true
+      this.initialAttempt = 0
+      this.renewalAttempt = 0
+      this.offWorkspaceAttempt = 0
+      if (this.state.phase !== 'ready') {
+        this.state = { phase: 'ready' }
+        this.notify()
+      }
+      this.layout()
       await this.syncSettings()
-      clearTimeout(this.timer)
-      this.timer = setTimeout(() => { void this.connect() }, Math.max(1000, credential.expiresAt - Date.now() - 30_000))
+      this.armTimer(Math.max(1000, credential.expiresAt - Date.now() - 30_000), key, false)
       this.note('[enterprise-chat] session_ready')
     } catch (error) {
       if (generation !== this.generation) return
-      this.clear()
-      this.key = key
-      this.state = { phase: 'error' }
-      const status = error && typeof error === 'object' && 'status' in error && (typeof error.status === 'number' || typeof error.status === 'string') ? error.status : 'transport'
-      this.note(`[enterprise-chat] session_failed status=${status}`)
-      this.notify()
+      this.recoverExchange(key, error, stage)
     }
+  }
+
+  private onWorkspace(): boolean {
+    const view = this.view
+    if (!view || view.webContents.isDestroyed()) return false
+    try { return new URL(view.webContents.getURL()).pathname.startsWith('/workspace') }
+    catch { return false }
+  }
+
+  private cancelTimer(): void {
+    clearTimeout(this.timer)
+    this.timer = undefined
+    this.backoffScheduled = false
+  }
+
+  /** One timer owns both the normal renewal and failure backoff. The callback drops its own mutex before connecting. */
+  private armTimer(delayMs: number, key: string, backoff: boolean): void {
+    clearTimeout(this.timer)
+    const generation = this.generation
+    this.backoffScheduled = backoff
+    this.timer = setTimeout(() => {
+      this.backoffScheduled = false
+      this.timer = undefined
+      if (generation !== this.generation || this.key !== key) return
+      const state = this.enterprise.snapshot()
+      if (!state.connected || state.connectionKey !== key) return
+      void this.connect()
+    }, delayMs)
+  }
+
+  private failExchange(key: string, error: unknown, stage: ExchangeStage): void {
+    this.clear()
+    this.key = key
+    this.state = { phase: 'error' }
+    this.note(`[enterprise-chat] session_failed stage=${stage} ${exchangeErrorLabel(error)}`)
+    this.notify()
+  }
+
+  private recoverExchange(key: string, error: unknown, stage: ExchangeStage): void {
+    const keepDocument = this.renewalMode && !!this.view && !this.view.webContents.isDestroyed()
+    if (!isRetryableChatExchangeError(error)) {
+      this.failExchange(key, error, stage)
+      return
+    }
+    if (keepDocument) {
+      if (!this.onWorkspace()) {
+        if (!this.continueOffWorkspace(key, error, stage)) this.failExchange(key, error, stage)
+        return
+      }
+      this.offWorkspaceAttempt = 0
+      this.note(`[enterprise-chat] session_renew_failed stage=${stage} ${exchangeErrorLabel(error)}`)
+      const delay = backoffDelay(backoffStep(RENEWAL_BACKOFF_MS, this.renewalAttempt))
+      this.renewalAttempt += 1
+      this.armTimer(delay, key, true)
+      this.notify()
+      return
+    }
+    if (this.initialAttempt >= INITIAL_BACKOFF_MS.length) {
+      this.failExchange(key, error, stage)
+      return
+    }
+    const delay = backoffDelay(backoffStep(INITIAL_BACKOFF_MS, this.initialAttempt))
+    this.initialAttempt += 1
+    this.note(`[enterprise-chat] session_retry stage=${stage} attempt=${this.initialAttempt} ${exchangeErrorLabel(error)}`)
+    if (this.view) {
+      const attempt = this.initialAttempt
+      this.clear()
+      this.initialAttempt = attempt
+      this.key = key
+    }
+    this.state = { phase: 'loading' }
+    this.armTimer(delay, key, true)
+    this.notify()
+  }
+
+  /** did-finish-load must not reset this counter; only success and clear() do. */
+  private continueOffWorkspace(key: string, error: unknown, stage: ExchangeStage): boolean {
+    if (this.offWorkspaceAttempt >= INITIAL_BACKOFF_MS.length) return false
+    const delay = backoffDelay(backoffStep(INITIAL_BACKOFF_MS, this.offWorkspaceAttempt))
+    this.offWorkspaceAttempt += 1
+    this.state = { phase: 'loading' }
+    this.layout()
+    this.note(`[enterprise-chat] session_renew_failed stage=${stage} ${exchangeErrorLabel(error)}`)
+    this.armTimer(delay, key, true)
+    this.notify()
+    return true
   }
 
   private clear(): void {
@@ -494,6 +673,12 @@ export class EnterpriseChatView {
     this.navigation = undefined
     this.navigationRequest++
     this.generation += 1
+    this.initialAttempt = 0
+    this.renewalAttempt = 0
+    this.offWorkspaceAttempt = 0
+    this.offWorkspaceRecovery = false
+    this.backoffScheduled = false
+    this.renewalMode = false
     clearTimeout(this.timer)
     this.timer = undefined
     this.pending = undefined
