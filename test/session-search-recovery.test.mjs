@@ -4,8 +4,8 @@ import { act } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { createSessionSearchFixture } from './helpers/session-search-fixture.mjs'
 
-const workspaceSource = await readFile('node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js', 'utf8')
-const desktopSource = await readFile('packages/dsh-desktop-client-ui/client.js', 'utf8')
+const workspaceSource = await readFile(process.env.DSH_TEST_SEARCH_WORKSPACE_SOURCE || 'node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js', 'utf8')
+const desktopSource = await readFile(process.env.DSH_TEST_SEARCH_DESKTOP_SOURCE || 'packages/dsh-desktop-client-ui/client.js', 'utf8')
 const originalScroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView')
 let fixture
 beforeEach(() => {
@@ -95,4 +95,56 @@ it('keeps local matches and restores history after a remote search error', async
   expect(f.host.textContent).toContain('会话 one')
   await act(async () => f.escape())
   expectCatalog()
+})
+
+it.each([false, true])('renders one empty search notice with shared=%s', async shared => {
+  const f = await mount({ shared })
+  await act(async () => f.openSearch())
+  await act(async () => f.type('missing'))
+  await settle()
+  const text = f.host.textContent
+  expect((text.match(/recentSearchEmpty|search.noMatches/g) || [])).toHaveLength(1)
+  expect(text).toContain(shared ? 'recentSearchEmpty' : 'search.noMatches')
+})
+
+it('shows a cloud-only match without a local empty notice', async () => {
+  const f = await mount()
+  await act(async () => f.openSearch())
+  await act(async () => f.type('云端'))
+  await settle()
+  expect(f.host.querySelectorAll('[data-history-kind=chat]')).toHaveLength(1)
+  expect(f.host.textContent).not.toMatch(/recentSearchEmpty|search.noMatches/)
+})
+
+it('waits for the local search response before showing the merged empty state', async () => {
+  let resolveSearch
+  const f = await mount({ searchSessions: () => new Promise(resolve => { resolveSearch = resolve }) })
+  await act(async () => f.openSearch())
+  await act(async () => f.type('missing'))
+  await settle()
+  expect(f.host.querySelector('[aria-label="search.pending"]')).toBeTruthy()
+  expect(f.host.textContent).not.toMatch(/recentSearchEmpty|search.noMatches/)
+  await act(async () => resolveSearch({ items: [], hasMore: false }))
+  expect(f.host.textContent.match(/recentSearchEmpty|search.noMatches/g)).toHaveLength(1)
+})
+
+it('waits for the initial cloud history before deciding the shared result is empty', async () => {
+  const f = await mount()
+  await act(async () => f.updateCloud({ items: [], page: 0, historyPhase: 'loading' }))
+  await act(async () => f.openSearch())
+  await act(async () => f.type('云端'))
+  await settle()
+  expect(f.host.textContent).toContain('historyLoading')
+  expect(f.host.textContent).not.toMatch(/recentSearchEmpty|search.noMatches/)
+  await act(async () => f.updateCloud({ items: [], page: 1, historyPhase: 'ready' }))
+  expect(f.host.textContent.match(/recentSearchEmpty|search.noMatches/g)).toHaveLength(1)
+})
+
+it('keeps archived-only search empty when only cloud titles match', async () => {
+  const f = await mount({ archivedOnly: true })
+  await act(async () => f.openSearch())
+  await act(async () => f.type('云端'))
+  await settle()
+  expect(f.host.querySelectorAll('[data-history-kind=chat]')).toHaveLength(0)
+  expect(f.host.textContent.match(/recentSearchEmpty|search.noMatches/g)).toHaveLength(1)
 })
