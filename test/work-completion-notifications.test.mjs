@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
+import * as cordis from '@deepseek-ai/cordis'
 import { Context } from '@deepseek-ai/cordis'
+import * as gateway from '@deepseek-ai/dsh-api-gateway/client'
 import { AgentLoop } from '@deepseek-ai/dsh-agent-loop'
 import { AgentRegistry } from '@deepseek-ai/dsh-agent'
 import { LlmRuntime, createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -30,27 +32,65 @@ function finish(session, turn, reason = { kind: 'completed' }, step = true) {
   if (step) session.append('step/start', { turn, step: 1 })
   session.append('turn/end', { turn, reason })
 }
-function client() {
+function client(sessions) {
   const bridge = { completed: vi.fn(async () => 'requested'), onClicked: vi.fn(() => vi.fn()) }
   let definition
-  vm.runInNewContext(readFileSync(new URL('../packages/dsh-desktop-client-ui/client.js', import.meta.url), 'utf8'), {
+  vm.runInNewContext(readFileSync(process.env.DSH_WORK_NOTIFICATION_SOURCE || new URL('../packages/dsh-desktop-client-ui/client.js', import.meta.url), 'utf8'), {
     window: { dshDesktopNotifications: bridge, __ModuleLoader__: { load: value => { definition = value } } },
     console, Date
   })
   const exported = definition.factory(() => ({}))
   const listeners = new Set()
-  let state = { phase: 'pending', ids: [], byId: {} }
+  let state = { phase: 'pending', ids: [], byId: {}, projectionsBySession: {} }
   const openSession = vi.fn()
   const select = vi.fn()
   exported.installWorkCompletionNotifications({
     effect: fn => dispose.push(fn()), uiWorkspace: { openSession },
-    sessions: { list: { getSnapshot: () => state, subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn) } } }
+    sessions: sessions ?? { list: { getSnapshot: () => state, subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn) } } }
   }, { select })
-  const publish = (rows, phase = 'ready') => {
-    state = { phase, ids: Object.keys(rows), byId: Object.fromEntries(Object.entries(rows).map(([id, completion]) => [id, { projectionValues: { desktopWorkCompletion: completion } }])) }
+  const publish = (rows, phase = 'ready', catalogIds = Object.keys(rows)) => {
+    state = { phase, ids: catalogIds,
+      byId: Object.fromEntries(catalogIds.map(id => [id, { projectionValues: { desktopWorkCompletion: rows[id] } }])),
+      projectionsBySession: Object.fromEntries(Object.entries(rows).map(([id, completion]) => [id, { values: { desktopWorkCompletion: completion } }])) }
     for (const fn of listeners) fn()
   }
   return { bridge, publish, listeners, openSession, select }
+}
+
+// Expose the installed catalog implementation only inside this test VM. The
+// manager, projection stores, notification scheduling and public list remain real.
+function harnessSessions(catalog = 'failed') {
+  // The browser store engine is supplied by the web bootstrap in production.
+  // This adapter supplies its observable boundary without mounting a web UI.
+  const stores = {
+    notifySubscribers: listeners => { for (const fn of [...listeners]) fn() },
+    createSnapshotStore: initial => {
+      let value = initial
+      const listeners = new Set()
+      return {
+        getSnapshot: () => value,
+        subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn) },
+        set: next => { value = next; for (const fn of [...listeners]) fn() }
+      }
+    }
+  }
+
+  let exported
+  const source = readFileSync(new URL('../node_modules/@deepseek-ai/dsh-api-session-controller/lib/client.js', import.meta.url), 'utf8')
+    .replace('exports.SessionManager = SessionManager;', 'exports.SessionManager = SessionManager; exports.ClientSessions = ClientSessions;')
+  vm.runInNewContext(source, {
+    window: { __ModuleLoader__: { load: value => { exported = value.factory(id => {
+      if (id === '@deepseek-ai/cordis') return cordis
+      if (id === '@deepseek-ai/dsh-api-gateway/client') return gateway
+      if (id === '@deepseek-ai/dsh-client-store') return stores
+      throw new Error(`Unexpected Harness dependency: ${id}`)
+    }) } } }, console, queueMicrotask, setTimeout, clearTimeout, AbortController
+  })
+  const ctx = new Context()
+  dispose.push(() => ctx.fiber.dispose())
+  return new exported.ClientSessions(ctx, { session: { list: async () => catalog === 'empty' ? { ok: true, value: { items: [] } } : ({ ok: false, error: {
+    code: 'gateway/internal', message: 'Fixture catalog unavailable', details: {}, isDSHRemoteError: true
+  } }) } })
 }
 
 describe('Work completion producer through the installed Harness registry', () => {
@@ -100,6 +140,32 @@ describe('Work completion producer through the installed Harness registry', () =
     expect(c.bridge.completed).toHaveBeenCalledTimes(1)
     c.publish({ fast: { count: 1, turn: 1, seq: 8, time: Date.now() } })
     expect(c.bridge.completed).toHaveBeenCalledTimes(2)
+  })
+  it.each(['pending', 'ready'])('delivers Work completion while the session catalog is %s and has no matching row', phase => {
+    const c = client()
+    c.publish({ work: { count: 0, turn: 0, seq: -1, time: 0 } }, phase, [])
+    c.publish({ work: { count: 1, turn: 1, seq: 8, time: Date.now() } }, phase, [])
+    expect(c.bridge.completed).toHaveBeenCalledExactlyOnceWith({ sessionId: 'work', turn: 1, seq: 8, count: 1 })
+    c.publish({ work: { count: 1, turn: 1, seq: 8, time: Date.now() } }, 'ready')
+    expect(c.bridge.completed).toHaveBeenCalledTimes(1)
+  })
+  it.each(['loading', 'failed', 'empty'])('delivers real Host projections through the installed ClientSessions while catalog RPC is %s', async phase => {
+    const h = await host()
+    const sessions = harnessSessions(phase)
+    if (phase !== 'loading') await sessions.refresh()
+    const c = client(sessions)
+    // The authenticated control baseline is independent of the catalog RPC.
+    sessions.handleControlFrame({ type: 'baseline', value: { projections: {
+      work: { asOfSeq: h.session.seq - 1, values: { desktopWorkCompletion: h.snapshot() } }
+    } } })
+    h.ctx.sessionProjections.onChanged((_session, key, value, seq) => {
+      if (key === 'desktopWorkCompletion') sessions.handleControlFrame({ type: 'projection', sessionId: 'work', key, value, seq })
+    })
+    await Promise.resolve()
+    expect(sessions.list.getSnapshot().phase).toBe(phase === 'empty' ? 'ready' : 'pending')
+    expect(sessions.list.getSnapshot().ids).toEqual([])
+    finish(h.session, 1)
+    await vi.waitFor(() => expect(c.bridge.completed).toHaveBeenCalledExactlyOnceWith({ sessionId: 'work', turn: 1, seq: h.session.seq - 1, count: 1 }))
   })
   it('processes independent sessions while animation frames are absent and unsubscribes on disposal', async () => {
     const c = client()

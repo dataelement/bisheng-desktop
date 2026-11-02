@@ -1181,11 +1181,10 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         const startedAt = Date.now()
         const report = () => {
           const list = ctx.sessions.list.getSnapshot()
-          if (list.phase !== 'ready') return
-          for (const id of list.ids) {
-            const row = list.byId[id]
-            if (!row || row.origin === 'subagent') continue
-            const completion = row.projectionValues?.desktopWorkCompletion
+          // Completion projections arrive independently of catalog metadata. Work
+          // notifications follow those facts even while the catalog loads or fails.
+          for (const [id, projection] of Object.entries(list.projectionsBySession)) {
+            const completion = projection.values.desktopWorkCompletion
             if (!completion) continue
             const previous = observed.get(id)
             observed.set(id, Math.max(previous ?? 0, completion.count))
