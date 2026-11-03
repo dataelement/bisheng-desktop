@@ -1023,6 +1023,28 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         openReference: () => false,
         codec: { clipboardText: ref => `@${decode(ref).name}`, serialize: async ref => `@${decode(ref).name}` },
       }
+      const catalogFor = async (sessionId, signal) => {
+        const { input } = inputFor(sessionId)
+        const catalog = await request('catalog', sessionId, undefined, signal)
+        signal?.throwIfAborted()
+        if (inputFor(sessionId).input !== input) throw new Error('Work task changed.')
+        return catalog.spaces
+      }
+      const refresh = async (sessionId, signal) => {
+        if (read(sessionId).length === 0) return
+        const spaces = await catalogFor(sessionId, signal)
+        const { input } = inputFor(sessionId)
+        if (['plain', 'claimed'].includes(input.state.getSnapshot().phase)) {
+          const allowed = new Set(spaces.map(space => space.id))
+          const current = read(sessionId)
+          const retained = current.filter(space => allowed.has(space.id))
+          if (retained.length < current.length) update(sessionId, retained)
+        }
+      }
+      const choose = async (sessionId, ids, captureInsertion, signal) => {
+        const spaces = await catalogFor(sessionId, signal)
+        update(sessionId, spaces.filter(space => ids.includes(space.id)), captureInsertion)
+      }
       const prepare = async ({ sessionId, references, signal, command }) => {
         // Goal control commands keep the active objective's retrieval scope.
         if (command && (command.name !== 'goal' || !command.args.trim() || /^(?:clear|pause|resume|edit)$/i.test(command.args.trim()))) return
@@ -1033,7 +1055,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         await request('select', sessionId, ids, signal)
         used.add(inputFor(sessionId).input)
       }
-      return { read, update, source, prepare }
+      return { read, update, source, prepare, refresh, choose, state: sessionId => inputFor(sessionId).input.state }
     }
 
     function WorkResourceAccessory({ sessionId, controls, t, inputActions, knowledge }) {
@@ -1044,7 +1066,43 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
       const [loading, setLoading] = React.useState(false)
       const [saving, setSaving] = React.useState(false)
       const [error, setError] = React.useState('')
+      const [accessError, setAccessError] = React.useState('')
       const [revision, retry] = React.useReducer(value => value + 1, 0)
+      React.useEffect(() => {
+        let pending
+        let signature
+        const refresh = () => {
+          pending?.abort()
+          const abort = new AbortController()
+          pending = abort
+          knowledge.refresh(sessionId, abort.signal)
+            .then(() => { if (!abort.signal.aborted) setAccessError('') })
+            .catch(reason => { if (!abort.signal.aborted) setAccessError(reason.message) })
+        }
+        const changed = () => {
+          const state = knowledge.state(sessionId).getSnapshot()
+          const next = JSON.stringify([state.phase, knowledge.read(sessionId)])
+          if (next === signature) return
+          signature = next
+          if (['plain', 'claimed'].includes(state.phase)) refresh()
+        }
+        const visible = () => { if (document.visibilityState === 'visible') refresh() }
+        const unsubscribe = knowledge.state(sessionId).subscribe(changed)
+        changed()
+        window.addEventListener('focus', refresh)
+        document.addEventListener('visibilitychange', visible)
+        const timer = setInterval(visible, 30_000)
+        return () => {
+          pending?.abort(); unsubscribe(); clearInterval(timer)
+          window.removeEventListener('focus', refresh)
+          document.removeEventListener('visibilitychange', visible)
+        }
+      }, [sessionId, knowledge])
+      const commitAbort = React.useRef()
+      React.useEffect(() => {
+        setSaving(false)
+        return () => commitAbort.current?.abort()
+      }, [sessionId])
       React.useEffect(() => {
         const control = { open: () => { setKeyword(''); setOpen(true) }, captureInsertion: () => inputActions.captureInsertion() }
         controls.set(sessionId, control)
@@ -1062,10 +1120,16 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
       }, [open, revision, sessionId, knowledge])
       const close = () => { if (!saving) setOpen(false) }
       const commit = async ids => {
+        const abort = new AbortController()
+        commitAbort.current?.abort()
+        commitAbort.current = abort
         setSaving(true); setError('')
-        try { knowledge.update(sessionId, spaces.filter(space => ids.includes(space.id)), () => inputActions.captureInsertion()); setOpen(false) }
-        catch (reason) { setError(reason.message) }
-        finally { setSaving(false) }
+        try {
+          await knowledge.choose(sessionId, ids, () => inputActions.captureInsertion(), abort.signal)
+          setOpen(false)
+        }
+        catch (reason) { if (!abort.signal.aborted) setError(reason.message) }
+        finally { if (!abort.signal.aborted) setSaving(false) }
       }
       const visible = spaces.filter(space => space.name.toLowerCase().includes(keyword.trim().toLowerCase())).sort((a, b) => {
         const an = a.name.trim(), bn = b.name.trim()
@@ -1078,7 +1142,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         kind === 'close' ? React.createElement('path', { d: 'm18 6-12 12M6 6l12 12' }) :
         [React.createElement('path', { key: 'left', d: 'M12 7v14m0-14C10 5 8 5 2 5v14c6 0 8 0 10 2' }), React.createElement('path', { key: 'right', d: 'M12 7c2-2 4-2 10-2v14c-6 0-8 0-10 2' })])
       return React.createElement(React.Fragment, null,
-        error && !open && React.createElement('div', { role: 'alert', className: 'dshWorkResourceError' }, error),
+        (error || accessError) && !open && React.createElement('div', { role: 'alert', className: 'dshWorkResourceError' }, error || accessError),
         React.createElement(Modal, { open, onClose: close, title: t('selectKnowledge'), headless: true, backdropBlur: false, className: 'dshWorkKnowledgeDialog' },
           React.createElement('header', { className: 'dshWorkKnowledgeHeader' },
             React.createElement('h2', null, t('selectKnowledge')),

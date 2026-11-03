@@ -843,6 +843,39 @@ describe('enterprise market credential boundary', () => {
 })
 
 describe('enterprise browser session handoff', () => {
+  it('checks effective space visibility across picker groups and rejects incomplete permission results', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    const checks: unknown[] = []
+    let malformed = false
+    const fetchImpl: EnterpriseFetch = async (input, init) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/api/v1/dsh/web-session') return Response.json({ cookie: 'signed-browser-cookie-for-host-only', expires_in: 300 })
+      if (path.startsWith('/api/v1/knowledge/space/')) {
+        const rows = path.endsWith('/department') ? [{ id: 7, name: 'Revoked department' }] :
+          path.endsWith('/mine') ? [{ id: 9, name: 'Owned space' }] :
+          [{ id: 7, name: 'Duplicate revoked' }, { id: 11, name: 'Authorized group space', user_role: null }]
+        return Response.json({ status_code: 200, data: rows })
+      }
+      if (path === '/api/v1/permissions/check') {
+        expect(new Headers(init?.headers).get('cookie')).toContain('signed-browser-cookie-for-host-only')
+        const body = JSON.parse(String(init?.body))
+        checks.push(body)
+        return Response.json({ status_code: 200, data: malformed ? {} : { allowed: body.resource_id !== '7' } })
+      }
+      return globalThis.fetch(input, init)
+    }
+    const { service } = await createService(createEnterpriseFetch(fetchImpl))
+    const login = await service.startLogin(origin)
+    await completeBrowserLogin(origin, login.authorizationUrl)
+    await waitFor(() => service.snapshot().connected)
+    const request = { operation: 'list', connectionKey: service.snapshot().connectionKey }
+    expect(await service.workResources(request)).toMatchObject({ spaces: [{ id: 9 }, { id: 11 }] })
+    expect(checks).toEqual([7, 9, 11].map(id => ({ resource_type: 'knowledge_space', resource_id: String(id), action: 'visible' })))
+    malformed = true
+    await expect(service.workResources(request)).rejects.toThrow('permission response is invalid')
+  })
   it('exchanges only host credentials, refreshes rejected access once, and rejects requests after logout', async () => {
     const platform = createMockEnterpriseServer({ port: 0 })
     const origin = await platform.listen()

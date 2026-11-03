@@ -16,21 +16,29 @@ export function createWorkResourceSelections({ sessionFor, request, state }) {
     selections.delete(id)
     return undefined
   }
-  const catalog = async () => {
+  const catalog = async signal => {
     const account = state()
     if (!account.connected || !account.connectionKey) throw new Error('Connect your enterprise account in Settings.')
-    const result = await request({ operation: 'list', connectionKey: account.connectionKey })
+    const result = await request({ operation: 'list', connectionKey: account.connectionKey }, signal)
+    signal?.throwIfAborted()
     if (state().connectionKey !== account.connectionKey || !state().connected) throw new Error('Enterprise account changed.')
+    const allowed = new Set(result.spaces.map(space => space.id))
+    for (const [id, selected] of selections) {
+      if (selected.connectionKey === account.connectionKey) {
+        const spaces = selected.spaces.filter(space => allowed.has(space.id))
+        if (spaces.length < selected.spaces.length) selections.set(id, { ...selected, spaces })
+      }
+    }
     return { ...result, connectionKey: account.connectionKey }
   }
   return {
     catalog,
     get: id => current(id)?.spaces ?? [],
-    async select(id, ids) {
+    async select(id, ids, signal) {
       const live = session(id)
       if (active.has(id)) throw new Error('Wait for the current knowledge search to finish.')
       if (!Array.isArray(ids) || ids.length > 50 || ids.some(value => !Number.isSafeInteger(value) || value <= 0)) throw new Error('Invalid knowledge space selection.')
-      const { spaces, connectionKey } = await catalog()
+      const { spaces, connectionKey } = await catalog(signal)
       const byId = new Map(spaces.map(space => [space.id, space]))
       if (ids.some(value => !byId.has(value))) throw new Error('A selected knowledge space is unavailable. Refresh the list.')
       if (session(id) !== live || active.has(id)) throw new Error('Work task changed. Select knowledge spaces again.')
@@ -69,9 +77,9 @@ export function applyWorkResources(ctx, { request, state, refreshState }) {
         if (!body || typeof body !== 'object' || Object.keys(body).some(key => !['operation', 'sessionId', 'spaceIds'].includes(key))) throw new Error('Invalid resource request.')
         await refreshState()
         let result
-        if (body.operation === 'catalog') result = await resources.catalog()
+        if (body.operation === 'catalog') result = await resources.catalog(request.signal)
         else if (body.operation === 'get') result = { spaces: resources.get(body.sessionId) }
-        else if (body.operation === 'select') result = { spaces: await resources.select(body.sessionId, body.spaceIds) }
+        else if (body.operation === 'select') result = { spaces: await resources.select(body.sessionId, body.spaceIds, request.signal) }
         else throw new Error('Unknown resource operation.')
         return Response.json(result, { headers: { 'cache-control': 'no-store' } })
       } catch (error) { return Response.json({ error: error.message }, { status: 400 }) }

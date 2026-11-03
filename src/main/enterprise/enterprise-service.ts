@@ -1094,7 +1094,21 @@ export class EnterpriseService {
         spaces.push({ id: row.id, name: row.name, description: typeof row.description === 'string' ? row.description : '', group, updatedAt: typeof row.update_time === 'string' ? row.update_time : '' })
       }
     }
-    return { spaces }
+    const available = []
+    for (let offset = 0; offset < spaces.length; offset += 10) {
+      const batch = spaces.slice(offset, offset + 10)
+      const allowed = await Promise.all(batch.map(async space => {
+        const result = await call('/api/v1/permissions/check', {
+          resource_type: 'knowledge_space', resource_id: String(space.id), action: 'visible'
+        })
+        if (typeof result !== 'object' || result === null || !('allowed' in result) || typeof result.allowed !== 'boolean') {
+          throw new Error('Knowledge space permission response is invalid.')
+        }
+        return result.allowed
+      }))
+      available.push(...batch.filter((_space, index) => allowed[index]))
+    }
+    return { spaces: available }
   }
 
   /** Host-only exchange. Credentials never cross the renderer or Harness Broker. */

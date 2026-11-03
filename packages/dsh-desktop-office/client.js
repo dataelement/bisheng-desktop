@@ -36,9 +36,10 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
         let state = await this.call(id, 'state', {}, controller.signal)
         if (this.revisions.get(key) !== revision) return
         const local = this.snapshot(), selected = local.selectedTemplateId
+        const chosen = local.templates.find(item => item.id === selected && item.mode === local.mode)
         if (id && !this.adopted.has(id) && local.engaged && local.mode && !state.mode && !state.presentationMode) {
           state = await this.call(id, 'mode', { mode: local.mode }, controller.signal)
-          if (selected) state = await this.call(id, 'select', { templateId: selected, revision: local.templates.find(item => item.id === selected)?.revision }, controller.signal)
+          if (chosen) state = await this.call(id, 'select', { templateId: chosen.id, revision: chosen.revision }, controller.signal)
           if (this.revisions.get(key) !== revision) return
           announce(id, state.mode)
         }
@@ -52,8 +53,13 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
       if (this.snapshot(id).busy || this.snapshot(id).loading) return false
       const revision = this.bump(id), key = keyOf(id)
       if (!id) {
-        this.update(id, endpoint === 'mode' ? { mode: payload.mode, selectedTemplateId: null, engaged: true, error: '' }
-          : { selectedTemplateId: endpoint === 'select' ? payload.templateId : null, engaged: true, error: '' })
+        if (endpoint === 'mode') this.update(id, { mode: payload.mode, selectedTemplateId: null, engaged: true, error: '' })
+        else if (endpoint === 'select') {
+          const current = this.snapshot(id)
+          const item = current.templates.find(entry => entry.id === payload.templateId && entry.mode === current.mode)
+          if (!item) return false
+          this.update(id, { selectedTemplateId: item.id, engaged: true, error: '' })
+        } else this.update(id, { selectedTemplateId: null, engaged: true, error: '' })
         announce(id, this.snapshot(id).mode); return true
       }
       this.update(id, { busy: true, error: '' })
