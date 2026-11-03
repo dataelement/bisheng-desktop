@@ -512,7 +512,7 @@ describe('personal PPT templates in the shipped runtime', () => {
     expect(await readdir(path.join(f.storage,'personal-templates/uploads'))).toEqual([]);
   });
 
-  it('rejects invalid uploads, cancels drafts, and prevents library path escapes', async () => {
+  it('rejects invalid uploads and oversized HTTP bodies', async () => {
     const f = await fixture();
     await expect(f.request('template/prepare', { input: { fileName: 'legacy.ppt', base64: 'UEsDBA==' } })).rejects.toThrow('PPTX');
     for (const base64 of ['UEsD?A==', 'UEsDBA=', 'UEsDBB=='])
@@ -524,10 +524,18 @@ describe('personal PPT templates in the shipped runtime', () => {
       body: 'payload too large'
     });
     expect((await f.request('state')).templates.filter(t => t.origin === 'personal')).toEqual([]);
+  }, 30000);
+
+  it('cancels a prepared draft without allowing it to be saved', async () => {
+    const f = await fixture();
     const bytes = await source(1);
     const draft = await f.request('template/prepare', { input: { fileName: 'cancel.pptx', base64: bytes.toString('base64') } });
     await f.request('template/cancel', { draftId: draft.draftId });
     await expect(f.request('template/save', { draftId: draft.draftId, name: 'Cancelled' })).rejects.toThrow();
+  }, 30000);
+
+  it('rejects a saved-library symlink escaping its storage root', async () => {
+    const f = await fixture();
     await mkdir(path.join(f.storage, 'personal-templates/saved'), { recursive: true });
     await symlink(f.workspace, path.join(f.storage, 'personal-templates/saved', `personal-${'a'.repeat(64)}`));
     await expect(f.request('state')).rejects.toThrow();

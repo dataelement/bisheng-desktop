@@ -15,6 +15,7 @@ import {
 } from './secure-credential-vault'
 
 export interface EnterpriseDesktopRuntime {
+  cloudRequest(input: unknown): Promise<unknown>
   snapshot(): EnterprisePublicState
   webSession(connectionKey: string): Promise<EnterpriseWebSession>
   subscribe(listener: (state: EnterprisePublicState) => void): () => void
@@ -46,6 +47,7 @@ export async function startEnterpriseDesktop(options: {
         catch { options.note?.('[enterprise] state_listener_failed') }
       }
     },
+    cloudRoot: join(options.userDataPath, 'cloud-development'),
     desktopVersion: options.desktopVersion,
     activateDesktop: options.activateDesktop,
     vault,
@@ -74,6 +76,7 @@ export async function startEnterpriseDesktop(options: {
   }
 
   return {
+    cloudRequest: input => service.cloudRequest(input),
     snapshot: () => service.snapshot(),
     webSession: (key) => service.webSession(key),
     subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener) } },

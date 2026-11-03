@@ -1,4 +1,6 @@
 import { EnterpriseChatView } from './enterprise/chat-view'
+import { CloudWorkbenchView } from './enterprise/cloud-workbench-view'
+import type { CloudLaunch } from './enterprise/cloud-workbench'
 import { desktopFileUrl, navigateDesktopWindow } from './desktop-navigation'
 import { recoverStartupConfiguration } from './startup-config-recovery'
 import { initializeDesktopService, desktopDiagnostics } from './desktop-service'
@@ -235,6 +237,7 @@ let mainWindow: BrowserWindow | undefined
 let mobileWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let runtime: HarnessRuntime
+const cloudWorkbenchView = new CloudWorkbenchView()
 let enterpriseDesktop: EnterpriseDesktopRuntime | undefined
 let enterpriseChat: EnterpriseChatView | undefined
 let localWorkbenchCapability: string | undefined
@@ -1089,6 +1092,7 @@ function createWindow(): BrowserWindow {
   installContextMenu(window, harnessLocale)
   installMainWindowRendererRecovery(window)
   window.on('closed', () => {
+    cloudWorkbenchView.close()
     if (mainWindow === window) mainWindow = undefined
     resolvePluginRecoveryAction('quit')
     resolveWebImportAction('skip')
@@ -1688,6 +1692,32 @@ async function uninstallMarketAndRestart(): Promise<{ ok: boolean }> {
 }
 
 function registerHarnessHandlers(): void {
+  for (const channel of ['enterprise-cloud:request', 'enterprise-cloud:open', 'enterprise-cloud:bounds', 'enterprise-cloud:close']) ipcMain.removeHandler(channel)
+  const checkCloudHost = (event: IpcMainInvokeEvent) => {
+    assertTrustedMainWindowEvent(event)
+    if (!sameHarnessOrigin(event.sender.getURL(), runtime.snapshot().url)) throw new Error('Trusted workbench host required.')
+    if (!enterpriseDesktop) throw new Error('Enterprise connection unavailable.')
+    return enterpriseDesktop
+  }
+  ipcMain.handle('enterprise-cloud:request', async (event, input: unknown) => {
+    const enterprise = checkCloudHost(event)
+    // Launch tickets are consumed only by the main-process view controller.
+    if ((input as { operation?: unknown })?.operation === 'launch') throw new Error('Use the workbench open action.')
+    return enterprise.cloudRequest(input)
+  })
+  ipcMain.handle('enterprise-cloud:open', async (event, appId: unknown, bounds: unknown, connectionKey: unknown, owner: unknown) => {
+    const enterprise = checkCloudHost(event)
+    if (typeof owner !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(owner) || connectionKey !== enterprise.snapshot().connectionKey) throw new Error('Enterprise account changed.')
+    const launch = await enterprise.cloudRequest({ operation: 'launch', appId }) as CloudLaunch
+    if (launch.connectionKey !== connectionKey) throw new Error('Enterprise account changed.')
+    if (!mainWindow) throw new Error('Workbench window closed.')
+    await cloudWorkbenchView.open(mainWindow, launch, bounds, owner, () => enterpriseDesktop?.snapshot().connected ? enterpriseDesktop.snapshot().connectionKey : undefined,
+      async appId => await enterprise.cloudRequest({ operation: 'launch', appId }) as CloudLaunch)
+    return { appId: launch.appId }
+  })
+  ipcMain.handle('enterprise-cloud:bounds', (event, bounds: unknown, owner: unknown) => { checkCloudHost(event); cloudWorkbenchView.resizeFor(owner, bounds) })
+  ipcMain.handle('enterprise-cloud:close', (event, owner: unknown) => { assertTrustedMainWindowEvent(event); cloudWorkbenchView.closeFor(owner) })
+
   registerDesktopNotificationBridge(() => mainWindow, desktopIconPath)
   ipcMain.removeAllListeners('dsh:storage-load-sync')
   ipcMain.on('dsh:storage-load-sync', (event) => {
