@@ -12,11 +12,20 @@ describe('Desktop host plugin control in Plugins settings', () => {
       window: {
         __ModuleLoader__: { load(entry) { client = entry.factory(createRequire(import.meta.url)) } },
         setInterval: () => 1,
-        clearInterval() {}
+        clearInterval() {},
+        setTimeout: () => 1,
+        clearTimeout() {},
+        addEventListener() {},
+        removeEventListener() {}
       },
       fetch: async () => ({ ok: true, json: async () => account }),
       __DSH_BOOT__: { entries: marketComposed ? [{ id: 'dshmarket' }] : [] },
-      document: { querySelector: () => ({}) }
+      document: {
+        visibilityState: 'visible',
+        querySelector: () => ({}),
+        addEventListener() {},
+        removeEventListener() {}
+      }
     })
     client.apply({
       effect(callback) { callback() },

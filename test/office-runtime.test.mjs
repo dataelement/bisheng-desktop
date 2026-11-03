@@ -101,6 +101,43 @@ describe('Office runtime assembly', () => {
     expect(() => officeTarget('win32', 'arm64')).toThrow('unsupported native target')
   })
 
+  it('retries a timed-out Office download and stores the verified payload', async () => {
+    const cache = await temporary()
+    const payload = Buffer.from('office-runtime-retry')
+    const digest = createHash('sha256').update(payload).digest('hex')
+    const original = globalThis.fetch
+    let calls = 0
+    globalThis.fetch = async () => {
+      calls += 1
+      if (calls === 1) throw new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+      return new Response(payload)
+    }
+    try {
+      const saved = await downloadAsset('https://example.test/runtime.tar.gz', digest, cache)
+      expect(calls).toBe(2)
+      expect(await readFile(saved)).toEqual(payload)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
+  it('does not retry an Office download that the server rejects', async () => {
+    const cache = await temporary()
+    const digest = createHash('sha256').update('missing').digest('hex')
+    const original = globalThis.fetch
+    let calls = 0
+    globalThis.fetch = async () => {
+      calls += 1
+      return new Response('missing', { status: 404 })
+    }
+    try {
+      await expect(downloadAsset('https://example.test/missing.tar.gz', digest, cache)).rejects.toThrow('HTTP 404')
+      expect(calls).toBe(1)
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
   it('rejects corrupt cached input and removes stale payload when preparation fails', async () => {
     const cache = await temporary()
     const digest = createHash('sha256').update('good').digest('hex')
