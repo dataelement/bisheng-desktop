@@ -14,6 +14,7 @@ import type { ServerResponse } from 'node:http'
 import type { AuditContextField } from 'dsh-desktop-enterprise/contract'
 import {
   CHAT_HEADER_TIMEOUT_MS,
+  CHAT_FIRST_CHUNK_TIMEOUT_MS,
   CHAT_IDLE_TIMEOUT_MS,
   CHAT_MAX_CONCURRENT,
   CHAT_TOTAL_TIMEOUT_MS,
@@ -1350,7 +1351,7 @@ export class EnterpriseService {
     }
     const reader = upstream.body.getReader()
     let totalBytes = 0
-    let idle = setTimeout(() => response.destroy(), CHAT_IDLE_TIMEOUT_MS)
+    let idle = setTimeout(() => response.destroy(), CHAT_FIRST_CHUNK_TIMEOUT_MS)
     const resetIdle = () => {
       clearTimeout(idle)
       idle = setTimeout(() => response.destroy(), CHAT_IDLE_TIMEOUT_MS)
