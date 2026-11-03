@@ -41,19 +41,34 @@ beforeAll(async () => {
 })
 afterEach(async () => { await cleanup?.(); cleanup = undefined; vi.restoreAllMocks() })
 
-async function fixture({ language = 'zh', deleteSession = vi.fn(async () => {}) } = {}) {
+async function fixture({ language = 'zh', deleteSession = vi.fn(async () => {}), cloud = false } = {}) {
   let plugin, locale = language
   const entries = new Map(), dictionaries = new Map(), disposers = []
   const nativeConfirm = vi.spyOn(window, 'confirm').mockImplementation(() => { throw new Error('Native confirmation invoked') })
   const nativeAlert = vi.spyOn(window, 'alert').mockImplementation(() => { throw new Error('Native alert invoked') })
-  new Function('window', source)({ __ModuleLoader__: { load({ factory }) {
+  let cloudState = { connected: true, phase: 'ready', epoch: 1, conversationId: 'cloud-a' }, cloudListener
+  let cloudItems = [{ id: 'cloud-a', title: '云端会话', updatedAt: '2026-11-03' }]
+  const bridge = {
+    state: async () => cloudState,
+    subscribe: fn => { cloudListener = fn; return () => { cloudListener = undefined } },
+    history: vi.fn(async () => ({ epoch: cloudState.epoch, items: [...cloudItems], hasMore: false })),
+    remove: vi.fn(async (id, epoch) => { await deleteSession(id); if (epoch === cloudState.epoch) cloudItems = cloudItems.filter(item => item.id !== id); return { epoch } }),
+    open: vi.fn(async () => {})
+  }
+  if (cloud) window.dshEnterpriseChat = bridge
+  const clientWindow = cloud ? window : {}
+  clientWindow.__ModuleLoader__ = { load({ factory }) {
     plugin = factory(name => {
       if (name === 'react') return React
       if (name === '@deepseek-ai/dsh-client-ui-primitives') return primitives
       throw new Error(name)
     })
-  } } })
+  } }
+  new Function('window', source)(clientWindow)
   plugin.apply({
+    uiWorkspace: { registerNavigationHandler: () => () => {} },
+    sessions: { list: { getSnapshot: () => ({ phase: 'ready', byId: {} }), subscribe: () => () => {} } },
+    layout: { panelInfo: { getSnapshot: () => ({ activePanelId: null }), subscribe: () => () => {} } },
     get: name => { expect(name).toBe('uiWorkspace'); return { deleteSession } },
     effect(fn) { const dispose = fn(); if (typeof dispose === 'function') disposers.push(dispose) },
     locale: {
@@ -61,21 +76,24 @@ async function fixture({ language = 'zh', deleteSession = vi.fn(async () => {}) 
       bind: ns => (key, args = {}) => dictionaries.get(ns)[locale][key].replace(/\{(\w+)\}/g, (_, name) => args[name])
     },
     slots: {
-      inject(name, fn) { if (['shell.overlay', 'sidebar.workspaces.session.menu.item'].includes(name)) fn() },
+      inject(name, fn) { if (['shell.overlay', 'sidebar.workspaces.session.menu.item', ...(cloud ? ['sidebar.workspaces.collection'] : [])].includes(name)) fn() },
       register(meta, Component) { entries.set(meta.id, { meta, Component }); return () => {} }
     }
   })
-  const menu = entries.get('desktop-delete-session'), overlay = entries.get('desktop-delete-session-dialog')
-  expect(menu.meta.locale).toBe(overlay.meta.locale)
+  const menu = entries.get('desktop-delete-session'), overlay = entries.get(cloud ? 'desktop-cloud-chat-delete-dialog' : 'desktop-delete-session-dialog')
+  if (!cloud) expect(menu.meta.locale).toBe(overlay.meta.locale)
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
   let mounted = true
   const menuProps = menu.meta.inject(), overlayProps = overlay.meta.inject()
+  const collection = entries.get('desktop-shared-collection')
+  const collectionProps = collection?.meta.inject()
+  if (cloud) disposers.push(collectionProps.navigation.start())
   function App() {
     const [open, setOpen] = React.useState(false)
     return React.createElement(React.Fragment, null,
-      React.createElement(primitives.Menu, {
+      cloud ? React.createElement(collection.Component, { ...collectionProps, mode: 'projects', query: '', archivedOnly: false, items: [], projects: () => null }) : React.createElement(primitives.Menu, {
         open, onClose: () => setOpen(false), portal: true,
         anchor: React.createElement('button', { onClick: () => setOpen(true), 'data-trigger': true }, 'Session actions')
       }, React.createElement(menu.Component, {
@@ -88,21 +106,31 @@ async function fixture({ language = 'zh', deleteSession = vi.fn(async () => {}) 
   const click = async label => {
     const button = [...document.querySelectorAll('button')].find(node => node.textContent === label)
     expect(button, label).toBeDefined()
-    await act(async () => button.click())
+    act(() => button.click())
     await act(async () => new Promise(resolve => setTimeout(resolve, 0)))
   }
   cleanup = async () => {
     if (mounted) await act(async () => root.unmount())
     disposers.reverse().forEach(dispose => dispose())
     container.remove()
+    if (cloud) { delete window.dshEnterpriseChat; delete window.__ModuleLoader__ }
   }
   return {
-    deleteSession, nativeConfirm, nativeAlert, click,
+    deleteSession, nativeConfirm, nativeAlert, click, bridge,
+    navigation: collectionProps?.navigation,
+    async account(epoch) { cloudState = { ...cloudState, epoch }; await act(async () => cloudListener(cloudState)) },
     dialog: () => document.querySelector('[role=dialog]'),
     open: async () => {
-      document.querySelector('[data-trigger]').focus()
-      await click('Session actions')
-      await click(locale === 'zh' ? '永久删除会话' : 'Delete session permanently')
+      if (cloud) {
+        const trigger = document.querySelector('.dshCloudHistoryActions')
+        trigger.focus()
+        await act(async () => trigger.click())
+        await click(locale === 'zh' ? '删除' : 'Delete')
+      } else {
+        document.querySelector('[data-trigger]').focus()
+        await click('Session actions')
+        await click(locale === 'zh' ? '永久删除会话' : 'Delete session permanently')
+      }
     },
     switchLanguage: async value => { locale = value; await act(async () => render()) },
     dispose: async () => {
@@ -205,4 +233,90 @@ it('disposes the confirmation and ignores a late failure after plugin unload', a
   expect(ui.deletion.getSnapshot()).toBeNull()
   await act(async () => ui.deletion.request('session-b', 'Other'))
   expect(ui.dialog()).toBeNull()
+})
+
+
+it.each(['zh', 'en'])('confirms cloud deletion through the installed Menu and Modal in %s', async language => {
+  const ui = await fixture({ cloud: true, language })
+  await ui.open()
+  expect(ui.bridge.open).toHaveBeenCalledTimes(0)
+  expect(ui.dialog().textContent).toContain('云端会话')
+  expect(document.activeElement.textContent).toBe(language === 'zh' ? '取消' : 'Cancel')
+  await ui.click(language === 'zh' ? '取消' : 'Cancel')
+  expect(ui.bridge.remove).toHaveBeenCalledTimes(0)
+  expect(document.activeElement.className).toBe('dshCloudHistoryActions')
+  await ui.open()
+  await ui.click(language === 'zh' ? '删除会话' : 'Delete conversation')
+  expect(ui.bridge.remove).toHaveBeenCalledExactlyOnceWith('cloud-a', 1)
+  expect(ui.dialog()).toBeNull()
+  expect(document.querySelector('[data-history-kind=chat]')).toBeNull()
+})
+
+it('keeps a failed cloud deletion retryable', async () => {
+  const deletion = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(undefined)
+  const ui = await fixture({ cloud: true, deleteSession: deletion })
+  await ui.open()
+  await ui.click('删除会话')
+  expect(ui.dialog().querySelector('[role=alert]').textContent).toContain('offline')
+  expect(document.querySelector('[data-history-kind=chat]')).toBeTruthy()
+  await ui.click('删除会话')
+  expect(ui.dialog()).toBeNull()
+  expect(ui.bridge.remove).toHaveBeenCalledTimes(2)
+})
+
+it('clears a pending confirmation when the authenticated account changes', async () => {
+  const ui = await fixture({ cloud: true })
+  await ui.open()
+  await ui.account(2)
+  expect(ui.dialog()).toBeNull()
+  await act(async () => ui.deletion.confirm())
+  expect(ui.bridge.remove).toHaveBeenCalledTimes(0)
+})
+
+it('holds the cloud confirmation during deletion and ignores duplicate confirmation', async () => {
+  let finish
+  const ui = await fixture({ cloud: true, deleteSession: () => new Promise(resolve => { finish = resolve }) })
+  await ui.open()
+  await ui.click('删除会话')
+  expect(ui.dialog().querySelector('[role=status]')).toBeTruthy()
+  await act(async () => { ui.deletion.close(); void ui.deletion.confirm() })
+  expect(ui.dialog()).toBeTruthy()
+  expect(ui.bridge.remove).toHaveBeenCalledTimes(1)
+  await act(async () => finish())
+  expect(ui.dialog()).toBeNull()
+})
+
+
+it('discards a list response captured before a successful deletion', async () => {
+  const ui = await fixture({ cloud: true })
+  let finish
+  ui.bridge.history.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  act(() => { void ui.navigation.refreshHistory() })
+  await ui.open()
+  await ui.click('删除会话')
+  expect(document.querySelector('[data-history-kind=chat]')).toBeNull()
+  await act(async () => finish({ epoch: 1, items: [{ id: 'cloud-a', title: 'stale', updatedAt: '2026-11-03' }], hasMore: false }))
+  expect(document.querySelector('[data-history-kind=chat]')).toBeNull()
+})
+
+it('preserves the next account history when an earlier deletion finishes', async () => {
+  let finish
+  const ui = await fixture({ cloud: true, deleteSession: () => new Promise(resolve => { finish = resolve }) })
+  await ui.open()
+  await ui.click('删除会话')
+  await ui.account(2)
+  expect(ui.dialog()).toBeNull()
+  await act(async () => finish())
+  expect(ui.navigation.snapshot().epoch).toBe(2)
+  expect(ui.navigation.snapshot().items.map(item => item.id)).toEqual(['cloud-a'])
+})
+
+
+it('advances server pages when filtered history pages contain fewer rows', async () => {
+  const ui = await fixture({ cloud: true })
+  ui.bridge.history.mockResolvedValue({ epoch: 1, items: [], hasMore: true })
+  await act(async () => ui.navigation.refreshHistory(true))
+  await act(async () => ui.navigation.refreshHistory(true))
+  expect(ui.bridge.history.mock.calls.map(call => call[0])).toEqual([1, 2, 3])
+  expect(ui.navigation.snapshot().page).toBe(3)
 })

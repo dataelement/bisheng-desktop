@@ -28,7 +28,7 @@ export function createSessionSearchFixture(workspaceSource, desktopSource, { gro
     return runtime
   }
   const { WorkspaceBrowser, createWorkspaceShortcutControls, zh, en } = load(workspaceSource, 'exports.WorkspaceBrowser = WorkspaceBrowser; exports.createWorkspaceShortcutControls = createWorkspaceShortcutControls; exports.zh = zh; exports.en = en')
-  const { SharedCollection, MODES_COPY } = load(desktopSource, 'exports.SharedCollection = SharedCollection; exports.MODES_COPY = MODES_COPY')
+  const { SharedCollection, MODES_COPY, CLOUD_DELETE_COPY } = load(desktopSource, 'exports.SharedCollection = SharedCollection; exports.MODES_COPY = MODES_COPY; exports.CLOUD_DELETE_COPY = CLOUD_DELETE_COPY')
   const workspaceCopy = locale === 'zh' ? zh : en
   const t = key => locale ? workspaceCopy[key] || key : key
   const desktopT = key => locale ? MODES_COPY[locale][key] || key : key
@@ -63,7 +63,7 @@ export function createSessionSearchFixture(workspaceSource, desktopSource, { gro
     open: id => opened.push(`work:${id}`),
     actions,
     renderSlot: (name, props, options) => shared && name === 'sidebar.workspaces.collection'
-      ? React.createElement(SharedCollection, { ...props, navigation, t: desktopT })
+      ? React.createElement(SharedCollection, { ...props, navigation, t: desktopT, deleteText: key => CLOUD_DELETE_COPY[locale || 'en'][key] })
       : options?.fallback,
     t
   }
