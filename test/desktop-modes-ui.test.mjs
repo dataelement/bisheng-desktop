@@ -132,6 +132,7 @@ async function mount(connected = false, collection = {}, inert = false, workbenc
     async workLive(patch) { await act(async () => { liveState = { ...liveState, ...patch }; liveListeners.forEach(fn => fn()) }) },
     liveListenerCount: () => liveListeners.size,
     async cloudLanding(landing) { snapshot = { ...snapshot, landing }; await act(async () => chatListener(snapshot)) },
+    async chatState(patch) { snapshot = { ...snapshot, ...patch }; await act(async () => chatListener(snapshot)) },
     draft: () => container.querySelector('textarea')
   }
 }
@@ -849,4 +850,25 @@ it('keeps a confirmed empty state visible while refreshing an empty history', as
   await ui.account(true)
   expect(history.textContent).toBe('recentrecentEmpty')
   await act(async () => pending.resolve(historyResult([])))
+})
+
+it('refreshes cloud history on push transitions and focus without periodic state polling', async () => {
+  const ui = await mount(true)
+  const bridge = window.dshEnterpriseChat
+  expect(bridge.history).toHaveBeenCalledTimes(1)
+  const stateCalls = bridge.state.mock.calls.length
+  vi.useFakeTimers()
+  try {
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+    expect(bridge.state).toHaveBeenCalledTimes(stateCalls)
+    expect(bridge.history).toHaveBeenCalledTimes(1)
+    await ui.chatState({ conversationId: 'another' })
+    expect(bridge.history).toHaveBeenCalledTimes(2)
+    await ui.chatState({ connected: false })
+    expect(container.querySelectorAll('[data-history-kind=chat]')).toHaveLength(0)
+    await ui.chatState({ connected: true, epoch: 2 })
+    expect(bridge.history).toHaveBeenCalledTimes(3)
+    await act(async () => window.dispatchEvent(new Event('focus')))
+    expect(bridge.history).toHaveBeenCalledTimes(4)
+  } finally { vi.useRealTimers() }
 })

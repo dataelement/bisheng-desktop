@@ -2,7 +2,7 @@
  * Lock provenance and deployment contract: docs/office-runtime.md.
  */
 import { createHash } from 'node:crypto'
-import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { access, cp, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -106,12 +106,52 @@ async function stripUnusedPythonPayload(dependencies, pythonLib, sitePackages) {
   }
 }
 
-/** Always assemble this build's payload. Keep only verified downloads as cache. */
+async function hashTree(hash, root, prefix = '') {
+  for (const entry of (await readdir(join(root, prefix), { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
+    const name = prefix ? `${prefix}/${entry.name}` : entry.name
+    hash.update(JSON.stringify(name))
+    if (entry.isDirectory()) await hashTree(hash, root, name)
+    else if (entry.isFile()) hash.update(await readFile(join(root, name)))
+    else throw new Error(`Office runtime: unsupported skill input ${name}`)
+  }
+}
+
+/** Reuse a complete local payload only while all assembly inputs match. */
 export async function prepareOfficeRuntime({ target = officeTarget(), output = join(project, '.build/office-runtime'), cache = join(project, '.build/office-downloads') } = {}) {
   const artifact = lock.targets[target]
   if (!artifact) throw new Error(`Office runtime: unknown target ${target}`)
-  const { version } = JSON.parse(await readFile(join(project, 'package.json'), 'utf8'))
+  let version, skillRoot, fingerprint
+  try {
+    ;({ version } = JSON.parse(await readFile(join(project, 'package.json'), 'utf8')))
+    skillRoot = dirname(require.resolve('@deepseek-ai/dsh-skill-office/package.json'))
+    const inputHash = createHash('sha256').update(JSON.stringify({ target, version, lock }))
+    inputHash.update(await readFile(fileURLToPath(import.meta.url)))
+    await hashTree(inputHash, join(skillRoot, 'assets'))
+    await hashTree(inputHash, join(project, 'packages/dsh-desktop-office/business-skills'))
+    fingerprint = inputHash.digest('hex')
+  } catch (error) {
+    await rm(output, { recursive: true, force: true })
+    throw error
+  }
   await mkdir(dirname(output), { recursive: true })
+  if (process.env.DSH_OFFICE_FORCE_BUILD !== '1') {
+    try {
+      const saved = await readFile(join(output, '.assembly-fingerprint'), 'utf8')
+      const python = target === 'win-x64' ? 'python.exe' : 'bin/python3'
+      await Promise.all([
+        access(join(output, 'primary-runtime/runtime.json')),
+        access(join(output, 'primary-runtime/dependencies/python', python)),
+        access(join(output, 'office-skills/office-docx/SKILL.md')),
+        access(join(output, 'business-skills'))
+      ])
+      if (saved.trim() === fingerprint) {
+        console.log(`Office runtime reused: ${target}`)
+        return
+      }
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
+  }
   // Do not leave last build's payload available after a failed preparation.
   await rm(output, { recursive: true, force: true })
   const staging = await mkdtemp(join(dirname(output), '.office-runtime-'))
@@ -138,7 +178,6 @@ export async function prepareOfficeRuntime({ target = officeTarget(), output = j
       pythonPackages: lock.pythonPackages
     }
     await writeFile(join(runtime, 'runtime.json'), `${JSON.stringify(manifest, null, 2)}\n`)
-    const skillRoot = dirname(require.resolve('@deepseek-ai/dsh-skill-office/package.json'))
     await cp(join(skillRoot, 'assets'), join(staging, 'office-skills'), { recursive: true, dereference: true })
     await cp(join(project, 'packages/dsh-desktop-office/business-skills'), join(staging, 'business-skills'), { recursive: true })
     // Keep upstream skills intact; add the Windows packaging constraint at the
@@ -151,6 +190,7 @@ export async function prepareOfficeRuntime({ target = officeTarget(), output = j
         : skill === 'office-docx' ? '\n\n## Desktop Word template workflow\n\nWhen the current Desktop Word composer selects a template, call office_template and use its editable_paragraphs with office_template_write. Fill current issuing organizations and content using replacements, additions cloned from template paragraphs, and removals for unused paragraphs. The Host preserves native page geometry, embedded fonts, borders and page-number footers and checks the current DOCX again at present. Use office-docx for native chart/image updates, content review and rendering of that resulting DOCX. Ordinary Word tasks use the general creation workflow.\n' : ''
       await writeFile(path, `${source}${route}\n\n## Desktop runtime\n\nCall load_workspace_dependencies and use its absolute Python path. For the general Office workflow, generate files with python-docx, python-pptx, openpyxl or XlsxWriter; active Desktop templates use pptd_* tools for PPT and office_template_write for Word. Do not hand-assemble OOXML with Windows PowerShell Compress-Archive: its ZIP entries can contain backslashes and fail Office preview. For deliberate low-level OOXML work, use Python zipfile with forward-slash entry names.\n\nThe supplied LibreOffice Kit node is the Desktop Electron runtime in Node mode. Set ELECTRON_RUN_AS_NODE=1 when invoking it (POSIX: prefix the command with ELECTRON_RUN_AS_NODE=1; PowerShell: set $env:ELECTRON_RUN_AS_NODE='1' before & <node> <cli>). Keep the supplied CLI path; it resolves the bundled engine outside ASAR.\n`)
     }
+    await writeFile(join(staging, '.assembly-fingerprint'), `${fingerprint}\n`)
     await rename(staging, output)
     console.log(`Office runtime prepared: ${manifest.platform}/${manifest.arch}, Python ${manifest.python}`)
   } finally {

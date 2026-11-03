@@ -2665,17 +2665,25 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
       ctx.slots.inject('sidebar.workspaces', () => ctx.slots.inject('sidebar.session.leading', () => ctx.slots.register({ name: 'sidebar.session.leading', inject: () => ({ service }) }, SessionWorkbenchIcon)))
       ctx.slots.inject('desktop.workbench.frame', () => ctx.slots.register({ name: 'desktop.workbench.frame', inject: () => ({ service }) }, Frame))
       ctx.effect(() => {
-        let disposed = false
+        let disposed = false, revision = 0, expiryTimer, expiresAt = 0
+        let nativeIdentity
         let disposeTab
         const sync = async () => {
+          const request = ++revision
           let account
           try {
             const response = await fetch('/api/enterprise.state', { credentials: 'same-origin', cache: 'no-store' })
-            if (!response.ok) return
+            if (!response.ok) throw new Error('Enterprise state unavailable')
             account = await response.json()
-          } catch { return }
-          if (disposed) return
-          const connected = account?.connected === true && Date.parse(account.sessionExpiresAt) > Date.now()
+          } catch {
+            if (!expiresAt || expiresAt > Date.now()) return
+            account = { connected: false }
+          }
+          if (disposed || request !== revision) return
+          expiresAt = Date.parse(account?.sessionExpiresAt) || 0
+          const connected = account?.connected === true && expiresAt > Date.now()
+          clearTimeout(expiryTimer)
+          if (connected) expiryTimer = setTimeout(() => { void sync() }, Math.min(expiresAt - Date.now() + 1, 2_147_483_647))
           const previousConnected = enterpriseCapability.getSnapshot().connected
           const previousKey = service.enterpriseAccountKey
           if (!connected || (previousKey && account.connectionKey && account.connectionKey !== previousKey)) {
@@ -2705,13 +2713,20 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
             name: 'settings.plugins.tab', id: 'desktop-workbenches', order: 40, label: () => ctx.locale.bind(SETTINGS_NS)('title')
           }, WorkbenchSettingsTab))
         }
-        const timer = typeof window.setInterval === 'function' ? window.setInterval(() => { void sync() }, 5000) : undefined
         const onAccountChanged = () => { void sync() }
+        const onNativeChanged = state => {
+          const identity = `${state?.connected === true}:${state?.epoch ?? ''}`
+          if (identity === nativeIdentity) return
+          nativeIdentity = identity
+          void sync()
+        }
         window.addEventListener('dsh-desktop:enterprise-account-changed', onAccountChanged)
+        window.addEventListener('focus', onAccountChanged)
+        const unsubscribeNative = window.dshEnterpriseChat?.subscribe?.(onNativeChanged)
         const unsubscribe = enterpriseCapability.subscribe(syncTab)
         void sync()
         syncTab()
-        return () => { disposed = true; disposeTab?.(); unsubscribe(); window.removeEventListener('dsh-desktop:enterprise-account-changed', onAccountChanged); if (timer !== undefined) window.clearInterval(timer) }
+        return () => { disposed = true; revision++; clearTimeout(expiryTimer); disposeTab?.(); unsubscribe(); unsubscribeNative?.(); window.removeEventListener('focus', onAccountChanged); window.removeEventListener('dsh-desktop:enterprise-account-changed', onAccountChanged) }
       }, 'workbenches: enterprise capability')
       ctx.effect(() => ctx.locale?.register?.('workbench.enterprise', {
         zh: {

@@ -93,6 +93,27 @@ describe('enterprise Chat host boundary', () => {
     } finally { f.host.dispose() }
   })
 
+  it('does not exchange or replace the cookie on unchanged connected publishes', async () => {
+    vi.useFakeTimers()
+    const f = fixture()
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      const view = fake.views[0]
+      f.change({ connected: true, connectionKey: 'tenant-a' })
+      f.change({ connected: true, connectionKey: 'tenant-a' })
+      await flush()
+      expect(f.enterprise.webSession).toHaveBeenCalledTimes(1)
+      expect(fake.sessions[0].cookies.set).toHaveBeenCalledTimes(1)
+      expect(view.webContents.loadURL).toHaveBeenCalledTimes(1)
+      expect(view.webContents.close).not.toHaveBeenCalled()
+      await elapse(270_000)
+      expect(f.enterprise.webSession).toHaveBeenCalledTimes(2)
+      expect(fake.sessions[0].cookies.set).toHaveBeenCalledTimes(2)
+      expect(view.webContents.loadURL).toHaveBeenCalledTimes(1)
+    } finally { f.host.dispose(); vi.useRealTimers() }
+  })
+
   it('discards an exchange finishing after logout', async () => {
     const f = fixture()
     let finish!: (value: any) => void
@@ -475,6 +496,28 @@ it('leaves failed remote settings without blocking the original conversation', a
     expect(f.host.snapshot().settingsSection).toBeUndefined()
     expect(view.setVisible).toHaveBeenLastCalledWith(true)
   } finally { f.host.dispose() }
+})
+
+it('pushes hidden account changes even before a Chat owner exists', async () => {
+  const f = fixture()
+  let window = undefined as typeof f.owner | undefined
+  const host = new EnterpriseChatView(f.enterprise as any, vi.fn(), () => window)
+  try {
+    f.change({ connected: false, connectionKey: 'tenant-a' })
+    expect(host.snapshot().connected).toBe(false)
+    window = f.owner
+    f.change({ connected: true, connectionKey: 'tenant-a' })
+    expect(window.webContents.send).toHaveBeenLastCalledWith('enterprise-chat:changed', expect.objectContaining({ connected: true, phase: 'idle' }))
+    expect(f.enterprise.webSession).not.toHaveBeenCalled()
+    host.present(window, { ...presentation, visible: false })
+    window.webContents.send.mockClear()
+    f.change({ connected: true, connectionKey: 'tenant-b' })
+    expect(window.webContents.send).toHaveBeenLastCalledWith('enterprise-chat:changed', expect.objectContaining({ connected: true, phase: 'idle' }))
+    expect(f.enterprise.webSession).not.toHaveBeenCalled()
+    f.change({ connected: false, connectionKey: 'tenant-b' })
+    expect(window.webContents.send).toHaveBeenLastCalledWith('enterprise-chat:changed', expect.objectContaining({ connected: false }))
+    expect(fake.views).toHaveLength(0)
+  } finally { host.dispose(); f.host.dispose() }
 })
 
 it('pushes connection failures and logout to mounted settings without waiting for a poll', async () => {

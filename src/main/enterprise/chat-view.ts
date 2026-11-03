@@ -101,10 +101,11 @@ export class EnterpriseChatView {
   private settingsTimer?: NodeJS.Timeout
   private appearance?: string
 
-  constructor(private enterprise: EnterpriseDesktopRuntime, private note: (line: string) => void) {
+  constructor(private enterprise: EnterpriseDesktopRuntime, private note: (line: string) => void, private notificationWindow?: () => BrowserWindow | undefined) {
     this.unsubscribe = enterprise.subscribe((state) => {
-      if (!state.connected || (this.key !== undefined && state.connectionKey !== this.key)) { this.clear(); this.notify() }
-      if (state.connected && this.state.phase !== 'error' && this.presentation?.visible && this.owner && !this.owner.isDestroyed()) {
+      if (!state.connected || (this.key !== undefined && state.connectionKey !== this.key)) this.clear()
+      this.notify()
+      if (state.connected && !this.view && this.state.phase !== 'error' && this.presentation?.visible && this.owner && !this.owner.isDestroyed()) {
         void this.connect()
       }
     })
@@ -115,7 +116,8 @@ export class EnterpriseChatView {
   }
 
   private notify(): void {
-    if (this.owner && !this.owner.isDestroyed()) this.owner.webContents.send('enterprise-chat:changed', this.snapshot())
+    const window = this.notificationWindow?.() ?? this.owner
+    if (window && !window.isDestroyed()) window.webContents.send('enterprise-chat:changed', this.snapshot())
   }
 
   present(window: BrowserWindow, input: unknown): EnterpriseChatViewState {

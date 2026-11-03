@@ -758,6 +758,8 @@ window.__ModuleLoader__.load({
       let disposeMarket
       let disposed = false
       let revision = 0
+      let expiryTimer
+      let marketMode
       const syncMarketEntry = async () => {
         const current = ++revision
         let account
@@ -769,8 +771,13 @@ window.__ModuleLoader__.load({
         const allowed = account?.connected === true
           && Date.parse(account.sessionExpiresAt) > Date.now()
           && account.allowThirdPartyPlugins === true
+        window.clearTimeout(expiryTimer)
+        if (allowed) expiryTimer = window.setTimeout(() => { void syncMarketEntry() }, Math.min(Date.parse(account.sessionExpiresAt) - Date.now() + 1, 2_147_483_647))
+        const nextMode = allowed ? (marketAlreadyComposed() ? 'management' : 'installer') : undefined
+        if (nextMode === marketMode) return
         disposeMarket?.()
         disposeMarket = undefined
+        marketMode = nextMode
         if (!allowed) return
         disposeMarket = ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register(
           marketAlreadyComposed()
@@ -779,9 +786,19 @@ window.__ModuleLoader__.load({
           marketAlreadyComposed() ? MarketManagementTab : MarketInstallerSection
         ))
       }
-      const timer = window.setInterval(() => { void syncMarketEntry() }, 5000)
+      const changed = () => { void syncMarketEntry() }
+      const focus = () => { if (document.visibilityState === 'visible') changed() }
+      window.addEventListener('dsh-desktop:enterprise-account-changed', changed)
+      window.addEventListener('focus', focus)
+      document.addEventListener('visibilitychange', focus)
+      const unsubscribe = window.dshEnterpriseChat?.subscribe?.(changed)
       void syncMarketEntry()
-      return () => { disposed = true; revision += 1; disposeMarket?.(); window.clearInterval(timer) }
+      return () => {
+        disposed = true; revision += 1; disposeMarket?.(); unsubscribe?.(); window.clearTimeout(expiryTimer)
+        window.removeEventListener('dsh-desktop:enterprise-account-changed', changed)
+        window.removeEventListener('focus', focus)
+        document.removeEventListener('visibilitychange', focus)
+      }
       }, 'dsh-desktop-market-installer: plugin market entry')
     }
 

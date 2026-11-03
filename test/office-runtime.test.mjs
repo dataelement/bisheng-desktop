@@ -115,6 +115,26 @@ describe('Office runtime assembly', () => {
     await expect(readFile(join(output, 'runtime.json'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('reuses matching assembly and rebuilds when its Python executable is missing', async () => {
+    const output = await temporary()
+    const cache = await temporary()
+    const target = officeTarget()
+    const lock = JSON.parse(await readFile(join(root, 'scripts/office-runtime/lock.json'), 'utf8'))
+    await writeFile(join(cache, lock.targets[target].pythonSha256), 'corrupt Python')
+    await copyFile(join(root, '.build/office-runtime/.assembly-fingerprint'), join(output, '.assembly-fingerprint'))
+    const python = join(output, 'primary-runtime/dependencies/python', ...(target === 'win-x64' ? ['python.exe'] : ['bin/python3']))
+    await mkdir(resolve(python, '..'), { recursive: true })
+    await writeFile(python, '')
+    await writeFile(join(output, 'primary-runtime/runtime.json'), '{}')
+    await mkdir(join(output, 'office-skills/office-docx'), { recursive: true })
+    await writeFile(join(output, 'office-skills/office-docx/SKILL.md'), '')
+    await mkdir(join(output, 'business-skills'))
+    await expect(prepareOfficeRuntime({ target, output, cache })).resolves.toBeUndefined()
+    await rm(python)
+    await expect(prepareOfficeRuntime({ target, output, cache })).rejects.toThrow('checksum mismatch')
+    await expect(readFile(join(output, '.assembly-fingerprint'))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('rejects wheel paths that escape site-packages or use unsupported installation schemes', async () => {
     const output = await temporary()
     for (const entry of ['../escaped', 'C:/escaped', 'lib\\bad.py', 'package.data/purelib/extra.py']) {

@@ -3485,7 +3485,7 @@ async function bootstrap(): Promise<void> {
     runtime.note('[enterprise] start_failed')
     enterpriseDesktop = undefined
   }
-  if (enterpriseDesktop) enterpriseChat = new EnterpriseChatView(enterpriseDesktop, (line) => runtime.note(line))
+  if (enterpriseDesktop) enterpriseChat = new EnterpriseChatView(enterpriseDesktop, (line) => runtime.note(line), () => mainWindow)
   app.once('before-quit', () => enterpriseChat?.dispose())
   registerHarnessHandlers()
   mobileBridge = new LanMobileBridge({

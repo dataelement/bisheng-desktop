@@ -525,6 +525,8 @@ describe('desktop workbench client navigation', () => {
       return Response.json({ error: 'unexpected' }, { status: 404 })
     })
     const listeners = new Map()
+    let nativeChanged, expiryCallback
+    const nativeUnsubscribe = vi.fn()
     const storage = new Map([[WORKBENCH_ENABLED, 'true']])
     const testWindow = {
       localStorage: {
@@ -533,7 +535,8 @@ describe('desktop workbench client navigation', () => {
         removeItem: key => storage.delete(key)
       },
       sessionStorage,
-      setInterval: () => 0,
+      dshEnterpriseChat: { subscribe: fn => { nativeChanged = fn; return nativeUnsubscribe } },
+      setInterval: vi.fn(() => 0),
       clearInterval: () => {},
       addEventListener(type, fn) {
         const list = listeners.get(type) ?? []
@@ -552,7 +555,7 @@ describe('desktop workbench client navigation', () => {
       window: Object.assign(testWindow, { __ModuleLoader__: { load({ factory }) {
         applyLocal = factory(name => name === 'react' ? { createElement() {}, Component: class {} } : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null }).apply
       } } }),
-      document, fetch: fetchImpl, setTimeout, clearTimeout, AbortController
+      document, fetch: fetchImpl, setTimeout: (fn, delay) => { if (delay > 100_000) { expiryCallback = fn; return 0 } return setTimeout(fn, delay) }, clearTimeout, AbortController
     })
     const list = { ids: ['old', 'writer-1', 'writer-2', 'research-1'], byId: {} }
     for (const id of list.ids) list.byId[id] = { sessionId: id, displayTitle: id }
@@ -606,6 +609,7 @@ describe('desktop workbench client navigation', () => {
     service.register({ title: 'Writer' }, () => null)
     await service.load()
     await vi.waitFor(() => expect(service.getSnapshot().enterpriseCatalogStatus).toBe('empty'))
+    expect(testWindow.setInterval).not.toHaveBeenCalled()
     projects.push({ workspaceId: 'project-2', title: 'Other project', sessionIds: ['native-2'] })
     list.ids.push('native-2')
     list.byId['native-2'] = { sessionId: 'native-2', displayTitle: 'Native session' }
@@ -618,13 +622,22 @@ describe('desktop workbench client navigation', () => {
     const created = ctx.sessions.create.mock.calls.length
 
     signedIn = false
-    testWindow.dispatchEvent({ type: 'dsh-desktop:enterprise-account-changed' })
+    nativeChanged({ connected: false, epoch: 2 })
     await vi.waitFor(() => expect(service.state.active).toBeNull())
     expect(ctx.uiWorkspace.openSession).toHaveBeenLastCalledWith('native-2')
     expect(currentOf(list)).toBe('native-2')
     expect(starter('project-1')).toBe(false)
     expect(ctx.sessions.create).toHaveBeenCalledTimes(created)
+    signedIn = true
+    testWindow.dispatchEvent({ type: 'focus' })
+    await vi.waitFor(() => expect(service.networkMarketAllowed).toBe(true))
+    expect(expiryCallback).toBeTypeOf('function')
+    signedIn = false
+    expiryCallback()
+    await vi.waitFor(() => expect(service.networkMarketAllowed).toBe(false))
     for (const cleanup of cleanups) cleanup()
+    expect(nativeUnsubscribe).toHaveBeenCalledOnce()
+    expect(listeners.get('focus')).toHaveLength(0)
     service.dispose()
   })
 

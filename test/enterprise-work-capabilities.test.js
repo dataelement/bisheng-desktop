@@ -37,6 +37,61 @@ function fixture() {
   return { request, messages, skill, catalog, fail: () => { failure = true } }
 }
 
+it('synchronizes at startup and on demand without a periodic catalog request', async () => {
+  vi.useFakeTimers()
+  try {
+    const f = fixture(), routes = []
+    const ctx = { connection: { fetch: { register: route => routes.push(route) } }, logger: { warn: vi.fn() },
+      sessions: { get: () => undefined }, tools: { register: () => () => {}, guard: vi.fn() },
+      on: vi.fn(), effect: fn => cleanups.push(fn()) }
+    const api = applyWorkCapabilities(ctx, { request: f.request, state: () => ({ connected: true, connectionKey: 'account-a' }), refreshState: async () => {} })
+    await api.sync()
+    const count = () => f.messages.filter(message => message.method === 'tools/list').length
+    expect(count()).toBe(1)
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(count()).toBe(1)
+    await routes[0].fetch(new Request('http://localhost/api/enterprise.work-tools', { method: 'POST', body: JSON.stringify({ operation: 'refresh' }) }))
+    expect(count()).toBe(2)
+  } finally { vi.useRealTimers() }
+})
+
+it('keeps conversation preparation available on catalog failure but rejects stale tool execution', async () => {
+  const f = fixture(), events = new Map(), registered = new Map()
+  const session = { id: 'main', header: { delegationDepth: 0 } }
+  let failing = false
+  const ctx = { connection: { fetch: { register: vi.fn() } }, logger: { warn: vi.fn() },
+    sessions: { get: () => session }, tools: { register: tool => { registered.set(tool.name, tool); return () => registered.delete(tool.name) }, guard: vi.fn() },
+    on: (name, fn) => events.set(name, fn), effect: fn => cleanups.push(fn()) }
+  const api = applyWorkCapabilities(ctx, { request: (...args) => failing ? Promise.reject(new Error('network unavailable')) : f.request(...args),
+    state: () => ({ connected: true, connectionKey: 'account-a' }), refreshState: async () => {} })
+  await api.sync()
+  const tool = registered.get('mcp__bisheng__bisheng_tool_7')
+  failing = true
+  await expect(events.get('system-prompt/prepare')({ agent: { session } })).resolves.toBeUndefined()
+  expect(registered.size).toBe(0)
+  await expect(tool.execute({ query: 'x' }, { agent: { session }, signal: new AbortController().signal })).rejects.toThrow('authorization expired')
+  const abort = new AbortController(); abort.abort()
+  await expect(events.get('system-prompt/prepare')({ agent: { session }, signal: abort.signal })).rejects.toThrow()
+})
+
+it('does not clear a newer generation when an old refresh fails', async () => {
+  let rejectOld, entered
+  const gate = new Promise((resolve, reject) => { rejectOld = reject })
+  const started = new Promise(resolve => { entered = resolve })
+  let calls = 0
+  const ctx = { connection: { fetch: { register: vi.fn() } }, logger: { warn: vi.fn() }, sessions: { get: () => undefined },
+    tools: { register: vi.fn(() => vi.fn()), guard: vi.fn() }, on: vi.fn(), effect: fn => cleanups.push(fn()) }
+  const api = applyWorkCapabilities(ctx, { request: vi.fn(), state: () => ({ connected: false }),
+    refreshState: async () => { calls++; if (calls === 1) { entered(); await gate } } })
+  await started
+  const old = api.sync()
+  api.clear()
+  rejectOld(new Error('old request failed'))
+  await expect(old).rejects.toThrow('old request failed')
+  // A second refresh must succeed after the stale attempt has settled.
+  await expect(api.sync()).resolves.toBeUndefined()
+})
+
 it('negotiates the real SDK protocol and follows all catalog pages', async () => {
   const f = fixture()
   const result = await withWorkMcp(f.request, 'account-a', undefined, client => client.listTools())

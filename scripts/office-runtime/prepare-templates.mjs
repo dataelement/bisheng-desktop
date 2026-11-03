@@ -102,7 +102,7 @@ export async function prepareOfficeTemplates({ runtime = join(project, '.build/o
   const kit = JSON.parse(await readFile(join(project, 'node_modules/@deepseek-ai/libreoffice-kit/package.json'), 'utf8'))
   const inputs = await files(sources)
   const fingerprint = hash(Buffer.concat([
-    Buffer.from(JSON.stringify({ format: 1, python: manifest.python, kit: kit.version })),
+    Buffer.from(JSON.stringify({ format: 2, platform: manifest.platform, arch: manifest.arch, payloadDigest: manifest.payloadDigest, kit: kit.version })),
     await readFile(fileURLToPath(import.meta.url)), await readFile(join(import.meta.dirname, 'normalize-package.py')),
     await readFile(join(import.meta.dirname, 'check-templates.py')),
     ...await Promise.all(inputs.map(async path => Buffer.concat([Buffer.from(path), await readFile(join(sources, path))])))

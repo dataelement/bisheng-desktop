@@ -77,6 +77,41 @@ async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<voi
 }
 
 describe('enterprise service login loop', () => {
+  it('does not poll after login or retry in the background after failure, but recovers on demand', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    const requests: string[] = []
+    let failModels = false
+    const fetchImpl: EnterpriseFetch = async (input, init) => {
+      const url = String(input)
+      requests.push(url)
+      if (failModels && url.includes('/api/v1/dsh/models')) throw new TypeError('fetch failed')
+      return globalThis.fetch(input, init)
+    }
+    const { service } = await createService(createEnterpriseFetch(fetchImpl))
+    await completeBrowserLogin(origin, (await service.startLogin(origin)).authorizationUrl)
+    await waitFor(() => service.snapshot().phase === 'connected' && service.snapshot().modelsAvailable)
+    requests.length = 0
+    vi.useFakeTimers()
+    try {
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
+      expect(requests).toEqual([])
+    } finally { vi.useRealTimers() }
+    failModels = true
+    expect((await service.refreshModels()).phase).toBe('degraded')
+    requests.length = 0
+    vi.useFakeTimers()
+    try {
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
+      expect(requests).toEqual([])
+    } finally { vi.useRealTimers() }
+    failModels = false
+    expect((await service.refreshModels(true)).phase).toBe('connected')
+    expect(requests.some(url => url.includes('/api/v1/dsh/models'))).toBe(true)
+    expect(requests.some(url => url.includes('/api/v1/dsh/usage'))).toBe(true)
+  })
+
   it('publishes a new catalog revision when only an administrator display name changes', async () => {
     const platform = createMockEnterpriseServer({ port: 0 })
     const origin = await platform.listen()
