@@ -87,6 +87,10 @@ window.__ModuleLoader__.load({
 		const TEMPLATE_DOCK_BOTTOM_PX = 12;
 		const TEMPLATE_PANEL_MIN_HEIGHT_PX = 200;
 		const STAGED_MODE_KEY = "\0dsh-ppt-unbound";
+		function pptTemplateId(templates, templateId) {
+			const template = (Array.isArray(templates) ? templates : []).find((item) => item.id === templateId && (item.supportedModes?.includes("ppt") ?? true));
+			return template?.id ?? null;
+		}
 		function modeKey(sessionId) {
 			return typeof sessionId === "string" && sessionId.trim().length > 0 ? sessionId : STAGED_MODE_KEY;
 		}
@@ -151,26 +155,34 @@ window.__ModuleLoader__.load({
 				}));
 			}
 			setTemplateState(sessionId, next) {
-                this.update(sessionId, current => ({
-                    ...current,
-                    templates: next.templates,
-                    selectedId: next.templates.some(template => template.id === next.selectedTemplateId) ? next.selectedTemplateId : null,
-                    activeMode: next.presentationMode ?? current.activeMode,
-                    notice: next.templateMigration?.reason ?? null,
-                    loading: false,
-                    error: ""
-                }));
-            }
+				this.update(sessionId, (current) => {
+					const templates = Array.isArray(next.templates) ? next.templates : current.templates;
+					const away = next.documentMode === "word" || next.documentMode === "excel";
+					const remoteId = pptTemplateId(templates, next.selectedTemplateId);
+					const keptId = pptTemplateId(templates, current.selectedId);
+					const selectedId = away ? null : remoteId !== null ? remoteId : typeof next.selectedTemplateId === "string" ? keptId : next.presentationMode === "ppt" ? null : keptId;
+					return {
+						...current,
+						templates,
+						selectedId,
+						activeMode: away ? null : next.presentationMode ?? current.activeMode,
+						notice: next.templateMigration?.reason ?? null,
+						loading: false,
+						error: ""
+					};
+				});
+			}
 			setTemplates(sessionId, templates) {
 				this.update(sessionId, (current) => ({
 					...current,
 					loading: false,
 					templates,
-					selectedId: templates.some((template) => template.id === current.selectedId) ? current.selectedId : null,
+					selectedId: pptTemplateId(templates, current.selectedId),
 					error: ""
 				}));
 			}
 			select(sessionId, template, activeMode) {
+				if (activeMode !== "ppt" || pptTemplateId([template], template?.id) === null) return;
 				this.bump(sessionId);
 				this.update(sessionId, (current) => ({
 					...current,
@@ -234,14 +246,17 @@ window.__ModuleLoader__.load({
 				this.update(sessionId, () => ({ ...staged, loading: true, error: "" }));
 				try {
 					const remote = await client.call("state");
-					const occupied = remote?.presentationMode === "ppt" || remote?.documentMode === "word" || remote?.documentMode === "excel" || typeof remote?.selectedTemplateId === "string";
+					const templates = Array.isArray(remote?.templates) ? remote.templates : [];
+					const away = remote?.documentMode === "word" || remote?.documentMode === "excel";
+					const matchId = pptTemplateId(templates, remote?.selectedTemplateId);
+					const occupied = away || remote?.presentationMode === "ppt" || matchId !== null;
 					if (occupied) {
 						this.clearStaged();
 						this.update(sessionId, (current) => ({
 							...current,
-							templates: Array.isArray(remote?.templates) ? remote.templates : current.templates,
-							selectedId: typeof remote?.selectedTemplateId === "string" ? remote.selectedTemplateId : null,
-							activeMode: remote?.presentationMode === "ppt" ? "ppt" : null,
+							templates: templates.length > 0 ? templates : current.templates,
+							selectedId: away ? null : matchId,
+							activeMode: away ? null : remote?.presentationMode === "ppt" ? "ppt" : null,
 							loading: false,
 							engaged: false,
 							error: ""
@@ -250,6 +265,22 @@ window.__ModuleLoader__.load({
 						return "kept";
 					}
 					if (staged.selectedId) {
+						const catalog = Array.isArray(staged.templates) ? staged.templates : [];
+						const stagedMatch = pptTemplateId(catalog, staged.selectedId);
+						if (catalog.length > 0 && stagedMatch === null) {
+							await client.call("presentation/mode", { mode: "ppt" });
+							this.update(sessionId, (current) => ({
+								...current,
+								activeMode: "ppt",
+								selectedId: null,
+								loading: false,
+								engaged: true,
+								error: ""
+							}));
+							this.clearStaged();
+							this.adopted.add(sessionId);
+							return "partial";
+						}
 						try {
 							await client.call("template/select", { templateId: staged.selectedId, mode: "ppt" });
 						} catch (reason) {
@@ -289,17 +320,28 @@ window.__ModuleLoader__.load({
 			applyLoadedTemplates(sessionId, client, seenRevision, next, request) {
 				if (request != null && (request.client !== client || modeKey(request.sessionId) !== modeKey(sessionId))) return false;
 				if (this.revision(sessionId) !== seenRevision) return false;
-				const activeMode = this.snapshot(sessionId).activeMode ?? (next?.presentationMode === "ppt" ? "ppt" : null);
+				const away = next?.documentMode === "word" || next?.documentMode === "excel";
+				const activeMode = away ? null : this.snapshot(sessionId).activeMode ?? (next?.presentationMode === "ppt" ? "ppt" : null);
 				this.setTemplates(sessionId, next?.templates ?? []);
+				if (away) {
+					this.update(sessionId, (current) => ({ ...current, activeMode: null, selectedId: null, loading: false, error: "" }));
+					return true;
+				}
 				if (!client?.bound || activeMode === null) return true;
 				this.setMode(sessionId, activeMode);
 				this.setNotice(sessionId, next?.templateMigration?.reason ?? null);
-				const selected = (next?.templates ?? []).find((template) => template.id === next.selectedTemplateId && (template.supportedModes?.includes("ppt") ?? true));
-				if (selected === void 0) {
-					this.deselect(sessionId, activeMode);
+				const templates = next?.templates ?? [];
+				const selectedId = pptTemplateId(templates, next.selectedTemplateId);
+				if (selectedId !== null) {
+					this.select(sessionId, templates.find((template) => template.id === selectedId), activeMode);
 					return true;
 				}
-				this.select(sessionId, selected, activeMode);
+				const keptId = pptTemplateId(templates, this.snapshot(sessionId).selectedId);
+				if (typeof next?.selectedTemplateId === "string" && keptId !== null) {
+					this.select(sessionId, templates.find((template) => template.id === keptId), activeMode);
+					return true;
+				}
+				this.deselect(sessionId, activeMode);
 				return true;
 			}
 		};
