@@ -781,10 +781,12 @@ var PptService = class {
 	selectPresentationMode(sessionId, active, actor) {
 		return this.mutate(sessionId, "select-presentation-mode", actor, (state) => {
 			const { presentationMode: _presentationMode, ...rest } = state;
+			const pptId = (Array.isArray(state.templates) ? state.templates : []).find((item) => item.id === state.selectedTemplateId && templateSupportsMode(item, "ppt"))?.id;
 			return {
 				state: active ? {
 					...rest,
-					presentationMode: "ppt", documentMode: undefined, selectedDocumentTemplate: undefined
+					presentationMode: "ppt", documentMode: undefined, selectedDocumentTemplate: undefined,
+					...pptId === void 0 ? { selectedTemplateId: void 0 } : { selectedTemplateId: pptId }
 				} : rest,
 				value: true,
 				summary: active ? "已进入 PPT 模式" : "已退出 PPT 模式",
@@ -805,7 +807,8 @@ var PptService = class {
             || typeof template.revision !== 'string' || !/^[a-zA-Z0-9.-]{1,96}$/.test(template.revision)) throw new PptError('invalid-request', 'Choose a versioned Office template');
         return this.mutate(sessionId, 'select-document-template', actor, state => {
             if (state.documentMode !== template.mode) throw new PptError('conflict', 'Choose the matching document format');
-            return { state: { ...state, selectedDocumentTemplate: { id: template.id, mode: template.mode, revision: template.revision } }, value: true,
+            const { presentationMode: _presentationMode, selectedTemplateId: _selectedTemplateId, templateMigration: _templateMigration, ...rest } = state;
+            return { state: { ...rest, selectedDocumentTemplate: { id: template.id, mode: template.mode, revision: template.revision } }, value: true,
                 summary: `已选择 Office 案例 ${template.id}`, facts: { ...template } };
         });
     }
@@ -1332,20 +1335,21 @@ function persistedState(value, sessionId, personalTemplates = []) {
  const missingPersonal = requested?.startsWith("personal-") && selected === undefined;
  const retired = requested !== undefined && selected === undefined && !missingPersonal;
  const fallback = BUILT_IN_TEMPLATES.find(template => template.id === "dsh-engineering-blueprint") ?? BUILT_IN_TEMPLATES[0];
- const selectedTemplateId = retired ? fallback.id : selected?.id;
+ const documentActive = record.documentMode === "word" || record.documentMode === "excel";
+ const selectedTemplateId = documentActive ? undefined : retired ? fallback.id : selected?.id;
  return {
   sessionId, templates,
   // Preserve historical decks and generated files; they are user-owned records.
   decks: Array.isArray(record.decks) ? record.decks : [],
   activities: Array.isArray(record.activities) ? record.activities : [],
-  ...(['word', 'excel'].includes(record.documentMode) ? { documentMode: record.documentMode } :
+  ...(documentActive ? { documentMode: record.documentMode } :
       record.presentationMode === "ppt" ? { presentationMode: "ppt" } : {}),
-  ...(['word', 'excel'].includes(record.documentMode) && record.selectedDocumentTemplate?.mode === record.documentMode
+  ...(documentActive && record.selectedDocumentTemplate?.mode === record.documentMode
       && /^[a-z0-9-]{1,96}$/.test(record.selectedDocumentTemplate?.id ?? '') && /^[a-zA-Z0-9.-]{1,96}$/.test(record.selectedDocumentTemplate?.revision ?? '')
       ? { selectedDocumentTemplate: { id: record.selectedDocumentTemplate.id, mode: record.documentMode, revision: record.selectedDocumentTemplate.revision } } : {}),
   ...(selectedTemplateId === undefined ? {} : { selectedTemplateId }),
-  ...(missingPersonal ? { templateMigration: { reason: "personal-template-deleted" } } : retired ? { templateMigration: { reason: "template-retired", replacementId: fallback.id } } :
-     record.templateMigration?.reason === "template-retired" ? { templateMigration: record.templateMigration } : {})
+  ...(!documentActive && missingPersonal ? { templateMigration: { reason: "personal-template-deleted" } } : !documentActive && retired ? { templateMigration: { reason: "template-retired", replacementId: fallback.id } } :
+     !documentActive && record.templateMigration?.reason === "template-retired" ? { templateMigration: record.templateMigration } : {})
  };
 }
 /** Local store containing only PPT route state, source projects, and output files. */

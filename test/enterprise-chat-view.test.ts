@@ -981,3 +981,93 @@ it('ignores render-process-gone emitted by closing the previous view', async () 
     expect(fake.views[1].webContents.close).not.toHaveBeenCalled()
   } finally { f.host.dispose(); vi.useRealTimers() }
 })
+
+// Cloud deletion uses the same authenticated endpoint as the web conversation list.
+describe('cloud conversation deletion', () => {
+  it.each([15, 20, 1, 5, 10])('deletes the selected flow type %s and returns the active view to new Chat', async flowType => {
+    const f = fixture()
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      fake.sessions[0].fetch.mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ chat_id: 'cloud-a', flow_id: 'app-a', flow_type: flowType }] })))
+      await f.host.history(1)
+      await f.host.open('cloud-a')
+      const epoch = f.host.snapshot().epoch
+      fake.sessions[0].fetch.mockResolvedValueOnce(new Response(JSON.stringify({ status_code: 200 })))
+      expect(await f.host.remove('cloud-a', epoch)).toEqual({ epoch })
+      expect(fake.sessions[0].fetch).toHaveBeenLastCalledWith('https://enterprise.example/api/v1/chat/cloud-a', expect.objectContaining({ method: 'DELETE', redirect: 'error', signal: expect.any(AbortSignal) }))
+      expect(fake.views[0].webContents.loadURL).toHaveBeenLastCalledWith('https://enterprise.example/workspace/c/new?embed=dsh&dshTheme=dark')
+      await expect(f.host.open('cloud-a')).rejects.toThrow('current Chat history')
+      // A lagging/in-flight list response cannot restore a deleted row or its grant.
+      expect((await f.host.history(1)).items).toEqual([])
+      await expect(f.host.open('cloud-a')).rejects.toThrow('current Chat history')
+    } finally { f.host.dispose() }
+  })
+
+  it('preserves another open conversation and rejects stale or forged deletion grants', async () => {
+    const f = fixture()
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      await f.host.history(1)
+      const epoch = f.host.snapshot().epoch
+      const fetch = fake.sessions[0].fetch
+      fetch.mockClear()
+      await expect(f.host.remove('cloud-a', -1)).rejects.toThrow()
+      await expect(f.host.remove('unknown', epoch)).rejects.toThrow()
+      await expect(f.host.remove('../cloud-a', epoch)).rejects.toThrow()
+      expect(fetch).toHaveBeenCalledTimes(0)
+      const loads = fake.views[0].webContents.loadURL.mock.calls.length
+      fetch.mockResolvedValueOnce(new Response(JSON.stringify({ status_code: 200 })))
+      await f.host.remove('cloud-a', epoch)
+      expect(fake.views[0].webContents.loadURL).toHaveBeenCalledTimes(loads)
+    } finally { f.host.dispose() }
+  })
+
+  it.each([new Response('', { status: 403 }), new Response(JSON.stringify({ status_code: 500 })), new Response('invalid')])('keeps the row and navigation grant when deletion fails', async response => {
+    const f = fixture()
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      await f.host.history(1)
+      const epoch = f.host.snapshot().epoch
+      fake.sessions[0].fetch.mockResolvedValueOnce(response)
+      await expect(f.host.remove('cloud-a', epoch)).rejects.toThrow()
+      expect((await f.host.history(1)).items).toHaveLength(1)
+      await f.host.open('cloud-a')
+      fake.sessions[0].fetch.mockResolvedValueOnce(new Response(JSON.stringify({ status_code: 200 })))
+      await expect(f.host.remove('cloud-a', epoch)).resolves.toEqual({ epoch })
+    } finally { f.host.dispose() }
+  })
+
+  it('discards a deletion response after logout', async () => {
+    const f = fixture()
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      await f.host.history(1)
+      let finish: (response: Response) => void = () => {}
+      fake.sessions[0].fetch.mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve }))
+      const pending = f.host.remove('cloud-a', f.host.snapshot().epoch)
+      const rejected = expect(pending).rejects.toThrow('identity changed')
+      f.change({ connected: false, connectionKey: 'tenant-a' })
+      finish(new Response(JSON.stringify({ status_code: 200 })))
+      await rejected
+      expect(f.host.snapshot().connected).toBe(false)
+    } finally { f.host.dispose() }
+  })
+
+  it('reports navigation recovery separately after a committed deletion', async () => {
+    const f = fixture()
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      await f.host.history(1)
+      await f.host.open('cloud-a')
+      fake.sessions[0].fetch.mockResolvedValueOnce(new Response(JSON.stringify({ status_code: 200 })))
+      fake.views[0].webContents.executeJavaScript.mockRejectedValueOnce(new Error('navigation failed'))
+      await expect(f.host.remove('cloud-a', f.host.snapshot().epoch)).resolves.toBeDefined()
+      expect(f.host.snapshot().phase).toBe('error')
+    } finally { f.host.dispose() }
+  })
+})

@@ -221,8 +221,8 @@ window.__ModuleLoader__.load({
       return {
         subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener) },
         getSnapshot: () => state,
-        request: (sessionId, displayTitle) => {
-          if (active && state === null) publish({ sessionId, displayTitle, busy: false, error: null })
+        request: (sessionId, displayTitle, context) => {
+          if (active && state === null) publish({ sessionId, displayTitle, context, busy: false, error: null })
         },
         close: () => { if (state && state.busy === false) publish(null) },
         confirm: async () => {
@@ -230,7 +230,7 @@ window.__ModuleLoader__.load({
           const pending = { ...state, busy: true, error: null }
           publish(pending)
           try {
-            await deleteSession(pending.sessionId)
+            await deleteSession(pending.sessionId, pending.context)
             if (active && state === pending) publish(null)
           } catch (reason) {
             if (active && state === pending) {
@@ -238,6 +238,7 @@ window.__ModuleLoader__.load({
             }
           }
         },
+        reset: () => publish(null),
         dispose: () => { active = false; publish(null); listeners.clear() }
       }
     }
@@ -302,6 +303,11 @@ window.__ModuleLoader__.load({
       }, unread ? (chinese ? '标为已读' : 'Mark as read') : (chinese ? '标为未读' : 'Mark as unread'))
     }
 
+    const CLOUD_DELETE_NS = 'desktop.cloudChatDelete'
+    const CLOUD_DELETE_COPY = {
+      zh: { menu: '删除', actions: '会话操作', title: '删除会话', close: '关闭', cancel: '取消', confirm: '删除会话', description: '确定删除“{name}”？会话及其聊天记录将被永久删除。', pending: '正在删除会话…', failed: '删除失败，请重试。' },
+      en: { menu: 'Delete', actions: 'Conversation actions', title: 'Delete conversation', close: 'Close', cancel: 'Cancel', confirm: 'Delete conversation', description: 'Permanently delete “{name}” and its chat history?', pending: 'Deleting conversation…', failed: 'Deletion failed. Please try again.' }
+    }
     const MODES_NS = 'desktop.chatWork'
     const MODES_COPY = {
       zh: { welcomeMessage: '来一起创造', welcome: '欢迎来到', newConversation: '新建对话', navigation: '导航', moreNavigation: '更多', recent: '对话', projects: '工作区', all: '所有会话', results: '搜索结果', cloud: '云端聊天', local: '本地工作', recentEmpty: '暂无最近会话', recentSearchEmpty: '当前列表没有匹配的会话', chat: '聊天', work: '工作', label: '聊天与工作', loading: '正在连接企业聊天…', error: '企业聊天连接失败，请重试', retry: '重新连接', refresh: '刷新聊天记录', historyLoading: '正在加载聊天记录…', historyError: '加载失败，点击重试', empty: '暂无聊天记录', more: '加载更多', newChat: '新聊天', signIn: '登录企业账号', signInTitle: '登录后使用聊天', signInDescription: '聊天由企业平台提供。登录后，即可使用平台中的模型和对话记录。', continueWork: '继续使用工作', close: '关闭', justNow: '刚刚' },
@@ -386,21 +392,30 @@ window.__ModuleLoader__.load({
         const lastPage = more ? page : Math.max(1, value.page)
         publish({ historyPhase: 'loading' })
         try {
-          let items = more ? [...value.items] : [], response
+          let items = more ? [...value.items] : [], response, fetchedPage = page
           for (let next = page; next <= lastPage; next++) {
             response = await window.dshEnterpriseChat.history(next)
             if (!active || request !== historyRequest || epoch !== value.epoch) return
             if (response.epoch !== epoch) { publish({ historyPhase: 'idle' }); return }
+            fetchedPage = next
             items.push(...response.items)
             if (!response.hasMore) break
           }
-          publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page: Math.ceil(items.length / 40) || 1, hasMore: response.hasMore, historyPhase: 'ready' })
+publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page: fetchedPage, hasMore: response.hasMore, historyPhase: 'ready' })
         } catch {
           if (active && request === historyRequest && epoch === value.epoch) publish({ historyPhase: 'error' })
         } finally {
           if (active && request === historyRequest && historyDirty) { historyDirty = false; void refreshHistory() }
         }
       }
+      const deletion = createSessionDeletion(async (id, epoch) => {
+        if (epoch !== value.epoch || !value.connected) throw new Error('Chat identity changed.')
+        const response = await window.dshEnterpriseChat.remove(id, epoch)
+        if (!active || epoch !== value.epoch || response.epoch !== epoch) return
+        historyRequest++
+        publish({ items: value.items.filter(item => item.id !== id), historyPhase: 'idle' })
+        void refreshHistory()
+      })
       const open = async (id) => {
         if (!select('chat')) return
         const epoch = value.epoch
@@ -415,7 +430,7 @@ window.__ModuleLoader__.load({
         const conversationChanged = next.conversationId !== value.conversationId
         const becameReady = next.phase === 'ready' && value.phase !== 'ready'
         const clearHistory = identityChanged || !next.connected
-        if (clearHistory) { historyRequest++; historyDirty = false }
+if (clearHistory) { historyRequest++; historyDirty = false; deletion.reset() }
         publish({
           ...next,
           ...(clearHistory ? { items: [], page: 0, hasMore: false, historyPhase: 'idle' } : {}),
@@ -437,7 +452,10 @@ window.__ModuleLoader__.load({
       return {
         snapshot: () => value,
         subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn) },
-        select, open, refreshHistory,
+        select, open, refreshHistory, deletion,
+        requestDelete(id, title, epoch) {
+          if (value.connected && epoch === value.epoch && value.items.some(item => item.id === id)) deletion.request(id, title, epoch)
+        },
         bindWorkbench(service) {
           const sync = () => {
             const snapshot = service.getSnapshot()
@@ -534,7 +552,7 @@ if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
           document.addEventListener('visibilitychange', visibility)
           void sync()
           return () => {
-            active = false; revision++; historyRequest++; unsubscribe(); unsubscribeSessions(); unsubscribeWork(); unsubscribeChat?.()
+active = false; deletion.reset(); revision++; historyRequest++; unsubscribe(); unsubscribeSessions(); unsubscribeWork(); unsubscribeChat?.()
             window.removeEventListener('dsh-desktop:enterprise-account-changed', account)
             disposeNavigation()
             if (revealWorkSession && ctx.uiWorkspace.openSession === revealWorkSession) ctx.uiWorkspace.openSession = originalOpenSession
@@ -549,7 +567,8 @@ if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
       }
     }
     /** Cloud rows use the same title reveal speed and geometry as Harness sessions. */
-    function CloudHistoryRow({ item, selected, navigation, t }) {
+    function CloudHistoryRow({ item, selected, navigation, t, deleteText }) {
+      const [menuOpen, setMenuOpen] = React.useState(false)
       const title = React.useRef(null)
       const frame = React.useRef(0)
       const reset = () => {
@@ -571,13 +590,24 @@ if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
         }
         frame.current = requestAnimationFrame(tick)
       }
-      return React.createElement('button', { type: 'button', 'data-history-kind': 'chat', className: 'dshHistoryRow', 'aria-current': selected ? 'page' : undefined,
+      return React.createElement('div', { className: 'dshCloudHistoryRow' },
+        React.createElement('button', { type: 'button', 'data-history-kind': 'chat', className: 'dshHistoryRow', 'aria-current': selected ? 'page' : undefined,
         title: item.title, onClick: () => navigation.open(item.id), onPointerEnter: reveal, onPointerLeave: reset, onFocus: reveal, onBlur: reset },
         React.createElement('span', { ref: title }, item.title || t('newChat')),
-        React.createElement('time', { dateTime: new Date(item.updatedAt).toISOString() }, historyTime(item.updatedAt, t)))
+        React.createElement('time', { dateTime: new Date(item.updatedAt).toISOString() }, historyTime(item.updatedAt, t))),
+        React.createElement(Menu, {
+          open: menuOpen, onClose: () => setMenuOpen(false), portal: true, align: 'end', autoFocus: true, dense: true,
+          anchor: React.createElement('button', { type: 'button', className: 'dshCloudHistoryActions', 'aria-label': deleteText('actions'), 'aria-haspopup': 'menu', 'aria-expanded': menuOpen, onClick: () => setMenuOpen(open => !open) }, '⋯')
+        }, React.createElement(MenuItemButton, {
+          danger: true, onSelect: () => {
+            const epoch = navigation.snapshot().epoch
+            setMenuOpen(false)
+            setTimeout(() => navigation.requestDelete(item.id, item.title || t('newChat'), epoch), 0)
+          }
+        }, deleteText('menu'))))
     }
     /** Cloud identities stay namespaced; project ownership is projected by Harness. */
-    function SharedCollection({ projects, items, mode, query, archivedOnly, searchPending = false, navigation, t }) {
+    function SharedCollection({ projects, items, mode, query, archivedOnly, searchPending = false, navigation, t, deleteText }) {
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
       const initialHistoryLoading = state.historyPhase === 'loading' && state.page === 0
       const resultsPending = initialHistoryLoading || (mode === 'search' && searchPending)
@@ -593,7 +623,7 @@ if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
             React.createElement('span', null, t(mode === 'projects' ? 'recent' : mode === 'search' ? 'results' : 'all'))),
           ...rows.map(item => item.kind === 'work'
             ? React.createElement('div', { key: item.key, 'data-history-kind': 'work' }, item.render(state.mode === 'work'))
-            : React.createElement(CloudHistoryRow, { key: item.key, item, selected: state.mode === 'chat' && !state.pageId && state.conversationId === item.id, navigation, t })),
+            : React.createElement(CloudHistoryRow, { key: item.key, item, selected: state.mode === 'chat' && !state.pageId && state.conversationId === item.id, navigation, t, deleteText })),
           state.historyPhase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => navigation.refreshHistory() }, t('historyError')),
           initialHistoryLoading && React.createElement('div', { className: 'dshHistoryNotice', role: 'status' }, t('historyLoading')),
           rows.length === 0 && !resultsPending && React.createElement('div', { className: 'dshHistoryNotice' }, t(search ? 'recentSearchEmpty' : 'recentEmpty')),
@@ -795,7 +825,13 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
     // their fixed-position containing block attached to the viewport.
     function installDesktopModes(ctx) {
       const navigation = createChatNavigation(ctx)
+      ctx.effect(() => () => navigation.deletion.dispose())
       ctx.effect(() => ctx.locale.register(MODES_NS, MODES_COPY), 'desktop: Chat and Work locale')
+      ctx.effect(() => ctx.locale.register(CLOUD_DELETE_NS, CLOUD_DELETE_COPY))
+      ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+        name: 'shell.overlay', id: 'desktop-cloud-chat-delete-dialog', locale: CLOUD_DELETE_NS,
+        inject: () => ({ deletion: navigation.deletion, t: ctx.locale.bind(CLOUD_DELETE_NS) })
+      }, DeleteSessionDialog))
       ctx.effect(() => {
         const style = document.createElement('style')
         style.dataset.plugin = 'dsh-desktop-client-ui'
@@ -818,6 +854,10 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           .dshSharedCollection{min-width:0}
           .dshRecentHistory{margin-top:12px;min-width:0}
           .dshHistoryHeading{display:flex;align-items:center;justify-content:space-between;padding:4px 8px 12px;color:var(--dsw-alias-label-secondary);font-size:13px}
+          .dshCloudHistoryRow{display:flex;align-items:center;min-width:0}
+          .dshCloudHistoryRow>.dshHistoryRow{flex:1;min-width:0}
+          .dshCloudHistoryActions{border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);width:28px;height:28px;cursor:pointer;font:inherit}
+          .dshCloudHistoryActions:hover,.dshCloudHistoryActions[aria-expanded=true]{background:var(--dsw-alias-interactive-bg-hover)}
           .dshHistoryRow{box-sizing:border-box;display:flex;align-items:center;gap:6px;width:100%;height:32px;margin-bottom:2px;padding:0 8px 0 28px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;text-align:left;cursor:pointer}
           .dshHistoryRow:hover,.dshHistoryRow[aria-current=page]{background:var(--dsw-alias-interactive-bg-hover)}
           .dshHistoryRow span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dshHistoryRow time{color:var(--dsw-alias-label-tertiary);font-size:10px;white-space:nowrap}
@@ -835,7 +875,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
       ctx.slots.inject('sidebar.primaryNavigation', () => ctx.slots.register({ name: 'sidebar.primaryNavigation', id: 'desktop-primary-navigation', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS) }) }, PrimaryNavigation))
       ctx.slots.inject('sidebar.workspaces.title', () => ctx.slots.register({ name: 'sidebar.workspaces.title', inject: () => ({ t: ctx.locale.bind(MODES_NS) }) }, ({ flat, t }) => t(flat ? 'all' : 'projects')))
       ctx.slots.inject('desktop.mode.content', () => ctx.slots.register({ name: 'desktop.mode.content', id: 'desktop-chat-work', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS), locale: ctx.locale }) }, DesktopModes))
-      ctx.slots.inject('sidebar.workspaces.collection', () => ctx.slots.register({ name: 'sidebar.workspaces.collection', id: 'desktop-shared-collection', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS) }) }, SharedCollection))
+      ctx.slots.inject('sidebar.workspaces.collection', () => ctx.slots.register({ name: 'sidebar.workspaces.collection', id: 'desktop-shared-collection', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS), deleteText: ctx.locale.bind(CLOUD_DELETE_NS) }) }, SharedCollection))
       return navigation
     }
 
@@ -988,6 +1028,28 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         openReference: () => false,
         codec: { clipboardText: ref => `@${decode(ref).name}`, serialize: async ref => `@${decode(ref).name}` },
       }
+      const catalogFor = async (sessionId, signal) => {
+        const { input } = inputFor(sessionId)
+        const catalog = await request('catalog', sessionId, undefined, signal)
+        signal?.throwIfAborted()
+        if (inputFor(sessionId).input !== input) throw new Error('Work task changed.')
+        return catalog.spaces
+      }
+      const refresh = async (sessionId, signal) => {
+        if (read(sessionId).length === 0) return
+        const spaces = await catalogFor(sessionId, signal)
+        const { input } = inputFor(sessionId)
+        if (['plain', 'claimed'].includes(input.state.getSnapshot().phase)) {
+          const allowed = new Set(spaces.map(space => space.id))
+          const current = read(sessionId)
+          const retained = current.filter(space => allowed.has(space.id))
+          if (retained.length < current.length) update(sessionId, retained)
+        }
+      }
+      const choose = async (sessionId, ids, captureInsertion, signal) => {
+        const spaces = await catalogFor(sessionId, signal)
+        update(sessionId, spaces.filter(space => ids.includes(space.id)), captureInsertion)
+      }
       const prepare = async ({ sessionId, references, signal, command }) => {
         // Goal control commands keep the active objective's retrieval scope.
         if (command && (command.name !== 'goal' || !command.args.trim() || /^(?:clear|pause|resume|edit)$/i.test(command.args.trim()))) return
@@ -998,7 +1060,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         await request('select', sessionId, ids, signal)
         used.add(inputFor(sessionId).input)
       }
-      return { read, update, source, prepare }
+      return { read, update, source, prepare, refresh, choose, state: sessionId => inputFor(sessionId).input.state }
     }
 
     function WorkResourceAccessory({ sessionId, controls, t, inputActions, knowledge }) {
@@ -1009,7 +1071,43 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
       const [loading, setLoading] = React.useState(false)
       const [saving, setSaving] = React.useState(false)
       const [error, setError] = React.useState('')
+      const [accessError, setAccessError] = React.useState('')
       const [revision, retry] = React.useReducer(value => value + 1, 0)
+      React.useEffect(() => {
+        let pending
+        let signature
+        const refresh = () => {
+          pending?.abort()
+          const abort = new AbortController()
+          pending = abort
+          knowledge.refresh(sessionId, abort.signal)
+            .then(() => { if (!abort.signal.aborted) setAccessError('') })
+            .catch(reason => { if (!abort.signal.aborted) setAccessError(reason.message) })
+        }
+        const changed = () => {
+          const state = knowledge.state(sessionId).getSnapshot()
+          const next = JSON.stringify([state.phase, knowledge.read(sessionId)])
+          if (next === signature) return
+          signature = next
+          if (['plain', 'claimed'].includes(state.phase)) refresh()
+        }
+        const visible = () => { if (document.visibilityState === 'visible') refresh() }
+        const unsubscribe = knowledge.state(sessionId).subscribe(changed)
+        changed()
+        window.addEventListener('focus', refresh)
+        document.addEventListener('visibilitychange', visible)
+        const timer = setInterval(visible, 30_000)
+        return () => {
+          pending?.abort(); unsubscribe(); clearInterval(timer)
+          window.removeEventListener('focus', refresh)
+          document.removeEventListener('visibilitychange', visible)
+        }
+      }, [sessionId, knowledge])
+      const commitAbort = React.useRef()
+      React.useEffect(() => {
+        setSaving(false)
+        return () => commitAbort.current?.abort()
+      }, [sessionId])
       React.useEffect(() => {
         const control = { open: () => { setKeyword(''); setOpen(true) }, captureInsertion: () => inputActions.captureInsertion() }
         controls.set(sessionId, control)
@@ -1027,10 +1125,16 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
       }, [open, revision, sessionId, knowledge])
       const close = () => { if (!saving) setOpen(false) }
       const commit = async ids => {
+        const abort = new AbortController()
+        commitAbort.current?.abort()
+        commitAbort.current = abort
         setSaving(true); setError('')
-        try { knowledge.update(sessionId, spaces.filter(space => ids.includes(space.id)), () => inputActions.captureInsertion()); setOpen(false) }
-        catch (reason) { setError(reason.message) }
-        finally { setSaving(false) }
+        try {
+          await knowledge.choose(sessionId, ids, () => inputActions.captureInsertion(), abort.signal)
+          setOpen(false)
+        }
+        catch (reason) { if (!abort.signal.aborted) setError(reason.message) }
+        finally { if (!abort.signal.aborted) setSaving(false) }
       }
       const visible = spaces.filter(space => space.name.toLowerCase().includes(keyword.trim().toLowerCase())).sort((a, b) => {
         const an = a.name.trim(), bn = b.name.trim()
@@ -1043,7 +1147,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         kind === 'close' ? React.createElement('path', { d: 'm18 6-12 12M6 6l12 12' }) :
         [React.createElement('path', { key: 'left', d: 'M12 7v14m0-14C10 5 8 5 2 5v14c6 0 8 0 10 2' }), React.createElement('path', { key: 'right', d: 'M12 7c2-2 4-2 10-2v14c-6 0-8 0-10 2' })])
       return React.createElement(React.Fragment, null,
-        error && !open && React.createElement('div', { role: 'alert', className: 'dshWorkResourceError' }, error),
+        (error || accessError) && !open && React.createElement('div', { role: 'alert', className: 'dshWorkResourceError' }, error || accessError),
         React.createElement(Modal, { open, onClose: close, title: t('selectKnowledge'), headless: true, backdropBlur: false, className: 'dshWorkKnowledgeDialog' },
           React.createElement('header', { className: 'dshWorkKnowledgeHeader' },
             React.createElement('h2', null, t('selectKnowledge')),
