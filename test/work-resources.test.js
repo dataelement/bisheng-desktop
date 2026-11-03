@@ -10,6 +10,15 @@ function setup() {
   return { api: createWorkResourceSelections({ sessionFor: id => sessions.get(id), request, state: () => account }), request, sessions, setAccount: value => { account = value } }
 }
 describe('Work task knowledge scope', () => {
+  it('reconciles every saved scope with current catalog permissions', async () => {
+    const { api, request } = setup()
+    await api.select('one', [7, 9]); await api.select('two', [7])
+    request.mockResolvedValueOnce({ spaces: [{ id: 9, name: 'Reports' }] })
+    await api.catalog()
+    expect(api.get('one').map(space => space.id)).toEqual([9])
+    expect(api.get('two')).toEqual([])
+    await expect(api.retrieve('two', 'q')).rejects.toThrow('Select knowledge spaces')
+  })
   it('retrieves exactly the selected IDs and keeps two tasks independent', async () => {
     const { api, request } = setup()
     await api.select('one', [7, 7]); await api.select('two', [9])
