@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, realpath, cp } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, writeFile, rm, symlink, realpath, cp } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
@@ -231,6 +231,21 @@ it('persists a single document format across restarts and preserves historical P
   const restarted = { provide(name, value) { this[name] = value }, skills: { registerProvider() {} }, tools: { register() {} }, systemPrompt: { section() {} }, on() {}, inject() {} }
   await applyPpt(restarted, { root: f.root })
   expect((await restarted.officeModes.state(id)).selectedDocumentTemplate.id).toBe('government-notice')
+  const [sessionDirectory] = await readdir(join(f.root, 'sessions'))
+  const statePath = join(f.root, 'sessions', sessionDirectory, 'state.json')
+  const stored = JSON.parse(await readFile(statePath, 'utf8'))
+  expect(stored.selectedTemplateId).toBeUndefined()
+  expect(stored.presentationMode).toBeUndefined()
+  expect(stored.selectedDocumentTemplate).toMatchObject({ id: 'government-notice', mode: 'word' })
+  stored.selectedTemplateId = 'dsh-engineering-blueprint'
+  stored.presentationMode = 'ppt'
+  await writeFile(statePath, JSON.stringify(stored))
+  const repaired = { provide(name, value) { this[name] = value }, skills: { registerProvider() {} }, tools: { register() {} }, systemPrompt: { section() {} }, on() {}, inject() {} }
+  await applyPpt(repaired, { root: f.root })
+  const office = await repaired.officeModes.state(id)
+  expect(office.selectedDocumentTemplate.id).toBe('government-notice')
+  expect(office.presentationMode).toBeUndefined()
+  expect(office.selectedTemplateId).toBeUndefined()
   await restarted.officeModes.select(id, 'excel')
   expect((await f.modes.state(id)).selectedDocumentTemplate).toBeUndefined()
   expect((await f.modes.state(id)).documentMode).toBe('excel')
