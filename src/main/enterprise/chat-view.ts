@@ -74,6 +74,7 @@ export class EnterpriseChatView {
   private navigationRequest = 0
   private origin?: string
   private routes = new Map<string, string>()
+  private deletedConversations = new Set<string>()
   private view?: WebContentsView
   private isolated?: Session
   private owner?: BrowserWindow
@@ -219,14 +220,52 @@ export class EnterpriseChatView {
     const result = await response.json() as { data?: unknown }
     if (epoch !== this.generation) throw new Error('Chat identity changed.')
     if (!Array.isArray(result.data) || result.data.length > 40) throw new Error('Invalid Chat history.')
-    const items = result.data.map((row: Record<string, unknown>) => {
+    const items = result.data.filter((row: Record<string, unknown>) => !this.deletedConversations.has(String(row.chat_id))).map((row: Record<string, unknown>) => {
       const id = parseChatId(row.chat_id)
       const flowType = Number(row.flow_type)
       const route = flowType === 20 ? `/workspace/linsight/${id}` : [1, 5, 10].includes(flowType) ? `/workspace/chat/${id}/${parseChatId(String(row.flow_id))}/${flowType}` : `/workspace/c/${id}`
       this.routes.set(id, route)
       return { id, title: String(row.name || row.flow_name || '').slice(0, 500), updatedAt: String(row.update_time || row.create_time || '').slice(0, 50) }
     })
-    return { epoch, items, hasMore: items.length === 40 }
+    return { epoch, items, hasMore: result.data.length === 40 }
+  }
+
+  /** The history grant and confirmation belong to one authenticated identity. */
+  async remove(input: unknown, expectedEpoch: unknown): Promise<{ epoch: number }> {
+    const id = parseChatId(input)
+    const epoch = this.generation
+    if (expectedEpoch !== epoch || !this.enterprise.snapshot().connected || !this.routes.has(id)) {
+      throw new Error('Select a conversation from current Chat history.')
+    }
+    if (this.state.phase !== 'ready') await this.connect()
+    if (epoch !== this.generation || !this.isolated || !this.origin) throw new Error('Chat identity changed.')
+    const response = await this.isolated.fetch(new URL(`/api/v1/chat/${id}`, this.origin).href, {
+      method: 'DELETE', redirect: 'error', signal: AbortSignal.timeout(15_000)
+    })
+    if (!response.ok) throw new Error(`Chat deletion failed (${response.status}).`)
+    const result: unknown = await response.json()
+    if (epoch !== this.generation) throw new Error('Chat identity changed.')
+    if (!result || typeof result !== 'object' || !('status_code' in result) || result.status_code !== 200) {
+      throw new Error('Chat deletion failed.')
+    }
+    this.deletedConversations.add(id)
+    this.routes.delete(id)
+    this.note('[enterprise-chat] conversation deleted')
+    if (this.settingsReturnRoute?.match(/^\/workspace\/(?:c|chat|linsight)\/([a-zA-Z0-9_-]+)/u)?.[1] === id) {
+      this.settingsReturnRoute = '/workspace/c/new'
+    }
+    if (this.snapshot().conversationId === id) {
+      try { await this.navigate('/workspace/c/new') }
+      catch {
+        // Deletion is committed; expose navigation recovery independently.
+        if (epoch === this.generation) {
+          this.state = { phase: 'error', error: 'Chat navigation failed.' }
+          this.layout()
+          this.notify()
+        }
+      }
+    }
+    return { epoch }
   }
 
   async open(input: unknown): Promise<void> {
@@ -685,6 +724,7 @@ export class EnterpriseChatView {
     this.key = undefined
     this.origin = undefined
     this.routes.clear()
+    this.deletedConversations.clear()
     const view = this.view
     const isolated = this.isolated
     this.view = undefined
