@@ -368,7 +368,7 @@ window.__ModuleLoader__.load({
     function createChatNavigation(ctx) {
       let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, signInPromptOpen: false, approvalsOpen: false, accountDialogOpen: false, settingsSurface: undefined, pageId: undefined, navigation: undefined, workLanding: false, nativeWork: true, panelOpen: false, activePanelId: null }
       const listeners = new Set()
-      let active = false, revision = 0, historyRequest = 0, timer, lastHistory = 0
+      let active = false, revision = 0, historyRequest = 0, historyDirty = false
       const publish = (patch) => { value = { ...value, ...patch }; listeners.forEach(fn => fn()) }
       const select = (mode) => {
         if (mode === 'chat' && !value.connected) {
@@ -379,7 +379,8 @@ window.__ModuleLoader__.load({
         return true
       }
       const refreshHistory = async (more = false) => {
-        if (!value.connected || !window.dshEnterpriseChat || value.historyPhase === 'loading') return
+        if (!value.connected || !window.dshEnterpriseChat) return
+        if (value.historyPhase === 'loading') { if (!more) historyDirty = true; return }
         const request = ++historyRequest, epoch = value.epoch
         const page = more ? value.page + 1 : 1
         const lastPage = more ? page : Math.max(1, value.page)
@@ -394,9 +395,10 @@ window.__ModuleLoader__.load({
             if (!response.hasMore) break
           }
           publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page: Math.ceil(items.length / 40) || 1, hasMore: response.hasMore, historyPhase: 'ready' })
-          lastHistory = Date.now()
         } catch {
           if (active && request === historyRequest && epoch === value.epoch) publish({ historyPhase: 'error' })
+        } finally {
+          if (active && request === historyRequest && historyDirty) { historyDirty = false; void refreshHistory() }
         }
       }
       const open = async (id) => {
@@ -411,8 +413,9 @@ window.__ModuleLoader__.load({
         const identityChanged = next.epoch !== value.epoch
         const signedIn = next.connected && !value.connected
         const conversationChanged = next.conversationId !== value.conversationId
+        const becameReady = next.phase === 'ready' && value.phase !== 'ready'
         const clearHistory = identityChanged || !next.connected
-        if (clearHistory) { historyRequest++; lastHistory = 0 }
+        if (clearHistory) { historyRequest++; historyDirty = false }
         publish({
           ...next,
           ...(clearHistory ? { items: [], page: 0, hasMore: false, historyPhase: 'idle' } : {}),
@@ -421,14 +424,14 @@ window.__ModuleLoader__.load({
           mode: next.connected ? signedIn ? 'chat' : value.mode : 'work'
         })
         if (signedIn) window.dispatchEvent(new CustomEvent('dsh-desktop:close-settings'))
-        if (next.connected && next.phase === 'ready' && (refresh || identityChanged || signedIn || conversationChanged || Date.now() - lastHistory > 30000)) void refreshHistory()
+        if (next.connected && next.phase === 'ready' && (refresh || identityChanged || signedIn || conversationChanged || becameReady)) void refreshHistory()
       }
-      const sync = async (refresh = false) => {
+      const sync = async () => {
         const request = ++revision
         try {
           const next = await window.dshEnterpriseChat?.state()
           if (!active || request !== revision || !next) return
-          applyState(next, refresh === true)
+          applyState(next, true)
         } catch { if (active && request === revision) publish({ phase: 'error' }) }
       }
       return {
@@ -465,8 +468,8 @@ window.__ModuleLoader__.load({
         },
         start() {
           active = true
-          const poll = async () => { if (!document.hidden) await sync(); if (active) timer = setTimeout(poll, 1500) }
-const account = () => { void sync(true) }
+          const account = () => { void sync() }
+          const visibility = () => { if (!document.hidden) void sync() }
 // Older workspace hosts omit this registration. Failing here used to skip
 // the enterprise menu sync, so More never received knowledge and the other pages.
 const hasNavigationHandler = typeof ctx.uiWorkspace.registerNavigationHandler === 'function'
@@ -528,9 +531,10 @@ if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
           window.addEventListener('dsh-desktop:account-dialog-visibility', accountDialog)
           window.addEventListener('dsh-desktop:settings-surface', settingsSurface)
           window.addEventListener('focus', sync)
-          void poll()
+          document.addEventListener('visibilitychange', visibility)
+          void sync()
           return () => {
-            active = false; revision++; historyRequest++; clearTimeout(timer); unsubscribe(); unsubscribeSessions(); unsubscribeWork(); unsubscribeChat?.()
+            active = false; revision++; historyRequest++; unsubscribe(); unsubscribeSessions(); unsubscribeWork(); unsubscribeChat?.()
             window.removeEventListener('dsh-desktop:enterprise-account-changed', account)
             disposeNavigation()
             if (revealWorkSession && ctx.uiWorkspace.openSession === revealWorkSession) ctx.uiWorkspace.openSession = originalOpenSession
@@ -539,6 +543,7 @@ if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
             window.removeEventListener('dsh-desktop:account-dialog-visibility', accountDialog)
             window.removeEventListener('dsh-desktop:settings-surface', settingsSurface)
             window.removeEventListener('focus', sync)
+            document.removeEventListener('visibilitychange', visibility)
           }
         }
       }

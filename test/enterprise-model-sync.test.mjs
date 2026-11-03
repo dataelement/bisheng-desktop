@@ -10,19 +10,21 @@ let dispose
 
 afterEach(() => { dispose?.(); dispose = undefined; vi.useRealTimers() })
 
-function fixture() {
+function fixture(realApi = false) {
   vi.useFakeTimers()
   const window = Object.assign(new EventTarget(), { setTimeout, clearTimeout, setInterval, clearInterval })
   const document = Object.assign(new EventTarget(), { visibilityState: 'visible' })
   const api = vi.fn(async () => ({}))
   const warn = vi.fn()
-  const bind = vm.runInNewContext(`${source.slice(start, end)}; bindEnterpriseModelSync`, {
-    window, document, api, AbortController, ACCOUNT_CHANGED_EVENT: accountChanged, console: { warn }
+  const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ ok: true }) }))
+  const apiEnd = source.indexOf('    function usageText(', end)
+  const bind = vm.runInNewContext(`${source.slice(start, realApi ? apiEnd : end)}; bindEnterpriseModelSync`, {
+    window, document, ...(realApi ? { fetch, CustomEvent: class extends Event {} } : { api }), AbortController, ACCOUNT_CHANGED_EVENT: accountChanged, console: { warn }
   })
-  return { window, document, api, warn, start() { dispose = bind() } }
+  return { window, document, api, fetch, warn, start() { dispose = bind() } }
 }
 
-it('refreshes on startup, foreground focus, account changes and the visible 30-second interval', async () => {
+it('refreshes on startup, foreground focus, account changes and the no periodic polling', async () => {
   const f = fixture()
   f.start()
   await vi.advanceTimersByTimeAsync(0)
@@ -31,14 +33,14 @@ it('refreshes on startup, foreground focus, account changes and the visible 30-s
   await vi.advanceTimersByTimeAsync(0)
   f.window.dispatchEvent(new Event(accountChanged))
   await vi.advanceTimersByTimeAsync(30_000)
-  expect(f.api).toHaveBeenCalledTimes(4)
+  expect(f.api).toHaveBeenCalledTimes(3)
   f.document.visibilityState = 'hidden'
   await vi.advanceTimersByTimeAsync(60_000)
-  expect(f.api).toHaveBeenCalledTimes(4)
+  expect(f.api).toHaveBeenCalledTimes(3)
   f.document.visibilityState = 'visible'
   f.document.dispatchEvent(new Event('visibilitychange'))
   await vi.advanceTimersByTimeAsync(0)
-  expect(f.api).toHaveBeenCalledTimes(5)
+  expect(f.api).toHaveBeenCalledTimes(4)
 })
 
 it('coalesces simultaneous foreground events and cancels requests and listeners on disposal', async () => {
@@ -72,4 +74,26 @@ it('retries after a failed refresh and bounds each request lifetime', async () =
   expect(signal.aborted).toBe(true)
   f.window.dispatchEvent(new Event('focus'))
   expect(f.api).toHaveBeenCalledTimes(3)
+})
+
+it('refreshes again when the account changes during an in-flight request', async () => {
+  const f = fixture()
+  let finish
+  f.api.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  f.start()
+  f.window.dispatchEvent(new Event(accountChanged))
+  expect(f.api).toHaveBeenCalledTimes(1)
+  finish({})
+  await vi.advanceTimersByTimeAsync(0)
+  expect(f.api).toHaveBeenCalledTimes(2)
+})
+
+it('does not recursively refresh after a successful real API response', async () => {
+  const f = fixture(true)
+  f.start()
+  await vi.advanceTimersByTimeAsync(60_000)
+  expect(f.fetch).toHaveBeenCalledTimes(1)
+  f.window.dispatchEvent(new Event(accountChanged))
+  await vi.advanceTimersByTimeAsync(0)
+  expect(f.fetch).toHaveBeenCalledTimes(2)
 })

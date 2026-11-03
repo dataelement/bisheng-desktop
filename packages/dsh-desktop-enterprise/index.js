@@ -217,7 +217,7 @@ export function apply(ctx) {
       await workbenches?.stop()
       capabilityPolicy?.reset()
     }
-    if (!state.connected || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
+    if ((!state.connected && account.connected) || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
     account = state
     if (!state.connected) capabilityPolicy?.reset()
     else void capabilityPolicy?.refresh(state.connectionKey).catch(() => undefined)
@@ -377,7 +377,12 @@ export function apply(ctx) {
   registerJsonRoute(connection, LOCAL_PATHS.manual, ['POST'], async (request) => {
     const body = await readJson(request)
     const state = await brokerJson('/v1/login/manual', { identityTicket: String(body?.identityTicket ?? '') })
-    if (!state.connected || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
+    if (account.connectionKey !== state.connectionKey) {
+      await market?.stop()
+      await workbenches?.stop()
+      capabilityPolicy?.reset()
+    }
+    if ((!state.connected && account.connected) || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
     account = state
     ingestEnterpriseState(state)
     if (state.connected) await capabilityPolicy?.refresh(state.connectionKey).catch(() => undefined)
@@ -416,7 +421,7 @@ export function apply(ctx) {
     await market.stop()
     await workbenches?.stop()
     capabilityPolicy?.reset()
-    if (!state.connected || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
+    if ((!state.connected && account.connected) || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
     account = state
     ingestEnterpriseState(state)
     return { ...state, allowThirdPartyPlugins: false, allowThirdPartyWorkbenches: false }

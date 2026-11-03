@@ -53,6 +53,28 @@ describe('enterpriseAuth instance SDK', () => {
     expect(second.enterpriseAuth.getState().connected).toBe(true)
   })
 
+  it('fails closed on polling failure and ignores a late snapshot after revocation', async () => {
+    vi.useFakeTimers()
+    const scoped = fixture().extend()
+    const { transport, dispose } = await bind(scoped, { connected: true, enterpriseId: 'a', userId: 'one', sessionVersion: '1' })
+    transport.state.mockRejectedValueOnce(new Error('broker unavailable'))
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(scoped.enterpriseAuth.getState()).toEqual({ connected: false, sessionVersion: '1' })
+    transport.state.mockResolvedValueOnce({ connected: true, enterpriseId: 'b', userId: 'two', sessionVersion: '2' })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(scoped.enterpriseAuth.getState()).toEqual({ connected: true, enterpriseId: 'b', userId: 'two', sessionVersion: '2' })
+    let complete
+    transport.state.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+    await vi.advanceTimersByTimeAsync(1000)
+    dispose()
+    complete({ connected: true, enterpriseId: 'a', userId: 'one', sessionVersion: '1' })
+    await Promise.resolve()
+    expect(() => scoped.enterpriseAuth.getState()).toThrow(EnterpriseAuthError)
+    await expect(scoped.enterpriseAuth.request('/api/test')).rejects.toMatchObject({ errorCode: 'authorization_denied' })
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(transport.state).toHaveBeenCalledTimes(4)
+  })
+
   it('refreshes sync snapshots and aborts requests when revoked', async () => {
     vi.useFakeTimers()
     const ctx = fixture(), scoped = ctx.extend()

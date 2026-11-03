@@ -109,7 +109,8 @@ it('refreshes immediately after save and waits past a pre-save catalog response'
 it('clears stale registrations on catalog failure and retries on the next request', async () => {
   const f = await fixture(), handle = await f.create()
   f.setError('catalog unavailable')
-  await expect(f.assemble(handle)).rejects.toThrow('catalog unavailable')
+  const assembly = await f.assemble(handle)
+  expect(assembly.tools).toEqual([])
   expect(f.ctx.tools.schemas()).toEqual([])
   f.setError(undefined)
   f.setEnabled(false)

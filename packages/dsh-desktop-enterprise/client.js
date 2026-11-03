@@ -604,14 +604,13 @@ window.__ModuleLoader__.load({
               setCatalog(current => current && ({ ...current, installed: next.installed }))
             }
           } catch {
-            // Keep the last plugin state until a later poll or explicit refresh succeeds.
+            // Keep the last plugin state until a later focus or explicit refresh succeeds.
           } finally { if (stateRequest.current === controller) stateRequest.current = null }
         }
-        const timer = window.setInterval(() => { void updateRuntimeState() }, 3000)
         const onFocus = () => { void updateRuntimeState() }
         window.addEventListener('focus', onFocus)
         return () => {
-          window.clearInterval(timer); window.removeEventListener('focus', onFocus)
+          window.removeEventListener('focus', onFocus)
           stateRequest.current?.abort(); stateRequest.current = null
         }
       }, [identity])
@@ -680,7 +679,7 @@ window.__ModuleLoader__.load({
     }
 
     function bindEnterpriseMarketTab(ctx) {
-      let disposeTab, identity, currentAccount, disposed = false, revision = 0
+      let disposeTab, identity, currentAccount, expiryTimer, disposed = false, revision = 0
       const sync = async () => {
         const currentRevision = ++revision
         try {
@@ -690,6 +689,8 @@ window.__ModuleLoader__.load({
           if (disposed || currentRevision !== revision) return
           const next = account.connected && Date.parse(account.sessionExpiresAt) > Date.now() ? `${account.base}|${account.tenant.id}|${account.user.id}` : null
           currentAccount = account
+          window.clearTimeout(expiryTimer)
+          if (next) expiryTimer = window.setTimeout(() => { void sync() }, Math.min(Date.parse(account.sessionExpiresAt) - Date.now() + 1, 2_147_483_647))
           if (identity === next) return
           disposeTab?.(); disposeTab = undefined; identity = next
           if (next) disposeTab = ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({
@@ -700,13 +701,13 @@ window.__ModuleLoader__.load({
         }
       }
       const focus = () => { if (document.visibilityState === 'visible') void sync() }
-      const timer = window.setInterval(focus, 5000)
+      const unsubscribe = window.dshEnterpriseChat?.subscribe?.(() => { void sync() })
       window.addEventListener(ACCOUNT_CHANGED_EVENT, sync)
       window.addEventListener('focus', focus)
       document.addEventListener('visibilitychange', focus)
       void sync()
       return () => {
-        disposed = true; revision += 1; disposeTab?.(); window.clearInterval(timer)
+        disposed = true; revision += 1; disposeTab?.(); unsubscribe?.(); window.clearTimeout(expiryTimer)
         window.removeEventListener(ACCOUNT_CHANGED_EVENT, sync)
         window.removeEventListener('focus', focus)
         document.removeEventListener('visibilitychange', focus)
@@ -714,7 +715,7 @@ window.__ModuleLoader__.load({
     }
 
     function bindEnterpriseModelSync() {
-      let pending, disposed = false
+      let pending, disposed = false, resync = false
       const sync = () => {
         if (disposed || document.visibilityState !== 'visible' || pending) return
         const controller = new AbortController()
@@ -725,21 +726,21 @@ window.__ModuleLoader__.load({
         }).finally(() => {
           window.clearTimeout(timeout)
           if (pending?.controller === controller) pending = undefined
+          if (resync && !disposed) { resync = false; sync() }
         })
       }
-      const timer = window.setInterval(sync, 30_000)
+      const accountChanged = () => { if (pending) resync = true; else sync() }
       window.addEventListener('focus', sync)
       document.addEventListener('visibilitychange', sync)
-      window.addEventListener(ACCOUNT_CHANGED_EVENT, sync)
+      window.addEventListener(ACCOUNT_CHANGED_EVENT, accountChanged)
       sync()
       return () => {
         disposed = true
         pending?.controller.abort()
         window.clearTimeout(pending?.timeout)
-        window.clearInterval(timer)
         window.removeEventListener('focus', sync)
         document.removeEventListener('visibilitychange', sync)
-        window.removeEventListener(ACCOUNT_CHANGED_EVENT, sync)
+        window.removeEventListener(ACCOUNT_CHANGED_EVENT, accountChanged)
       }
     }
 
@@ -757,7 +758,7 @@ window.__ModuleLoader__.load({
         if (typeof payload.errorCode === 'string' && payload.errorCode) failure.errorCode = payload.errorCode
         throw failure
       }
-      if (!path.startsWith('/api/enterprise.market.')) window.dispatchEvent(new CustomEvent(ACCOUNT_CHANGED_EVENT))
+      if (!path.startsWith('/api/enterprise.market.') && path !== '/api/enterprise.models.refresh') window.dispatchEvent(new CustomEvent(ACCOUNT_CHANGED_EVENT))
       return payload
     }
 

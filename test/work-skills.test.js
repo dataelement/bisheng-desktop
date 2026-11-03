@@ -64,6 +64,28 @@ describe('enterprise Work skill provider', () => {
   })
 })
 
+it('invalidates skills on explicit catalog and identity changes, not a timer', async () => {
+  vi.useFakeTimers()
+  try {
+    const fixture = await setup(), invalidate = vi.fn(), abort = new AbortController()
+    let provider, route
+    const { applyEnterpriseSkills } = await import('../packages/dsh-desktop-enterprise/work-skills.js')
+    const api = applyEnterpriseSkills({ skills: { registerProvider: factory => { provider = factory({ invalidate, signal: abort.signal }) } },
+      connection: { fetch: { register: value => { route = value } } } },
+    { state: () => fixture.state, request: fixture.request, refreshState: async () => {}, home: homes.at(-1) })
+    await provider.list({ signal: abort.signal })
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(invalidate).not.toHaveBeenCalled()
+    expect(fixture.request).toHaveBeenCalledTimes(1)
+    const response = await route.fetch(new Request('http://localhost/api/enterprise.work-skills', { method: 'POST', body: JSON.stringify({ operation: 'catalog' }) }))
+    expect(response.status).toBe(200)
+    expect(invalidate).toHaveBeenCalledTimes(1)
+    api.clear()
+    expect(invalidate).toHaveBeenCalledTimes(2)
+    abort.abort()
+  } finally { vi.useRealTimers() }
+})
+
 it('coexists with a same-named local skill in the actual Harness registry', async () => {
   const { Context } = await import('@deepseek-ai/cordis')
   const { default: SkillRegistry, renderSkillContent } = await import('@deepseek-ai/dsh-skill')
@@ -75,7 +97,7 @@ it('coexists with a same-named local skill in the actual Harness registry', asyn
   let disposeProvider = () => {}
   try {
     ctx.skills.register({ name: 'office', description: 'Local office', content: 'Local instructions', source: 'local' })
-    applyEnterpriseSkills({ skills: { registerProvider: create => { disposeProvider = ctx.skills.registerProvider(create) } }, connection: { fetch: { register() {} } } }, {
+    const api = applyEnterpriseSkills({ skills: { registerProvider: create => { disposeProvider = ctx.skills.registerProvider(create) } }, connection: { fetch: { register() {} } } }, {
       state: () => fixture.state, request: fixture.request, refreshState: async () => {}, home: homes.at(-1)
     })
     const catalog = await ctx.skills.list()
@@ -87,5 +109,9 @@ it('coexists with a same-named local skill in the actual Harness registry', asyn
     expect(loaded.resourceBase.kind).toBe('directory')
     fixture.disable()
     await expect(ctx.skills.get(enterprise.name)).rejects.toThrow('no longer available')
+    fixture.setState({ ...fixture.state, user: { id: 4 }, connectionKey: 'key-b' })
+    api.clear()
+    expect((await ctx.skills.list()).some(row => row.name === enterprise.name)).toBe(false)
+    expect(await ctx.skills.get(enterprise.name)).toBeUndefined()
   } finally { disposeProvider(); await fork.dispose() }
 })
