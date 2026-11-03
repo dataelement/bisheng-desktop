@@ -5,7 +5,7 @@ import { EnterprisePlatformError } from '../src/main/enterprise/enterprise-reque
 import { parseChatPresentation } from '../src/shared/enterprise-chat-view'
 import { parseWebSession } from '../src/main/enterprise/web-session'
 
-const fake = vi.hoisted(() => ({ views: [] as any[], sessions: [] as any[], hangLoads: false, loadFailures: 0, loadErrorCode: 'ERR_CONNECTION_RESET', emitCloseAsGone: false }))
+const fake = vi.hoisted(() => ({ views: [] as any[], sessions: [] as any[], hangLoads: false, loadFailures: 0, loadErrorCode: 'ERR_CONNECTION_RESET', emitCloseAsGone: false, loadLanding: undefined as string | undefined }))
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events')
   return {
@@ -25,7 +25,7 @@ vi.mock('electron', async () => {
         this.webContents = Object.assign(new EventEmitter(), { id: fake.views.length + 100, session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), focus: vi.fn(), send: vi.fn(), mainFrame: {}, getURL: () => url, getZoomFactor: () => 1, close: vi.fn(() => { if (fake.emitCloseAsGone) { const contents = this.webContents; setTimeout(() => contents.emit('render-process-gone'), 0) } }), executeJavaScript: vi.fn(async () => {}), insertCSS: vi.fn(async () => 'key'), loadURL: vi.fn(async (next: string) => {
           if (fake.hangLoads) return await new Promise<void>(() => {})
           if (fake.loadFailures > 0) { fake.loadFailures -= 1; throw Object.assign(new Error('load failed'), { code: fake.loadErrorCode }) }
-          url = next
+          url = fake.loadLanding ?? next
           this.webContents.emit('did-finish-load')
         }) })
         fake.views.push(this)
@@ -34,7 +34,7 @@ vi.mock('electron', async () => {
   }
 })
 
-afterEach(() => { fake.views.length = 0; fake.sessions.length = 0; fake.hangLoads = false; fake.loadFailures = 0; fake.loadErrorCode = 'ERR_CONNECTION_RESET'; fake.emitCloseAsGone = false })
+afterEach(() => { fake.views.length = 0; fake.sessions.length = 0; fake.hangLoads = false; fake.loadFailures = 0; fake.loadErrorCode = 'ERR_CONNECTION_RESET'; fake.emitCloseAsGone = false; fake.loadLanding = undefined })
 const networkError = () => new EnterprisePlatformError('Could not reach the BiSheng platform.', { code: 'network_error' })
 const elapse = async (ms: number) => { await vi.advanceTimersByTimeAsync(ms); await flush() }
 const presentation = { visible: true, theme: 'dark', bounds: { x: 0, y: 56, width: 1100, height: 700 } }
@@ -905,16 +905,108 @@ it('treats an aborted document load as terminal', async () => {
   } finally { f.host.dispose(); vi.useRealTimers() }
 })
 
-it('keeps an unexpected login redirect as an error outside renewal backoff', async () => {
+it('reloads the workspace after a ready document redirects to login', async () => {
   vi.useFakeTimers()
   const f = fixture()
   try {
     f.host.present(f.owner, presentation)
     await flush()
-    await fake.views[0].webContents.loadURL('https://enterprise.example/login')
+    const view = fake.views[0]
+    await view.webContents.loadURL('https://enterprise.example/login')
+    expect(f.host.snapshot().phase).toBe('loading')
+    expect(view.webContents.close).not.toHaveBeenCalled()
+    const calls = f.enterprise.webSession.mock.calls.length
+    await elapse(2_400)
+    expect(f.enterprise.webSession.mock.calls.length).toBe(calls + 1)
+    expect(f.host.snapshot().phase).toBe('ready')
+    expect(view.webContents.loadURL).toHaveBeenLastCalledWith('https://enterprise.example/workspace/?embed=dsh&dshTheme=dark')
+    expect(view.webContents.close).not.toHaveBeenCalled()
+  } finally { f.host.dispose(); vi.useRealTimers() }
+})
+
+it('stops after the workspace shell redirects to login again', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0]
+    const leave = () => view.webContents.loadURL('https://enterprise.example/login')
+    await leave()
+    await elapse(2_400)
+    expect(f.host.snapshot().phase).toBe('ready')
+    await leave()
+    await elapse(6_000)
+    expect(f.host.snapshot().phase).toBe('ready')
+    await leave()
+    await elapse(12_000)
+    expect(f.host.snapshot().phase).toBe('ready')
+    await leave()
+    expect(f.host.snapshot().phase).toBe('error')
+    expect(view.webContents.close).toHaveBeenCalled()
+    const calls = f.enterprise.webSession.mock.calls.length
+    await elapse(36_000)
+    expect(f.enterprise.webSession.mock.calls.length).toBe(calls)
+  } finally { f.host.dispose(); vi.useRealTimers() }
+})
+
+it('shows Reconnect only after a ready document stays off the workspace', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    f.enterprise.webSession.mockRejectedValue(networkError())
+    const view = fake.views[0]
+    await view.webContents.loadURL('https://enterprise.example/login')
+    expect(f.host.snapshot().phase).toBe('loading')
+    await elapse(2_400)
+    await elapse(6_000)
+    await elapse(12_000)
+    expect(f.host.snapshot().phase).toBe('error')
+    expect(view.webContents.close).toHaveBeenCalled()
+    const calls = f.enterprise.webSession.mock.calls.length
+    await elapse(36_000)
+    expect(f.enterprise.webSession.mock.calls.length).toBe(calls)
+  } finally { f.host.dispose(); vi.useRealTimers() }
+})
+
+it('reloads the workspace after an in-page leave', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0]
+    const contents = view.webContents
+    let current = contents.getURL()
+    const loadURL = contents.loadURL
+    contents.getURL = () => current
+    contents.loadURL = vi.fn(async (next: string) => {
+      current = next
+      return loadURL.call(view, next)
+    })
+    current = 'https://enterprise.example/login'
+    contents.emit('did-navigate-in-page', {}, current, true)
+    expect(f.host.snapshot().phase).toBe('loading')
+    expect(contents.close).not.toHaveBeenCalled()
+    await elapse(2_400)
+    expect(f.host.snapshot().phase).toBe('ready')
+    expect(contents.loadURL).toHaveBeenLastCalledWith('https://enterprise.example/workspace/?embed=dsh&dshTheme=dark')
+    expect(contents.close).not.toHaveBeenCalled()
+  } finally { f.host.dispose(); vi.useRealTimers() }
+})
+
+it('keeps a first login redirect terminal before the workspace has loaded', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  fake.loadLanding = 'https://enterprise.example/login'
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
     expect(f.host.snapshot().phase).toBe('error')
     const calls = f.enterprise.webSession.mock.calls.length
-    await elapse(270_000)
+    await elapse(12_000)
     expect(f.enterprise.webSession.mock.calls.length).toBe(calls)
   } finally { f.host.dispose(); vi.useRealTimers() }
 })
@@ -1057,7 +1149,7 @@ describe('cloud conversation deletion', () => {
     } finally { f.host.dispose() }
   })
 
-  it('reports navigation recovery separately after a committed deletion', async () => {
+  it('keeps the open workspace when navigation fails after a committed deletion', async () => {
     const f = fixture()
     try {
       f.host.present(f.owner, presentation)
@@ -1066,8 +1158,11 @@ describe('cloud conversation deletion', () => {
       await f.host.open('cloud-a')
       fake.sessions[0].fetch.mockResolvedValueOnce(new Response(JSON.stringify({ status_code: 200 })))
       fake.views[0].webContents.executeJavaScript.mockRejectedValueOnce(new Error('navigation failed'))
+      // Old contract: the committed deletion still resolved, then the failed navigation painted the reconnect page.
+      // New contract: the document never left /workspace, so the session stays ready instead of becoming a dead error.
       await expect(f.host.remove('cloud-a', f.host.snapshot().epoch)).resolves.toBeDefined()
-      expect(f.host.snapshot().phase).toBe('error')
+      expect(f.host.snapshot().phase).toBe('ready')
+      expect(fake.views[0].webContents.close).not.toHaveBeenCalled()
     } finally { f.host.dispose() }
   })
 })

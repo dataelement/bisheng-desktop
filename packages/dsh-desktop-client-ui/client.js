@@ -420,7 +420,7 @@ publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page
         if (!select('chat')) return
         const epoch = value.epoch
         try { await window.dshEnterpriseChat.open(id); if (active && epoch === value.epoch) { publish({ conversationId: id }); void refreshHistory() } }
-        catch { if (active && epoch === value.epoch) publish({ phase: 'error' }) }
+        catch { if (active && epoch === value.epoch) void readHostState() }
       }
       // Account notifications also follow ordinary enterprise reads. The host epoch,
       // shared by history responses and state updates, owns the in-memory history.
@@ -447,7 +447,16 @@ if (clearHistory) { historyRequest++; historyDirty = false; deletion.reset() }
           const next = await window.dshEnterpriseChat?.state()
           if (!active || request !== revision || !next) return
           applyState(next, true)
-        } catch { if (active && request === revision) publish({ phase: 'error' }) }
+        } catch { /* A missed focus read must not paint the reconnect page. */ }
+      }
+      // One guarded read. It does not refresh history; sync() owns that on focus and visibility.
+      const readHostState = async () => {
+        const request = ++revision
+        try {
+          const next = await window.dshEnterpriseChat?.state()
+          if (!active || request !== revision || !next) return
+          applyState(next)
+        } catch { /* Keep the last host snapshot. A missed read is not a dead session. */ }
       }
       return {
         snapshot: () => value,
@@ -476,7 +485,7 @@ if (clearHistory) { historyRequest++; historyDirty = false; deletion.reset() }
           publish({ mode: 'chat', pageId: id })
           const epoch = value.epoch
           try { await window.dshEnterpriseChat.openPage(id) }
-          catch { if (active && epoch === value.epoch) publish({ phase: 'error' }) }
+          catch { if (active && epoch === value.epoch) void readHostState() }
         },
         choose(mode) {
           if (!select(mode)) return false
