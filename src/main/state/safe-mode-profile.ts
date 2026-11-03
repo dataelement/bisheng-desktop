@@ -45,7 +45,17 @@ export function extractSafeModePatch(sourcePatchText: string): string {
   for (const item of contents.items) {
     if (!isMap(item)) continue
     const id = item.get('id')
-    if (typeof id === 'string' && SAFE_MODE_MODEL_ENTRY_IDS.has(id)) {
+    if (typeof id === 'string' && id === 'locale') {
+      // Copy only the preference, never the entry's loader or arbitrary config.
+      const config = item.get('config')
+      const preference = isMap(config) ? config.get('preference') : undefined
+      if (typeof preference === 'string' && /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/u.test(preference) && isMap(config)) {
+        for (const key of ['name', 'disabled', 'if', 'insert', 'remove']) item.delete(key)
+        item.items = item.items.filter(pair => String(pair.key) === 'id' || String(pair.key) === 'config')
+        config.items = config.items.filter(pair => String(pair.key) === 'preference')
+        kept.push(item)
+      }
+    } else if (typeof id === 'string' && SAFE_MODE_MODEL_ENTRY_IDS.has(id)) {
       // Safe Mode must never inherit a broken baseURL that crashes the DeepSeek core adapter
       if (id === 'llm-deepseek') {
         const config = item.get('config')
@@ -65,7 +75,7 @@ export function extractSafeModePatch(sourcePatchText: string): string {
   }
 
   contents.items = kept
-  const header = `# Managed by DSH Desktop Safe Mode.\n# Third-party bundles and non-model web profile patches are intentionally omitted.\n# Model configurations inherited from the normal profile are included below.\n`
+  const header = `# Managed by DSH Desktop Safe Mode.\n# Third-party bundles and unrelated web profile patches are intentionally omitted.\n# Model configurations and the language preference are inherited from the normal profile.\n`
   return `${header}${String(doc)}`
 }
 
@@ -82,8 +92,8 @@ async function writeIfChanged(path: string, content: string): Promise<void> {
  * Materialize an isolated profile that resolves only installation-owned core
  * bundles. It shares DSH_HOME settings, credentials, sessions, and workspaces
  * with the normal profile. It inherits model configurations (e.g. custom endpoints
- * and providers) from the normal profile, but intentionally omits third-party bundles
- * and non-model user patches.
+ * and providers) and the language preference from the normal profile, but intentionally
+ * omits third-party bundles and unrelated user patches.
  */
 export async function ensureSafeModeProfile(dshHome: string, sourceProfile = 'web'): Promise<string> {
   const directory = join(dshHome, 'profiles', SAFE_MODE_PROFILE)
