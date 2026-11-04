@@ -50,7 +50,9 @@ const LOCAL_PATHS = Object.freeze({
   confirmDeepLink: '/api/enterprise.deep-link.confirm',
   refresh: '/api/enterprise.refresh',
   refreshModels: '/api/enterprise.models.refresh',
-  logout: '/api/enterprise.logout'
+  logout: '/api/enterprise.logout',
+  chatHistory: '/api/enterprise.chat.history',
+  chatDelete: '/api/enterprise.chat.delete'
 })
 
 const MAX_JSON_BYTES = 64 * 1024
@@ -366,39 +368,58 @@ export function apply(ctx, config) {
     return { models, usage }
   }
 
+  let tokenRefreshPromise = null
   const refreshSessionTokens = async () => {
     if (!sessionAuth?.tokens?.refresh_token || !sessionAuth?.base) return
-    try {
-      const res = await fetch(`${sessionAuth.base}${API_PATHS.token}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json' },
-        body: JSON.stringify({
-          grant_type: 'refresh_token',
-          refresh_token: sessionAuth.tokens.refresh_token
-        })
-      })
-      if (!res.ok) {
-        const payload = await res.json().catch(() => ({}))
-        console.warn('[enterprise] token refresh failed', res.status, payload)
-        if (res.status === 400 || res.status === 401 || res.status === 403) {
-          sessionAuth = null
-          saveSessionToDisk(null)
-          account = disabledState()
-          ingestEnterpriseState(account)
+    if (tokenRefreshPromise) return tokenRefreshPromise
+    tokenRefreshPromise = (async () => {
+      try {
+        const disk = loadSessionFromDisk()
+        if (disk?.tokens?.refresh_token && disk.tokens.refresh_token !== sessionAuth.tokens.refresh_token && !accessNeedsRefresh(disk.tokens)) {
+          sessionAuth = disk
+          return
         }
-        return
+        const res = await fetch(`${sessionAuth.base}${API_PATHS.token}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          body: JSON.stringify({
+            grant_type: 'refresh_token',
+            refresh_token: sessionAuth.tokens.refresh_token
+          })
+        })
+        if (!res.ok) {
+          const payload = await res.json().catch(() => ({}))
+          console.warn('[enterprise] token refresh failed', res.status, payload)
+          const reloaded = loadSessionFromDisk()
+          if (reloaded?.tokens?.refresh_token && reloaded.tokens.refresh_token !== sessionAuth.tokens?.refresh_token) {
+            sessionAuth = reloaded
+            return
+          }
+          if (res.status === 400 || res.status === 401 || res.status === 403) {
+            account = {
+              ...account,
+              phase: 'reauthRequired',
+              error: payload.error?.message || `Token refresh failed (${res.status}).`
+            }
+            ingestEnterpriseState(account)
+          }
+          return
+        }
+        const newTokens = parseToken(await res.json(), sessionAuth.base)
+        sessionAuth = {
+          ...sessionAuth,
+          tokens: newTokens,
+          user: newTokens.user,
+          tenant: newTokens.tenant
+        }
+        saveSessionToDisk(sessionAuth)
+      } catch (err) {
+        console.warn('[enterprise] token refresh error', err)
+      } finally {
+        tokenRefreshPromise = null
       }
-      const newTokens = parseToken(await res.json(), sessionAuth.base)
-      sessionAuth = {
-        ...sessionAuth,
-        tokens: newTokens,
-        user: newTokens.user,
-        tenant: newTokens.tenant
-      }
-      saveSessionToDisk(sessionAuth)
-    } catch (err) {
-      console.warn('[enterprise] token refresh error', err)
-    }
+    })()
+    return tokenRefreshPromise
   }
 
   const ensureValidSessionAuth = async () => {
@@ -900,6 +921,61 @@ export function apply(ctx, config) {
     account = state
     ingestEnterpriseState(state)
     return { ...state, allowThirdPartyPlugins: false, allowThirdPartyWorkbenches: false }
+  })
+  registerJsonRoute(connection, LOCAL_PATHS.chatHistory, ['GET'], async (request) => {
+    const url = new URL(request.url, 'http://127.0.0.1')
+    const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10) || 1)
+    if (!broker) {
+      const auth = await ensureValidSessionAuth()
+      if (!auth?.tokens?.access_token || !auth?.base) {
+        throw Object.assign(new Error('Enterprise chat unavailable.'), { status: 401 })
+      }
+      const targetUrl = new URL(`/api/v1/chat/list?page=${page}&limit=40`, auth.base)
+      const res = await fetch(targetUrl.href, {
+        headers: {
+          authorization: `Bearer ${auth.tokens.access_token}`,
+          accept: 'application/json'
+        },
+        signal: AbortSignal.timeout(15_000)
+      })
+      if (!res.ok) throw Object.assign(new Error(`Chat history request failed (${res.status}).`), { status: res.status })
+      const result = await res.json()
+      const rawItems = Array.isArray(result?.data) ? result.data : []
+      const items = rawItems.map(row => ({
+        id: String(row.chat_id || ''),
+        title: String(row.name || row.flow_name || '').slice(0, 500),
+        updatedAt: String(row.update_time || row.create_time || '').slice(0, 50)
+      })).filter(item => Boolean(item.id))
+      return {
+        epoch: account.revision || 1,
+        items,
+        hasMore: rawItems.length === 40
+      }
+    }
+    return { epoch: account.revision || 1, items: [], hasMore: false }
+  })
+  registerJsonRoute(connection, LOCAL_PATHS.chatDelete, ['POST'], async (request) => {
+    const body = await readJson(request)
+    const id = String(body?.id || '').trim()
+    if (!id) throw Object.assign(new Error('Chat id required.'), { status: 400 })
+    if (!broker) {
+      const auth = await ensureValidSessionAuth()
+      if (!auth?.tokens?.access_token || !auth?.base) {
+        throw Object.assign(new Error('Enterprise chat unavailable.'), { status: 401 })
+      }
+      const targetUrl = new URL(`/api/v1/chat/${encodeURIComponent(id)}`, auth.base)
+      const res = await fetch(targetUrl.href, {
+        method: 'DELETE',
+        headers: {
+          authorization: `Bearer ${auth.tokens.access_token}`,
+          accept: 'application/json'
+        },
+        signal: AbortSignal.timeout(15_000)
+      })
+      if (!res.ok) throw Object.assign(new Error(`Chat deletion failed (${res.status}).`), { status: res.status })
+      return { epoch: body?.epoch ?? (account.revision || 1) }
+    }
+    return { epoch: body?.epoch ?? (account.revision || 1) }
   })
   const llm = ctx.llm
   if (llm) {

@@ -381,11 +381,16 @@ window.__ModuleLoader__.load({
           publish({ signInPromptOpen: true })
           return false
         }
+        if (mode === 'work' && typeof window !== 'undefined' && !window.dshEnterpriseChat) {
+          if (ctx.layout?.panelInfo?.getSnapshot?.()?.activePanelId === 'desktop-chat') {
+            ctx.layout.selectPanel(null)
+          }
+        }
         publish({ mode, pageId: undefined, signInPromptOpen: false })
         return true
       }
       const refreshHistory = async (more = false) => {
-        if (!value.connected || !window.dshEnterpriseChat) return
+        if (!value.connected) return
         if (value.historyPhase === 'loading') { if (!more) historyDirty = true; return }
         const request = ++historyRequest, epoch = value.epoch
         const page = more ? value.page + 1 : 1
@@ -394,14 +399,20 @@ window.__ModuleLoader__.load({
         try {
           let items = more ? [...value.items] : [], response, fetchedPage = page
           for (let next = page; next <= lastPage; next++) {
-            response = await window.dshEnterpriseChat.history(next)
+            if (typeof window !== 'undefined' && window.dshEnterpriseChat) {
+              response = await window.dshEnterpriseChat.history(next)
+            } else {
+              const res = await fetch(`/api/enterprise.chat.history?page=${next}`, { credentials: 'same-origin', cache: 'no-store' })
+              if (!res.ok) throw new Error('History fetch failed')
+              response = await res.json()
+            }
             if (!active || request !== historyRequest || epoch !== value.epoch) return
-            if (response.epoch !== epoch) { publish({ historyPhase: 'idle' }); return }
+            if (response.epoch !== epoch && typeof window !== 'undefined' && window.dshEnterpriseChat) { publish({ historyPhase: 'idle' }); return }
             fetchedPage = next
             items.push(...response.items)
             if (!response.hasMore) break
           }
-publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page: fetchedPage, hasMore: response.hasMore, historyPhase: 'ready' })
+          publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page: fetchedPage, hasMore: response.hasMore, historyPhase: 'ready' })
         } catch {
           if (active && request === historyRequest && epoch === value.epoch) publish({ historyPhase: 'error' })
         } finally {
@@ -410,7 +421,19 @@ publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page
       }
       const deletion = createSessionDeletion(async (id, epoch) => {
         if (epoch !== value.epoch || !value.connected) throw new Error('Chat identity changed.')
-        const response = await window.dshEnterpriseChat.remove(id, epoch)
+        let response
+        if (typeof window !== 'undefined' && window.dshEnterpriseChat) {
+          response = await window.dshEnterpriseChat.remove(id, epoch)
+        } else {
+          const res = await fetch('/api/enterprise.chat.delete', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ id, epoch }),
+            credentials: 'same-origin'
+          })
+          if (!res.ok) throw new Error('Chat deletion failed.')
+          response = await res.json()
+        }
         if (!active || epoch !== value.epoch || response.epoch !== epoch) return
         historyRequest++
         publish({ items: value.items.filter(item => item.id !== id), historyPhase: 'idle' })
@@ -419,8 +442,19 @@ publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page
       const open = async (id) => {
         if (!select('chat')) return
         const epoch = value.epoch
-        try { await window.dshEnterpriseChat.open(id); if (active && epoch === value.epoch) { publish({ conversationId: id }); void refreshHistory() } }
+        try {
+          if (typeof window !== 'undefined' && window.dshEnterpriseChat) {
+            await window.dshEnterpriseChat.open(id)
+          }
+          if (active && epoch === value.epoch) {
+            publish({ conversationId: id, mode: 'chat', pageId: undefined })
+            void refreshHistory()
+          }
+        }
         catch { if (active && epoch === value.epoch) void readHostState() }
+        if (typeof window !== 'undefined' && !window.dshEnterpriseChat) {
+          ctx.layout?.selectPanel?.('desktop-chat')
+        }
       }
       // Account notifications also follow ordinary enterprise reads. The host epoch,
       // shared by history responses and state updates, owns the in-memory history.
@@ -436,7 +470,7 @@ publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page
           ...(clearHistory ? { items: [], page: 0, hasMore: false, historyPhase: 'idle' } : {}),
           signInPromptOpen: next.connected ? false : value.signInPromptOpen,
           pageId: next.navigation?.entries.find(entry => entry.active)?.id,
-          mode: next.connected ? (signedIn && typeof window !== 'undefined' && window.dshEnterpriseChat ? 'chat' : value.mode) : 'work'
+          mode: next.connected ? (signedIn ? 'chat' : value.mode) : 'work'
         })
         if (signedIn) window.dispatchEvent(new CustomEvent('dsh-desktop:close-settings'))
         if (next.connected && next.phase === 'ready' && (refresh || identityChanged || signedIn || conversationChanged || becameReady)) void refreshHistory()
@@ -456,6 +490,7 @@ publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page
                 base: data.base,
                 user: data.user,
                 tenant: data.tenant,
+                epoch: data.revision || 1,
                 navigation: {
                   entries: [
                     { id: 'knowledge', label: '知识空间', path: '/knowledge', active: false, primary: true },
@@ -509,6 +544,18 @@ publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page
             return result
           }
         if (revealWorkSession && ctx.uiWorkspace) ctx.uiWorkspace.openSession = revealWorkSession
+        const originalStartSession = ctx.uiWorkspace?.startSession
+        const interceptStartSession = hasNavigationHandler || typeof originalStartSession !== 'function'
+          ? null
+          : function (workspaceId, options) {
+            if (workspaceId === undefined && value.mode === 'chat') {
+              void open('new')
+              return
+            }
+            select('work')
+            return originalStartSession.call(this, workspaceId, options)
+          }
+        if (interceptStartSession && ctx.uiWorkspace) ctx.uiWorkspace.startSession = interceptStartSession
         const settings = (event) => publish({ settingsOpen: event.detail?.open === true, ...(event.detail?.open ? {} : { settingsSurface: undefined }) })
         const approvals = (event) => publish({ approvalsOpen: event.detail?.open === true })
         const accountDialog = (event) => publish({ accountDialogOpen: event.detail?.open === true })
@@ -568,6 +615,7 @@ publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page
             window.removeEventListener('dsh-desktop:enterprise-account-changed', account)
             disposeNavigation()
             if (revealWorkSession && ctx.uiWorkspace?.openSession === revealWorkSession) ctx.uiWorkspace.openSession = originalOpenSession
+            if (interceptStartSession && ctx.uiWorkspace?.startSession === interceptStartSession) ctx.uiWorkspace.startSession = originalStartSession
             window.removeEventListener('dsh-desktop:settings-visibility', settings)
             window.removeEventListener('dsh-desktop:approvals-visibility', approvals)
             window.removeEventListener('dsh-desktop:account-dialog-visibility', accountDialog)
@@ -611,11 +659,8 @@ publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page
               window.dispatchEvent(new CustomEvent('dsh-desktop:open-settings-section', { detail: { id: 'enterprise-account' } }))
               return
             }
-            const base = value.base || ''
-            if (base) {
-              const url = `${base}/${id}`
-              window.open(url, '_blank')
-            }
+            publish({ mode: 'chat', pageId: id })
+            ctx.layout?.selectPanel?.('desktop-chat')
           }
         },
         choose(mode) {
@@ -820,7 +865,18 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
       React.useEffect(() => () => {
         void window.dshEnterpriseChat?.present({ visible: false, bounds: { x: 0, y: 48, width: 0, height: 0 }, theme: 'light' }).catch(() => {})
       }, [])
-      const showModePicker = Boolean(window.dshEnterpriseChat) && !settingsOpen && (mode === 'chat'
+      const isWeb = typeof window !== 'undefined' && !window.dshEnterpriseChat
+      const chatFrameSrc = React.useMemo(() => {
+        if (!isWeb || !state.connected || !state.base) return null
+        const base = state.base.replace(/\/+$/, '')
+        const theme = typeof document !== 'undefined' && document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light'
+        const loc = locale?.getSnapshot?.()?.active === 'zh' ? 'zh' : 'en'
+        const path = state.pageId
+          ? `/workspace/${state.pageId}`
+          : (state.conversationId && state.conversationId !== 'new' ? `/workspace/c/${state.conversationId}` : '/workspace/c/new')
+        return `${base}${path}?embed=dsh&dshTheme=${theme}&dshLocale=${loc}`
+      }, [isWeb, state.connected, state.base, state.conversationId, state.pageId, locale])
+      const showModePicker = (Boolean(window.dshEnterpriseChat) || state.connected) && !settingsOpen && (mode === 'chat'
         ? !state.pageId && state.conversationId === 'new' && state.landing !== false
         : state.nativeWork && state.workLanding && !state.panelOpen)
       const select = navigation.choose
@@ -843,9 +899,17 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
             ...['chat', 'work'].map((key) => React.createElement('button', { key, id: `dsh-mode-${key}`, type: 'button', role: 'tab', 'aria-selected': mode === key, 'aria-controls': `dsh-panel-${key}`, tabIndex: mode === key ? 0 : -1, ref: (node) => { tabs.current[key] = node }, onClick: (event) => { setAnimateWork(event.detail > 0 && key === 'work'); select(key) } }, t(key))))),
         React.createElement('section', { id: 'dsh-panel-work', role: 'tabpanel', 'aria-label': t('work'), hidden: mode !== 'work', className: 'dshModeBody dshWorkContent', 'data-reveal-controls': animateWork, onTransitionEnd: event => { if (event.propertyName === 'clip-path') setAnimateWork(false) }, style: { gridTemplateColumns: columns } }, work, resizeHandle),
         React.createElement('section', { ref: panel, id: 'dsh-panel-chat', role: 'tabpanel', 'aria-label': t('chat'), hidden: mode !== 'chat', className: 'dshModeBody' },
-          React.createElement('div', { className: 'dshChatStatus', role: 'status' },
-            React.createElement('p', null, state.phase === 'error' ? t('error') : state.phase === 'ready' ? '' : t('loading')),
-            state.connected && state.phase === 'error' && React.createElement('button', { type: 'button', onClick: () => { void window.dshEnterpriseChat.retry().catch(() => {}) } }, t('retry')))))
+          isWeb && chatFrameSrc
+            ? React.createElement('iframe', {
+                key: state.pageId || state.conversationId || 'new',
+                src: chatFrameSrc,
+                className: 'dshChatFrame',
+                style: { width: '100%', height: '100%', border: 'none', display: 'block', background: 'transparent' },
+                title: t('chat')
+              })
+            : React.createElement('div', { className: 'dshChatStatus', role: 'status' },
+                React.createElement('p', null, state.phase === 'error' ? t('error') : state.phase === 'ready' ? '' : t('loading')),
+                state.connected && state.phase === 'error' && React.createElement('button', { type: 'button', onClick: () => { void window.dshEnterpriseChat?.retry?.().catch(() => {}) } }, t('retry')))))
     }
     const NAV_ICON_PATHS = {
       new: 'M12 20H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v7M16 16v6m-3-3h6M7 8h10M7 12h5',
@@ -940,6 +1004,8 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           .dshModesTabs{display:flex;padding:3px;border-radius:24px;background:var(--dsw-alias-bg-layer-2);-webkit-app-region:no-drag}
           .dshModesTabs button{font:inherit;font-size:13px;min-width:96px;height:30px;padding:0 20px;border:0;border-radius:20px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
           .dshModesTabs button[aria-selected=true]{background:var(--dsw-alias-interactive-bg-hover-solid);color:var(--dsw-alias-label-primary)}
+          .dshModesPickerHeader{position:absolute;top:12px;left:0;right:0;display:flex;justify-content:center;align-items:center;pointer-events:none;z-index:10}
+          .dshModesPickerHeader .dshModesTabs{pointer-events:auto}
           .dshModes button:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
           .dshModeBody{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}.dshModeBody[hidden]{display:none}
           .dshWorkContent{display:grid;grid-template-rows:minmax(0,1fr);isolation:isolate}.dshWorkContent[hidden]{display:none}
@@ -967,6 +1033,71 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         document.head.appendChild(style)
         return () => style.remove()
       })
+      function EnterpriseChatPanel({ navigation, t, locale }) {
+        const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
+        React.useEffect(() => typeof navigation?.start === 'function' ? navigation.start() : undefined, [navigation])
+        const chatFrameSrc = React.useMemo(() => {
+          if (!state.connected || !state.base) return null
+          const base = state.base.replace(/\/+$/, '')
+          const theme = typeof document !== 'undefined' && document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light'
+          const loc = locale?.getSnapshot?.()?.active === 'zh' ? 'zh' : 'en'
+          const path = state.pageId
+            ? `/workspace/${state.pageId}`
+            : (state.conversationId && state.conversationId !== 'new' ? `/workspace/c/${state.conversationId}` : '/workspace/c/new')
+          return `${base}${path}?embed=dsh&dshTheme=${theme}&dshLocale=${loc}`
+        }, [state.connected, state.base, state.conversationId, state.pageId, locale])
+
+        if (!state.connected) {
+          return React.createElement('div', { className: 'dshChatEmptyWrap', style: { padding: '48px', textAlign: 'center' } },
+            React.createElement('h3', null, t('signInTitle')),
+            React.createElement('p', { className: 'dshChatSignInDescription', style: { margin: '16px auto', maxWidth: '400px' } }, t('signInDescription')),
+            React.createElement(Button, { type: 'button', variant: 'primary', onClick: navigation.signIn }, t('signIn')))
+        }
+
+        const showModePicker = !state.pageId && (state.conversationId === 'new' || !state.conversationId)
+        return React.createElement('div', { className: 'dshChatPanelWrap', style: { width: '100%', height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' } },
+          showModePicker && React.createElement('header', { className: 'dshModesHeader' },
+            React.createElement('div', { role: 'tablist', 'aria-label': t('label'), className: 'dshModesTabs' },
+              ...['chat', 'work'].map((key) => React.createElement('button', {
+                key,
+                id: `dsh-mode-${key}`,
+                type: 'button',
+                role: 'tab',
+                'aria-selected': key === 'chat',
+                'aria-controls': `dsh-panel-${key}`,
+                tabIndex: key === 'chat' ? 0 : -1,
+                onClick: () => navigation.choose(key)
+              }, t(key)))
+            )
+          ),
+          chatFrameSrc && React.createElement('iframe', {
+            key: state.pageId || state.conversationId || 'new',
+            src: chatFrameSrc,
+            className: 'dshChatFrame',
+            style: { width: '100%', height: '100%', flex: '1 1 0%', minHeight: 0, border: 'none', display: 'block', background: 'transparent' },
+            title: t('chat')
+          }))
+      }
+      function WorkModeHeaderLeading({ navigation, t }) {
+        const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
+        React.useEffect(() => typeof navigation?.start === 'function' ? navigation.start() : undefined, [navigation])
+        const isWeb = typeof window !== 'undefined' && !window.dshEnterpriseChat
+        if (!isWeb || !state.connected || !state.workLanding) return null
+        return React.createElement('div', { className: 'dshModesPickerHeader' },
+          React.createElement('div', { role: 'tablist', 'aria-label': t('label'), className: 'dshModesTabs' },
+            ...['chat', 'work'].map((key) => React.createElement('button', {
+              key,
+              id: `dsh-mode-${key}`,
+              type: 'button',
+              role: 'tab',
+              'aria-selected': key === 'work',
+              'aria-controls': `dsh-panel-${key}`,
+              tabIndex: key === 'work' ? 0 : -1,
+              onClick: () => navigation.choose(key)
+            }, t(key)))
+          )
+        )
+      }
       function EnterprisePanelActions({ onDismiss, onOpen, navigation, t }) {
         const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
         React.useEffect(() => typeof navigation?.start === 'function' ? navigation.start() : undefined, [navigation])
@@ -979,11 +1110,23 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           ? (state.navigation?.entries?.length ? state.navigation.entries : defaultEntries)
           : defaultEntries
         return React.createElement(React.Fragment, null,
+          React.createElement(MenuItemButton, {
+            key: 'enterprise:chat',
+            icon: React.createElement(NavigationIcon, { id: 'channel' }),
+            onSelect: () => {
+              onDismiss?.()
+              if (typeof onOpen === 'function') onOpen('desktop-chat')
+              ctx.layout?.selectPanel?.('desktop-chat')
+              void navigation.open('new')
+            }
+          }, t('cloud') || '云端聊天'),
           ...entries.map(entry => React.createElement(MenuItemButton, {
             key: `enterprise:${entry.id}`,
             icon: React.createElement(NavigationIcon, { id: entry.id }),
             onSelect: () => {
               onDismiss?.()
+              if (typeof onOpen === 'function') onOpen('desktop-chat')
+              ctx.layout?.selectPanel?.('desktop-chat')
               void navigation.openPage(entry.id)
             }
           }, entry.label)),
@@ -998,6 +1141,8 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           }, t('workbenches') || '工作台')
         )
       }
+      ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'desktop-chat', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS), locale: ctx.locale }) }, EnterpriseChatPanel))
+      ctx.slots.inject('conversation.header.leading', () => ctx.slots.register({ name: 'conversation.header.leading', id: 'desktop-work-mode-leading', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS) }) }, WorkModeHeaderLeading))
       ctx.slots.inject('sidebar.primaryNavigation', () => ctx.slots.register({ name: 'sidebar.primaryNavigation', id: 'desktop-primary-navigation', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS) }) }, PrimaryNavigation))
       ctx.slots.inject('sidebar.panellist.actions', () => ctx.slots.register({ name: 'sidebar.panellist.actions', id: 'desktop-enterprise-more-actions', order: -100, inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS) }) }, EnterprisePanelActions))
       ctx.slots.inject('sidebar.workspaces.title', () => ctx.slots.register({ name: 'sidebar.workspaces.title', inject: () => ({ t: ctx.locale.bind(MODES_NS) }) }, ({ flat, t }) => t(flat ? 'all' : 'projects')))

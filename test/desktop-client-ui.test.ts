@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 const projectRoot = path.resolve(import.meta.dirname, '..')
 
 interface Registration {
-  config: { name: string; id?: string; order?: number }
+  config: { name: string; id?: string; order?: number; key?: string }
   component: (props: Record<string, unknown>) => unknown
 }
 
@@ -107,6 +107,8 @@ describe('BISHENG client slot occupants', () => {
     expect(registrations.map(({ config }) => config.name)).toEqual([
       'shell.overlay',
       'shell.overlay',
+      'main',
+      'conversation.header.leading',
       'sidebar.primaryNavigation',
       'sidebar.panellist.actions',
       'sidebar.workspaces.title',
@@ -121,6 +123,7 @@ describe('BISHENG client slot occupants', () => {
       'sidebar.workspaces.session.menu.item',
       'sidebar.workspaces.session.menu.item'
     ])
+    expect(registrations.find(({ config }) => config.name === 'main')?.config.key).toBe('desktop-chat')
     // Desktop toolbar styles have an owned lifetime; branding stays in currentColor.
     expect(appended).toHaveLength(2)
     // Match Harness panelList spacing without changing navigation's outer padding.
@@ -156,12 +159,12 @@ describe('BISHENG client slot occupants', () => {
       onDismiss: dismissSpy, onOpen: openSpy, navigation: actionsNav, t: (key: string) => key
     }) as { props: Record<string, unknown> }
     const actionItems = renderedActions.props.children as Array<{ props: { onSelect: () => void; children: string } }>
-    expect(actionItems).toHaveLength(4)
-    expect(actionItems.map(item => Array.isArray(item.props.children) ? item.props.children[0] : item.props.children)).toEqual(['知识空间', '应用中心', '企业技能', 'workbenches'])
-    actionItems[0]!.props.onSelect()
+    expect(actionItems).toHaveLength(5)
+    expect(actionItems.map(item => Array.isArray(item.props.children) ? item.props.children[0] : item.props.children)).toEqual(['cloud', '知识空间', '应用中心', '企业技能', 'workbenches'])
+    actionItems[1]!.props.onSelect()
     expect(dismissSpy).toHaveBeenCalled()
     expect(actionsNav.openPage).toHaveBeenCalledWith('knowledge')
-    actionItems[3]!.props.onSelect()
+    actionItems[4]!.props.onSelect()
     expect(openSpy).toHaveBeenCalledWith('desktop-workbenches')
     // A native WebContentsView steals window focus without an iframe target.
     menuOpen = true
