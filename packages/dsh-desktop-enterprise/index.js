@@ -1,6 +1,9 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs'
 import { CONTENT_SAFETY_ERROR_COPY } from './error-copy.js'
 import { createContentSafetyLocaleScope } from './content-safety-locale.js'
 import { applyEnterpriseSkills } from './work-skills.js'
@@ -13,6 +16,7 @@ import { applyEnterpriseAuth, createEnterpriseAuthTransport } from './enterprise
 import {
   API_PATHS,
   CLIENT_ID,
+  accessNeedsRefresh,
   createPkceTransaction,
   parseAuthorization,
   parseConfig,
@@ -269,6 +273,37 @@ function startEphemeralLoginCallbackServer(onAccepted) {
   })
 }
 
+function getSessionStorePath() {
+  const home = process.env.DSH_HOME || join(homedir(), '.dsh')
+  return join(home, 'enterprise-session.json')
+}
+
+function saveSessionToDisk(session) {
+  try {
+    const filePath = getSessionStorePath()
+    if (!session) {
+      try { unlinkSync(filePath) } catch {}
+      return
+    }
+    mkdirSync(join(filePath, '..'), { recursive: true })
+    writeFileSync(filePath, JSON.stringify(session, null, 2), { encoding: 'utf8', mode: 0o600 })
+  } catch (err) {
+    console.warn('[enterprise] failed to save session to disk', err)
+  }
+}
+
+function loadSessionFromDisk() {
+  try {
+    const filePath = getSessionStorePath()
+    const content = readFileSync(filePath, 'utf8')
+    const parsed = JSON.parse(content)
+    if (parsed && typeof parsed.base === 'string' && parsed.tokens?.access_token) {
+      return parsed
+    }
+  } catch {}
+  return null
+}
+
 export function apply(ctx, config) {
   const broker = brokerConfig(ctx, config)
   const brokerJson = (path, body, signal) => requestBrokerJson(broker, path, body, signal)
@@ -276,9 +311,24 @@ export function apply(ctx, config) {
   let market
   let workbenches
   let capabilityPolicy
-  let sessionAuth = null
+  let sessionAuth = broker ? null : loadSessionFromDisk()
   let sessionPending = null
-  let account = disabledState()
+  let account = sessionAuth && !broker
+    ? {
+        connected: true,
+        secureStorageAvailable: true,
+        storageMode: 'session',
+        phase: 'connected',
+        connectionKey: randomUUID(),
+        revision: 1,
+        base: sessionAuth.base,
+        user: sessionAuth.user,
+        tenant: sessionAuth.tenant,
+        models: [],
+        modelsAvailable: false,
+        usage: unavailableUsage()
+      }
+    : disabledState()
   let workSkills
   let workResources
   let workCapabilities
@@ -292,6 +342,9 @@ export function apply(ctx, config) {
     }
   }
   const readBrokerState = async () => {
+    if (!broker && sessionAuth && !account.modelsAvailable) {
+      await refreshSessionState().catch(() => undefined)
+    }
     const state = broker ? await brokerJson('/v1/state') : account
     if (account.connectionKey !== state.connectionKey) {
       await market?.stop()
@@ -478,18 +531,72 @@ export function apply(ctx, config) {
     return { models, usage }
   }
 
+  const refreshSessionTokens = async () => {
+    if (!sessionAuth?.tokens?.refresh_token || !sessionAuth?.base) return
+    try {
+      const res = await fetch(`${sessionAuth.base}${API_PATHS.token}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({
+          grant_type: 'refresh_token',
+          refresh_token: sessionAuth.tokens.refresh_token
+        })
+      })
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}))
+        console.warn('[enterprise] token refresh failed', res.status, payload)
+        if (res.status === 400 || res.status === 401 || res.status === 403) {
+          sessionAuth = null
+          saveSessionToDisk(null)
+          account = disabledState()
+          ingestEnterpriseState(account)
+        }
+        return
+      }
+      const newTokens = parseToken(await res.json(), sessionAuth.base)
+      sessionAuth = {
+        ...sessionAuth,
+        tokens: newTokens,
+        user: newTokens.user,
+        tenant: newTokens.tenant
+      }
+      saveSessionToDisk(sessionAuth)
+    } catch (err) {
+      console.warn('[enterprise] token refresh error', err)
+    }
+  }
+
+  const ensureValidSessionAuth = async () => {
+    if (!sessionAuth) return null
+    if (accessNeedsRefresh(sessionAuth.tokens)) {
+      await refreshSessionTokens()
+    }
+    return sessionAuth
+  }
+
+  let refreshPromise = null
   const refreshSessionState = async () => {
     if (!sessionAuth) return account
-    const { models, usage } = await fetchSessionData(sessionAuth.base, sessionAuth.tokens.access_token)
-    account = {
-      ...account,
-      models,
-      modelsAvailable: models.length > 0,
-      usage,
-      revision: (account.revision || 0) + 1
-    }
-    ingestEnterpriseState(account)
-    return account
+    if (refreshPromise) return refreshPromise
+    refreshPromise = (async () => {
+      try {
+        await ensureValidSessionAuth()
+        if (!sessionAuth) return account
+        const { models, usage } = await fetchSessionData(sessionAuth.base, sessionAuth.tokens.access_token)
+        account = {
+          ...account,
+          models,
+          modelsAvailable: models.length > 0,
+          usage,
+          revision: (account.revision || 0) + 1
+        }
+        ingestEnterpriseState(account)
+        return account
+      } finally {
+        refreshPromise = null
+      }
+    })()
+    return refreshPromise
   }
 
   const completeSessionLoginWithTicket = async (ticket) => {
@@ -521,6 +628,7 @@ export function apply(ctx, config) {
       user: tokens.user,
       tenant: tokens.tenant
     }
+    saveSessionToDisk(sessionAuth)
     sessionPending.callbackServer?.close?.()
     sessionPending = null
     const state = {
@@ -703,6 +811,7 @@ export function apply(ctx, config) {
     } else {
       sessionAuth = null
       sessionPending = null
+      saveSessionToDisk(null)
       state = disabledState()
     }
     await market?.stop()
@@ -715,11 +824,17 @@ export function apply(ctx, config) {
   })
   const llm = ctx.llm
   if (llm) {
-    const handle = startEnterpriseLlm(ctx, llm, broker, () => sessionAuth)
+    const handle = startEnterpriseLlm(ctx, llm, broker, ensureValidSessionAuth)
     ingestEnterpriseState = handle.ingest
     if (typeof ctx.effect === 'function' && broker) {
       ctx.effect(() => handle.dispose, 'dsh-desktop-enterprise: poll broker state')
     }
+  }
+  if (!broker && sessionAuth) {
+    ingestEnterpriseState(account)
+    void refreshSessionState().catch((err) => {
+      console.warn('[enterprise] failed to refresh restored session', err)
+    })
   }
 }
 
@@ -798,9 +913,9 @@ function startEnterpriseLlm(ctx, llm, broker, getSessionAuth) {
         return undefined
       }
     },
-    request: (body, signal, headers) => {
+    request: async (body, signal, headers) => {
       if (broker) return brokerChat(broker, body, signal, pickAttributionHeaders(headers))
-      const session = getSessionAuth?.()
+      const session = await getSessionAuth?.()
       if (!session?.tokens?.access_token) unavailable()
       return fetch(`${session.base}${API_PATHS.chat}`, {
         method: 'POST',
@@ -813,9 +928,9 @@ function startEnterpriseLlm(ctx, llm, broker, getSessionAuth) {
         body: JSON.stringify(body)
       })
     },
-    requestResponses: (body, signal, headers, connectionKey) => {
+    requestResponses: async (body, signal, headers, connectionKey) => {
       if (broker) return brokerChat(broker, body, signal, pickAttributionHeaders(headers), connectionKey)
-      const session = getSessionAuth?.()
+      const session = await getSessionAuth?.()
       if (!session?.tokens?.access_token) unavailable()
       return fetch(`${session.base}${API_PATHS.responses}`, {
         method: 'POST',

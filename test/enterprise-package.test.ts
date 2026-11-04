@@ -1,8 +1,10 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createRequire } from 'node:module'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import path from 'node:path'
+import { tmpdir } from 'node:os'
+import path, { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { apply as applyEnterprise, inject as enterpriseInject } from '../packages/dsh-desktop-enterprise/index.js'
 import {
@@ -356,5 +358,213 @@ it('keeps sign-in focused and shows unified credits without model quotas', async
     const client = await readFile(path.join(projectRoot, 'packages/dsh-desktop-enterprise/client.js'), 'utf8')
     expect(client).toContain('order: -10')
     expect(client).toContain("state?.secureStorageAvailable === false && state?.storageMode !== 'session'")
+  })
+
+  it('persists web session to disk and reloads on startup without broker', async () => {
+    const testDir = join(tmpdir(), `dsh-test-session-${Date.now()}`)
+    mkdirSync(testDir, { recursive: true })
+    const prevDshHome = process.env.DSH_HOME
+    process.env.DSH_HOME = testDir
+    try {
+      const sessionFile = join(testDir, 'enterprise-session.json')
+      const initialSession = {
+        base: 'https://bisheng.example.com',
+        tokens: {
+          base: 'https://bisheng.example.com',
+          token_type: 'Bearer',
+          access_token: 'initial-access-token',
+          access_expires_at: new Date(Date.now() + 3600_000).toISOString(),
+          refresh_token: 'initial-refresh-token',
+          refresh_expires_at: new Date(Date.now() + 86400_000).toISOString(),
+          session_id: 'test-session-id',
+          session_expires_at: new Date(Date.now() + 86400_000).toISOString(),
+          user: { id: 'u1', display_name: 'Test User' },
+          tenant: { id: 't1', display_name: 'Test Tenant' }
+        },
+        user: { id: 'u1', display_name: 'Test User' },
+        tenant: { id: 't1', display_name: 'Test Tenant' }
+      }
+      writeFileSync(sessionFile, JSON.stringify(initialSession), 'utf8')
+
+      const routes = new Map<string, (req: Request) => Promise<Response>>()
+      const ctx: Record<string, unknown> = {
+        provide: vi.fn(),
+        get: vi.fn(),
+        inject: vi.fn(),
+        on: vi.fn(() => () => undefined),
+        effect: vi.fn(),
+        connection: {
+          fetch: {
+            register: (spec: { path: string, fetch: (req: Request) => Promise<Response> }) => {
+              routes.set(spec.path, spec.fetch)
+              return () => { routes.delete(spec.path) }
+            }
+          }
+        },
+        loader: {}
+      }
+
+      const originalFetch = globalThis.fetch
+      globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('/api/v1/dsh/models')) {
+          return new Response(JSON.stringify({
+            object: 'list',
+            data: [
+              {
+                id: 'bisheng/test-model',
+                object: 'model',
+                capabilities: { streaming: true, tools: true, reasoning_content: false }
+              }
+            ]
+          }), { status: 200, headers: { 'content-type': 'application/json' } })
+        }
+        if (url.includes('/api/v1/dsh/usage')) {
+          return new Response(JSON.stringify({
+            used: 10, limit: 100, quota_state: 'available'
+          }), { status: 200, headers: { 'content-type': 'application/json' } })
+        }
+        return new Response('Not found', { status: 404 })
+      }) as unknown as typeof fetch
+
+      try {
+        applyEnterprise(ctx as unknown as Parameters<typeof applyEnterprise>[0], {})
+        const stateHandler = routes.get('/api/enterprise.state')
+        expect(stateHandler).toBeTypeOf('function')
+        const res = await stateHandler!(new Request('http://127.0.0.1/api/enterprise.state'))
+        const state = await res.json()
+        expect(state).toMatchObject({
+          connected: true,
+          storageMode: 'session',
+          phase: 'connected',
+          base: 'https://bisheng.example.com',
+          user: { id: 'u1', display_name: 'Test User' },
+          tenant: { id: 't1', display_name: 'Test Tenant' },
+          modelsAvailable: true
+        })
+        expect(state.models).toHaveLength(1)
+
+        const logoutHandler = routes.get('/api/enterprise.logout')
+        expect(logoutHandler).toBeTypeOf('function')
+        const logoutRes = await logoutHandler!(new Request('http://127.0.0.1/api/enterprise.logout', {
+          method: 'POST',
+          body: JSON.stringify({})
+        }))
+        const logoutState = await logoutRes.json()
+        expect(logoutState.connected).toBe(false)
+        expect(existsSync(sessionFile)).toBe(false)
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    } finally {
+      if (prevDshHome !== undefined) process.env.DSH_HOME = prevDshHome
+      else delete process.env.DSH_HOME
+      rmSync(testDir, { recursive: true, force: true })
+    }
+  })
+
+  it('automatically refreshes tokens when access token needs refresh', async () => {
+    const testDir = join(tmpdir(), `dsh-test-refresh-${Date.now()}`)
+    mkdirSync(testDir, { recursive: true })
+    const prevDshHome = process.env.DSH_HOME
+    process.env.DSH_HOME = testDir
+    try {
+      const sessionFile = join(testDir, 'enterprise-session.json')
+      const initialSession = {
+        base: 'https://bisheng.example.com',
+        tokens: {
+          base: 'https://bisheng.example.com',
+          token_type: 'Bearer',
+          access_token: 'old-access-token',
+          access_expires_at: new Date(Date.now() - 60_000).toISOString(),
+          refresh_token: 'valid-refresh-token',
+          refresh_expires_at: new Date(Date.now() + 86400_000).toISOString(),
+          session_id: 'test-session-id',
+          session_expires_at: new Date(Date.now() + 86400_000).toISOString(),
+          user: { id: 'u1', display_name: 'Test User' },
+          tenant: { id: 't1', display_name: 'Test Tenant' }
+        },
+        user: { id: 'u1', display_name: 'Test User' },
+        tenant: { id: 't1', display_name: 'Test Tenant' }
+      }
+      writeFileSync(sessionFile, JSON.stringify(initialSession), 'utf8')
+
+      const routes = new Map<string, (req: Request) => Promise<Response>>()
+      const ctx: Record<string, unknown> = {
+        provide: vi.fn(),
+        get: vi.fn(),
+        inject: vi.fn(),
+        on: vi.fn(() => () => undefined),
+        effect: vi.fn(),
+        connection: {
+          fetch: {
+            register: (spec: { path: string, fetch: (req: Request) => Promise<Response> }) => {
+              routes.set(spec.path, spec.fetch)
+              return () => { routes.delete(spec.path) }
+            }
+          }
+        },
+        loader: {}
+      }
+
+      let tokenRefreshed = false
+      const originalFetch = globalThis.fetch
+      globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('/api/v1/dsh/token')) {
+          tokenRefreshed = true
+          return new Response(JSON.stringify({
+            token_type: 'Bearer',
+            access_token: 'new-refreshed-access-token',
+            expires_in: 3600,
+            refresh_token: 'new-refreshed-refresh-token',
+            refresh_expires_in: 86400,
+            session_id: 'test-session-id',
+            session_expires_at: new Date(Date.now() + 86400_000).toISOString(),
+            user: { id: 'u1', username: 'testuser', display_name: 'Test User' },
+            tenant: { id: 't1', name: 'Test Tenant' }
+          }), { status: 200, headers: { 'content-type': 'application/json' } })
+        }
+        if (url.includes('/api/v1/dsh/models')) {
+          return new Response(JSON.stringify({
+            object: 'list',
+            data: [
+              {
+                id: 'bisheng/test-model',
+                object: 'model',
+                capabilities: { streaming: true, tools: true, reasoning_content: false }
+              }
+            ]
+          }), { status: 200, headers: { 'content-type': 'application/json' } })
+        }
+        if (url.includes('/api/v1/dsh/usage')) {
+          return new Response(JSON.stringify({
+            used: 10, limit: 100, quota_state: 'available'
+          }), { status: 200, headers: { 'content-type': 'application/json' } })
+        }
+        return new Response('Not found', { status: 404 })
+      }) as unknown as typeof fetch
+
+      try {
+        applyEnterprise(ctx as unknown as Parameters<typeof applyEnterprise>[0], {})
+        const stateHandler = routes.get('/api/enterprise.state')
+        expect(stateHandler).toBeTypeOf('function')
+        const res = await stateHandler!(new Request('http://127.0.0.1/api/enterprise.state'))
+        const state = await res.json()
+        expect(tokenRefreshed).toBe(true)
+        expect(state.connected).toBe(true)
+        expect(state.modelsAvailable).toBe(true)
+
+        const updatedDiskSession = JSON.parse(await readFile(sessionFile, 'utf8'))
+        expect(updatedDiskSession.tokens.access_token).toBe('new-refreshed-access-token')
+        expect(updatedDiskSession.tokens.refresh_token).toBe('new-refreshed-refresh-token')
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    } finally {
+      if (prevDshHome !== undefined) process.env.DSH_HOME = prevDshHome
+      else delete process.env.DSH_HOME
+      rmSync(testDir, { recursive: true, force: true })
+    }
   })
 })
