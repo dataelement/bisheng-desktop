@@ -394,4 +394,40 @@ describe('BiSheng compatible client API mock', () => {
       }]
     })[0]?.usage).toMatchObject({ used: 12, limit: 99, source: 'live' })
   })
+
+  it('preserves context_window and max_tokens declarations from model root or capabilities', () => {
+    const models = parseModelsLenient({
+      object: 'list',
+      data: [
+        {
+          id: 'model-with-root-limits',
+          context_window: 256000,
+          max_tokens: 4096,
+          capabilities: { streaming: true, tools: true, reasoning_content: false }
+        },
+        {
+          id: 'model-with-cap-limits',
+          capabilities: {
+            streaming: true,
+            tools: true,
+            reasoning_content: false,
+            context_window: 128000,
+            max_tokens: 8192
+          }
+        }
+      ]
+    })
+    expect(models[0]).toMatchObject({
+      id: 'model-with-root-limits',
+      context_window: 256000,
+      max_tokens: 4096,
+      capabilities: { context_window: 256000, max_tokens: 4096 }
+    })
+    expect(models[1]).toMatchObject({
+      id: 'model-with-cap-limits',
+      context_window: 128000,
+      max_tokens: 8192,
+      capabilities: { context_window: 128000, max_tokens: 8192 }
+    })
+  })
 })

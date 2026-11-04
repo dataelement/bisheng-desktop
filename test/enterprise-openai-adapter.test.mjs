@@ -129,6 +129,48 @@ describe('enterprise reasoning effort', () => {
   })
 })
 
+describe('enterprise context window and compaction support', () => {
+  it('resolves default context window and declared maxTokens', async () => {
+    const customModel = {
+      id: 'bisheng:custom',
+      display_name: 'Custom Capacity Model',
+      context_window: 256_000,
+      max_tokens: 8192,
+      capabilities: { streaming: true, tools: true, reasoning_content: false }
+    }
+    const adapter = new EnterpriseLlmAdapter({
+      models: () => [model, customModel],
+      providerName: () => 'Enterprise'
+    })
+    const resolvedDefault = await adapter.resolveModel('enterprise', model.id)
+    expect(resolvedDefault.context).toEqual({ contextWindow: 128_000 })
+    expect(resolvedDefault.defaultMaxTokens).toBeUndefined()
+
+    const resolvedCustom = await adapter.resolveModel('enterprise', customModel.id)
+    expect(resolvedCustom.context).toEqual({ contextWindow: 256_000 })
+    expect(resolvedCustom.defaultMaxTokens).toBe(8192)
+  })
+
+  it('provides valid context to Harness resolveModelInfo for compaction pressure checks', async () => {
+    const ctx = new Context()
+    const fiber = ctx.plugin(LlmRuntime)
+    await fiber
+    const adapter = new EnterpriseLlmAdapter({
+      models: () => [model],
+      providerName: () => 'Enterprise'
+    })
+    const dispose = ctx.llm.registerAdapter(['enterprise'], adapter)
+    try {
+      const info = await ctx.llm.resolveModelInfo('enterprise', model.id)
+      expect(info.context).toEqual({ contextWindow: 128_000 })
+      expect(info.id).toBe(model.id)
+    } finally {
+      dispose()
+      await fiber.dispose()
+    }
+  })
+})
+
 const referenceImage = {
   attachmentId: 'sha256:abcdef1234567890',
   mediaType: 'image/png',

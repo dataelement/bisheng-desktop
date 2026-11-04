@@ -729,8 +729,10 @@ function contentSafetyLocale(request) {
 
 function startEnterpriseLlm(ctx, llm, broker, getSessionAuth) {
   const safetyLocale = new AsyncLocalStorage()
-  const disposeSafetyLocale = ctx.on('connection/request', (request, _response, next) =>
-    safetyLocale.run(contentSafetyLocale(request), next))
+  const disposeSafetyLocale = typeof ctx.on === 'function'
+    ? ctx.on('connection/request', (request, _response, next) =>
+      safetyLocale.run(contentSafetyLocale(request), next))
+    : () => {}
   const safetyLocaleScope = createContentSafetyLocaleScope(ctx, () => safetyLocale.getStore())
   let latest = disabledState()
   let models = []
