@@ -310,8 +310,8 @@ window.__ModuleLoader__.load({
     }
     const MODES_NS = 'desktop.chatWork'
     const MODES_COPY = {
-      zh: { welcomeMessage: '来一起创造', welcome: '欢迎来到', newConversation: '新建对话', navigation: '导航', moreNavigation: '更多', recent: '对话', projects: '工作区', all: '所有会话', results: '搜索结果', cloud: '云端聊天', local: '本地工作', recentEmpty: '暂无最近会话', recentSearchEmpty: '当前列表没有匹配的会话', chat: '聊天', work: '工作', label: '聊天与工作', loading: '正在连接企业聊天…', error: '企业聊天连接失败，请重试', retry: '重新连接', refresh: '刷新聊天记录', historyLoading: '正在加载聊天记录…', historyError: '加载失败，点击重试', empty: '暂无聊天记录', more: '加载更多', newChat: '新聊天', signIn: '登录企业账号', signInTitle: '登录后使用聊天', signInDescription: '聊天由企业平台提供。登录后，即可使用平台中的模型和对话记录。', continueWork: '继续使用工作', close: '关闭', justNow: '刚刚' },
-      en: { welcomeMessage: "Let's Create Together", welcome: 'Welcome', newConversation: 'New conversation', navigation: 'Navigation', moreNavigation: 'More', recent: 'Conversations', projects: 'Workspaces', all: 'All conversations', results: 'Search results', cloud: 'Cloud chat', local: 'Local work', recentEmpty: 'No recent conversations', recentSearchEmpty: 'No matches in the current list', chat: 'Chat', work: 'Work', label: 'Chat and Work', loading: 'Connecting to enterprise Chat…', error: 'Could not connect to enterprise Chat. Try again.', retry: 'Reconnect', refresh: 'Refresh Chat history', historyLoading: 'Loading history…', historyError: 'Loading failed. Retry', empty: 'No chats yet', more: 'Load more', newChat: 'New chat', signIn: 'Sign in to your enterprise account', signInTitle: 'Sign in to use Chat', signInDescription: 'Chat is provided by your enterprise platform. Sign in to use its models and conversations.', continueWork: 'Continue in Work', close: 'Close', justNow: 'Now' }
+      zh: { welcomeMessage: '来一起创造', welcome: '欢迎来到', newConversation: '新建对话', navigation: '导航', moreNavigation: '更多', recent: '对话', projects: '工作区', all: '所有会话', results: '搜索结果', cloud: '云端聊天', local: '本地工作', recentEmpty: '暂无最近会话', recentSearchEmpty: '当前列表没有匹配的会话', chat: '聊天', work: '工作', label: '聊天与工作', loading: '正在连接企业聊天…', error: '企业聊天连接失败，请重试', retry: '重新连接', refresh: '刷新聊天记录', historyLoading: '正在加载聊天记录…', historyError: '加载失败，点击重试', empty: '暂无聊天记录', more: '加载更多', newChat: '新聊天', signIn: '登录企业账号', signInTitle: '登录后使用聊天', signInDescription: '聊天由企业平台提供。登录后，即可使用平台中的模型和对话记录。', continueWork: '继续使用工作', close: '关闭', justNow: '刚刚', workbenches: '工作台' },
+      en: { welcomeMessage: "Let's Create Together", welcome: 'Welcome', newConversation: 'New conversation', navigation: 'Navigation', moreNavigation: 'More', recent: 'Conversations', projects: 'Workspaces', all: 'All conversations', results: 'Search results', cloud: 'Cloud chat', local: 'Local work', recentEmpty: 'No recent conversations', recentSearchEmpty: 'No matches in the current list', chat: 'Chat', work: 'Work', label: 'Chat and Work', loading: 'Connecting to enterprise Chat…', error: 'Could not connect to enterprise Chat. Try again.', retry: 'Reconnect', refresh: 'Refresh Chat history', historyLoading: 'Loading history…', historyError: 'Loading failed. Retry', empty: 'No chats yet', more: 'Load more', newChat: 'New chat', signIn: 'Sign in to your enterprise account', signInTitle: 'Sign in to use Chat', signInDescription: 'Chat is provided by your enterprise platform. Sign in to use its models and conversations.', continueWork: 'Continue in Work', close: 'Close', justNow: 'Now', workbenches: 'Workbenches' }
     }
     /**
      * Host tokens the embedded enterprise document reuses. It cannot read the host's CSS, so the
@@ -430,23 +430,23 @@ publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page
         const conversationChanged = next.conversationId !== value.conversationId
         const becameReady = next.phase === 'ready' && value.phase !== 'ready'
         const clearHistory = identityChanged || !next.connected
-if (clearHistory) { historyRequest++; historyDirty = false; deletion.reset() }
+        if (clearHistory) { historyRequest++; historyDirty = false; deletion.reset() }
         publish({
           ...next,
           ...(clearHistory ? { items: [], page: 0, hasMore: false, historyPhase: 'idle' } : {}),
           signInPromptOpen: next.connected ? false : value.signInPromptOpen,
           pageId: next.navigation?.entries.find(entry => entry.active)?.id,
-          mode: next.connected ? signedIn ? 'chat' : value.mode : 'work'
+          mode: next.connected ? (signedIn && typeof window !== 'undefined' && window.dshEnterpriseChat ? 'chat' : value.mode) : 'work'
         })
         if (signedIn) window.dispatchEvent(new CustomEvent('dsh-desktop:close-settings'))
         if (next.connected && next.phase === 'ready' && (refresh || identityChanged || signedIn || conversationChanged || becameReady)) void refreshHistory()
       }
       const readState = async () => {
-        if (window.dshEnterpriseChat?.state) {
+        if (typeof window !== 'undefined' && window.dshEnterpriseChat?.state) {
           return window.dshEnterpriseChat.state()
         }
         try {
-          const res = await fetch('/api/enterprise.state')
+          const res = await fetch('/api/enterprise.state', { credentials: 'same-origin', cache: 'no-store' })
           if (res.ok) {
             const data = await res.json()
             if (data?.connected) {
@@ -487,6 +487,96 @@ if (clearHistory) { historyRequest++; historyDirty = false; deletion.reset() }
           applyState(next)
         } catch { /* Keep the last host snapshot. A missed read is not a dead session. */ }
       }
+      let startCount = 0
+      let cleanupStart = null
+      const activate = () => {
+        active = true
+        const account = () => { void sync() }
+        const visibility = () => { if (!document.hidden) void sync() }
+        const hasNavigationHandler = typeof ctx.uiWorkspace?.registerNavigationHandler === 'function'
+        const disposeNavigation = hasNavigationHandler
+          ? ctx.uiWorkspace.registerNavigationHandler((intent, workspaceId) => {
+            if (intent === 'new' && workspaceId === undefined && value.mode === 'chat') { void open('new'); return true }
+            select('work')
+          })
+          : () => {}
+        const originalOpenSession = ctx.uiWorkspace?.openSession
+        const revealWorkSession = hasNavigationHandler || typeof originalOpenSession !== 'function'
+          ? null
+          : function (target, source) {
+            const result = originalOpenSession.call(this, target, source)
+            if (typeof target === 'string' && value.mode === 'chat') select('work')
+            return result
+          }
+        if (revealWorkSession && ctx.uiWorkspace) ctx.uiWorkspace.openSession = revealWorkSession
+        const settings = (event) => publish({ settingsOpen: event.detail?.open === true, ...(event.detail?.open ? {} : { settingsSurface: undefined }) })
+        const approvals = (event) => publish({ approvalsOpen: event.detail?.open === true })
+        const accountDialog = (event) => publish({ accountDialogOpen: event.detail?.open === true })
+        const settingsSurface = (event) => {
+          const detail = event.detail
+          if (detail?.close) { if (value.settingsSurface?.token === detail.token) publish({ settingsSurface: undefined }); return }
+          if (detail?.bounds && typeof detail.section === 'string') publish({ settingsSurface: detail })
+        }
+        let workSession, unsubscribeWork = () => {}
+        const workState = () => {
+          const list = ctx.sessions?.list?.getSnapshot?.()
+          if (!list) return
+          const current = Object.values(list.byId || {}).find(row => (row.retainedBy?.mainView ?? 0) > 0)
+          const session = current && ctx.sessions?.binding?.(current.id)?.session
+          if (session !== workSession) {
+            unsubscribeWork()
+            workSession = session
+            unsubscribeWork = session ? session.subscribe(workState) : () => {}
+          }
+          const live = session?.getSnapshot()
+          const blank = live ? live.blank && live.pendingSubmissions.length === 0 && !live.running && !live.awaitingFirstTurn : current?.blank
+          publish({ workLanding: current ? blank === true : list.phase === 'ready' })
+        }
+        const panel = () => {
+          const info = ctx.layout?.panelInfo?.getSnapshot?.()
+          const activePanelId = info?.activePanelId ?? null
+          const panelOpen = activePanelId !== null
+          publish({ panelOpen, activePanelId, ...(panelOpen ? { mode: 'work' } : {}) })
+        }
+        const unsubscribe = ctx.layout?.panelInfo?.subscribe?.(panel) || (() => {})
+        const unsubscribeSessions = ctx.sessions?.list?.subscribe?.(workState) || (() => {})
+        const unsubscribeChat = typeof window !== 'undefined' ? window.dshEnterpriseChat?.subscribe?.((next) => {
+          revision++
+          applyState(next)
+        }) : undefined
+        workState(); panel()
+        if (typeof window !== 'undefined') {
+          window.addEventListener('dsh-desktop:enterprise-account-changed', account)
+          window.addEventListener('dsh-desktop:settings-visibility', settings)
+          window.addEventListener('dsh-desktop:approvals-visibility', approvals)
+          window.addEventListener('dsh-desktop:account-dialog-visibility', accountDialog)
+          window.addEventListener('dsh-desktop:settings-surface', settingsSurface)
+          window.addEventListener('focus', sync)
+          document.addEventListener('visibilitychange', visibility)
+        }
+        void sync()
+        return () => {
+          active = false
+          deletion.reset()
+          revision++
+          historyRequest++
+          unsubscribe()
+          unsubscribeSessions()
+          unsubscribeWork()
+          unsubscribeChat?.()
+          if (typeof window !== 'undefined') {
+            window.removeEventListener('dsh-desktop:enterprise-account-changed', account)
+            disposeNavigation()
+            if (revealWorkSession && ctx.uiWorkspace?.openSession === revealWorkSession) ctx.uiWorkspace.openSession = originalOpenSession
+            window.removeEventListener('dsh-desktop:settings-visibility', settings)
+            window.removeEventListener('dsh-desktop:approvals-visibility', approvals)
+            window.removeEventListener('dsh-desktop:account-dialog-visibility', accountDialog)
+            window.removeEventListener('dsh-desktop:settings-surface', settingsSurface)
+            window.removeEventListener('focus', sync)
+            document.removeEventListener('visibilitychange', visibility)
+          }
+        }
+      }
       return {
         snapshot: () => value,
         subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn) },
@@ -509,8 +599,7 @@ if (clearHistory) { historyRequest++; historyDirty = false; deletion.reset() }
           window.dispatchEvent(new CustomEvent('dsh-desktop:open-settings-section', { detail: { id: 'enterprise-account' } }))
         },
         async openPage(id) {
-          if (!value.connected) return
-          if (window.dshEnterpriseChat?.openPage) {
+          if (typeof window !== 'undefined' && window.dshEnterpriseChat?.openPage) {
             if (!value.navigation?.entries.some(entry => entry.id === id)) return
             ctx.layout.selectPanel(null)
             publish({ mode: 'chat', pageId: id })
@@ -518,6 +607,10 @@ if (clearHistory) { historyRequest++; historyDirty = false; deletion.reset() }
             try { await window.dshEnterpriseChat.openPage(id) }
             catch { if (active && epoch === value.epoch) void readHostState() }
           } else {
+            if (!value.connected) {
+              window.dispatchEvent(new CustomEvent('dsh-desktop:open-settings-section', { detail: { id: 'enterprise-account' } }))
+              return
+            }
             const base = value.base || ''
             if (base) {
               const url = `${base}/${id}`
@@ -528,87 +621,21 @@ if (clearHistory) { historyRequest++; historyDirty = false; deletion.reset() }
         choose(mode) {
           if (!select(mode)) return false
           if (mode === 'chat' && value.conversationId !== 'new') void open('new')
-          if (mode === 'work' && (!value.workLanding || value.panelOpen)) ctx.uiWorkspace.startSession()
+          if (mode === 'work' && (!value.workLanding || value.panelOpen)) ctx.uiWorkspace?.startSession?.()
           return true
         },
         start() {
-          active = true
-          const account = () => { void sync() }
-          const visibility = () => { if (!document.hidden) void sync() }
-// Older workspace hosts omit this registration. Failing here used to skip
-// the enterprise menu sync, so More never received knowledge and the other pages.
-const hasNavigationHandler = typeof ctx.uiWorkspace.registerNavigationHandler === 'function'
-const disposeNavigation = hasNavigationHandler
-  ? ctx.uiWorkspace.registerNavigationHandler((intent, workspaceId) => {
-    if (intent === 'new' && workspaceId === undefined && value.mode === 'chat') { void open('new'); return true }
-    select('work')
-  })
-  : () => {}
-// This host never notifies session opens. A history click still replaces
-// the work session, so reveal that column when chat is covering it.
-const originalOpenSession = ctx.uiWorkspace.openSession
-const revealWorkSession = hasNavigationHandler || typeof originalOpenSession !== 'function'
-  ? null
-  : function (target, source) {
-    const result = originalOpenSession.call(this, target, source)
-    if (typeof target === 'string' && value.mode === 'chat') select('work')
-    return result
-  }
-if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
-          const settings = (event) => publish({ settingsOpen: event.detail?.open === true, ...(event.detail?.open ? {} : { settingsSurface: undefined }) })
-          const approvals = (event) => publish({ approvalsOpen: event.detail?.open === true })
-          // A sidebar account dialog is drawn by the renderer, so the native view yields the region.
-          const accountDialog = (event) => publish({ accountDialogOpen: event.detail?.open === true })
-          const settingsSurface = (event) => {
-            const detail = event.detail
-            if (detail?.close) { if (value.settingsSurface?.token === detail.token) publish({ settingsSurface: undefined }); return }
-            if (detail?.bounds && typeof detail.section === 'string') publish({ settingsSurface: detail })
+          startCount++
+          if (startCount === 1) {
+            cleanupStart = activate()
           }
-          let workSession, unsubscribeWork = () => {}
-          const workState = () => {
-            const list = ctx.sessions.list.getSnapshot()
-            const current = Object.values(list.byId).find(row => (row.retainedBy.mainView ?? 0) > 0)
-            const session = current && ctx.sessions.binding(current.id)?.session
-            if (session !== workSession) {
-              unsubscribeWork()
-              workSession = session
-              unsubscribeWork = session ? session.subscribe(workState) : () => {}
-            }
-            const live = session?.getSnapshot()
-            const blank = live ? live.blank && live.pendingSubmissions.length === 0 && !live.running && !live.awaitingFirstTurn : current?.blank
-            publish({ workLanding: current ? blank === true : list.phase === 'ready' })
-          }
-          const panel = () => {
-            const { activePanelId } = ctx.layout.panelInfo.getSnapshot()
-            const panelOpen = activePanelId !== null
-            publish({ panelOpen, activePanelId, ...(panelOpen ? { mode: 'work' } : {}) })
-          }
-          const unsubscribe = ctx.layout.panelInfo.subscribe(panel)
-          const unsubscribeSessions = ctx.sessions.list.subscribe(workState)
-          const unsubscribeChat = window.dshEnterpriseChat?.subscribe?.((next) => {
-            revision++
-            applyState(next)
-          })
-          workState(); panel()
-          window.addEventListener('dsh-desktop:enterprise-account-changed', account)
-          window.addEventListener('dsh-desktop:settings-visibility', settings)
-          window.addEventListener('dsh-desktop:approvals-visibility', approvals)
-          window.addEventListener('dsh-desktop:account-dialog-visibility', accountDialog)
-          window.addEventListener('dsh-desktop:settings-surface', settingsSurface)
-          window.addEventListener('focus', sync)
-          document.addEventListener('visibilitychange', visibility)
-          void sync()
           return () => {
-active = false; deletion.reset(); revision++; historyRequest++; unsubscribe(); unsubscribeSessions(); unsubscribeWork(); unsubscribeChat?.()
-            window.removeEventListener('dsh-desktop:enterprise-account-changed', account)
-            disposeNavigation()
-            if (revealWorkSession && ctx.uiWorkspace.openSession === revealWorkSession) ctx.uiWorkspace.openSession = originalOpenSession
-            window.removeEventListener('dsh-desktop:settings-visibility', settings)
-            window.removeEventListener('dsh-desktop:approvals-visibility', approvals)
-            window.removeEventListener('dsh-desktop:account-dialog-visibility', accountDialog)
-            window.removeEventListener('dsh-desktop:settings-surface', settingsSurface)
-            window.removeEventListener('focus', sync)
-            document.removeEventListener('visibilitychange', visibility)
+            startCount--
+            if (startCount <= 0) {
+              startCount = 0
+              cleanupStart?.()
+              cleanupStart = null
+            }
           }
         }
       }
@@ -837,9 +864,10 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
       return React.createElement('svg', { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: id === 'more' ? 3 : 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
         React.createElement('path', { d: NAV_ICON_PATHS[id === 'capabilities' ? 'skills' : id] || NAV_ICON_PATHS.apps }))
     }
-    function PrimaryNavigation({ wide, renderAction, expandSidebar, panels, selectPanel, renderPanelIcon, navigation, t }) {
+    function PrimaryNavigation({ wide, renderAction, expandSidebar, panels = [], selectPanel, renderPanelIcon, navigation, t }) {
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
       const [menuOpen, setMenuOpen] = React.useState(false)
+      React.useEffect(() => typeof navigation?.start === 'function' ? navigation.start() : undefined, [navigation])
       React.useEffect(() => { setMenuOpen(false) }, [state.epoch])
       React.useEffect(() => { if (!wide) setMenuOpen(false) }, [wide])
       React.useEffect(() => {
@@ -850,22 +878,42 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         window.addEventListener('blur', close)
         return () => window.removeEventListener('blur', close)
       }, [menuOpen])
-      const entries = state.connected ? state.navigation?.entries || [] : []
+      const defaultEntries = [
+        { id: 'knowledge', label: '知识空间', path: '/knowledge', active: false, primary: true },
+        { id: 'apps', label: '应用中心', path: '/apps', active: false, primary: true },
+        { id: 'skills', label: '企业技能', path: '/skills', active: false, primary: true }
+      ]
+      const entries = state.connected
+        ? (state.navigation?.entries?.length ? state.navigation.entries : defaultEntries)
+        : []
       const activeId = state.mode === 'chat' ? entries.find(entry => entry.active)?.id : undefined
-      const plugins = panels.find(panel => panel.id === 'plugins')
-      const morePanels = panels.filter(panel => panel.id !== 'plugins')
+      const panelList = Array.isArray(panels) ? panels : []
+      const plugins = panelList.find(panel => panel.id === 'plugins')
+      const morePanels = panelList.filter(panel => panel.id !== 'plugins' && panel.id !== 'workbenches')
       const items = [
         ...entries.map(entry => ({ id: `web:${entry.id}`, label: entry.label, icon: React.createElement(NavigationIcon, { id: entry.id }) })),
-        ...morePanels.map(panel => ({ id: `local:${panel.id}`, label: panel.label, icon: renderPanelIcon(panel.id) }))
+        ...morePanels.map(panel => ({ id: `local:${panel.id}`, label: panel.label, icon: renderPanelIcon ? renderPanelIcon(panel.id) : null }))
       ]
+      const renderItem = (props) => {
+        if (typeof renderAction === 'function') return renderAction(props)
+        return React.createElement('button', {
+          type: 'button',
+          className: 'dshNavigationRow',
+          'data-navigation-id': props.id,
+          'aria-label': props.label,
+          'aria-expanded': props.expanded,
+          'aria-haspopup': props.expanded !== undefined ? 'menu' : undefined,
+          onClick: props.onClick
+        }, props.icon, wide && React.createElement('span', null, props.label))
+      }
       return React.createElement('nav', { className: 'dshPrimaryNavigation', 'data-wide': wide, 'aria-label': t('navigation') },
-        plugins && renderAction({ id: plugins.id, label: plugins.label, icon: renderPanelIcon(plugins.id), active: state.mode === 'work' && state.activePanelId === plugins.id, onClick: () => { setMenuOpen(false); navigation.select('work'); selectPanel(plugins.id) } }),
+        plugins && renderItem({ id: plugins.id, label: plugins.label, icon: renderPanelIcon ? renderPanelIcon(plugins.id) : null, active: state.mode === 'work' && state.activePanelId === plugins.id, onClick: () => { setMenuOpen(false); navigation.select('work'); selectPanel?.(plugins.id) } }),
         items.length > 0 && React.createElement(Menu, {
-          open: menuOpen, onClose: () => setMenuOpen(false), items, autoFocus: true, dense: true,
+          open: menuOpen, onClose: () => setMenuOpen(false), items, autoFocus: true, dense: true, portal: true,
           className: 'dshNavigationMenu', listClassName: 'dshNavigationMenuList',
           selectedId: activeId ? `web:${activeId}` : undefined,
-          onSelect: id => { setMenuOpen(false); if (id.startsWith('web:')) void navigation.openPage(id.slice(4)); else { navigation.select('work'); selectPanel(id.slice(6)) } },
-          anchor: renderAction({ id: 'more', label: t('moreNavigation'), icon: React.createElement(NavigationIcon, { id: 'more' }), active: Boolean(activeId) || (state.mode === 'work' && morePanels.some(panel => panel.id === state.activePanelId)), expanded: menuOpen, onClick: () => { if (!wide) expandSidebar(); setMenuOpen(open => !open) } })
+          onSelect: id => { setMenuOpen(false); if (id.startsWith('web:')) void navigation.openPage(id.slice(4)); else { navigation.select('work'); selectPanel?.(id.slice(6)) } },
+          anchor: renderItem({ id: 'more', label: t('moreNavigation'), icon: React.createElement(NavigationIcon, { id: 'more' }), active: Boolean(activeId) || (state.mode === 'work' && morePanels.some(panel => panel.id === state.activePanelId)), expanded: menuOpen, onClick: () => { if (!wide) expandSidebar?.(); setMenuOpen(open => !open) } })
         }))
     }
     // Work overlays use viewport coordinates. Isolate stacking while keeping
@@ -919,7 +967,39 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         document.head.appendChild(style)
         return () => style.remove()
       })
+      function EnterprisePanelActions({ onDismiss, onOpen, navigation, t }) {
+        const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
+        React.useEffect(() => typeof navigation?.start === 'function' ? navigation.start() : undefined, [navigation])
+        const defaultEntries = [
+          { id: 'knowledge', label: '知识空间' },
+          { id: 'apps', label: '应用中心' },
+          { id: 'skills', label: '企业技能' }
+        ]
+        const entries = state.connected
+          ? (state.navigation?.entries?.length ? state.navigation.entries : defaultEntries)
+          : defaultEntries
+        return React.createElement(React.Fragment, null,
+          ...entries.map(entry => React.createElement(MenuItemButton, {
+            key: `enterprise:${entry.id}`,
+            icon: React.createElement(NavigationIcon, { id: entry.id }),
+            onSelect: () => {
+              onDismiss?.()
+              void navigation.openPage(entry.id)
+            }
+          }, entry.label)),
+          React.createElement(MenuItemButton, {
+            key: 'enterprise:workbenches',
+            icon: React.createElement(NavigationIcon, { id: 'square' }),
+            onSelect: () => {
+              onDismiss?.()
+              if (typeof onOpen === 'function') onOpen('desktop-workbenches')
+              ctx.layout?.selectPanel?.('desktop-workbenches')
+            }
+          }, t('workbenches') || '工作台')
+        )
+      }
       ctx.slots.inject('sidebar.primaryNavigation', () => ctx.slots.register({ name: 'sidebar.primaryNavigation', id: 'desktop-primary-navigation', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS) }) }, PrimaryNavigation))
+      ctx.slots.inject('sidebar.panellist.actions', () => ctx.slots.register({ name: 'sidebar.panellist.actions', id: 'desktop-enterprise-more-actions', order: -100, inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS) }) }, EnterprisePanelActions))
       ctx.slots.inject('sidebar.workspaces.title', () => ctx.slots.register({ name: 'sidebar.workspaces.title', inject: () => ({ t: ctx.locale.bind(MODES_NS) }) }, ({ flat, t }) => t(flat ? 'all' : 'projects')))
       ctx.slots.inject('desktop.mode.content', () => ctx.slots.register({ name: 'desktop.mode.content', id: 'desktop-chat-work', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS), locale: ctx.locale }) }, DesktopModes))
       ctx.slots.inject('sidebar.workspaces.collection', () => ctx.slots.register({ name: 'sidebar.workspaces.collection', id: 'desktop-shared-collection', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS), deleteText: ctx.locale.bind(CLOUD_DELETE_NS) }) }, SharedCollection))

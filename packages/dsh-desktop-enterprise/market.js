@@ -2,6 +2,7 @@ import semver from 'semver'
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { acceptMarketSnapshot } from './market-policy.js'
 import { installOfflineBundle, sha256, verifyInstalledBundle } from './offline-bundle.js'
@@ -20,7 +21,16 @@ const hostRequire = createRequire(import.meta.url)
  * the current installation and must be passed through unchanged.
  */
 export function hostDshEntryPath() {
-  return hostRequire.resolve('@deepseek-ai/dsh/lib/bin.js')
+  try {
+    return hostRequire.resolve('@deepseek-ai/dsh/lib/bin.js')
+  } catch {
+    try {
+      const cwdRequire = createRequire(join(process.cwd(), 'package.json'))
+      return cwdRequire.resolve('@deepseek-ai/dsh/lib/bin.js')
+    } catch {
+      return undefined
+    }
+  }
 }
 
 /** Both the UI and installer consume this host-owned compatibility verdict. */
@@ -53,9 +63,9 @@ function rememberedInstall(value) {
 }
 
 export function createMarketController(ctx, accountController, options = {}) {
-  const home = options.home ?? process.env.DSH_HOME
+  const home = options.home ?? (process.env.DSH_HOME || join(homedir(), '.dsh'))
   const target = options.target ?? `${process.platform}-${process.arch}`
-  const desktopVersion = () => options.desktopVersion ?? accountController.state().desktopVersion ?? ''
+  const desktopVersion = () => options.desktopVersion ?? accountController.state().desktopVersion ?? process.env.DSH_DESKTOP_VERSION ?? '1.0.1'
   const load = options.load ?? createMarketRuntime(ctx, options.auth, (record, error) => {
     const requestEpoch = epoch
     void serialized(async () => {

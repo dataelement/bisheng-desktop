@@ -108,6 +108,7 @@ describe('BISHENG client slot occupants', () => {
       'shell.overlay',
       'shell.overlay',
       'sidebar.primaryNavigation',
+      'sidebar.panellist.actions',
       'sidebar.workspaces.title',
       'desktop.mode.content',
       'sidebar.workspaces.collection',
@@ -128,13 +129,40 @@ describe('BISHENG client slot occupants', () => {
     // The in-place dropdown fills its trigger wrapper instead of shrink-wrapping its labels.
     expect(appended[0]?.textContent).toContain('.dshNavigationMenu .dshNavigationMenuList{width:100%;min-width:0;max-width:100%;box-sizing:border-box}')
     const primaryNavigation = registrations.find(({ config }) => config.name === 'sidebar.primaryNavigation')!.component
+    const startSpy = vi.fn(() => vi.fn())
     for (const wide of [true, false]) {
       const nav = primaryNavigation({
-        wide, panels: [], navigation: { subscribe: vi.fn(), snapshot: () => ({ mode: 'work' }) }, t: (key: string) => key
+        wide, panels: [], navigation: { subscribe: vi.fn(), snapshot: () => ({ mode: 'work', connected: true }), start: startSpy }, t: (key: string) => key
       }) as { props: Record<string, unknown> }
       expect(nav.props.className).toBe('dshPrimaryNavigation')
       expect(nav.props['data-wide']).toBe(wide)
+      expect(startSpy).toHaveBeenCalled()
+      const children = (nav.props.children as Array<any>).filter(Boolean)
+      const menu = children.find(child => child?.props?.items)
+      expect(menu).toBeDefined()
+      expect(menu.props.portal).toBe(true)
+      expect(menu.props.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'web:knowledge', label: '知识空间' }),
+        expect.objectContaining({ id: 'web:apps', label: '应用中心' }),
+        expect.objectContaining({ id: 'web:skills', label: '企业技能' })
+      ]))
     }
+
+    const panelActions = registrations.find(({ config }) => config.name === 'sidebar.panellist.actions')!.component
+    const actionsNav = { subscribe: vi.fn(), snapshot: () => ({ mode: 'work', connected: true }), start: startSpy, openPage: vi.fn() }
+    const dismissSpy = vi.fn()
+    const openSpy = vi.fn()
+    const renderedActions = panelActions({
+      onDismiss: dismissSpy, onOpen: openSpy, navigation: actionsNav, t: (key: string) => key
+    }) as { props: Record<string, unknown> }
+    const actionItems = renderedActions.props.children as Array<{ props: { onSelect: () => void; children: string } }>
+    expect(actionItems).toHaveLength(4)
+    expect(actionItems.map(item => Array.isArray(item.props.children) ? item.props.children[0] : item.props.children)).toEqual(['知识空间', '应用中心', '企业技能', 'workbenches'])
+    actionItems[0]!.props.onSelect()
+    expect(dismissSpy).toHaveBeenCalled()
+    expect(actionsNav.openPage).toHaveBeenCalledWith('knowledge')
+    actionItems[3]!.props.onSelect()
+    expect(openSpy).toHaveBeenCalledWith('desktop-workbenches')
     // A native WebContentsView steals window focus without an iframe target.
     menuOpen = true
     primaryNavigation({

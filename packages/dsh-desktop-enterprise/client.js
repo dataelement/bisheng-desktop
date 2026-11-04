@@ -768,10 +768,12 @@ window.__ModuleLoader__.load({
           if (!response.ok) throw new Error('Enterprise state unavailable')
           const account = await response.json()
           if (disposed || currentRevision !== revision) return
-          const next = account.connected && Date.parse(account.sessionExpiresAt) > Date.now() ? `${account.base}|${account.tenant.id}|${account.user.id}` : null
+          const sessionExpires = account.sessionExpiresAt ? Date.parse(account.sessionExpiresAt) : undefined
+          const notExpired = sessionExpires === undefined || sessionExpires > Date.now()
+          const next = account.connected && notExpired ? `${account.base}|${account.tenant.id}|${account.user.id}` : null
           currentAccount = account
           window.clearTimeout(expiryTimer)
-          if (next) expiryTimer = window.setTimeout(() => { void sync() }, Math.min(Date.parse(account.sessionExpiresAt) - Date.now() + 1, 2_147_483_647))
+          if (next && sessionExpires !== undefined) expiryTimer = window.setTimeout(() => { void sync() }, Math.min(sessionExpires - Date.now() + 1, 2_147_483_647))
           if (identity === next) return
           disposeTab?.(); disposeTab = undefined; identity = next
           if (next) disposeTab = ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({

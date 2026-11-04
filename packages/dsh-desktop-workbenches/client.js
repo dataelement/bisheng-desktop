@@ -172,10 +172,21 @@ window.__ModuleLoader__.load({
       listeners: new Set(),
       // The general-settings switch is hidden. A stored "true" still turns the
       // feature on; anything else keeps it off.
-      enabled: (() => { try { return window.localStorage.getItem(WORKBENCH_PREF) === 'true' } catch { return false } })(),
+      enabled: (() => {
+        try {
+          return window.localStorage.getItem(WORKBENCH_PREF) === 'true' || window.localStorage.getItem('dsh_workbench') === 'true'
+        } catch { return false }
+      })(),
       subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener) },
       getSnapshot() { return this.enabled },
-      set(value) { this.enabled = !!value; try { window.localStorage.setItem(WORKBENCH_PREF, String(this.enabled)) } catch {} ; for (const listener of this.listeners) listener() }
+      set(value) {
+        this.enabled = !!value
+        try {
+          window.localStorage.setItem(WORKBENCH_PREF, String(this.enabled))
+          window.localStorage.setItem('dsh_workbench', String(this.enabled))
+        } catch {}
+        for (const listener of this.listeners) listener()
+      }
     }
     const policyWorkbenchCopy = {
       zh: '当前企业未开放网络工作台安装',
@@ -1761,7 +1772,7 @@ window.__ModuleLoader__.load({
     function WorkbenchSidebarSwitcher({ service, wide, startSession, usePanelInfo }) {
       useHostLocale(service)
       const { state, catalog, ready, pending, marketOpen, switcherHint } = useWorkbench(service)
-      const activePanelId = usePanelInfo((info) => info.activePanelId)
+      const activePanelId = typeof usePanelInfo === 'function' ? usePanelInfo((info) => info?.activePanelId) : (marketOpen ? PANEL : null)
       const marketSelected = activePanelId === PANEL
       const enabled = React.useSyncExternalStore(workbenchPreference.subscribe.bind(workbenchPreference), workbenchPreference.getSnapshot.bind(workbenchPreference))
       const enterprise = React.useSyncExternalStore(enterpriseCapability.subscribe.bind(enterpriseCapability), enterpriseCapability.getSnapshot.bind(enterpriseCapability))
@@ -2680,10 +2691,10 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
             account = { connected: false }
           }
           if (disposed || request !== revision) return
-          expiresAt = Date.parse(account?.sessionExpiresAt) || 0
-          const connected = account?.connected === true && expiresAt > Date.now()
+          expiresAt = account?.sessionExpiresAt ? (Date.parse(account.sessionExpiresAt) || 0) : 0
+          const connected = account?.connected === true && (expiresAt === 0 || expiresAt > Date.now())
           clearTimeout(expiryTimer)
-          if (connected) expiryTimer = setTimeout(() => { void sync() }, Math.min(expiresAt - Date.now() + 1, 2_147_483_647))
+          if (connected && expiresAt > Date.now()) expiryTimer = setTimeout(() => { void sync() }, Math.min(expiresAt - Date.now() + 1, 2_147_483_647))
           const previousConnected = enterpriseCapability.getSnapshot().connected
           const previousKey = service.enterpriseAccountKey
           if (!connected || (previousKey && account.connectionKey && account.connectionKey !== previousKey)) {
@@ -2762,16 +2773,20 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
         })
         : undefined, 'workbenches: new session scope')
       ctx.effect(() => ctx.sessions.list.subscribe(() => service.selectionChanged()), 'workbenches: session navigation')
-      ctx.effect(() => ctx.uiWorkspace.registerSessionReuseFilter((sessionId) => !service.state.sessionBindings[sessionId]), 'workbenches: blank session reuse')
-      ctx.effect(() => ctx.uiWorkspace.registerSessionOpener((sessionId, source = 'explicit-session', context) => {
-        if (!workbenchPreference.getSnapshot()) return false
-        if (service.internalSessionOpen === sessionId) return false
-        if (source === 'workspace' && service.routeWorkspaceSession(sessionId, context)) return true
-        const id = service.state.sessionBindings[sessionId]
-        if (!service.ready || !id || !service.state.added.includes(id) || !service.catalog.has(id) || service.activationFor(service.catalog.get(id)) === 'off') return false
-        service.run(service.open(id, sessionId))
-        return true
-      }), 'workbenches: open linked session')
+      ctx.effect(() => typeof ctx.uiWorkspace.registerSessionReuseFilter === 'function'
+        ? ctx.uiWorkspace.registerSessionReuseFilter((sessionId) => !service.state.sessionBindings[sessionId])
+        : undefined, 'workbenches: blank session reuse')
+      ctx.effect(() => typeof ctx.uiWorkspace.registerSessionOpener === 'function'
+        ? ctx.uiWorkspace.registerSessionOpener((sessionId, source = 'explicit-session', context) => {
+          if (!workbenchPreference.getSnapshot()) return false
+          if (service.internalSessionOpen === sessionId) return false
+          if (source === 'workspace' && service.routeWorkspaceSession(sessionId, context)) return true
+          const id = service.state.sessionBindings[sessionId]
+          if (!service.ready || !id || !service.state.added.includes(id) || !service.catalog.has(id) || service.activationFor(service.catalog.get(id)) === 'off') return false
+          service.run(service.open(id, sessionId))
+          return true
+        })
+        : undefined, 'workbenches: open linked session')
       ctx.effect(() => {
         service.run(service.load())
         const beforeUnload = (event) => { if (service.pending || service.blocked || service.draftNotes.size) { event.preventDefault(); event.returnValue = '' } }

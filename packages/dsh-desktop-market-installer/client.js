@@ -768,13 +768,15 @@ window.__ModuleLoader__.load({
           account = await response.json()
         } catch { account = undefined }
         if (disposed || current !== revision) return
+        const sessionExpires = account?.sessionExpiresAt ? Date.parse(account.sessionExpiresAt) : undefined
+        const notExpired = sessionExpires === undefined || sessionExpires > Date.now()
         const allowed = account?.connected === true
-          && Date.parse(account.sessionExpiresAt) > Date.now()
+          && notExpired
           && account.allowThirdPartyPlugins === true
         if (typeof window?.clearTimeout === 'function') window.clearTimeout(expiryTimer)
         else if (typeof clearTimeout === 'function') clearTimeout(expiryTimer)
-        if (allowed) {
-          const delay = Math.min(Date.parse(account.sessionExpiresAt) - Date.now() + 1, 2_147_483_647)
+        if (allowed && sessionExpires !== undefined) {
+          const delay = Math.min(sessionExpires - Date.now() + 1, 2_147_483_647)
           if (typeof window?.setTimeout === 'function') {
             expiryTimer = window.setTimeout(() => { void syncMarketEntry() }, delay)
           } else if (typeof setTimeout === 'function') {
