@@ -23,6 +23,12 @@ const { menuReduce, MenuView } = vm.runInNewContext(`(() => {
   react: React,
   react_jsx_runtime: jsx,
   document,
+  window,
+  getComputedStyle,
+  ResizeObserver: class {
+    observe() {}
+    disconnect() {}
+  },
   Node,
   clsx: (...values) => values.filter(Boolean).join(' '),
   MenuView_module_css_default: new Proxy({}, { get: (_, key) => String(key) }),
@@ -57,10 +63,11 @@ describe('input trigger menu scroll ownership', () => {
       if (this.getAttribute('role') === 'option') {
         const index = Number(this.id.split('-').at(-1))
         const scroll = this.parentElement.scrollTop
-        return { top: 123 + index * 40 - scroll, bottom: 157 + index * 40 - scroll }
+        return { top: 123 + index * 40 - scroll, bottom: 157 + index * 40 - scroll, height: 34 }
       }
       return { top: 96, bottom: 496 }
     })
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(1000)
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
     dispatch = event => {
       state = menuReduce(state, event)

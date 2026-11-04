@@ -100,6 +100,17 @@ it('keeps a newer Word choice when an older PPT acknowledgement arrives', async 
   expect(f.panels()).toEqual({ office: 'word', ppt: false })
 })
 
+it('keeps the PPT panel when Office reports an empty mode and clears it for Word', async () => {
+  const f = await fixture()
+  await f.click('PPT')
+  await f.finish()
+  expect(f.panels()).toEqual({ office: null, ppt: true })
+  await act(async () => window.dispatchEvent(new CustomEvent('dsh-office-mode-change', { detail: { origin: 'office', mode: null, sessionId: 'session-a' } })))
+  expect(f.panels()).toEqual({ office: null, ppt: true })
+  await act(async () => window.dispatchEvent(new CustomEvent('dsh-office-mode-change', { detail: { origin: 'office', mode: 'word', sessionId: 'session-a' } })))
+  expect(f.panels()).toEqual({ office: null, ppt: false })
+})
+
 it('keeps preloaded PPT examples when switching from unbound Excel', async () => {
   const f = await fixture(false)
   await f.click('Excel')

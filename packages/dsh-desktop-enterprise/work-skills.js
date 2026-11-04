@@ -106,9 +106,7 @@ export function applyEnterpriseSkills(ctx, options) {
   let invalidate = () => undefined
   ctx.skills.registerProvider(control => {
     invalidate = control.invalidate
-    const timer = setInterval(control.invalidate, 30_000)
-    timer.unref?.()
-    control.signal.addEventListener('abort', () => { clearInterval(timer); skills.clear() }, { once: true })
+    control.signal.addEventListener('abort', () => { skills.clear() }, { once: true })
     return { name: PROVIDER, list: async ({ signal }) => { await options.refreshState(); return skills.catalog(signal) },
       get: async (candidate, { signal }) => { await options.refreshState(); return skills.load(candidate.name, signal) } }
   })

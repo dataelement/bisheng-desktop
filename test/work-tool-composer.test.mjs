@@ -16,7 +16,7 @@ it('serializes the actual selected tool identity after checking availability for
   const ref = JSON.stringify({ name: 'mcp__bisheng__bisheng_tool_7', label: '当前时间', connectionKey: 'account-a' })
   expect(source.codec.clipboardText(ref)).toBe('/当前时间')
   expect(source.openReference()).toBe(false)
-  expect(await source.codec.serialize(ref)).toBe(' [Selected tool: mcp__bisheng__bisheng_tool_7] ')
+  expect(await source.codec.serialize(ref)).toBe(' [Selected tool: mcp__bisheng__bisheng_tool_7; label: "当前时间"] ')
   expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ operation: 'validate', names: ['mcp__bisheng__bisheng_tool_7'], connectionKey: 'account-a' })
   fetch.mockResolvedValueOnce(Response.json({ error: 'Tool disabled' }, { status: 400 }))
   await expect(source.codec.serialize(ref)).rejects.toThrow('Tool disabled')

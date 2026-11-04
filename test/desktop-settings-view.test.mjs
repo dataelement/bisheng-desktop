@@ -11,6 +11,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { afterEach, expect, it, vi } from 'vitest'
 
 const source = await readFile(new URL('../packages/dsh-desktop-settings/client.js', import.meta.url), 'utf8')
+const usageData = ({ storage, ...summary }) => ({ summary: { status: 'ready', data: summary }, storage: { status: 'ready', data: storage } })
 let cleanup
 afterEach(async () => { await cleanup?.(); cleanup = undefined; vi.unstubAllGlobals() })
 
@@ -80,7 +81,7 @@ async function fixture(language = 'zh', settingsProtocolVersion = 1, signedIn = 
 it.each(['zh', 'en'])('renders native usage with enterprise data, switching metrics and clearing identity (%s)', async language => {
   const f = await fixture(language)
   const totals = { total_tokens: 1200, input_tokens: 1000, output_tokens: 200, message_count: 12, missing_usage_count: 1 }
-  window.dshEnterpriseChat.usage = vi.fn(async () => ({ totals, storage: { used: 0.05, limit: -1 }, points: [{ ...totals, start_at: '2026-10-22T00:00:00+08:00', end_at: '2026-10-23T00:00:00+08:00' }] }))
+  window.dshEnterpriseChat.usage = vi.fn(async () => usageData({ totals, storage: { used: 0.05, limit: -1 }, points: [{ ...totals, start_at: '2026-10-22T00:00:00+08:00', end_at: '2026-10-23T00:00:00+08:00' }] }))
   const surface = vi.fn()
   window.addEventListener('dsh-desktop:settings-surface', surface)
   const entry = f.registrations.find(row => row.options.id === 'desktop-usage')
@@ -124,7 +125,7 @@ it.each(['zh', 'en'])('avoids overlapping month labels for a partial starting we
   const totals = { total_tokens: 0, input_tokens: 0, output_tokens: 0, message_count: 0, missing_usage_count: 0 }
   const start = Date.parse('2025-10-31T00:00:00Z')
   const points = Array.from({ length: 365 }, (_, index) => ({ ...totals, start_at: new Date(start + index * 86400000).toISOString(), end_at: new Date(start + (index + 1) * 86400000).toISOString() }))
-  window.dshEnterpriseChat.usage = vi.fn(async () => ({ totals, storage: null, points }))
+  window.dshEnterpriseChat.usage = vi.fn(async () => usageData({ totals, storage: null, points }))
   const entry = f.registrations.find(row => row.options.id === 'desktop-usage')
   await f.mount(entry.Component, entry.options.inject())
   const labels = [...document.querySelectorAll('.dshUsageMonths span')]
@@ -142,7 +143,7 @@ it('retries native usage failures and ignores results finishing after identity c
   window.dshEnterpriseChat.usage = usage
   const entry = f.registrations.find(row => row.options.id === 'desktop-usage')
   await f.mount(entry.Component, entry.options.inject())
-  expect(document.querySelector('[role=alert]').textContent).toContain('用量暂不可用')
+  expect(document.querySelector('[role=alert]').textContent).toContain('用量统计加载失败')
   let finish
   usage.mockImplementation(() => new Promise(resolve => { finish = resolve }))
   await click(document.querySelector('.dshSettingsStatus button'))
@@ -267,7 +268,7 @@ it('shows enterprise models natively and embeds no account page in Account and s
     disposers.reverse().forEach(dispose => dispose())
     await localeContext.fiber.dispose()
   }
-  window.dshEnterpriseChat.usage = vi.fn(async () => ({ totals: { total_tokens: 900, input_tokens: 800, output_tokens: 100, message_count: 9, missing_usage_count: 0 }, points: [], storage: { used: 0.05, limit: 1 } }))
+  window.dshEnterpriseChat.usage = vi.fn(async () => usageData({ totals: { total_tokens: 900, input_tokens: 800, output_tokens: 100, message_count: 9, missing_usage_count: 0 }, points: [], storage: { used: 0.05, limit: 1 } }))
   const renderSlot = vi.fn((...args) => f.renderSlot(...args))
   await f.mount(EnterpriseSection, { t: key => key, renderSlot })
   expect(document.querySelector('.dshEnterpriseManagedModels').tagName).toBe('SECTION')
@@ -626,11 +627,66 @@ it('retries the failed account read and the failed action from the menu', async 
 it.each([[0, '0.0万'], [12057, '1.2万'], [1152049, '115.2万'], [99900000, '9990.0万'], [100000000, '1.0亿'], [230000000, '2.3亿']])('formats daily Token usage %s as %s', async (count, expected) => {
   const f = await fixture('zh')
   const totals = { total_tokens: count, input_tokens: count, output_tokens: 0, message_count: 3, missing_usage_count: 0 }
-  window.dshEnterpriseChat.usage = vi.fn(async () => ({ totals, storage: null, points: [{ ...totals, start_at: '2026-10-22T00:00:00+08:00', end_at: '2026-10-23T00:00:00+08:00' }] }))
+  window.dshEnterpriseChat.usage = vi.fn(async () => usageData({ totals, storage: null, points: [{ ...totals, start_at: '2026-10-22T00:00:00+08:00', end_at: '2026-10-23T00:00:00+08:00' }] }))
   const entry = f.registrations.find(row => row.options.id === 'desktop-usage')
   await f.mount(entry.Component, entry.options.inject())
   const day = document.querySelector('[role=listitem]')
   await act(async () => day.dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true })))
   expect(document.querySelector('[role=tooltip]').textContent).toBe(`2026-10-22 · Token 用量: ${expected}`)
   expect(document.querySelectorAll('.dshUsageOverview dd')[1].textContent).toBe(expected)
+})
+
+it('retries an errored Chat session through the host usage operation', async () => {
+  const f = await fixture()
+  window.dshEnterpriseChat.state = async () => ({ connected: true, phase: 'error', epoch: 3 })
+  const totals = { total_tokens: 12, input_tokens: 10, output_tokens: 2, message_count: 1, missing_usage_count: 0 }
+  const usage = vi.fn().mockRejectedValueOnce(new Error('session exchange failed')).mockResolvedValue(usageData({ totals, points: [], storage: null }))
+  window.dshEnterpriseChat.usage = usage
+  const entry = f.registrations.find(row => row.options.id === 'desktop-usage')
+  await f.mount(entry.Component, entry.options.inject())
+  expect(usage).toHaveBeenCalledTimes(1)
+  await click(document.querySelector('.dshSettingsStatus button'))
+  expect(usage).toHaveBeenCalledTimes(2)
+  expect(document.querySelector('[role=alert]')).toBeNull()
+  expect(document.querySelector('.dshUsageOverview')).not.toBeNull()
+})
+
+it('loads after the same account epoch becomes ready and coalesces repeated ready events', async () => {
+  const f = await fixture()
+  window.dshEnterpriseChat.state = async () => ({ connected: true, phase: 'error', epoch: 3 })
+  const totals = { total_tokens: 0, input_tokens: 0, output_tokens: 0, message_count: 0, missing_usage_count: 0 }
+  const usage = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(usageData({ totals, points: [], storage: null }))
+  window.dshEnterpriseChat.usage = usage
+  const entry = f.registrations.find(row => row.options.id === 'desktop-usage')
+  await f.mount(entry.Component, entry.options.inject())
+  await act(async () => { f.update({ connected: true, phase: 'ready', epoch: 3 }); f.update({ connected: true, phase: 'ready', epoch: 3 }) })
+  expect(usage).toHaveBeenCalledTimes(2)
+  expect(document.querySelector('[role=alert]')).toBeNull()
+})
+
+it.each(['summary', 'storage'])('keeps the successful section visible when %s fails and retries both', async failed => {
+  const f = await fixture()
+  const totals = { total_tokens: 12, input_tokens: 10, output_tokens: 2, message_count: 1, missing_usage_count: 0 }
+  const complete = usageData({ totals, points: [], storage: { used: 0.05, limit: 1 } })
+  const usage = vi.fn().mockResolvedValueOnce({ ...complete, [failed]: { status: 'error' } }).mockResolvedValue(complete)
+  window.dshEnterpriseChat.usage = usage
+  const entry = f.registrations.find(row => row.options.id === 'desktop-usage')
+  await f.mount(entry.Component, entry.options.inject())
+  expect(document.querySelector(failed === 'storage' ? '.dshUsageOverview' : '.dshUsageStorage')).not.toBeNull()
+  expect(document.querySelector('[role=alert]').textContent).toContain(failed === 'storage' ? '存储空间加载失败' : '用量统计加载失败')
+  await click(document.querySelector('[role=alert] button'))
+  expect(document.querySelector('[role=alert]')).toBeNull()
+  expect(document.querySelector('.dshUsageStorage')).not.toBeNull()
+  expect(document.querySelector('.dshUsageOverview')).not.toBeNull()
+})
+
+it('keeps a session failure bounded while the host publishes a new error epoch', async () => {
+  const f = await fixture()
+  window.dshEnterpriseChat.state = async () => ({ connected: true, phase: 'error', epoch: 3 })
+  const usage = vi.fn(async () => { f.update({ connected: true, phase: 'error', epoch: 4 }); throw new Error('offline') })
+  window.dshEnterpriseChat.usage = usage
+  const entry = f.registrations.find(row => row.options.id === 'desktop-usage')
+  await f.mount(entry.Component, entry.options.inject())
+  expect(usage).toHaveBeenCalledTimes(1)
+  expect(document.querySelector('[role=alert]')).not.toBeNull()
 })

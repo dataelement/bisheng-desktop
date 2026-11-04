@@ -31,6 +31,7 @@ const LOCAL_PATHS = Object.freeze({
   inspectDeepLink: '/api/enterprise.deep-link.inspect',
   confirmDeepLink: '/api/enterprise.deep-link.confirm',
   refresh: '/api/enterprise.refresh',
+  refreshModels: '/api/enterprise.models.refresh',
   logout: '/api/enterprise.logout'
 })
 
@@ -75,11 +76,15 @@ function brokerConfig() {
   const capability = process.env.DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY
   // Consume the owner secret before any market plugin is imported. This is not a Node sandbox.
   delete process.env.DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY
-  if (!urlValue || !capability) return undefined
+  if (!urlValue || !capability) {
+    console.warn('[enterprise] broker configuration missing', { urlConfigured: Boolean(urlValue), capabilityConfigured: Boolean(capability) })
+    return undefined
+  }
   let url
   try {
     url = new URL(urlValue)
   } catch {
+    console.warn('[enterprise] broker URL is invalid')
     return undefined
   }
   if (
@@ -90,6 +95,7 @@ function brokerConfig() {
     || url.search
     || url.hash
   ) {
+    console.warn('[enterprise] broker URL must be an HTTP loopback origin without credentials, query or hash')
     return undefined
   }
   return { origin: url.origin, capability }
@@ -149,6 +155,7 @@ async function brokerChat(broker, body, signal, attribution, connectionKey) {
     })
   } catch (error) {
     if (signal?.aborted) throw error
+    console.warn('[enterprise] broker model request failed', error)
     unavailable()
   }
   return response
@@ -168,8 +175,9 @@ async function requestBrokerJson(broker, path, body, signal) {
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) })
     })
-  } catch {
+  } catch (error) {
     signal?.throwIfAborted()
+    console.warn('[enterprise] broker request failed', { path }, error)
     unavailable()
   }
   const payload = await response.json().catch(() => ({}))
@@ -209,7 +217,7 @@ export function apply(ctx) {
       await workbenches?.stop()
       capabilityPolicy?.reset()
     }
-    if (!state.connected || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
+    if ((!state.connected && account.connected) || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
     account = state
     if (!state.connected) capabilityPolicy?.reset()
     else void capabilityPolicy?.refresh(state.connectionKey).catch(() => undefined)
@@ -369,7 +377,12 @@ export function apply(ctx) {
   registerJsonRoute(connection, LOCAL_PATHS.manual, ['POST'], async (request) => {
     const body = await readJson(request)
     const state = await brokerJson('/v1/login/manual', { identityTicket: String(body?.identityTicket ?? '') })
-    if (!state.connected || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
+    if (account.connectionKey !== state.connectionKey) {
+      await market?.stop()
+      await workbenches?.stop()
+      capabilityPolicy?.reset()
+    }
+    if ((!state.connected && account.connected) || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
     account = state
     ingestEnterpriseState(state)
     if (state.connected) await capabilityPolicy?.refresh(state.connectionKey).catch(() => undefined)
@@ -387,6 +400,13 @@ export function apply(ctx) {
       ...(body?.confirmInsecurePrivateHttp === true ? { confirmInsecurePrivateHttp: true } : {})
     })
   })
+  registerJsonRoute(connection, LOCAL_PATHS.refreshModels, ['POST'], async (request) => {
+    await readJson(request)
+    if (!broker) return disabledState()
+    const state = await brokerJson('/v1/models/refresh', {})
+    ingestEnterpriseState(state)
+    return state
+  })
   registerJsonRoute(connection, LOCAL_PATHS.refresh, ['POST'], async (request) => {
     await readJson(request)
     if (!broker) return disabledState()
@@ -401,7 +421,7 @@ export function apply(ctx) {
     await market.stop()
     await workbenches?.stop()
     capabilityPolicy?.reset()
-    if (!state.connected || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
+    if ((!state.connected && account.connected) || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
     account = state
     ingestEnterpriseState(state)
     return { ...state, allowThirdPartyPlugins: false, allowThirdPartyWorkbenches: false }

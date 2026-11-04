@@ -45,18 +45,57 @@ function setup() {
   const capture = () => ({ start: 0, end: 0, draftRev: rev })
   const update = spaces => composer.update('one', spaces, capture)
   const enter = command => composer.prepare({ sessionId: 'one', references: snapshot().occurrences, signal: new AbortController().signal, command })
-  return { composer, request, update, enter, input, setNodes: value => { nodes = value; rev++ }, setPhase: value => { phase = value } }
+  return { composer, request, update, enter, input, capture, setNodes: value => { nodes = value; rev++ }, setPhase: value => { phase = value } }
 }
 const a = { id: 7, name: '研发知识库' }
 const b = { id: 9, name: '团队资料' }
 
 describe('Work inline knowledge references', () => {
+  it('checks current permissions when confirming a picker opened before revocation', async () => {
+    const { composer, request, capture } = setup()
+    request.mockResolvedValueOnce({ spaces: [b] })
+    await composer.choose('one', [7, 9], capture, new AbortController().signal)
+    expect(composer.read('one')).toEqual([b])
+  })
+  it('removes revoked references from the draft while preserving text and other references', async () => {
+    const { composer, request, update, input, setNodes } = setup()
+    update([a, b])
+    const refs = input.state.getSnapshot().occurrences
+    setNodes(['question ', { source: 'files', ref: 'file', clipboardText: '@file.pdf' }, ' ', ...refs])
+    request.mockResolvedValueOnce({ spaces: [b] })
+    await composer.refresh('one', new AbortController().signal)
+    expect(composer.read('one')).toEqual([b])
+    expect(input.state.getSnapshot().draft).toBe('question @file.pdf @团队资料')
+    expect(input.state.getSnapshot().occurrences.map(ref => ref.source)).toEqual(['files', 'desktop-knowledge'])
+  })
+  it('reconciles the latest draft and preserves a user deletion during the permission check', async () => {
+    const { composer, request, update, setNodes } = setup()
+    update([a])
+    let resolve
+    request.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    const pending = composer.refresh('one', new AbortController().signal)
+    setNodes(['edited question'])
+    resolve({ spaces: [a] })
+    await pending
+    expect(composer.read('one')).toEqual([])
+  })
+  it('discards a cancelled confirmation and keeps the draft on a failed permission request', async () => {
+    const { composer, request, update, capture } = setup()
+    update([a])
+    request.mockRejectedValueOnce(new Error('Service unavailable'))
+    await expect(composer.refresh('one')).rejects.toThrow('Service unavailable')
+    expect(composer.read('one')).toEqual([a])
+    const abort = new AbortController()
+    request.mockImplementationOnce(async () => { abort.abort(); return { spaces: [b] } })
+    await expect(composer.choose('one', [9], capture, abort.signal)).rejects.toThrow()
+    expect(composer.read('one')).toEqual([a])
+  })
   it('inserts native blue-reference data with a stable ID and no preview action', async () => {
     const { composer, update, input } = setup()
     update([a])
     const [ref] = input.state.getSnapshot().occurrences
     expect(ref).toMatchObject({ source: 'desktop-knowledge', label: a.name, clipboardText: `@${a.name}` })
-    expect(ref.appearance).toBeUndefined()
+    expect(ref.appearance).toBe('folder')
     expect(composer.source.openReference()).toBe(false)
     expect(await composer.source.codec.serialize(ref.ref)).toBe(`@${a.name}`)
     expect(composer.read('one')).toEqual([a])

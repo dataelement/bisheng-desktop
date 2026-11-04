@@ -10,14 +10,14 @@ window.__ModuleLoader__.load({
         accountMenu: '账号菜单', enterpriseAccount: '企业账号', signedOut: '未登录', deviceOnly: '本机模式', signInHint: '登录后可使用企业功能', identityLoading: '正在读取账号…', identityError: '暂时无法读取账号', settings: '设置', accountSettings: '账号设置', approvals: '消息', approvalsPending: '待处理审批', phone: '连接手机', login: '登录企业账号', logout: '退出登录', logoutBody: '退出后需要重新登录企业账号。本机设置、已安装插件和本地数据保留。', logoutFailed: '退出登录未完成，请重试。', cancel: '取消', again: '重试', close: '关闭', loggingOut: '正在退出登录…',
         creditsRemaining: '剩余积分', creditsUnavailable: '积分暂不可用',
         activity: '用量活动', period: '统计范围：{start} — {end}', less: '少', more: '多', totalTokens: '累计 Token', totalMessages: '累计消息',
-        tokenWan: '{value}万', tokenYi: '{value}亿', numberLocale: 'zh-CN', modelUsage: '模型用量', tokens: 'Token 用量', messages: '消息数', storage: '个人存储空间', unlimited: '不限', storageValue: '已使用 {used} / {limit}', breakdown: '输入 {input} Token · 输出 {output} Token', missingUsage: '{count} 条记录缺少 Token 用量', usageError: '用量暂不可用，请重试。', noUsage: '暂无用量记录', unavailable: '—',
+        tokenWan: '{value}万', tokenYi: '{value}亿', numberLocale: 'zh-CN', modelUsage: '模型用量', tokens: 'Token 用量', messages: '消息数', storage: '个人存储空间', unlimited: '不限', storageValue: '已使用 {used} / {limit}', breakdown: '输入 {input} Token · 输出 {output} Token', missingUsage: '{count} 条记录缺少 Token 用量', usageError: '用量统计加载失败，请重试。', storageError: '存储空间加载失败，请重试。', noUsage: '暂无用量记录', unavailable: '—',
         openContent: '进入设置内容', usage: '用量与存储', about: '关于与帮助', tasks: '我的审批', requests: '我的申请', notifications: '通知', ai: 'AI 助手接入', loading: '正在加载企业设置…', error: '暂时无法加载企业设置，请检查连接后重试。', restart: '请完全退出并重新启动客户端，以启用统一设置。', unsupported: '平台暂不支持统一设置，请联系管理员更新平台。', retry: '重新连接', signIn: '登录企业账号后可查看', openAccount: '前往账号设置', desktopVersion: 'BISHENG 版本', harnessVersion: 'Harness 版本', infoError: '无法读取版本信息', update: '检查更新', logs: '查看日志', recovery: '安全模式与插件恢复', localHint: '本机设置仍可正常使用。', actionError: '操作未完成，请重试。',
       },
       en: {
         accountMenu: 'Account menu', enterpriseAccount: 'Enterprise account', signedOut: 'Not signed in', deviceOnly: 'Device only', signInHint: 'Sign in to use enterprise features', identityLoading: 'Loading account…', identityError: 'Account unavailable', settings: 'Settings', accountSettings: 'Account settings', approvals: 'Messages', approvalsPending: 'Pending approvals', phone: 'Connect phone', login: 'Sign in', logout: 'Log out', logoutBody: 'You will need to sign in again. Device settings, installed plugins and local data are kept.', logoutFailed: 'Logout did not complete. Try again.', cancel: 'Cancel', again: 'Retry', close: 'Close', loggingOut: 'Logging out…',
         creditsRemaining: 'Credits remaining', creditsUnavailable: 'Credits unavailable',
         activity: 'Usage activity', period: 'Reporting period: {start} — {end}', less: 'Less', more: 'More', totalTokens: 'Total tokens', totalMessages: 'Total messages',
-        tokenWan: '{value} ten thousand', tokenYi: '{value} hundred million', numberLocale: 'en-US', modelUsage: 'Model usage', tokens: 'Token usage', messages: 'Messages', storage: 'Personal storage', unlimited: 'Unlimited', storageValue: 'Used {used} / {limit}', breakdown: 'Input {input} tokens · Output {output} tokens', missingUsage: '{count} records are missing token usage', usageError: 'Usage unavailable. Please retry.', noUsage: 'No usage recorded', unavailable: '—',
+        tokenWan: '{value} ten thousand', tokenYi: '{value} hundred million', numberLocale: 'en-US', modelUsage: 'Model usage', tokens: 'Token usage', messages: 'Messages', storage: 'Personal storage', unlimited: 'Unlimited', storageValue: 'Used {used} / {limit}', breakdown: 'Input {input} tokens · Output {output} tokens', missingUsage: '{count} records are missing token usage', usageError: 'Usage statistics failed to load. Please retry.', storageError: 'Storage failed to load. Please retry.', noUsage: 'No usage recorded', unavailable: '—',
         openContent: 'Enter settings content', usage: 'Usage and storage', about: 'About and help', tasks: 'My approvals', requests: 'My requests', notifications: 'Notifications', ai: 'AI assistant access', loading: 'Loading enterprise settings…', error: 'Enterprise settings could not load. Check the connection and try again.', restart: 'Quit and restart the desktop app to enable unified settings.', unsupported: 'This platform does not support unified settings yet. Ask your administrator to update it.', retry: 'Reconnect', signIn: 'Sign in to view enterprise settings', openAccount: 'Open account settings', desktopVersion: 'BISHENG version', harnessVersion: 'Harness version', infoError: 'Could not read version information', update: 'Check for updates', logs: 'Show logs', recovery: 'Safe Mode and plugin recovery', localHint: 'Device settings remain available.', actionError: 'The action did not complete. Try again.',
       }
     }
@@ -103,23 +103,31 @@ window.__ModuleLoader__.load({
       const [attempt, setAttempt] = useState(0)
       const id = React.useId()
       useEffect(() => {
-        let disposed = false, revision = 0, identity
+        let disposed = false, revision = 0, identity, phase, pending = false
         const bridge = window.dshEnterpriseChat
-        const receive = next => {
+        const receive = (next, requested = false) => {
           if (!bridge?.usage) { setState({ phase: 'unsupported' }); return }
           const key = `${next.epoch}:${next.connected}`
-          if (key === identity) return
+          const changed = key !== identity
+          const ready = next.phase === 'ready' && phase !== 'ready'
           identity = key
+          phase = next.phase
+          if (changed) { revision++; pending = false }
+          if (!next.connected) { setState({ phase: 'signedOut' }); return }
+          if (next.phase === 'error' && !requested) { setState({ phase: 'error' }); return }
+          if (pending || (!changed && !ready && !requested)) return
           const request = ++revision
-          setState({ phase: next.connected ? 'loading' : 'signedOut' })
-          if (next.connected && next.phase === 'error') { setState({ phase: 'error' }); return }
-          if (next.connected) void bridge.usage().then(data => {
-            if (!disposed && request === revision) setState({ phase: 'ready', data })
-          }).catch(() => { if (!disposed && request === revision) setState({ phase: 'error' }) })
+          pending = true
+          setState({ phase: 'loading' })
+          void bridge.usage().then(data => {
+            if (!disposed && request === revision) { pending = false; setState({ phase: 'ready', data }) }
+          }).catch(() => {
+            if (!disposed && request === revision) { pending = false; setState({ phase: 'error' }) }
+          })
         }
         const unsubscribe = bridge?.subscribe(next => { if (!disposed) receive(next) })
         const initial = revision
-        if (bridge?.usage) void bridge.state().then(next => { if (!disposed && initial === revision) receive(next) }).catch(() => { if (!disposed && initial === revision) setState({ phase: 'error' }) })
+        if (bridge?.usage) void bridge.state().then(next => { if (!disposed && initial === revision) receive(next, true) }).catch(() => { if (!disposed && initial === revision) setState({ phase: 'error' }) })
         else setState({ phase: 'unsupported' })
         return () => { disposed = true; revision++; unsubscribe?.() }
       }, [attempt])
@@ -134,13 +142,16 @@ window.__ModuleLoader__.load({
         return new Intl.NumberFormat(locale, { notation: 'compact', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value)
       }
       const size = (value, unit) => `${Number((unit === 'MB' ? value * 1024 : value).toFixed(2))} ${unit}`
-      const data = state.data
+      const data = state.data?.summary.status === 'ready' ? state.data.summary.data : null
+      const storage = state.data?.storage
+      const quota = storage?.status === 'ready' ? storage.data : null
+      const unit = (quota?.limit === -1 ? quota.used : quota?.limit) < 1 ? 'MB' : 'GB'
+      const failure = key => h('div', { className: 'dshSettingsStatus', role: 'alert' }, h('p', null, t(key)), h('button', { type: 'button', onClick: () => setAttempt(value => value + 1) }, t('again')))
       let content
       if (state.phase === 'signedOut') content = h('div', { className: 'dshSettingsStatus' }, h('p', null, t('signIn')), h('button', { type: 'button', onClick: openAccount }, t('openAccount')))
       else if (state.phase !== 'ready') content = h('div', { className: 'dshSettingsStatus', role: state.phase === 'error' ? 'alert' : 'status' }, h('p', null, t(state.phase === 'unsupported' ? 'restart' : state.phase === 'error' ? 'usageError' : 'loading')), state.phase === 'error' && h('button', { type: 'button', onClick: () => setAttempt(value => value + 1) }, t('again')))
+      else if (!data) content = failure('usageError')
       else {
-        const quota = data.storage
-        const unit = (quota?.limit === -1 ? quota.used : quota?.limit) < 1 ? 'MB' : 'GB'
         const value = point => metric === 'tokens' ? point.total_tokens : point.message_count
         const max = Math.max(1, ...data.points.map(point => value(point) || 0))
         // Sunday-first calendar columns, matching the enterprise daily buckets in Shanghai.
@@ -179,13 +190,16 @@ window.__ModuleLoader__.load({
                 h('p', { className: 'dshSettingsHint', style: { visibility: metric === 'tokens' ? 'visible' : 'hidden' }, 'aria-hidden': metric !== 'tokens' }, t('breakdown', { input: tokenAmount(data.totals.input_tokens), output: tokenAmount(data.totals.output_tokens) })),
                 h('div', { className: 'dshUsageLegend', 'aria-hidden': true }, t('less'), ...[0, 1, 2, 3, 4].map(level => h('span', { key: level, className: 'dshUsageDay', 'data-level': level })), t('more'))),
               data.totals.missing_usage_count > 0 && h('p', { role: 'status', className: 'dshSettingsHint' }, t('missingUsage', { count: data.totals.missing_usage_count })))),
-          models,
-          h('div', { className: 'dshUsageStorage' }, h('span', null, t('storage')), h('span', null, quota ? t('storageValue', { used: size(quota.used, unit), limit: quota.limit === -1 ? t('unlimited') : size(quota.limit, unit) }) : t('unavailable'))),
-          quota && quota.limit !== -1 && h('progress', { className: 'dshUsageProgress', value: quota.limit > 0 ? Math.min(1, quota.used / quota.limit) : 1, max: 1, 'aria-label': t('storage') })
         )
       }
-      return h('section', { className: 'dshSettingsSection dshUsage', 'aria-busy': state.phase === 'loading' }, content, state.phase !== 'ready' && models)
+      return h('section', { className: 'dshSettingsSection dshUsage', 'aria-busy': state.phase === 'loading' },
+        content,
+        models,
+        storage?.status === 'error' ? failure('storageError') : storage?.status === 'ready' && h(React.Fragment, null,
+          h('div', { className: 'dshUsageStorage' }, h('span', null, t('storage')), h('span', null, quota ? t('storageValue', { used: size(quota.used, unit), limit: quota.limit === -1 ? t('unlimited') : size(quota.limit, unit) }) : t('unavailable'))),
+          quota && quota.limit !== -1 && h('progress', { className: 'dshUsageProgress', value: quota.limit > 0 ? Math.min(1, quota.used / quota.limit) : 1, max: 1, 'aria-label': t('storage') })))
     }
+
     function AiAccess({ t }) { return h('section', { className: 'dshSettingsSection' }, h('h2', null, t('ai')), h(RemoteSettings, { section: 'ai-access', t })) }
     const APPROVAL_SECTIONS = [['my-tasks', 'tasks'], ['my-requests', 'requests'], ['notifications', 'notifications']]
 

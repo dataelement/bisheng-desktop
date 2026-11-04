@@ -5,7 +5,7 @@ const PREFIX = 'mcp__bisheng__'
 
 /** Account-bound enterprise tools; no credential reaches Agent context. */
 export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
-  let generation = 0, connectionKey, timer, stopped = false, syncing
+  let generation = 0, connectionKey, stopped = false, syncing
   let signature = '', disposeTools = [], pickerTools = []
   let lifetime = new AbortController()
   const assertAccount = key => {
@@ -29,11 +29,14 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
     assertAccount(key)
     return result
   }
-  const synchronize = async () => {
+  const synchronize = async (attempt) => {
+    if (stopped) throw new Error('Enterprise capability synchronization stopped.')
+    const started = generation
     await refreshState()
+    if (stopped || generation !== started) throw new Error('Enterprise capability synchronization expired.')
     const account = state()
     if (!account.connected || !account.connectionKey) { clear(); return }
-    if (connectionKey && connectionKey !== account.connectionKey) clear()
+    if (connectionKey && connectionKey !== account.connectionKey) { clear(); attempt.generation = generation }
     const key = account.connectionKey, epoch = generation
     const catalog = await rpc(key, undefined, async client => ({ tools: await readMcpPages(params => client.listTools(params), 'tools') }))
     if (generation !== epoch || stopped) throw new Error('Enterprise capability synchronization expired.')
@@ -49,6 +52,7 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
         call: async (args, exec) => {
           if (!mainSession(exec)) throw new Error('An active main Work task is required.')
           await refreshState()
+          if (generation !== epoch) throw new Error('Enterprise capability authorization expired.')
           return rpc(key, exec.signal, client => client.callTool({ name: tool.name, arguments: args }, { signal: exec.signal, timeout: 65_000 }))
         }
       })
@@ -60,7 +64,33 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
     pickerTools = catalog.tools.map(tool => ({ name: PREFIX + tool.name, label: tool.title || tool.name, description: tool.description || '' }))
     connectionKey = key; signature = nextSignature
   }
-  const sync = () => syncing ??= synchronize().finally(() => { syncing = undefined })
+  const sync = () => {
+    if (syncing) return syncing
+    const attempt = { generation }
+    syncing = synchronize(attempt).catch(error => {
+      // An expired attempt must not clear a later account's state.
+      if (generation === attempt.generation) clear()
+      throw error
+    }).finally(() => { syncing = undefined })
+    return syncing
+  }
+  // A request already in flight may have read the catalog before a saved toggle.
+  // Join it, then start a fresh read shared by callers at this boundary.
+  const refresh = async () => {
+    if (syncing) await syncing
+    await sync()
+  }
+  ctx.on('system-prompt/prepare', async ({ agent, signal }) => {
+    if (mainSession({ agent }) && state().connected) {
+      signal?.throwIfAborted()
+      try { await refresh() } catch (error) {
+        signal?.throwIfAborted()
+        // Catalog failures do not block unrelated conversations.
+        ctx.logger.warn('Enterprise Work capabilities: %s', error.message)
+      }
+      signal?.throwIfAborted()
+    }
+  })
 
   // The picker and submission validator use the same fresh permission-filtered
   // catalog as native registration. References contain an account fingerprint,
@@ -73,10 +103,9 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
         if (text.length > 16384) throw new Error('Tool selection is too large.')
         const body = JSON.parse(text)
         if (!body || typeof body !== 'object' || Object.keys(body).some(key => !['operation', 'names', 'connectionKey'].includes(key))) throw new Error('Invalid tool request.')
-        if (!['catalog', 'validate'].includes(body.operation)) throw new Error('Unknown tool operation.')
-        // Finish a background sync before requesting a fresh snapshot for a submit.
-        if (syncing) await syncing
-        await sync()
+        if (!['catalog', 'validate', 'refresh'].includes(body.operation)) throw new Error('Unknown tool operation.')
+        await refresh()
+        if (body.operation === 'refresh') return Response.json({ ok: true }, { headers: { 'cache-control': 'no-store' } })
         assertAccount(connectionKey)
         if (!connectionKey) throw new Error('Connect your enterprise account in Settings.')
         if (body.operation === 'validate') {
@@ -97,15 +126,9 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
     return { kind: 'ask', reason: 'Use the enterprise tool with the displayed arguments.',
       displayReason: { en: 'Run this enterprise tool with these arguments?', zh: '使用这些参数调用企业工具？' } }
   })
-  const poll = async () => {
-    if (stopped) return
-    try { await sync() }
-    catch (error) { clear(); ctx.logger.warn('Enterprise Work capabilities: %s', error.message) }
-    if (!stopped) { timer = setTimeout(poll, 30_000); timer.unref?.() }
-  }
-  void poll()
+  void sync().catch(error => ctx.logger.warn('Enterprise Work capabilities: %s', error.message))
   ctx.effect(() => async () => {
-    stopped = true; clearTimeout(timer); clear()
+    stopped = true; clear()
   })
-  return { sync, clear }
+  return { sync, refresh, clear }
 }

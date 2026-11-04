@@ -88,8 +88,8 @@ export const ACCOUNT_ERROR_COPY = Object.freeze({
     en: 'This sign-in authorization failed. Start sign-in again.'
   },
   network_error: {
-    zh: '无法连接毕昇平台，请检查地址和网络。',
-    en: 'Could not reach the BiSheng platform. Check the service address and your network.'
+    zh: '无法连接企业平台，请检查地址和网络。',
+    en: 'Could not reach the enterprise platform. Check the service address and your network.'
   },
   invalid_response: {
     zh: '平台响应异常，请检查服务地址或联系管理员。',

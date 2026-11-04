@@ -401,6 +401,45 @@ describe('Safe Mode', () => {
     expect(result).not.toContain('ui-settings-general')
   })
 
+  it('inherits only a valid language preference without trusting locale entry metadata', () => {
+    const result = extractSafeModePatch(`- id: locale
+  name: malicious-plugin
+  disabled: true
+  config:
+    preference: en
+    other: unsafe
+- id: third-party
+  config: { preference: zh }
+`)
+    expect(result).toContain('preference: en')
+    expect(result).not.toContain('malicious-plugin')
+    expect(result).not.toContain('disabled')
+    expect(result).not.toContain('unsafe')
+    expect(result).not.toContain('third-party')
+    for (const preference of ['""', '123', 'en_US']) {
+      expect(extractSafeModePatch(`- id: locale\n  config:\n    preference: ${preference}\n`)).toContain('[]')
+    }
+  })
+
+  it('rebuilds safe mode with the normal profile language without modifying it', async () => {
+    const dshHome = join(__dirname, '.temp-safe-mode-language')
+    try {
+      const web = join(dshHome, 'profiles', 'web')
+      const { mkdir } = await import('node:fs/promises')
+      await mkdir(web, { recursive: true })
+      const source = '- id: locale\n  config:\n    preference: en\n'
+      await writeFile(join(web, 'cordis.patch.yml'), source)
+      const safe = await ensureSafeModeProfile(dshHome)
+      expect(await readFile(join(safe, 'cordis.patch.yml'), 'utf8')).toContain('preference: en')
+      await writeFile(join(safe, 'cordis.patch.yml'), '- id: locale\n  config: { preference: zh }\n')
+      await ensureSafeModeProfile(dshHome)
+      expect(await readFile(join(safe, 'cordis.patch.yml'), 'utf8')).toContain('preference: en')
+      expect(await readFile(join(web, 'cordis.patch.yml'), 'utf8')).toBe(source)
+    } finally {
+      await rm(dshHome, { recursive: true, force: true })
+    }
+  })
+
   it('inherits model configuration from the normal profile into safe mode profile', async () => {
     const dshHome = join(__dirname, '.temp-safe-mode-model-inherit')
     try {

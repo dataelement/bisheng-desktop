@@ -1,4 +1,5 @@
 import { Context } from '@deepseek-ai/cordis'
+import { mountRootInclude } from '@deepseek-ai/dsh-app-boot'
 import { Loader } from '@deepseek-ai/cordis-plugin-loader'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -50,6 +51,28 @@ describe('enterpriseAuth instance SDK', () => {
     a.dispose()
     await expect(pluginCtx.enterpriseAuth.request('/api/test')).rejects.toMatchObject({ errorCode: 'authorization_denied' })
     expect(second.enterpriseAuth.getState().connected).toBe(true)
+  })
+
+  it('fails closed on polling failure and ignores a late snapshot after revocation', async () => {
+    vi.useFakeTimers()
+    const scoped = fixture().extend()
+    const { transport, dispose } = await bind(scoped, { connected: true, enterpriseId: 'a', userId: 'one', sessionVersion: '1' })
+    transport.state.mockRejectedValueOnce(new Error('broker unavailable'))
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(scoped.enterpriseAuth.getState()).toEqual({ connected: false, sessionVersion: '1' })
+    transport.state.mockResolvedValueOnce({ connected: true, enterpriseId: 'b', userId: 'two', sessionVersion: '2' })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(scoped.enterpriseAuth.getState()).toEqual({ connected: true, enterpriseId: 'b', userId: 'two', sessionVersion: '2' })
+    let complete
+    transport.state.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+    await vi.advanceTimersByTimeAsync(1000)
+    dispose()
+    complete({ connected: true, enterpriseId: 'a', userId: 'one', sessionVersion: '1' })
+    await Promise.resolve()
+    expect(() => scoped.enterpriseAuth.getState()).toThrow(EnterpriseAuthError)
+    await expect(scoped.enterpriseAuth.request('/api/test')).rejects.toMatchObject({ errorCode: 'authorization_denied' })
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(transport.state).toHaveBeenCalledTimes(4)
   })
 
   it('refreshes sync snapshots and aborts requests when revoked', async () => {
@@ -128,6 +151,9 @@ describe('enterpriseAuth market lifecycle', () => {
     const ctx = fixture(), contexts = [], disposed = vi.fn()
     ctx.provide('probe', { accept(value) { contexts.push(value) }, disposed })
     await ctx.plugin(Loader, { baseUrl: pathToFileURL(directory + '/').href })
+    await writeFile(join(directory, 'cordis.yml'), '[]')
+    await mountRootInclude(ctx, join(directory, 'cordis.yml'))
+    await ctx.loader.await()
     const grant = vi.fn(async () => ({ state: async () => state, request: async () => new Response('ok') }))
     const revoke = vi.fn(async () => {})
     let load
@@ -138,7 +164,9 @@ describe('enterpriseAuth market lifecycle', () => {
     const ownerId = await ctx.loader.create({ name: pathToFileURL(owner).href })
     await ctx.loader.store[ownerId].fiber.await()
     const record = { directory, name: 'sdk-fixture', plugin_id: 'host-record-id', config: { pluginId: 'forged' } }
-    const first = await load(record), second = await load(record)
+    const secondRecord = { ...record, plugin_id: 'second-host-record-id' }
+    const first = await load(record), second = await load(secondRecord)
+    await expect(load(record)).rejects.toThrow(/unique entry id/)
     cleanup.push(() => second.dispose(), () => first.dispose())
     expect([...ctx.loader.entries()].filter(entry => entry.options.name.endsWith('/sdk-fixture/index.js'))).toHaveLength(2)
     expect(grant.mock.calls[0][0]).toMatchObject({ pluginId: 'host-record-id', instanceId: expect.any(String) })
@@ -154,8 +182,8 @@ describe('enterpriseAuth market lifecycle', () => {
     const result = await contexts[1].enterpriseAuth.request('/search')
     expect(settled).not.toHaveBeenCalled()
     await result.text()
-    expect(settled).toHaveBeenCalledWith(record, undefined)
-    await expect(load({ ...record, config: { fail: true } })).rejects.toThrow()
+    expect(settled).toHaveBeenCalledWith(secondRecord, undefined)
+    await expect(load({ ...record, plugin_id: 'failed-host-record-id', config: { fail: true } })).rejects.toThrow()
     expect(revoke).toHaveBeenCalledTimes(2)
     await second.dispose()
     expect(revoke).toHaveBeenCalledTimes(3)
