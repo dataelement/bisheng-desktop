@@ -211,6 +211,7 @@ interface DesktopExtensionView {
   history(input: unknown): Promise<unknown>
   openPage(input: unknown): Promise<void>
   open(input: unknown): Promise<void>
+  remove(id: unknown, epoch: unknown): Promise<{ epoch: number }>
   dispose(): void
 }
 

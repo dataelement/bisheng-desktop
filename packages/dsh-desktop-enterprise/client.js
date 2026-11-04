@@ -1865,23 +1865,25 @@ window.__ModuleLoader__.load({
         label: () => settingsT('about')
       })
 
-      ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
-        name: 'settings.section.icon',
-        id: ENTERPRISE_SECTION_ID,
-        inject: () => ({})
-      }, ({ size }) => h(IconUserOutlineMedium, { size: size || 18 })))
+      if (typeof ctx.slots?.entries === 'function') {
+        ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+          name: 'settings.section.icon',
+          id: ENTERPRISE_SECTION_ID,
+          inject: () => ({})
+        }, ({ size }) => h(IconUserOutlineMedium, { size: size || 18 })))
 
-      ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
-        name: 'settings.section.icon',
-        id: 'desktop-about',
-        inject: () => ({})
-      }, ({ size }) => h(IconInfoOutlineMedium, { size: size || 18 })))
+        ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+          name: 'settings.section.icon',
+          id: 'desktop-about',
+          inject: () => ({})
+        }, ({ size }) => h(IconInfoOutlineMedium, { size: size || 18 })))
 
-      ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
-        name: 'settings.section.icon',
-        id: 'desktop-ai-access',
-        inject: () => ({})
-      }, ({ size }) => h(IconApiOutlineMedium, { size: size || 18 })))
+        ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+          name: 'settings.section.icon',
+          id: 'desktop-ai-access',
+          inject: () => ({})
+        }, ({ size }) => h(IconApiOutlineMedium, { size: size || 18 })))
+      }
 
       ctx.effect(() => {
         let disposed = false, disposeEntry, revision = 0

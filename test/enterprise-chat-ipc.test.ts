@@ -51,6 +51,7 @@ it('validates sender before forwarding and retains view parameter validation', (
     history: vi.fn((input: unknown) => Promise.resolve(parseChatPage(input))),
     open: vi.fn((input: unknown) => { parseChatId(input); return Promise.resolve() }),
     openPage: vi.fn((input: unknown) => { parseChatId(input); return Promise.resolve() }),
+    remove: vi.fn((_id: unknown, epoch: unknown) => Promise.resolve({ epoch: Number(epoch) })),
     snapshot: vi.fn(() => ({ phase: 'idle', connected: false })), retry: vi.fn(), focusSettings: vi.fn(), usage: vi.fn()
   } satisfies EnterpriseChatIpcView
   let owner: BrowserWindow | undefined
@@ -81,7 +82,7 @@ it('rolls back only acquired channels on conflict and permits later registration
   first()
   const second = registerEnterpriseChatIpc(f.registry, () => undefined, () => f.window)
   first()
-  expect(f.handlers.size).toBe(8)
+  expect(f.handlers.size).toBe(9)
   second()
   expect(f.handlers.size).toBe(0)
 })
@@ -190,7 +191,7 @@ it('retains failed registration cleanup in the host lifecycle until it succeeds'
   expect([...handlers.entries()]).toEqual([['enterprise-chat:state', external]])
   handlers.delete('enterprise-chat:state')
   const dispose = registerEnterpriseChatIpc(registry, () => undefined, () => undefined)
-  expect(handlers.size).toBe(8)
+  expect(handlers.size).toBe(9)
   dispose()
   expect(handlers.size).toBe(0)
 })

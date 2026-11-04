@@ -188,7 +188,7 @@ it('keeps Chat handlers until before-quit when the installer throws', async () =
   await manager.installDownloadedUpdate()
   expect(mocks.prepareToInstall).toHaveBeenCalledOnce()
   expect(manager.getUpdateStatus()).toMatchObject({ phase: 'error', message: 'installer failed' })
-  expect(handlers.size).toBe(8)
+  expect(handlers.size).toBe(9)
   dispose()
   dispose()
   expect(handlers.size).toBe(0)
