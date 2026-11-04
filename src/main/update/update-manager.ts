@@ -41,6 +41,13 @@ let skippedVersion: string | undefined
 let skipLoaded = false
 let manualCheck = false
 let manualCheckRequested = false
+let presentationSerial = 0
+let presentUpdateCard: ((status: UpdateStatus) => void) | undefined
+
+/** The desktop card view is not a BrowserWindow, so status has to be handed over. */
+export function bindUpdateCardPresenter(present: (status: UpdateStatus) => void): void {
+  presentUpdateCard = present
+}
 
 export function getUpdateStatus(): UpdateStatus {
   return { ...status, locale: updateLocale?.() }
@@ -77,6 +84,14 @@ function currentSkippedVersion(): string | undefined {
  */
 export function skipUpdate(version: unknown): UpdateStatus {
   if (typeof version !== 'string' || !version) return getUpdateStatus()
+  // Consent already started the fetch. Skipping here would erase that update
+  // and remember the version as permanently declined. The ready-to-install
+  // card may appear before downloadUpdate() settles, and skip is allowed then.
+  const downloadInProgress = status.phase === 'downloading' || (downloading && status.phase === 'available')
+  if (downloadInProgress) return getUpdateStatus()
+  // This check has been answered. A repeated available event must not open the
+  // card again for the version the user just skipped.
+  manualCheck = false
   skippedVersion = version
   skipLoaded = true
   writeSkippedVersion(skipFile(), version)
@@ -122,21 +137,26 @@ export async function checkForUpdates(manual = false, source: UpdateStatus['sour
 
   if (checkPromise) {
     if (manual) {
+      // The check already running may be a background one. Remember that the
+      // user asked, or a skipped version would be dropped when it returns.
       manualCheckRequested = true
-      transition({ type: 'present-manual' })
+      transition({ type: 'present-manual', presentationId: nextPresentationId() })
     }
     await checkPromise
     return getUpdateStatus()
   }
-  if (['downloading', 'downloaded'].includes(status.phase) || (!manual && status.phase === 'available')) {
+  // An offer, download, or finished package is already the answer. Show that
+  // instead of starting another check whose corner card is easy to miss.
+  if (status.phase === 'downloading' || status.phase === 'downloaded' || status.phase === 'available') {
     if (manual) {
       manualCheck = true
-      transition({ type: 'present-manual' })
+      transition({ type: 'present-manual', presentationId: nextPresentationId() })
     }
     return getUpdateStatus()
   }
 
-  transition({ type: 'check', manual, source })
+  const presentationId = manual ? nextPresentationId() : undefined
+  transition({ type: 'check', manual, source, ...(presentationId === undefined ? {} : { presentationId }) })
   manualCheck = manual
   manualCheckRequested = manual
   lastCheckedAt = Date.now()
@@ -146,6 +166,7 @@ export async function checkForUpdates(manual = false, source: UpdateStatus['sour
   try {
     await checkPromise
   } catch (error) {
+    manualCheckRequested = false
     transition({ type: 'error', message: errorMessage(error) })
   } finally {
     checkPromise = undefined
@@ -161,14 +182,25 @@ export async function checkForUpdates(manual = false, source: UpdateStatus['sour
 export async function downloadAvailableUpdate(): Promise<UpdateStatus> {
   if (status.phase !== 'available' || downloading) return getUpdateStatus()
   const expectedVersion = status.availableVersion
-  // A queued manual check can replace an automatic offer. Consent to A must
-  // not download B; history installs already own this lock and cannot await it.
-  if (checkPromise) await checkPromise
-  if (status.phase !== 'available' || status.availableVersion !== expectedVersion || downloading) {
+  // Lock skip before the first await. Progress may not have moved the phase
+  // off "available" yet, and that is exactly when the card used to stay clickable.
+  downloading = true
+  try {
+    // A queued manual check can replace an automatic offer. Consent to A must
+    // not download B; history installs already own this lock and cannot await it.
+    if (checkPromise) await checkPromise
+  } catch (error) {
+    downloading = false
+    throw error
+  }
+  if (status.phase !== 'available' || status.availableVersion !== expectedVersion) {
+    downloading = false
     return getUpdateStatus()
   }
-  downloading = true
 
+  // Stay on one visible phase. downloadUpdate() repeats check and available
+  // events, and those used to hide the card and unlock skip.
+  transition({ type: 'progress', percent: 0 })
   try {
     await autoUpdater.downloadUpdate()
   } catch (error) {
@@ -215,11 +247,16 @@ function configureUpdater(): void {
     debug: (...args: unknown[]) => console.debug('[updater]', ...args)
   }
 
-  autoUpdater.on('checking-for-update', () =>
+  autoUpdater.on('checking-for-update', () => {
+    if (isDownloadOnScreen()) return
     transition({ type: 'check', manual: status.manual, source: status.source })
-  )
+  })
   autoUpdater.on('update-available', (info) => {
-    if (!shouldOfferUpdate(info.version, currentSkippedVersion(), manualCheck)) {
+    if (isDownloadOnScreen()) return
+    const offeredByManualCheck = manualCheck || manualCheckRequested
+    manualCheck = false
+    manualCheckRequested = false
+    if (!shouldOfferUpdate(info.version, currentSkippedVersion(), offeredByManualCheck)) {
       console.info('[updater] skipping', info.version, 'at the user’s request')
       transition({ type: 'reset' })
       return
@@ -232,14 +269,27 @@ function configureUpdater(): void {
     transition({ type: 'progress', percent: progress.percent })
   )
   autoUpdater.on('update-not-available', () => {
+    if (isDownloadOnScreen()) return
+    manualCheck = false
+    manualCheckRequested = false
     transition({ type: 'not-available' })
   })
   autoUpdater.on('update-downloaded', (info) =>
     transition({ type: 'downloaded', version: info.version })
   )
   autoUpdater.on('error', (error) => {
+    manualCheckRequested = false
     transition({ type: 'error', message: errorMessage(error) })
   })
+}
+
+function isDownloadOnScreen(): boolean {
+  return downloading || status.phase === 'downloading'
+}
+
+function nextPresentationId(): number {
+  presentationSerial += 1
+  return presentationSerial
 }
 
 function transition(event: UpdateStateEvent, manualOverride?: boolean): void {
@@ -247,9 +297,11 @@ function transition(event: UpdateStateEvent, manualOverride?: boolean): void {
   if (manualOverride !== undefined) status.manual = manualOverride
 
   console.info('[updater] status', status.phase, status.percent ?? '')
+  const next = getUpdateStatus()
   for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send('updates:status-changed', getUpdateStatus())
+    if (!window.isDestroyed()) window.webContents.send('updates:status-changed', next)
   }
+  presentUpdateCard?.(next)
 }
 
 function checkAfterResume(): void {

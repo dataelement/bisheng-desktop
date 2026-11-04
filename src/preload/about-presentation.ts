@@ -1,3 +1,8 @@
+/** Chromium 124+ option missing from the DOM lib this repo typechecks against. */
+interface QuietFocusOptions extends FocusOptions {
+  focusVisible?: boolean
+}
+
 /** About owns the foreground across the host DOM and native embedded views. */
 export function createAboutPresentation(document: Document, window: Window) {
   const attribute = 'data-dsh-about-open'
@@ -30,7 +35,10 @@ export function createAboutPresentation(document: Document, window: Window) {
       open = true
       closeButton = button
       document.documentElement.setAttribute(attribute, '')
-      button.focus()
+      // Opening from the menu focuses this button before the user tabs to it.
+      // A visible ring here is the blue box around the close control.
+      const quietFocus: QuietFocusOptions = { preventScroll: true, focusVisible: false }
+      button.focus(quietFocus)
     },
     close,
     dispose(): void {
