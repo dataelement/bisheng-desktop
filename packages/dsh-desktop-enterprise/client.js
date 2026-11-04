@@ -105,6 +105,7 @@ window.__ModuleLoader__.load({
       loggingIn: '等待浏览器授权…',
       learnMore: '了解企业版',
       openWorkspace: '进入企业工作台',
+      unlimitedUsage: '不限额度',
       usedCredits: '已消耗积分',
       totalCredits: '总分配额度',
       vision: '视觉',
@@ -175,6 +176,7 @@ window.__ModuleLoader__.load({
       loggingIn: 'Waiting for browser authorization…',
       learnMore: 'Learn about Enterprise',
       openWorkspace: 'Open Enterprise Workspace',
+      unlimitedUsage: 'Unlimited',
       usedCredits: 'Used Credits',
       totalCredits: 'Total Allocation',
       vision: 'Vision',
@@ -801,6 +803,7 @@ window.__ModuleLoader__.load({
       }
       const formatter = new Intl.NumberFormat(language || 'en', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
       if (usage.limit === 0) return formatter.format(0)
+      if (usage.limit === -1 || (usage.limit === null && usage.used !== null)) return t('unlimitedUsage')
       if (usage.used === null || usage.limit === null) return t('usageUnavailable')
       return formatter.format(Math.max(0, usage.limit - usage.used) / 1_000_000)
     }
@@ -1449,6 +1452,8 @@ window.__ModuleLoader__.load({
         }
         if (usage && typeof usage.limit === 'number' && usage.limit > 0) {
           items.push([accountTranslate?.('totalCredits') || '总分配额度', amount(usage.limit), ''])
+        } else if (usage && (usage.limit === -1 || (usage.limit === null && typeof usage.used === 'number'))) {
+          items.push([accountTranslate?.('totalCredits') || '总分配额度', accountTranslate?.('unlimitedUsage') || '不限额度', ''])
         }
         content = h('dl', { className: 'dshUsageOverview' },
           ...items.map(([label, count, help], index) =>

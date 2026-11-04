@@ -462,9 +462,15 @@ export function apply(ctx, config) {
       ])
       if (modelsRes.ok) {
         models = parseModelsLenient(await modelsRes.json())
+      } else {
+        console.warn(`[enterprise] models request failed: ${modelsRes.status}`)
       }
       if (usageRes.ok) {
-        usage = parseUsageLenient(await usageRes.json())
+        const usageJson = await usageRes.json()
+        console.log('[enterprise] usage response:', usageJson)
+        usage = parseUsageLenient(usageJson)
+      } else {
+        console.warn(`[enterprise] usage request failed: ${usageRes.status}`)
       }
     } catch (err) {
       console.warn('[enterprise] failed to fetch models or usage', err)
