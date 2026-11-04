@@ -2697,6 +2697,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           if (connected && expiresAt > Date.now()) expiryTimer = setTimeout(() => { void sync() }, Math.min(expiresAt - Date.now() + 1, 2_147_483_647))
           const previousConnected = enterpriseCapability.getSnapshot().connected
           const previousKey = service.enterpriseAccountKey
+          const accountChanged = previousKey !== (account?.connectionKey || '')
           if (!connected || (previousKey && account.connectionKey && account.connectionKey !== previousKey)) {
             service.enterpriseTicket += 1
             service.enterpriseCatalog = []
@@ -2714,7 +2715,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           service.networkMarketAllowed = marketAllowed
           if (!marketAllowed) service.closePublicMarket()
           service.publish()
-          if (connected) service.run(service.refreshEnterpriseCatalog())
+          if (connected && (accountChanged || service.enterpriseCatalogStatus === 'idle')) service.run(service.refreshEnterpriseCatalog())
         }
         const syncTab = () => {
           disposeTab?.()

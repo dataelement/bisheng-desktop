@@ -509,7 +509,22 @@ export function apply(ctx, config) {
         if (typeof payload.errorCode === 'string' && payload.errorCode) failure.code = payload.errorCode
         throw failure
       }
-      return binary ? Buffer.from(await response.arrayBuffer()) : response.json()
+      if (binary) return Buffer.from(await response.arrayBuffer())
+      const data = await response.json()
+      if (data && (data.status_code === 401 || data.status_code === 403)) {
+        await refreshSessionTokens()
+        if (sessionAuth?.tokens?.access_token && sessionAuth.tokens.access_token !== auth.tokens.access_token) {
+          const retry = await makeRequest(sessionAuth.tokens.access_token)
+          if (retry.ok) {
+            const retryData = await retry.json()
+            if (retryData?.status_code !== 401 && retryData?.status_code !== 403) return retryData
+          }
+        }
+        const failure = new Error(data.status_message || 'Invalid enterprise credential')
+        failure.status = data.status_code
+        throw failure
+      }
+      return data
     }
     const response = await fetch(new URL('/v1/market', broker.origin), {
       method: 'POST', redirect: 'error',
