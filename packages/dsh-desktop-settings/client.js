@@ -127,7 +127,8 @@ window.__ModuleLoader__.load({
         }
         const unsubscribe = bridge?.subscribe(next => { if (!disposed) receive(next) })
         const initial = revision
-        if (bridge?.usage) void bridge.state().then(next => { if (!disposed && initial === revision) receive(next, true) }).catch(() => { if (!disposed && initial === revision) setState({ phase: 'error' }) })
+        if (!bridge) setState({ phase: 'web' })
+        else if (bridge.usage) void bridge.state().then(next => { if (!disposed && initial === revision) receive(next, true) }).catch(() => { if (!disposed && initial === revision) setState({ phase: 'error' }) })
         else setState({ phase: 'unsupported' })
         return () => { disposed = true; revision++; unsubscribe?.() }
       }, [attempt])
@@ -148,7 +149,8 @@ window.__ModuleLoader__.load({
       const unit = (quota?.limit === -1 ? quota.used : quota?.limit) < 1 ? 'MB' : 'GB'
       const failure = key => h('div', { className: 'dshSettingsStatus', role: 'alert' }, h('p', null, t(key)), h('button', { type: 'button', onClick: () => setAttempt(value => value + 1) }, t('again')))
       let content
-      if (state.phase === 'signedOut') content = h('div', { className: 'dshSettingsStatus' }, h('p', null, t('signIn')), h('button', { type: 'button', onClick: openAccount }, t('openAccount')))
+      if (state.phase === 'web') content = h('dl', { className: 'dshUsageOverview' }, h('div', { title: creditsHelp }, h('dt', null, creditsLabel), h('dd', null, credits ?? t('unavailable'))))
+      else if (state.phase === 'signedOut') content = h('div', { className: 'dshSettingsStatus' }, h('p', null, t('signIn')), h('button', { type: 'button', onClick: openAccount }, t('openAccount')))
       else if (state.phase !== 'ready') content = h('div', { className: 'dshSettingsStatus', role: state.phase === 'error' ? 'alert' : 'status' }, h('p', null, t(state.phase === 'unsupported' ? 'restart' : state.phase === 'error' ? 'usageError' : 'loading')), state.phase === 'error' && h('button', { type: 'button', onClick: () => setAttempt(value => value + 1) }, t('again')))
       else if (!data) content = failure('usageError')
       else {
@@ -246,7 +248,7 @@ window.__ModuleLoader__.load({
       return h('section', { className: 'dshSettingsSection' },
         h('h2', null, t('about')),
         h('dl', { className: 'dshSettingsVersions' }, ...[['desktopVersion', info?.desktopVersion], ['harnessVersion', info?.harnessVersion]].flatMap(([key, value]) => [h('dt', { key: `${key}:label` }, t(key)), h('dd', { key }, value || '—')])),
-        h('div', { className: 'dshSettingsButtons' },
+        typeof window.dshDesktop?.settingsAction === 'function' && h('div', { className: 'dshSettingsButtons' },
           ...[['check-for-updates', 'update'], ['show-harness-log', 'logs'], ['safe-mode', 'recovery']].map(([action, label]) => h('button', { key: action, type: 'button', disabled: busy, onClick: () => run(action) }, t(label)))),
         error && h('p', { role: 'alert' }, t(error)))
     }
@@ -445,15 +447,15 @@ window.__ModuleLoader__.load({
             connected && h('div', { className: 'dshAccountMenuCredits', role: 'status' }, h('strong', null, credits ?? '—'), h('small', null, t(credits === null ? 'creditsUnavailable' : 'creditsRemaining')))),
           h(MenuItemButton, { icon: h(IconSettingsOutlineRegular), shortcut: settingsShortcut, disabled: busy, onSelect: () => { setMenuOpen(false); openSettings() } }, t('settings')),
           connected && h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'account' }), disabled: busy, onSelect: openAccountSettings }, t('accountSettings')),
-          h(MenuItemButton, { icon: h(IconChecklistOutlineRegular), disabled: busy || !connected, onSelect: () => { setMenuOpen(false); setApprovalsOpen(true) } },
+          Boolean(window.dshEnterpriseChat) && h(MenuItemButton, { icon: h(IconChecklistOutlineRegular), disabled: busy || !connected, onSelect: () => { setMenuOpen(false); setApprovalsOpen(true) } },
             h('span', { className: 'dshAccountMenuRow' }, t('approvals'), badge)),
-          h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'phone' }), disabled: busy, onSelect: () => { void pairPhone() } }, t('phone')),
+          typeof window.dshDesktop?.openPhonePairing === 'function' && h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'phone' }), disabled: busy, onSelect: () => { void pairPhone() } }, t('phone')),
           connected
             ? h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'logout' }), separatorBefore: true, danger: true, disabled: busy, onSelect: () => { setMenuOpen(false); setLogoutFailed(false); setLogoutOpen(true) } }, t('logout'))
             : h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'login' }), separatorBefore: true, disabled: busy, onSelect: openAccountSettings }, t('login')),
           failure && h('p', { className: 'dshAccountMenuError', role: 'alert' }, t(failure)),
           failure && h(MenuItemButton, { disabled: busy, onSelect: () => { if (actionError) { void pairPhone(); return } setActionError(false); void identity.refresh() } }, t('again'))),
-        h(ApprovalsDialog, { open: approvalsOpen, onClose: closeApprovals, t }),
+        Boolean(window.dshEnterpriseChat) && h(ApprovalsDialog, { open: approvalsOpen, onClose: closeApprovals, t }),
         h(LogoutDialog, { open: logoutOpen, busy, failed: logoutFailed, onCancel: closeLogout, onConfirm: () => { void confirmLogout() }, t }))
     }
 
@@ -500,23 +502,30 @@ window.__ModuleLoader__.load({
         document.head.appendChild(style)
         return () => style.remove()
       }, 'desktop-settings: owned styles')
-      const register = (name, id, Component, extra = {}) => ctx.slots.inject(name, () => ctx.slots.register({ name, id, locale: NS, ...extra, inject: () => ({ t }) }, Component))
-      register('desktop.account.usage', 'desktop-usage', Usage)
-      register('settings.section', 'desktop-about', About, { order: 90, label: () => t('about') })
-      ctx.effect(() => {
-        let disposed = false, disposeEntry, revision = 0
-        const sync = state => {
-          revision++
-          const allowed = state.connected && state.navigation?.settings?.aiAccess === true
-          if (allowed && !disposeEntry) disposeEntry = register('settings.section', 'desktop-ai-access', AiAccess, { order: 80, label: () => t('ai') })
-          if (!allowed) { disposeEntry?.(); disposeEntry = undefined }
-        }
-        const unsubscribe = window.dshEnterpriseChat?.subscribe(sync)
-        const request = revision
-        void window.dshEnterpriseChat?.state().then(state => { if (!disposed && request === revision) sync(state) }).catch(() => { /* Unavailable capability stays hidden until the next host state. */ })
-        return () => { disposed = true; unsubscribe?.(); disposeEntry?.() }
-      }, 'desktop-settings: account capabilities')
-      register('settings.launcher', 'desktop-account-menu', AccountLauncher)
+      const register = (scope, name, id, Component, extra = {}) => scope.slots.inject(name, () => scope.slots.register({ name, id, locale: NS, ...extra, inject: () => ({ t }) }, Component))
+      const applyEnterpriseSettings = (scope) => {
+        register(scope, 'desktop.account.usage', 'desktop-usage', Usage)
+        scope.effect(() => {
+          let disposed = false, disposeEntry, revision = 0
+          const sync = state => {
+            revision++
+            const allowed = state.connected && state.navigation?.settings?.aiAccess === true
+            if (allowed && !disposeEntry) disposeEntry = register(scope, 'settings.section', 'desktop-ai-access', AiAccess, { order: 80, label: () => t('ai') })
+            if (!allowed) { disposeEntry?.(); disposeEntry = undefined }
+          }
+          const unsubscribe = window.dshEnterpriseChat?.subscribe(sync)
+          const request = revision
+          void window.dshEnterpriseChat?.state().then(state => { if (!disposed && request === revision) sync(state) }).catch(() => { /* Unavailable capability stays hidden until the next host state. */ })
+          return () => { disposed = true; unsubscribe?.(); disposeEntry?.() }
+        }, 'desktop-settings: account capabilities')
+        register(scope, 'settings.launcher', 'desktop-account-menu', AccountLauncher)
+      }
+      register(ctx, 'settings.section', 'desktop-about', About, { order: 90, label: () => t('about') })
+      if (typeof ctx.inject === 'function') {
+        ctx.inject(['slots', 'enterpriseLauncher'], applyEnterpriseSettings)
+      } else if (typeof window !== 'undefined' && (window.dshEnterpriseChat || window.dshDesktopEnterprise)) {
+        applyEnterpriseSettings(ctx)
+      }
       // The shell only has glyphs for its native sections and falls back to the gear; the Bisheng
       // sections get theirs here, through the shell's own row so selection and focus stay native.
       ctx.slots.inject('settings.navigation', () => ctx.slots.register({ name: 'settings.navigation', id: 'desktop-nav-glyphs', inject: () => ({ t }) }, SettingsNavigation))

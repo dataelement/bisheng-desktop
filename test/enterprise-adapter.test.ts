@@ -143,14 +143,15 @@ function memorySafeStorage(): SafeStorageCryptoAdapter {
 }
 
 describe('enterprise adapter without a Broker', () => {
-  it('loads and reports a local disabled state', async () => {
+  it('loads and reports a local idle session storage state', async () => {
     const routes = createPluginContext()
     const response = await invoke(routes, '/api/enterprise.state')
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({
       connected: false,
-      secureStorageAvailable: false,
-      phase: 'disabled',
+      secureStorageAvailable: true,
+      storageMode: 'session',
+      phase: 'idle',
       revision: 0,
       models: [],
       modelsAvailable: false,
@@ -159,7 +160,7 @@ describe('enterprise adapter without a Broker', () => {
     })
   })
 
-  it('inspects a deep link locally and rejects login until the Broker exists', async () => {
+  it('inspects a deep link locally and handles login without the Broker', async () => {
     const routes = createPluginContext()
     const inspected = await invoke(routes, '/api/enterprise.deep-link.inspect', 'POST', {
       url: 'bisheng://login?server=https%3A%2F%2Fbisheng.example.com'
@@ -185,10 +186,9 @@ describe('enterprise adapter without a Broker', () => {
     const started = await invoke(routes, '/api/enterprise.login.start', 'POST', {
       base: 'https://bisheng.example.com'
     })
-    expect(started.status).toBe(503)
+    expect(started.status).toBe(400)
     await expect(started.json()).resolves.toMatchObject({
-      ok: false,
-      error: 'Enterprise login is not available yet.'
+      ok: false
     })
   })
 })

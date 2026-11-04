@@ -716,7 +716,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
       React.useEffect(() => () => {
         void window.dshEnterpriseChat?.present({ visible: false, bounds: { x: 0, y: 48, width: 0, height: 0 }, theme: 'light' }).catch(() => {})
       }, [])
-      const showModePicker = !settingsOpen && (mode === 'chat'
+      const showModePicker = Boolean(window.dshEnterpriseChat) && !settingsOpen && (mode === 'chat'
         ? !state.pageId && state.conversationId === 'new' && state.landing !== false
         : state.nativeWork && state.workLanding && !state.panelOpen)
       const select = navigation.choose
@@ -1242,7 +1242,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         scoped.effect(() => navigation.bindWorkbench(scoped.desktopWorkbenches))
       })
       if (typeof ctx.inject === 'function') ctx.inject(['uiConversation'], installWorkToolMessages)
-      if (typeof ctx.inject === 'function') ctx.inject(['commandUi', 'inputTriggers', 'conversation', 'remote.skills'], installWorkResources)
+      if (typeof ctx.inject === 'function') ctx.inject(['commandUi', 'inputTriggers', 'conversation', 'remote.skills', 'enterpriseWorkResources'], installWorkResources)
       // `remote` and `remote.session` are separate inject names. Reading
       // `ctx.remote` without declaring `remote` throws and unmounts this slot.
       const remote = ctx.remote

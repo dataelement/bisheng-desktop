@@ -872,3 +872,36 @@ it('refreshes cloud history on push transitions and focus without periodic state
     expect(bridge.history).toHaveBeenCalledTimes(4)
   } finally { vi.useRealTimers() }
 })
+
+it('hides the Chat/Work mode picker and skips enterprise work resources when enterprise capabilities are absent', async () => {
+  await mount()
+  delete window.dshEnterpriseChat
+  const injectedDeps = []
+  let plugin
+  window.__ModuleLoader__ = { load({ factory }) {
+    plugin = factory(name => {
+      if (name === 'react') return React
+      if (name === '@deepseek-ai/dsh-client-ui-primitives') return { Button: props => React.createElement('button', props), Modal: () => null, Menu: () => null }
+      throw new Error(name)
+    })
+  } }
+  new Function(await readFile(process.env.DSH_TEST_HOST_DIALOG_CLIENT_SOURCE || 'packages/dsh-desktop-client-ui/client.js', 'utf8'))()
+  const registrations = new Map()
+  plugin.apply({
+    inject(names) { injectedDeps.push(names) },
+    uiWorkspace: { registerNavigationHandler: () => () => {}, startSession: () => {} },
+    sessions: { binding: () => ({ session: { getSnapshot: () => ({ blank: true, pendingSubmissions: [], running: false, awaitingFirstTurn: false }), subscribe: () => () => {} } }), list: { getSnapshot: () => ({ phase: 'ready', byId: { draft: { id: 'draft', blank: true, retainedBy: { mainView: 1 } } } }), subscribe: () => () => {} } },
+    layout: { selectPanel: () => {}, panelInfo: { getSnapshot: () => ({ activePanelId: null }), subscribe: () => () => {} } },
+    remote: {}, locale: { register() {}, bind: () => key => key, getSnapshot: () => ({ active: 'en' }), subscribe: () => () => {} },
+    effect(fn) { const dispose = fn(); if (typeof dispose === 'function') disposers.push(dispose) },
+    slots: {
+      inject(name, fn) { if (name === 'desktop.mode.content') fn() },
+      register(options, component) { registrations.set(options.name, { component, props: options.inject() }) }
+    }
+  })
+  expect(injectedDeps).toContainEqual(['commandUi', 'inputTriggers', 'conversation', 'remote.skills', 'enterpriseWorkResources'])
+  const content = registrations.get('desktop.mode.content')
+  await act(async () => root.render(React.createElement(content.component, { ...content.props, columns: '1fr 0px', work: React.createElement('textarea', { 'aria-label': 'public work draft' }) })))
+  expect(container.querySelector('[role=tablist]')).toBeNull()
+  expect(container.querySelector('#dsh-panel-work').hidden).toBe(false)
+})

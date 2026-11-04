@@ -1,4 +1,3 @@
-import { EnterpriseChatView } from './enterprise/chat-view'
 import { desktopFileUrl, navigateDesktopWindow } from './desktop-navigation'
 import { recoverStartupConfiguration } from './startup-config-recovery'
 import { initializeDesktopService, desktopDiagnostics } from './desktop-service'
@@ -19,7 +18,6 @@ import {
   ipcMain,
   Menu,
   nativeTheme,
-  safeStorage,
   shell,
   Tray,
   utilityProcess,
@@ -28,6 +26,7 @@ import {
 } from 'electron'
 import { clearStaleLoopbackHttpCache } from './cache-maintenance'
 import { harnessPreferredPort, mobileBridgePort } from './desktop-ports'
+import { resolveProductIdentity, type ProductIdentityConfig } from './product-identity'
 import {
   extractFailureCause,
   extractPluginFailureReferences,
@@ -46,14 +45,15 @@ import {
   marketUsableWithoutBaseline,
   readProfileMarket
 } from './state/market-baseline'
-import { canReenableProfilePlugin, enforceCommunityPluginPolicy, isProtectedProfileBundle } from './state/community-plugin-policy'
-import { readPersistedThirdPartyPolicy } from 'dsh-desktop-market-installer/enterprise-policy'
+import { canReenableProfilePlugin, isProtectedProfileBundle } from './state/community-plugin-policy'
+import { bindStartupPluginPolicy, type StartupPluginPolicy } from './startup-plugin-policy'
 import {
   clearProfileInstallMarker,
   markProfileInstallComplete
 } from './state/profile-install-marker'
 import { healProfileBundles, HOST_COMPOSED_BUNDLES, inspectProfileConsistency } from './state/profile-consistency'
 import { inspectProfileBootInputs } from './state/profile-boot-preflight'
+import { resolveHarnessPatchPaths } from './harness-patch-paths'
 import {
   BUILTIN_IMAGE_GENERATION,
   prepareProfileBundleForHostEnable,
@@ -93,16 +93,11 @@ import {
   serializeGpuFallbackState
 } from './gpu-fallback'
 import { secureWindow } from './security'
-import { startEnterpriseDesktop, type EnterpriseDesktopRuntime } from './enterprise/enterprise-desktop'
-import { migrateLegacyEnterpriseSettings } from './enterprise/legacy-settings-migration'
-import {
-  allowInsecureEnterpriseLoopback,
-  enterpriseLoginFromArgv,
-  parseEnterpriseLoginLink,
-  registerEnterpriseLoginProtocol,
-  sameHarnessOrigin
-} from './enterprise/login-link'
-import { createElectronEnterpriseFetch } from './enterprise/platform-fetch'
+import { StaticExtensionLifecycle } from './static-extension-lifecycle'
+import { createTrustedIpcRegistry } from './trusted-ipc-registry'
+import { settleDesktopShutdown } from './desktop-shutdown'
+import { createEarlyLinks, type EarlyLinksProduct } from './early-links'
+import { runProductProfileMaintenance, type ProductProfileMaintenance } from './product-profile-maintenance'
 import { SafeModeFrame } from './safe-mode-frame'
 import { desktopResourceUrl, installDesktopProtocol, registerDesktopScheme, SAFE_MODE_PAGE } from './desktop-protocol'
 import { ensureLaunchRoot } from './state/launch-root'
@@ -207,6 +202,45 @@ import {
   shouldReloadAfterMainWindowRendererLoss
 } from './main-window-recovery'
 
+interface DesktopExtensionView {
+  focusSettings(): void
+  present(window: BrowserWindow, input: unknown): unknown
+  snapshot(): unknown
+  retry(): void
+  usage(): Promise<unknown>
+  history(input: unknown): Promise<unknown>
+  openPage(input: unknown): Promise<void>
+  open(input: unknown): Promise<void>
+  dispose(): void
+}
+
+interface DesktopExtension {
+  readThirdPartyPolicy(): Promise<{ allowThirdPartyPlugins: boolean }>
+  rotateCapability(): void
+  harnessEnvironment(): NodeJS.ProcessEnv
+  stop(): Promise<void>
+  createView(): DesktopExtensionView
+}
+
+type StartDesktopExtension = (context: {
+  version: string
+  userDataPath: string
+  activate: () => Promise<void>
+  note: (line: string) => void
+  window: () => BrowserWindow | undefined
+}) => Promise<DesktopExtension>
+
+interface DesktopProduct {
+  identity: ProductIdentityConfig
+  harnessPatches: { normal: string; safe: string; market: string }
+  profileMaintenance: ProductProfileMaintenance
+  startupPluginPolicy: StartupPluginPolicy
+  loginLink: EarlyLinksProduct
+  startEnterprise: StartDesktopExtension
+  registerChatIpc: (registry: ReturnType<typeof createTrustedIpcRegistry>, view: () => DesktopExtensionView | undefined, window: () => BrowserWindow | undefined, onFailedCleanup: (dispose: () => void) => void) => () => void
+  createChatDisposer: (disposeIpc: () => void, disposeView: () => void) => () => void
+}
+
 type PluginRecoveryAction = `upgrade:${string}` | `uninstall:${string}` | `agent:${string}` | 'uninstall' | 'upgrade' | 'show-log' | 'quit' | 'restart' | 'refresh' | 'safe-mode' | 'auto-process' | 'check-updates' | 'market-upgrade' | 'market-remove'
 type WebImportAction = 'import' | 'skip'
 type SafeModeAction =
@@ -238,8 +272,11 @@ let mainWindow: BrowserWindow | undefined
 let mobileWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let runtime: HarnessRuntime
-let enterpriseDesktop: EnterpriseDesktopRuntime | undefined
-let enterpriseChat: EnterpriseChatView | undefined
+let desktopProduct: DesktopProduct
+let enterpriseDesktop: DesktopExtension | undefined
+const staticExtensions = new StaticExtensionLifecycle()
+let enterpriseChat: DesktopExtensionView | undefined
+let disposeEnterpriseChat: (() => void) | undefined
 let localWorkbenchCapability: string | undefined
 
 async function liveThirdPartyPluginsAllowed(): Promise<boolean> {
@@ -314,28 +351,10 @@ let harnessRendered = false
 let gpuFallbackState: GpuFallbackState = defaultGpuFallbackState
 let gpuFallbackRelaunching = false
 let gpuStableLaunchTimer: NodeJS.Timeout | undefined
-let pendingEnterpriseLoginUrl: string | undefined
+let earlyLinks: ReturnType<typeof createEarlyLinks>
 
 function deliverPendingEnterpriseLogin(): void {
-  if (!pendingEnterpriseLoginUrl || !mainWindow || mainWindow.isDestroyed()) return
-  const snapshot = runtime?.snapshot()
-  if (!sameHarnessOrigin(mainWindow.webContents.getURL(), snapshot?.url)) return
-  mainWindow.webContents.send('enterprise:login-link', pendingEnterpriseLoginUrl)
-  pendingEnterpriseLoginUrl = undefined
-}
-
-async function acceptEnterpriseLoginLink(value: string): Promise<boolean> {
-  try {
-    const parsed = await parseEnterpriseLoginLink(value)
-    pendingEnterpriseLoginUrl = parsed.url
-  } catch (error) {
-    console.warn(
-      `[enterprise] rejected login link: ${error instanceof Error ? error.message : 'invalid link'}`
-    )
-    return false
-  }
-  deliverPendingEnterpriseLogin()
-  return true
+  earlyLinks.deliver()
 }
 
 function appendRendererPluginFailureLog(message: string): void {
@@ -554,19 +573,15 @@ function applyWindowChromeTheme(window: BrowserWindow, isDark: boolean): void {
   }
 }
 
-function configureAppIdentity(): void {
+function configureAppIdentity(product: DesktopProduct): void {
   configureNotificationIdentity(app, process.platform, developmentBuild)
-  if (developmentBuild) {
-    app.setName('BISHENG Dev')
-    app.setPath('userData', process.env.BISHENG_DEV_USER_DATA || join(app.getPath('appData'), 'bisheng-dev'))
-    return
-  }
-
-  app.setName('BISHENG')
-  // Keep this directory explicit. Harness stores workspaces, sessions,
-  // credentials, and custom presets below userData, so deriving the path from
-  // app.getName() would make a later display-name change look like a fresh install.
-  app.setPath('userData', join(app.getPath('appData'), 'bisheng'))
+  const identity = resolveProductIdentity(product.identity, {
+    appDataPath: app.getPath('appData'),
+    developmentBuild,
+    environment: process.env
+  })
+  app.setName(identity.name)
+  app.setPath('userData', identity.userDataPath)
 }
 
 async function syncNativeTheme(window: BrowserWindow): Promise<void> {
@@ -1382,10 +1397,7 @@ function launchHarness(): Promise<void> {
       recoverInterruptedMigration: () =>
         recoverInterruptedMigration(dshHome, (line) => runtime.note(line)),
       incompletePluginRestoreId: () => incompletePluginRestoreId(dshHome),
-      enforceCommunityPluginPolicy: () =>
-        enforceCommunityPluginPolicy(dshHome, (line) => runtime.note(line)),
-      thirdPartyPluginsAllowed: async () =>
-        (await readPersistedThirdPartyPolicy(dshHome)).allowThirdPartyPlugins === true,
+      ...bindStartupPluginPolicy(desktopProduct.startupPluginPolicy, dshHome, (line) => runtime.note(line)),
       preparePackageStore: async () => {
         // This must run after interrupted-migration recovery has allowed
         // Profile writes, but before any operation invokes pnpm.
@@ -1432,7 +1444,7 @@ function launchHarness(): Promise<void> {
       }),
       marketUsableWithoutBaseline: () => marketUsableWithoutBaseline(dshHome),
       reportProfileConsistency: () => reportProfileConsistency(dshHome),
-      inspectProfileBootInputs: () => inspectProfileBootInputs(dshHome, dshEntryPath(), desktopResourcePath('dsh-desktop.patch.yml')),
+      inspectProfileBootInputs: () => inspectProfileBootInputs(dshHome, dshEntryPath(), resolveHarnessPatchPaths(desktopProduct.harnessPatches, desktopResourcePath).dshPatchPath),
       pruneUnresolvableBundles: () => pruneUnresolvableProfileBundles(dshHome)
     })
     migrationPendingPlugins = new Set(
@@ -1453,18 +1465,12 @@ function launchHarness(): Promise<void> {
     maintenanceRecoveryLocked = false
     maintenanceAllowedRestoreId = undefined
     runtime.note('[desktop] profile maintenance done')
-    await refreshMigrationRecoveryLock(dshHome)
-    try {
-      const legacyEnterprise = await migrateLegacyEnterpriseSettings(dshHome)
-      if (legacyEnterprise.changed) {
-        runtime.note(`[enterprise] retired legacy settings: ${legacyEnterprise.removed.join(', ')}`)
-      }
-    } catch (error) {
-      runtime.note(
-        `[enterprise] legacy settings migration failed: ${error instanceof Error ? error.message : String(error)
-        }`
-      )
-    }
+    await runProductProfileMaintenance(
+      desktopProduct.profileMaintenance,
+      dshHome,
+      (line) => runtime.note(line),
+      () => refreshMigrationRecoveryLock(dshHome)
+    )
     void auditInstalledLaunchAgents(dshHome)
       .then(() => {
         runtime.note('[desktop] LaunchAgent audit done')
@@ -1701,40 +1707,6 @@ function registerHarnessHandlers(): void {
     }
   })
 
-  for (const channel of ['enterprise-chat:present', 'enterprise-chat:state', 'enterprise-chat:retry', 'enterprise-chat:usage', 'enterprise-chat:history', 'enterprise-chat:open', 'enterprise-chat:open-page', 'enterprise-chat:focus-settings']) ipcMain.removeHandler(channel)
-  ipcMain.handle('enterprise-chat:focus-settings', (event) => {
-    assertTrustedMainWindowEvent(event)
-    enterpriseChat?.focusSettings()
-  })
-  ipcMain.handle('enterprise-chat:present', (event, presentation: unknown) => {
-    assertTrustedMainWindowEvent(event)
-    return enterpriseChat?.present(mainWindow!, presentation) ?? { phase: 'idle', connected: false }
-  })
-  ipcMain.handle('enterprise-chat:state', (event) => {
-    assertTrustedMainWindowEvent(event)
-    return enterpriseChat?.snapshot() ?? { phase: 'idle', connected: false }
-  })
-  ipcMain.handle('enterprise-chat:retry', (event) => {
-    assertTrustedMainWindowEvent(event)
-    enterpriseChat?.retry()
-  })
-  ipcMain.handle('enterprise-chat:usage', (event) => {
-    assertTrustedMainWindowEvent(event)
-    if (!enterpriseChat) throw new Error('Enterprise usage unavailable.')
-    return enterpriseChat.usage()
-  })
-  ipcMain.handle('enterprise-chat:history', (event, page: unknown) => {
-    assertTrustedMainWindowEvent(event)
-    return enterpriseChat?.history(page)
-  })
-  ipcMain.handle('enterprise-chat:open-page', (event, id: unknown) => {
-    assertTrustedMainWindowEvent(event)
-    return enterpriseChat?.openPage(id)
-  })
-  ipcMain.handle('enterprise-chat:open', (event, id: unknown) => {
-    assertTrustedMainWindowEvent(event)
-    return enterpriseChat?.open(id)
-  })
   ipcMain.removeHandler('harness:restart')
   ipcMain.handle('harness:restart', async (event) => {
     if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
@@ -1816,9 +1788,8 @@ function registerHarnessHandlers(): void {
     return { ok: true }
   })
 
-  ipcMain.removeHandler('desktop:about-info')
-  ipcMain.handle('desktop:about-info', (event) => {
-    assertTrustedMainWindowEvent(event)
+  const trustedIpc = createTrustedIpcRegistry(ipcMain, assertTrustedMainWindowEvent)
+  const disposeAboutInfo = trustedIpc.register('desktop:about-info', () => {
     const locale = harnessLocale()
     return {
       desktopVersion: app.getVersion(),
@@ -1827,6 +1798,7 @@ function registerHarnessHandlers(): void {
       locale
     }
   })
+  app.once('will-quit', disposeAboutInfo)
   ipcMain.removeHandler('desktop:settings-action')
   ipcMain.handle('desktop:settings-action', async (event, action: unknown) => {
     assertTrustedMainWindowEvent(event)
@@ -3397,11 +3369,12 @@ async function showMobilePairing(): Promise<void> {
   mobileWindow.focus()
 }
 
-async function bootstrap(): Promise<void> {
+async function bootstrap(product: DesktopProduct): Promise<void> {
   desktopDiagnostics?.startSending()
   installDesktopProtocol(desktopResourcePath)
   if (process.platform === 'darwin') app.dock?.setIcon(desktopIconPath())
   launchDirectory = await ensureLaunchRoot(app.getPath('userData'))
+  if (quitting) return
   registerUpdateHandlers({ locale: harnessLocale })
   nativeTheme.themeSource = harnessThemePreference()
   ensureTray()
@@ -3418,9 +3391,7 @@ async function bootstrap(): Promise<void> {
     dshEntryPath: dshEntryPath(),
     nodeExecutablePath: bundledNodePath(),
     nodeEntryPath: harnessNodeEntryPath(),
-    dshPatchPath: desktopResourcePath('dsh-desktop.patch.yml'),
-    dshSafePatchPath: desktopResourcePath('dsh-desktop-safe.patch.yml'),
-    dshMarketPatchPath: desktopResourcePath('dsh-desktop-market.patch.yml'),
+    ...resolveHarnessPatchPaths(product.harnessPatches, desktopResourcePath),
     dshHome: join(app.getPath('userData'), 'harness'),
     logPath: join(app.getPath('logs'), 'harness.log'),
     pnpmEntryPath: bundledPnpmEntryPath(),
@@ -3461,27 +3432,39 @@ async function bootstrap(): Promise<void> {
       }
     }
   })
-  try {
-    enterpriseDesktop = await startEnterpriseDesktop({
-      desktopVersion: app.getVersion(),
-      activateDesktop: async () => {
-        const snapshot = runtime.snapshot()
-        if (snapshot.phase === 'ready' && snapshot.url) {
-          await openHarness(snapshot.url, 'user')
-        }
-      },
-      userDataPath: app.getPath('userData'),
-      safeStorage,
-      fetchImpl: createElectronEnterpriseFetch(net.fetch.bind(net)),
-      allowInsecureLoopback: allowInsecureEnterpriseLoopback(),
-      note: (line) => runtime.note(line)
+  await staticExtensions.start([async (onDispose) => {
+    try {
+      enterpriseDesktop = await product.startEnterprise({
+        version: app.getVersion(),
+        activate: async () => {
+          const snapshot = runtime.snapshot()
+          if (snapshot.phase === 'ready' && snapshot.url) {
+            await openHarness(snapshot.url, 'user')
+          }
+        },
+        userDataPath: app.getPath('userData'),
+        note: (line) => runtime.note(line),
+        window: () => mainWindow
+      })
+      const desktop = enterpriseDesktop
+      onDispose(() => desktop.stop())
+    } catch (error) {
+      // Error messages may contain enterprise credentials or configuration.
+      const category = error instanceof AggregateError ? 'aggregate' : 'error'
+      runtime.note(`[enterprise] start_failed phase=start category=${category}`)
+      enterpriseDesktop = undefined
+    }
+    const registry = createTrustedIpcRegistry(ipcMain, assertTrustedMainWindowEvent)
+    const disposeIpc = product.registerChatIpc(registry, () => enterpriseChat, () => mainWindow, onDispose)
+    disposeEnterpriseChat = product.createChatDisposer(disposeIpc, () => {
+      enterpriseChat?.dispose()
+      enterpriseChat = undefined
     })
-  } catch {
-    runtime.note('[enterprise] start_failed')
-    enterpriseDesktop = undefined
-  }
-  if (enterpriseDesktop) enterpriseChat = new EnterpriseChatView(enterpriseDesktop, (line) => runtime.note(line), () => mainWindow)
-  app.once('before-quit', () => enterpriseChat?.dispose())
+    onDispose(() => disposeEnterpriseChat?.())
+  }])
+  if (quitting || !staticExtensions.runIfNotStopped(() => {
+    if (enterpriseDesktop) enterpriseChat = enterpriseDesktop.createView()
+  })) return
   registerHarnessHandlers()
   mobileBridge = new LanMobileBridge({
     harnessUrl: () => runtime.snapshot().url,
@@ -3787,6 +3770,7 @@ async function bootstrap(): Promise<void> {
   } else {
     await launchHarness()
   }
+  if (quitting) return
   if (!developmentBuild) {
     startUpdateManager({
       prepareToInstall: async () => {
@@ -3803,6 +3787,21 @@ async function bootstrap(): Promise<void> {
   }
 }
 
+export function createDesktopBootstrap(product: DesktopProduct): () => void {
+  return () => startDesktop(product)
+}
+
+function startDesktop(product: DesktopProduct): void {
+desktopProduct = product
+earlyLinks = createEarlyLinks(product.loginLink, () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return undefined
+  const window = mainWindow
+  return {
+    current: window.webContents.getURL(),
+    expected: runtime?.snapshot().url,
+    send: url => window.webContents.send('enterprise:login-link', url)
+  }
+})
 if (isDaemonLaunch(process.env, process.platform)) {
   // launchd started this bundle from a LaunchAgent instead of the user
   // opening the app. Requesting the single instance lock here would reach
@@ -3810,20 +3809,16 @@ if (isDaemonLaunch(process.env, process.platform)) {
   // its window as though the user had asked for it, so leave first.
   app.exit(0)
 } else {
-  configureAppIdentity()
+  configureAppIdentity(product)
   configureApplicationLocale()
   configureGpuFallback()
   installGpuFallbackWatch()
-  registerEnterpriseLoginProtocol()
-  void enterpriseLoginFromArgv(process.argv).then((link) => {
-    if (link) pendingEnterpriseLoginUrl = link.url
-    deliverPendingEnterpriseLogin()
-  }).catch(() => undefined)
-  app.on('open-url', (event, url) => {
-    event.preventDefault()
-    void acceptEnterpriseLoginLink(url)
-  })
-  const singleInstance = app.requestSingleInstanceLock()
+  const singleInstance = earlyLinks.start(process.argv, handler => {
+    app.on('open-url', (event, url) => {
+      event.preventDefault()
+      handler(url)
+    })
+  }, () => app.requestSingleInstanceLock())
   if (!singleInstance) {
     console.warn('[desktop] Another instance is already running; focusing existing window and exiting.')
     app.quit()
@@ -3841,9 +3836,7 @@ if (isDaemonLaunch(process.env, process.platform)) {
     }, initializeDesktopService)
     app.on('second-instance', (_event, argv) => {
       if (!isUserInitiatedInstance(argv)) return
-      void enterpriseLoginFromArgv(argv).then((link) => {
-        if (link) void acceptEnterpriseLoginLink(link.url)
-      }).catch(() => undefined)
+      earlyLinks.secondInstance(argv)
       if (shouldStartInSafeMode(argv)) {
         void showSafeMode().catch(showUnexpectedError)
         return
@@ -3854,7 +3847,7 @@ if (isDaemonLaunch(process.env, process.platform)) {
       }
     })
     registerDesktopScheme()
-    app.whenReady().then(bootstrap).catch((error: unknown) => {
+    app.whenReady().then(() => bootstrap(product)).catch((error: unknown) => {
       desktopDiagnostics?.startupFailed(error)
       showUnexpectedError(error)
       app.quit()
@@ -3877,9 +3870,22 @@ if (isDaemonLaunch(process.env, process.platform)) {
     })
     app.on('before-quit', (event) => {
       desktopDiagnostics?.markCleanExit()
-      if (quitting || !runtime) return
-      event.preventDefault()
+      const disposeChat = () => {
+        try { disposeEnterpriseChat?.() } catch (error) {
+          const category = error instanceof AggregateError ? 'aggregate' : 'error'
+          console.warn(`[desktop] enterprise_chat_shutdown_failed phase=cleanup category=${category}`)
+        }
+      }
+      if (quitting) {
+        disposeChat()
+        return
+      }
       quitting = true
+      if (!runtime) {
+        disposeChat()
+        return
+      }
+      event.preventDefault()
       desktopStorageManager?.flushSync()
       stopUpdateManager()
       // Windows leaves the tray icon behind as a ghost until the user hovers
@@ -3888,7 +3894,14 @@ if (isDaemonLaunch(process.env, process.platform)) {
       tray = undefined
       repairAgentService?.dispose()
       repairAgentService = undefined
-      void Promise.all([runtime.stop(), mobileBridge?.stop(), enterpriseDesktop?.stop()]).finally(() => app.quit())
+      void settleDesktopShutdown([
+        { name: 'runtime', stop: () => runtime.stop() },
+        { name: 'mobile', stop: () => mobileBridge?.stop() },
+        { name: 'extensions', stop: () => staticExtensions.stop() }
+      ]).then((failures) => {
+        for (const failure of failures) console.warn('[desktop] shutdown_failed', failure)
+      }).finally(() => app.quit())
     })
   }
+}
 }

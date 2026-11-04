@@ -1,6 +1,10 @@
 import { randomBytes } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { isLocalPluginRequest, localSourcePath } from './local-source.mjs'
+import { isProtectedProfileBundle } from './profile-protection.mjs'
+export { isProtectedProfileBundle } from './profile-protection.mjs'
+export { isLocalPluginRequest, localSourcePath } from './local-source.mjs'
 
 const POLICY_PATH = join('profiles', 'web', '.dsh-desktop', 'third-party-policy.json')
 const CLOSED = Object.freeze({
@@ -185,44 +189,8 @@ export function createEnterpriseCapabilityPolicy(options = {}) {
   return policy
 }
 
-const PROTECTED_BUNDLES = new Set([
-  '@deepseek-ai/dsh-base',
-  '@deepseek-ai/dsh-web-app',
-  'dsh-desktop-log-bridge',
-  'dsh-desktop-client-ui',
-  'dsh-desktop-enterprise',
-  'dsh-desktop-market-installer',
-  'dsh-image-generation',
-  'dsh-ppt',
-  'dsh-ppt-composer',
-  'dsh-desktop-hmr-fallback',
-  'dsh-desktop-preset-transfer',
-  'dsh-desktop-workbenches',
-  'dsh-desktop-onboarding',
-  'dsh-desktop-office'
-])
-
-export function isProtectedProfileBundle(name) {
-  return PROTECTED_BUNDLES.has(name)
-}
-
 /** Startup and recovery stay closed until a live tenant read explicitly allows them. */
 export function communityPluginInstallAllowed() {
-  return false
-}
-
-/** Absolute path carried by a local directory or local tarball spec. Remote URLs are not absolute paths. */
-export function localSourcePath(spec) {
-  if (typeof spec !== 'string') return undefined
-  const stripped = spec.trim().replace(/^(?:file|link):/u, '')
-  return isAbsolute(stripped) ? stripped : undefined
-}
-
-/** A package-manager request whose bytes already live on this machine. */
-export function isLocalPluginRequest(request) {
-  if (request === null || typeof request !== 'object') return false
-  if (request.kind === 'path') return localSourcePath(request.path) !== undefined
-  if (request.kind === 'tarball') return request.host === undefined && localSourcePath(request.path) !== undefined
   return false
 }
 
@@ -255,7 +223,9 @@ export function restrictCommunityPackageBackend(backend, policy = createEnterpri
       if (!isLocalPluginRequest(request)) await policy.authorizePluginMutation()
       const result = await backend.install(request)
       const name = request?.expectedName ?? request?.name
-      if (typeof name === 'string' && name) await releaseQuarantine(name)
+      if (result?.packageResult?.exitCode === 0 && result.packageResult.timedOut !== true && typeof name === 'string' && name) {
+        await releaseQuarantine(name)
+      }
       return result
     },
     async authorizeSpec(parsed) {
@@ -288,8 +258,9 @@ export function restrictCommunityPackageBackend(backend, policy = createEnterpri
       const installed = request?.name !== 'dshmarket' && (
         await mayEnableWithoutNetwork(request.name) || await isPhysicallyInstalled(request.name)
       )
+      const result = await backend.switched(request)
       if (request?.enabled === true && installed) await releaseQuarantine(request.name)
-      return backend.switched(request)
+      return result
     }
   }
 }

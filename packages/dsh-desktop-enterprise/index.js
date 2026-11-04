@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { randomUUID } from 'node:crypto'
 import { CONTENT_SAFETY_ERROR_COPY } from './error-copy.js'
 import { createContentSafetyLocaleScope } from './content-safety-locale.js'
 import { applyEnterpriseSkills } from './work-skills.js'
@@ -8,7 +9,16 @@ import { requestImageDimensions } from '@deepseek-ai/dsh-attachment'
 import { applyEnterpriseMarket } from './market.js'
 import { applyEnterpriseWorkbenchMarket } from './workbench-market.js'
 import { applyEnterpriseAuth, createEnterpriseAuthTransport } from './enterprise-auth.js'
-import { parseThirdPartyPolicy } from './contract.js'
+import {
+  API_PATHS,
+  CLIENT_ID,
+  createPkceTransaction,
+  parseAuthorization,
+  parseConfig,
+  parseModelsLenient,
+  parseThirdPartyPolicy,
+  parseToken
+} from './contract.js'
 import { createAuditTitleSync } from './audit-title.js'
 import {
   isInsecurePrivateHttpOrigin,
@@ -40,8 +50,9 @@ const MAX_JSON_BYTES = 64 * 1024
 function disabledState(error) {
   return {
     connected: false,
-    secureStorageAvailable: false,
-    phase: 'disabled',
+    secureStorageAvailable: true,
+    storageMode: 'session',
+    phase: 'idle',
     revision: 0,
     models: [],
     modelsAvailable: false,
@@ -71,15 +82,8 @@ function inspectedBase(base) {
   }
 }
 
-function brokerConfig() {
-  const urlValue = process.env.DSH_DESKTOP_ENTERPRISE_BROKER_URL
-  const capability = process.env.DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY
-  // Consume the owner secret before any market plugin is imported. This is not a Node sandbox.
-  delete process.env.DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY
-  if (!urlValue || !capability) {
-    console.warn('[enterprise] broker configuration missing', { urlConfigured: Boolean(urlValue), capabilityConfigured: Boolean(capability) })
-    return undefined
-  }
+function parseBrokerOrigin(urlValue, capability) {
+  if (!urlValue || !capability) return undefined
   let url
   try {
     url = new URL(urlValue)
@@ -99,6 +103,30 @@ function brokerConfig() {
     return undefined
   }
   return { origin: url.origin, capability }
+}
+
+function brokerConfig(ctx, config) {
+  const injected = (typeof ctx?.get === 'function' ? ctx.get('enterpriseBroker') : ctx?.enterpriseBroker) ?? config?.broker
+  if (injected && typeof injected === 'object') {
+    const resolved = parseBrokerOrigin(injected.origin ?? injected.url, injected.capability)
+    if (resolved) return resolved
+  }
+  const urlValue = process.env.DSH_DESKTOP_ENTERPRISE_BROKER_URL
+  const capability = process.env.DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY
+  // Consume the owner secret before any market plugin is imported. This is not a Node sandbox.
+  delete process.env.DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY
+  if (!urlValue || !capability) {
+    console.warn('[enterprise] broker configuration missing', { urlConfigured: Boolean(urlValue), capabilityConfigured: Boolean(capability) })
+    return undefined
+  }
+  return parseBrokerOrigin(urlValue, capability)
+}
+
+export function provideEnterpriseBroker(ctx, broker) {
+  const resolved = parseBrokerOrigin(broker?.origin ?? broker?.url, broker?.capability)
+  if (!resolved) throw new Error('Invalid enterprise broker configuration.')
+  if (typeof ctx?.provide === 'function') ctx.provide('enterpriseBroker', resolved)
+  return resolved
 }
 
 async function readJson(request) {
@@ -190,13 +218,15 @@ async function requestBrokerJson(broker, path, body, signal) {
   return payload
 }
 
-export function apply(ctx) {
-  const broker = brokerConfig()
+export function apply(ctx, config) {
+  const broker = brokerConfig(ctx, config)
   const brokerJson = (path, body, signal) => requestBrokerJson(broker, path, body, signal)
   const connection = Reflect.get(ctx, 'connection')
   let market
   let workbenches
   let capabilityPolicy
+  let sessionAuth = null
+  let sessionPending = null
   let account = disabledState()
   let workSkills
   let workResources
@@ -211,7 +241,7 @@ export function apply(ctx) {
     }
   }
   const readBrokerState = async () => {
-    const state = broker ? await brokerJson('/v1/state') : disabledState()
+    const state = broker ? await brokerJson('/v1/state') : account
     if (account.connectionKey !== state.connectionKey) {
       await market?.stop()
       await workbenches?.stop()
@@ -369,14 +399,118 @@ export function apply(ctx) {
   })
   registerJsonRoute(connection, LOCAL_PATHS.start, ['POST'], async (request) => {
     const body = await readJson(request)
-    return brokerJson('/v1/login/start', {
-      base: String(body?.base ?? ''),
-      ...(body?.confirmInsecurePrivateHttp === true ? { confirmInsecurePrivateHttp: true } : {})
+    const base = normalizeEnterpriseServerUrl(String(body?.base ?? ''), inspectUrlOptions())
+    if (broker) {
+      return brokerJson('/v1/login/start', {
+        base,
+        ...(body?.confirmInsecurePrivateHttp === true ? { confirmInsecurePrivateHttp: true } : {})
+      })
+    }
+    const configRes = await fetch(`${base}${API_PATHS.config}`, {
+      headers: { accept: 'application/json' }
     })
+    if (!configRes.ok) {
+      throw Object.assign(new Error(`Failed to connect to enterprise platform (${configRes.status}).`), { status: configRes.status })
+    }
+    const config = parseConfig(await configRes.json())
+    if (!config.enabled) throw Object.assign(new Error('Enterprise login is disabled on this platform.'), { status: 503 })
+
+    const pkce = createPkceTransaction()
+    const authRes = await fetch(`${base}${API_PATHS.authorizations}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({
+        client_id: CLIENT_ID,
+        code_challenge: pkce.codeChallenge,
+        code_challenge_method: 'S256',
+        state: pkce.state,
+        device_name: 'BISHENG Web'
+      })
+    })
+    if (!authRes.ok) {
+      throw Object.assign(new Error(`Enterprise authorization failed (${authRes.status}).`), { status: authRes.status })
+    }
+    const authData = parseAuthorization(await authRes.json(), base)
+    const expiresAt = Date.now() + authData.expires_in * 1000
+    sessionPending = {
+      base,
+      codeVerifier: pkce.codeVerifier,
+      state: pkce.state,
+      authId: authData.auth_id,
+      expiresAt
+    }
+    account = {
+      ...account,
+      base,
+      phase: 'authorizing',
+      revision: (account.revision || 0) + 1,
+      loginExpiresAt: expiresAt
+    }
+    ingestEnterpriseState(account)
+    return {
+      authorizationUrl: authData.authorize_url,
+      expiresIn: authData.expires_in,
+      base
+    }
   })
   registerJsonRoute(connection, LOCAL_PATHS.manual, ['POST'], async (request) => {
     const body = await readJson(request)
-    const state = await brokerJson('/v1/login/manual', { identityTicket: String(body?.identityTicket ?? '') })
+    const ticket = String(body?.identityTicket ?? '').trim()
+    let state
+    if (broker) {
+      state = await brokerJson('/v1/login/manual', { identityTicket: ticket })
+    } else {
+      if (!ticket) throw Object.assign(new Error('A one-time login code is required.'), { status: 400 })
+      if (!sessionPending || Date.now() > sessionPending.expiresAt) {
+        throw Object.assign(new Error('No enterprise login is waiting for a code.'), { status: 409 })
+      }
+      const tokenRes = await fetch(`${sessionPending.base}${API_PATHS.token}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({
+          grant_type: 'identity_ticket',
+          identity_ticket: ticket,
+          client_id: CLIENT_ID,
+          code_verifier: sessionPending.codeVerifier
+        })
+      })
+      if (!tokenRes.ok) {
+        const payload = await tokenRes.json().catch(() => ({}))
+        throw Object.assign(new Error(payload.error || `Login verification failed (${tokenRes.status}).`), { status: tokenRes.status })
+      }
+      const tokens = parseToken(await tokenRes.json(), sessionPending.base)
+      let models = []
+      try {
+        const modelsRes = await fetch(`${sessionPending.base}${API_PATHS.models}`, {
+          headers: { authorization: `Bearer ${tokens.access_token}`, accept: 'application/json' }
+        })
+        if (modelsRes.ok) {
+          models = parseModelsLenient(await modelsRes.json())
+        }
+      } catch (err) {
+        console.warn('[enterprise] failed to fetch models after session login', err)
+      }
+      sessionAuth = {
+        base: sessionPending.base,
+        tokens,
+        user: tokens.user,
+        tenant: tokens.tenant
+      }
+      sessionPending = null
+      state = {
+        connected: true,
+        secureStorageAvailable: true,
+        storageMode: 'session',
+        phase: 'connected',
+        connectionKey: randomUUID(),
+        revision: (account.revision || 0) + 1,
+        base: sessionAuth.base,
+        user: tokens.user,
+        tenant: tokens.tenant,
+        models,
+        modelsAvailable: models.length > 0
+      }
+    }
     if (account.connectionKey !== state.connectionKey) {
       await market?.stop()
       await workbenches?.stop()
@@ -402,23 +536,52 @@ export function apply(ctx) {
   })
   registerJsonRoute(connection, LOCAL_PATHS.refreshModels, ['POST'], async (request) => {
     await readJson(request)
-    if (!broker) return disabledState()
-    const state = await brokerJson('/v1/models/refresh', {})
-    ingestEnterpriseState(state)
-    return state
+    if (broker) {
+      const state = await brokerJson('/v1/models/refresh', {})
+      ingestEnterpriseState(state)
+      return state
+    }
+    if (sessionAuth) {
+      try {
+        const modelsRes = await fetch(`${sessionAuth.base}${API_PATHS.models}`, {
+          headers: { authorization: `Bearer ${sessionAuth.tokens.access_token}`, accept: 'application/json' }
+        })
+        if (modelsRes.ok) {
+          const models = parseModelsLenient(await modelsRes.json())
+          account = {
+            ...account,
+            models,
+            modelsAvailable: models.length > 0,
+            revision: (account.revision || 0) + 1
+          }
+          ingestEnterpriseState(account)
+        }
+      } catch (err) {
+        console.warn('[enterprise] failed to refresh models', err)
+      }
+    }
+    return account
   })
   registerJsonRoute(connection, LOCAL_PATHS.refresh, ['POST'], async (request) => {
     await readJson(request)
-    if (!broker) return disabledState()
-    const state = await brokerJson('/v1/refresh', {})
-    ingestEnterpriseState(state)
-    return state
+    if (broker) {
+      const state = await brokerJson('/v1/refresh', {})
+      ingestEnterpriseState(state)
+      return state
+    }
+    return account
   })
   registerJsonRoute(connection, LOCAL_PATHS.logout, ['POST'], async (request) => {
     await readJson(request)
-    if (!broker) return disabledState()
-    const state = await brokerJson('/v1/logout', {})
-    await market.stop()
+    let state
+    if (broker) {
+      state = await brokerJson('/v1/logout', {})
+    } else {
+      sessionAuth = null
+      sessionPending = null
+      state = disabledState()
+    }
+    await market?.stop()
     await workbenches?.stop()
     capabilityPolicy?.reset()
     if ((!state.connected && account.connected) || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
@@ -427,10 +590,10 @@ export function apply(ctx) {
     return { ...state, allowThirdPartyPlugins: false, allowThirdPartyWorkbenches: false }
   })
   const llm = ctx.llm
-  if (llm && broker) {
-    const handle = startEnterpriseLlm(ctx, llm, broker)
+  if (llm) {
+    const handle = startEnterpriseLlm(ctx, llm, broker, () => sessionAuth)
     ingestEnterpriseState = handle.ingest
-    if (typeof ctx.effect === 'function') {
+    if (typeof ctx.effect === 'function' && broker) {
       ctx.effect(() => handle.dispose, 'dsh-desktop-enterprise: poll broker state')
     }
   }
@@ -464,7 +627,7 @@ function contentSafetyLocale(request) {
   }
 }
 
-function startEnterpriseLlm(ctx, llm, broker) {
+function startEnterpriseLlm(ctx, llm, broker, getSessionAuth) {
   const safetyLocale = new AsyncLocalStorage()
   const disposeSafetyLocale = ctx.on('connection/request', (request, _response, next) =>
     safetyLocale.run(contentSafetyLocale(request), next))
@@ -479,7 +642,7 @@ function startEnterpriseLlm(ctx, llm, broker) {
   const titles = createAuditTitleSync({
     ctx,
     async send(body, signal) {
-      if (!broker) throw new Error('Enterprise broker unavailable.')
+      if (!broker) return { ok: true }
       const response = await fetch(new URL('/v1/audit/conversations/title', broker.origin), {
         method: 'POST', redirect: 'error', signal,
         headers: { authorization: `Bearer ${broker.capability}`, 'content-type': 'application/json' },
@@ -509,8 +672,36 @@ function startEnterpriseLlm(ctx, llm, broker) {
         return undefined
       }
     },
-    request: (body, signal, headers) => brokerChat(broker, body, signal, pickAttributionHeaders(headers)),
-    requestResponses: (body, signal, headers, connectionKey) => brokerChat(broker, body, signal, pickAttributionHeaders(headers), connectionKey),
+    request: (body, signal, headers) => {
+      if (broker) return brokerChat(broker, body, signal, pickAttributionHeaders(headers))
+      const session = getSessionAuth?.()
+      if (!session?.tokens?.access_token) unavailable()
+      return fetch(`${session.base}${API_PATHS.chat}`, {
+        method: 'POST',
+        signal,
+        headers: {
+          authorization: `Bearer ${session.tokens.access_token}`,
+          'content-type': 'application/json',
+          ...pickAttributionHeaders(headers)
+        },
+        body: JSON.stringify(body)
+      })
+    },
+    requestResponses: (body, signal, headers, connectionKey) => {
+      if (broker) return brokerChat(broker, body, signal, pickAttributionHeaders(headers), connectionKey)
+      const session = getSessionAuth?.()
+      if (!session?.tokens?.access_token) unavailable()
+      return fetch(`${session.base}${API_PATHS.responses}`, {
+        method: 'POST',
+        signal,
+        headers: {
+          authorization: `Bearer ${session.tokens.access_token}`,
+          'content-type': 'application/json',
+          ...pickAttributionHeaders(headers)
+        },
+        body: JSON.stringify({ ...body, connectionKey })
+      })
+    },
     connectionKey: () => latest.connectionKey,
     contentSafetyFormatterFor: options => safetyLocaleScope.formatterFor(options),
     onReplayDegrade: (reason) => ctx.logger?.info?.(`Enterprise Responses replay degraded: ${reason}`),
@@ -537,9 +728,9 @@ function startEnterpriseLlm(ctx, llm, broker) {
   }
 
   const poll = async () => {
-    if (stopped) return
+    if (stopped || !broker) return
     try {
-      ingest(broker ? await requestBrokerJson(broker, '/v1/state') : disabledState())
+      ingest(await requestBrokerJson(broker, '/v1/state'))
     } catch {
       // Keep the last published catalog until the next local snapshot.
     }
@@ -551,7 +742,7 @@ function startEnterpriseLlm(ctx, llm, broker) {
     timer = setTimeout(() => { void poll() }, delay)
     timer.unref?.()
   }
-  void poll()
+  if (broker) void poll()
   return {
     ingest(state) {
       if (stopped) return

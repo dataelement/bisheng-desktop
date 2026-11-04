@@ -56,4 +56,6 @@ export function createGenerationPackageBackend(options: {
   environment?: NodeJS.ProcessEnv
   spawnProcess?: unknown
   runInstall?: unknown
+  /** Runs under the registry lock before staging and before publication. */
+  authorizeInstall?: (request: ProfileBundleInstallRequest) => Promise<void> | void
 }): ProfileBundlePackageBackend

@@ -690,3 +690,41 @@ it('keeps a session failure bounded while the host publishes a new error epoch',
   expect(usage).toHaveBeenCalledTimes(1)
   expect(document.querySelector('[role=alert]')).not.toBeNull()
 })
+
+it.each(['zh', 'en'])('adapts Usage, AccountLauncher, and About to pure Web mode without Desktop preload bridges (%s)', async language => {
+  const f = await fixture(language)
+  delete window.dshEnterpriseChat
+  delete window.dshDesktop
+  f.setAccount({
+    connected: true,
+    user: { display_name: 'WebUser', username: 'webuser' },
+    usage: { used: 100_000_000, limit: 12_000_000_000, quota_state: 'available' },
+    models: [{ id: 'web-model', display_name: 'Web Model' }]
+  })
+
+  // 1. Usage in pure Web mode renders enterprise credits & models instead of the Desktop restart prompt.
+  const usageEntry = f.registrations.find(row => row.options.id === 'desktop-usage')
+  await f.mount(usageEntry.Component, {
+    ...usageEntry.options.inject(),
+    credits: '11,900.0',
+    creditsLabel: language === 'zh' ? '剩余积分' : 'Credits remaining',
+    models: React.createElement('section', { className: 'dshEnterpriseManagedModels' }, 'Web Model')
+  })
+  expect(document.body.textContent).not.toContain(language === 'zh' ? '请完全退出并重新启动客户端' : 'Quit and restart the desktop app')
+  expect(document.querySelector('.dshUsageOverview')).not.toBeNull()
+  expect(document.querySelector('.dshUsageOverview dd').textContent).toBe('11,900.0')
+  expect(document.querySelector('.dshEnterpriseManagedModels').textContent).toBe('Web Model')
+
+  // 2. AccountLauncher in pure Web mode omits Desktop-only "Messages" (approvals) and "Connect phone" items.
+  await f.render('settings.launcher', { wide: true, openSettings: vi.fn(), settingsOpen: false })
+  await click(document.querySelector('.dshAccountTrigger'))
+  const webMenuLabels = language === 'zh'
+    ? ['设置', '账号设置', '退出登录']
+    : ['Settings', 'Account settings', 'Log out']
+  expect([...document.querySelectorAll('[role=menuitem]')].map(node => node.textContent)).toEqual(webMenuLabels)
+
+  // 3. About in pure Web mode omits Desktop-only update/log/safe-mode action buttons.
+  const aboutEntry = f.registrations.find(row => row.options.id === 'desktop-about')
+  await f.mount(aboutEntry.Component, aboutEntry.options.inject())
+  expect(document.querySelectorAll('button')).toHaveLength(0)
+})

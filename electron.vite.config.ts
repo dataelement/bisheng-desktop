@@ -11,14 +11,17 @@ const { dependencies } = require('./package.json') as { dependencies: Record<str
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin(), packagedImportsPlugin(dependencies)]
+    plugins: [externalizeDepsPlugin(), packagedImportsPlugin(dependencies)],
+    build: {
+      rollupOptions: { input: { index: resolve('src/main/product-entry.ts') } }
+    }
   },
   preload: {
     plugins: [externalizeDepsPlugin(), packagedImportsPlugin(dependencies, true)],
     build: {
       rollupOptions: {
         input: {
-          index: resolve('src/preload/index.ts'),
+          index: resolve('src/preload/product-entry.ts'),
           'enterprise-chat': resolve('src/preload/enterprise-chat.ts')
         },
         output: {

@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join } from 'node:path'
-import { stripEnterpriseEnvironment } from '../enterprise/enterprise-env'
+import { stripEnterpriseEnvironment } from './extension-env'
 import { resolveEnvironmentPath } from './harness-runtime'
 import {
   HIDE_CONSOLE_BOOTSTRAP_ENV,

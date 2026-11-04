@@ -13,6 +13,7 @@ import {
   type SafeStorageCryptoAdapter,
   SecureEnterpriseCredentialVault
 } from './secure-credential-vault'
+import { createNodeKeySafeStorage } from './secure-storage'
 
 export interface EnterpriseDesktopRuntime {
   snapshot(): EnterprisePublicState
@@ -28,15 +29,19 @@ export async function startEnterpriseDesktop(options: {
   desktopVersion?: string
   activateDesktop?: () => Promise<void> | void
   userDataPath: string
-  safeStorage: SafeStorageCryptoAdapter
+  safeStorage?: SafeStorageCryptoAdapter
   fetchImpl: EnterpriseFetch
   allowInsecureLoopback: boolean
   note?: (line: string) => void
 }): Promise<EnterpriseDesktopRuntime> {
   await sweepWorkbenchVerifyDirectory().catch(() => undefined)
+  const safeStorage = options.safeStorage ?? createNodeKeySafeStorage(
+    join(options.userDataPath, '.enterprise-vault.key'),
+    process.env.DSH_ENTERPRISE_MASTER_KEY
+  )
   const vault = new SecureEnterpriseCredentialVault(
     join(options.userDataPath, ENTERPRISE_VAULT_FILENAME),
-    options.safeStorage
+    safeStorage
   )
   const listeners = new Set<(state: EnterprisePublicState) => void>()
   const service = new EnterpriseService({
@@ -62,7 +67,13 @@ export async function startEnterpriseDesktop(options: {
       options.note?.(parts.join(' '))
     }
   })
-  await service.restore()
+  try {
+    await service.restore()
+  } catch (error) {
+    try { await service.stop() }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Enterprise startup and cleanup failed') }
+    throw error
+  }
 
   let broker: EnterpriseCredentialBroker | undefined
   try {
@@ -73,6 +84,8 @@ export async function startEnterpriseDesktop(options: {
     options.note?.('[enterprise] broker_start_failed')
   }
 
+  let brokerStopped = false
+  let serviceStopped = false
   return {
     snapshot: () => service.snapshot(),
     webSession: (key) => service.webSession(key),
@@ -97,8 +110,14 @@ export async function startEnterpriseDesktop(options: {
       broker?.rotateCapability()
     },
     async stop() {
-      await broker?.stop()
-      await service.stop()
+      const errors: unknown[] = []
+      if (!brokerStopped) {
+        try { await broker?.stop(); brokerStopped = true } catch (error) { errors.push(error) }
+      }
+      if (!serviceStopped) {
+        try { await service.stop(); serviceStopped = true } catch (error) { errors.push(error) }
+      }
+      if (errors.length) throw new AggregateError(errors, 'Enterprise shutdown failed')
     }
   }
 }

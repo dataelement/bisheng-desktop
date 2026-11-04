@@ -3,8 +3,8 @@ import { promisify } from 'node:util'
 import { createRequire } from 'node:module'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
-import { inject as enterpriseInject } from '../packages/dsh-desktop-enterprise/index.js'
+import { describe, expect, it, vi } from 'vitest'
+import { apply as applyEnterprise, inject as enterpriseInject } from '../packages/dsh-desktop-enterprise/index.js'
 import {
   ACCOUNT_ERROR_COPY,
   LEGACY_ACCOUNT_PHRASES,
@@ -99,7 +99,14 @@ describe('DSH Desktop enterprise package', () => {
 
     expect(packageJson.dsh?.client).toBeTruthy()
     expect(packageJson.dsh?.client).toMatchObject({
-      inject: ['@deepseek-ai/dsh-client-locale', '@deepseek-ai/dsh-client-ui-primitives', '@deepseek-ai/dsh-client-ui-settings', '@deepseek-ai/dsh-client-ui-settings-plugins']
+      inject: [
+        '@deepseek-ai/dsh-client-locale',
+        '@deepseek-ai/dsh-client-ui-primitives',
+        '@deepseek-ai/dsh-client-ui-settings',
+        '@deepseek-ai/dsh-client-ui-settings-general',
+        '@deepseek-ai/dsh-client-ui-settings-plugins',
+        '@deepseek-ai/dsh-client-ui-sidebar'
+      ]
     })
     expect(packageJson.exports?.['./client']).toBe('./client.js')
   })
@@ -307,5 +314,47 @@ it('keeps sign-in focused and shows unified credits without model quotas', async
     const enterpriseBlock = nextPlugin === -1 ? rest : rest.slice(0, nextPlugin)
     expect(enterpriseBlock).toContain('name: dsh-desktop-enterprise')
     expect(enterpriseBlock).not.toMatch(/\binject:/u)
+  })
+
+  it('downgrades to session storage without broker and exposes idle state with secureStorageAvailable true', async () => {
+    const routes = new Map<string, (req: Request) => Promise<Response>>()
+    const ctx: Record<string, unknown> = {
+      provide: vi.fn(),
+      get: vi.fn(),
+      inject: vi.fn(),
+      on: vi.fn(() => () => undefined),
+      effect: vi.fn(),
+      connection: {
+        fetch: {
+          register: (spec: { path: string, fetch: (req: Request) => Promise<Response> }) => {
+            routes.set(spec.path, spec.fetch)
+            return () => { routes.delete(spec.path) }
+          }
+        }
+      },
+      loader: {}
+    }
+    applyEnterprise(ctx as unknown as Parameters<typeof applyEnterprise>[0], {})
+    const stateHandler = routes.get('/api/enterprise.state')
+    expect(stateHandler).toBeTypeOf('function')
+    const res = await stateHandler!(new Request('http://127.0.0.1/api/enterprise.state'))
+    expect(res.status).toBe(200)
+    const state = await res.json()
+    expect(state).toMatchObject({
+      connected: false,
+      secureStorageAvailable: true,
+      storageMode: 'session',
+      phase: 'idle'
+    })
+  })
+
+  it('replaces official account settings section by disabling ui-settings-account and setting order -10', async () => {
+    const patchYaml = await readFile(path.join(projectRoot, 'packages/dsh-desktop-enterprise/cordis.patch.yml'), 'utf8')
+    expect(patchYaml).toContain('- id: ui-settings-account\n  disabled: true')
+    expect(patchYaml).toContain('id: dsh-desktop-enterprise')
+
+    const client = await readFile(path.join(projectRoot, 'packages/dsh-desktop-enterprise/client.js'), 'utf8')
+    expect(client).toContain('order: -10')
+    expect(client).toContain("state?.secureStorageAvailable === false && state?.storageMode !== 'session'")
   })
 })

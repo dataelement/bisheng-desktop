@@ -2,6 +2,8 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { createTrustedIpcRegistry } from '../src/main/trusted-ipc-registry'
+import { registerEnterpriseChatIpc } from '../src/main/enterprise/chat-ipc'
 
 const mocks = vi.hoisted(() => ({
   ipc: new Map<string, (...args: unknown[]) => unknown>(),
@@ -171,4 +173,23 @@ it('does not expose the removed version-list and rollback handlers', () => {
   expect(mocks.ipc.has('updates:list-versions')).toBe(false)
   expect(mocks.ipc.has('updates:install-version')).toBe(false)
   expect(mocks.updater.quitAndInstall).not.toHaveBeenCalled()
+})
+
+it('keeps Chat handlers until before-quit when the installer throws', async () => {
+  const handlers = new Map<string, (...args: never[]) => unknown>()
+  const registry = createTrustedIpcRegistry({
+    handle(channel, handler) { handlers.set(channel, handler) },
+    removeHandler(channel) { handlers.delete(channel) }
+  }, () => {})
+  const dispose = registerEnterpriseChatIpc(registry, () => undefined, () => undefined)
+  start()
+  emit('update-downloaded', { version: '1.0.2' })
+  mocks.updater.quitAndInstall.mockImplementationOnce(() => { throw new Error('installer failed') })
+  await manager.installDownloadedUpdate()
+  expect(mocks.prepareToInstall).toHaveBeenCalledOnce()
+  expect(manager.getUpdateStatus()).toMatchObject({ phase: 'error', message: 'installer failed' })
+  expect(handlers.size).toBe(8)
+  dispose()
+  dispose()
+  expect(handlers.size).toBe(0)
 })

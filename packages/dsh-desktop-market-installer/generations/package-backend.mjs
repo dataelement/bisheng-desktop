@@ -91,7 +91,8 @@ export function createGenerationPackageBackend(options) {
     pnpmEntryPath,
     environment = process.env,
     spawnProcess,
-    runInstall
+    runInstall,
+    authorizeInstall
   } = options
 
   return Object.freeze({
@@ -144,6 +145,8 @@ export function createGenerationPackageBackend(options) {
 
         const result = await withRegistryLock(dshHome, async () => {
           request.signal?.throwIfAborted()
+          await authorizeInstall?.(request)
+          request.signal?.throwIfAborted()
           const beforeDesired = await readDesired(dshHome)
           const beforeGenerations = await listGenerations(dshHome)
           const install = await installGeneration({
@@ -178,6 +181,8 @@ export function createGenerationPackageBackend(options) {
           if (!peers.ok) {
             return { ok: false, detail: `generation peer validation failed: ${peers.problems.join('; ')}` }
           }
+          await authorizeInstall?.(request)
+          request.signal?.throwIfAborted()
           const replacedGeneration = beforeGenerations.some(item =>
             beforeDesired.includes(item.id) && item.pluginName === generation.pluginName
           )

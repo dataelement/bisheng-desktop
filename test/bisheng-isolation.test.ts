@@ -16,11 +16,12 @@ describe('BISHENG installation identity', () => {
 
   it('does not import an existing ~/.dsh home during startup', async () => {
     const main = await readFile(path.join(projectRoot, 'src', 'main', 'index.ts'), 'utf8')
+    const identity = await readFile(path.join(projectRoot, 'src', 'main', 'product-identity.ts'), 'utf8')
 
     expect(main).not.toContain('maybeImportWebHome')
     expect(main).not.toContain('shouldOfferWebHomeImport')
-    expect(main).toContain("join(app.getPath('appData'), 'bisheng')")
-    expect(main).toContain("join(app.getPath('appData'), 'bisheng-dev')")
+    expect(identity).toContain("productionDataDirectory: 'bisheng'")
+    expect(identity).toContain("developmentDataDirectory: 'bisheng-dev'")
     expect(main).not.toContain("join(app.getPath('appData'), 'dsh-desktop')")
   })
 

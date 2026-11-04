@@ -8,6 +8,7 @@
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
+    "./market-executor": "./market-executor.mjs",
     "./generations/registry": {
       "types": "./generations/registry.d.ts",
       "default": "./generations/registry.mjs"
@@ -31,6 +32,10 @@
     "./market-registry": {
       "types": "./market-registry.d.ts",
       "default": "./market-registry.mjs"
+    },
+    "./profile-protection": {
+      "types": "./profile-protection.d.ts",
+      "default": "./profile-protection.mjs"
     },
     "./enterprise-policy": {
       "types": "./enterprise-policy.d.ts",
