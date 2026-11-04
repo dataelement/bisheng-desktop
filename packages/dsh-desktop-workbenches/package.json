@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop-workbenches",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Awesome workbench catalog, pinned navigation and native conversation frame for DSH Desktop.",
   "private": true,
   "type": "module",
@@ -11,6 +11,9 @@
     "./package.json": "./package.json"
   },
   "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "inject": [

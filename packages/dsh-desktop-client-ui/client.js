@@ -441,10 +441,39 @@ if (clearHistory) { historyRequest++; historyDirty = false; deletion.reset() }
         if (signedIn) window.dispatchEvent(new CustomEvent('dsh-desktop:close-settings'))
         if (next.connected && next.phase === 'ready' && (refresh || identityChanged || signedIn || conversationChanged || becameReady)) void refreshHistory()
       }
+      const readState = async () => {
+        if (window.dshEnterpriseChat?.state) {
+          return window.dshEnterpriseChat.state()
+        }
+        try {
+          const res = await fetch('/api/enterprise.state')
+          if (res.ok) {
+            const data = await res.json()
+            if (data?.connected) {
+              return {
+                connected: true,
+                phase: 'ready',
+                base: data.base,
+                user: data.user,
+                tenant: data.tenant,
+                navigation: {
+                  entries: [
+                    { id: 'knowledge', label: '知识空间', path: '/knowledge', active: false, primary: true },
+                    { id: 'apps', label: '应用中心', path: '/apps', active: false, primary: true },
+                    { id: 'skills', label: '企业技能', path: '/skills', active: false, primary: true }
+                  ],
+                  homeLabel: '首页'
+                }
+              }
+            }
+          }
+        } catch {}
+        return { connected: false, phase: 'idle' }
+      }
       const sync = async () => {
         const request = ++revision
         try {
-          const next = await window.dshEnterpriseChat?.state()
+          const next = await readState()
           if (!active || request !== revision || !next) return
           applyState(next, true)
         } catch { /* A missed focus read must not paint the reconnect page. */ }
@@ -453,7 +482,7 @@ if (clearHistory) { historyRequest++; historyDirty = false; deletion.reset() }
       const readHostState = async () => {
         const request = ++revision
         try {
-          const next = await window.dshEnterpriseChat?.state()
+          const next = await readState()
           if (!active || request !== revision || !next) return
           applyState(next)
         } catch { /* Keep the last host snapshot. A missed read is not a dead session. */ }
@@ -480,12 +509,21 @@ if (clearHistory) { historyRequest++; historyDirty = false; deletion.reset() }
           window.dispatchEvent(new CustomEvent('dsh-desktop:open-settings-section', { detail: { id: 'enterprise-account' } }))
         },
         async openPage(id) {
-          if (!value.connected || !value.navigation?.entries.some(entry => entry.id === id)) return
-          ctx.layout.selectPanel(null)
-          publish({ mode: 'chat', pageId: id })
-          const epoch = value.epoch
-          try { await window.dshEnterpriseChat.openPage(id) }
-          catch { if (active && epoch === value.epoch) void readHostState() }
+          if (!value.connected) return
+          if (window.dshEnterpriseChat?.openPage) {
+            if (!value.navigation?.entries.some(entry => entry.id === id)) return
+            ctx.layout.selectPanel(null)
+            publish({ mode: 'chat', pageId: id })
+            const epoch = value.epoch
+            try { await window.dshEnterpriseChat.openPage(id) }
+            catch { if (active && epoch === value.epoch) void readHostState() }
+          } else {
+            const base = value.base || ''
+            if (base) {
+              const url = `${base}/${id}`
+              window.open(url, '_blank')
+            }
+          }
         },
         choose(mode) {
           if (!select(mode)) return false

@@ -320,23 +320,60 @@ window.__ModuleLoader__.load({
           opacity: .5;
           cursor: default;
         }
+        .dshEnterpriseWorkspaceBtn {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          height: 28px;
+          padding: 0 10px;
+          border: 1px solid var(--dsw-alias-border-l3, var(--ds-border, #ccd0d5));
+          border-radius: var(--dsw-radius-sm, 6px);
+          color: var(--dsw-alias-label-primary, inherit);
+          background: transparent;
+          font-size: 12px;
+          font-weight: 500;
+          line-height: 26px;
+          text-decoration: none;
+          cursor: pointer;
+          white-space: nowrap;
+          transition: background .15s ease, border-color .15s ease, color .15s ease;
+        }
+        .dshEnterpriseWorkspaceBtn:hover {
+          color: var(--dsw-alias-label-primary, inherit);
+          background: var(--dsw-alias-interactive-bg-hover, rgba(0, 0, 0, .04));
+          border-color: var(--dsw-alias-border-l2, #b0b4ba);
+        }
+        .dshEnterpriseWorkspaceBtn:active {
+          background: var(--dsw-alias-interactive-bg-active, rgba(0, 0, 0, .08));
+        }
+        .dshEnterpriseWorkspaceBtn:focus-visible {
+          outline: 2px solid var(--dsw-alias-label-primary, #202124);
+          outline-offset: 2px;
+        }
+        .dshEnterpriseWorkspaceIcon {
+          display: inline-flex;
+          align-items: center;
+          font-size: 11px;
+          opacity: .75;
+        }
         .dshEnterpriseLearnMoreShell {
           display: inline-flex;
         }
         .dshEnterpriseLearnMore {
           display: inline-flex;
           align-items: center;
-          gap: 5px;
-          min-height: 32px;
-          padding: 4px 8px;
+          gap: 4px;
+          height: 28px;
+          padding: 0 8px;
           border: 0;
-          border-radius: 6px;
+          border-radius: var(--dsw-radius-sm, 6px);
           color: var(--dsw-alias-label-secondary);
           background: transparent;
           font: inherit;
           font-size: 12px;
           cursor: pointer;
           white-space: nowrap;
+          transition: background .15s ease, color .15s ease;
         }
         .dshEnterpriseLearnMore:hover {
           color: var(--dsw-alias-label-primary);
@@ -532,6 +569,15 @@ window.__ModuleLoader__.load({
           color: #f2f3f5;
           background: #1f2024;
           border-color: #50535c;
+        }
+        body[data-ds-dark-theme] .dshEnterpriseWorkspaceBtn {
+          color: #f2f3f5;
+          border-color: var(--dsw-alias-border-l3, #50535c);
+          background: transparent;
+        }
+        body[data-ds-dark-theme] .dshEnterpriseWorkspaceBtn:hover {
+          background: rgba(255, 255, 255, .08);
+          border-color: #727680;
         }
         body[data-ds-dark-theme] .dshEnterpriseError {
           color: #ffb4ab;
@@ -1229,12 +1275,14 @@ window.__ModuleLoader__.load({
 
       const openWorkspaceLink = connected && state?.base
         ? h('a', {
-            className: 'dshEnterpriseButton',
+            className: 'dshEnterpriseWorkspaceBtn',
             href: `${state.base.replace(/\/+$/u, '')}/workspace/`,
             target: '_blank',
-            rel: 'noopener noreferrer',
-            style: { textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px' }
-          }, t('openWorkspace'))
+            rel: 'noopener noreferrer'
+          },
+            t('openWorkspace'),
+            h('span', { className: 'dshEnterpriseWorkspaceIcon', 'aria-hidden': 'true' }, '↗')
+          )
         : null
 
       return h('section', { className: 'dshEnterprise' },

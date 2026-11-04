@@ -9,11 +9,20 @@ import { createStateStore, MAX_STATE_BYTES, StateError } from './state.mjs'
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { consumeLocalWorkbenchCapability, localCapabilityMatches, LOCAL_WORKBENCH_CAPABILITY_HEADER, readLocalWorkbenchPackage } from './local-install.mjs'
 import { dirname, isAbsolute, join } from 'node:path'
+import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 export const name = 'dsh-desktop-workbenches'
 export const inject = ['connection']
-export const Config = Schema.object({ root: Schema.string().required() })
+
+function defaultWorkbenchRoot() {
+  const home = process.env.DSH_HOME || join(homedir(), '.dsh')
+  return join(home, 'desktop-workbenches')
+}
+
+export const Config = Schema.object({
+  root: Schema.string().default(defaultWorkbenchRoot())
+})
 
 export function catalogReadOptions(request) {
   const params = new URL(request.url).searchParams
@@ -78,13 +87,14 @@ async function recordLocalInstall(root, install) {
 }
 
 export function apply(ctx, config) {
-  const store = createStateStore(config.root)
+  const root = config?.root || defaultWorkbenchRoot()
+  const store = createStateStore(root)
   const readCatalog = createCatalogReader({
     fetch: selectMarketFetch(),
-    cachePath: join(config.root, 'workbench-catalog-cache.json'),
+    cachePath: join(root, 'workbench-catalog-cache.json'),
     onWarning: error => ctx.logger?.warn?.(error)
   })
-  const marketInstalls = createMarketInstallStore(config.root)
+  const marketInstalls = createMarketInstallStore(root)
   // Providers must use the same persisted ownership as Desktop, never a second
   // settings namespace that could accidentally authorize an ordinary session.
   ctx.effect(() => ctx.reflect.provide('desktopWorkbenchOwnership', {
@@ -262,6 +272,9 @@ export function apply(ctx, config) {
           const target = await resolveInstallTarget(entry)
           try {
             await requireReplacement([target.expectedPluginName])
+            if (!ctx.desktopPnpm?.installWorkbenchGeneration) {
+              throw new MarketInstallError('Workbench package installation is unavailable in this environment.', 503)
+            }
             let handle
             try {
               handle = ctx.desktopPnpm.installWorkbenchGeneration({
@@ -270,7 +283,7 @@ export function apply(ctx, config) {
                 expectedPluginName: target.expectedPluginName,
                 expectedVersion: target.expectedVersion,
                 npmIntegrity: target.npmIntegrity
-              }, config.root)
+              }, root)
             } catch (error) { throw new MarketInstallError(error instanceof Error ? error.message : String(error), 409) }
             await awaitHandle(handle)
           } finally { await target.cleanup() }
@@ -294,6 +307,9 @@ export function apply(ctx, config) {
           }
           const payload = await readPayload(request, 4096, 'Request is too large.')
           const pkg = await readLocalWorkbenchPackage(payload?.path)
+          if (!ctx.desktopPnpm?.installWorkbenchGeneration) {
+            throw new MarketInstallError('Local workbench install is unavailable in this environment.', 503)
+          }
           let handle
           try {
             handle = ctx.desktopPnpm.installWorkbenchGeneration({
@@ -302,7 +318,7 @@ export function apply(ctx, config) {
               path: pkg.directory,
               expectedPluginName: pkg.name,
               expectedVersion: pkg.version
-            }, config.root)
+            }, root)
           } catch (error) { throw new MarketInstallError(error instanceof Error ? error.message : String(error), 409) }
           await awaitHandle(handle)
           const install = {
@@ -312,7 +328,7 @@ export function apply(ctx, config) {
             path: pkg.directory,
             installedAt: new Date().toISOString()
           }
-          await recordLocalInstall(config.root, install)
+          await recordLocalInstall(root, install)
           return Response.json({ install, restartRequired: true }, { headers: { 'cache-control': 'no-store' } })
         } catch (error) { return installFailure(error, 'Could not install the local workbench.') }
       }
@@ -326,8 +342,11 @@ export function apply(ctx, config) {
           const { id } = await catalogPayloadFrom(request)
           const install = (await marketInstalls.read())[id]
           if (!install) throw new MarketInstallError('This workbench was not installed from the workbench market.', 404)
+          if (!ctx.desktopPnpm?.removeWorkbenchGeneration) {
+            throw new MarketInstallError('Workbench package uninstallation is unavailable in this environment.', 503)
+          }
           let handle
-          try { handle = ctx.desktopPnpm.removeWorkbenchGeneration(install.pluginName, config.root) }
+          try { handle = ctx.desktopPnpm.removeWorkbenchGeneration(install.pluginName, root) }
           catch (error) { throw new MarketInstallError(error instanceof Error ? error.message : String(error), 409) }
           await awaitHandle(handle)
           await marketInstalls.forget(id)
