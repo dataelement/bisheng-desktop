@@ -104,6 +104,9 @@ window.__ModuleLoader__.load({
       loginAgain: '重新登录',
       loggingIn: '等待浏览器授权…',
       learnMore: '了解企业版',
+      openWorkspace: '进入企业工作台',
+      usedCredits: '已消耗积分',
+      totalCredits: '总分配额度',
       vision: '视觉',
       visionHint: '企业已开启图片输入',
       usageLabel: '剩余积分',
@@ -171,6 +174,9 @@ window.__ModuleLoader__.load({
       loginAgain: 'Sign in again',
       loggingIn: 'Waiting for browser authorization…',
       learnMore: 'Learn about Enterprise',
+      openWorkspace: 'Open Enterprise Workspace',
+      usedCredits: 'Used Credits',
+      totalCredits: 'Total Allocation',
       vision: 'Vision',
       visionHint: 'Image input enabled by your enterprise',
       usageLabel: 'Credits remaining',
@@ -561,6 +567,7 @@ window.__ModuleLoader__.load({
 
     let marketTranslate
     let accountTranslate
+    let settingsTranslate = (key) => key
     function marketLabels() { return Object.fromEntries(Object.keys(marketEn).map(key => [key, marketTranslate(key)])) }
     function marketStatusCopy(cause) {
       const code = typeof cause?.errorCode === 'string' ? cause.errorCode : ''
@@ -1217,19 +1224,51 @@ window.__ModuleLoader__.load({
             }, t('cancel'))))
         : null
 
+      const openWorkspaceLink = connected && state?.base
+        ? h('a', {
+            className: 'dshEnterpriseButton',
+            href: `${state.base.replace(/\/+$/u, '')}/workspace/`,
+            target: '_blank',
+            rel: 'noopener noreferrer',
+            style: { textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px' }
+          }, t('openWorkspace'))
+        : null
+
       return h('section', { className: 'dshEnterprise' },
         h('div', { className: 'dshEnterpriseTitleRow' },
           h('h2', null, t(connected ? 'title' : 'signInTitle')),
-          renderLearnMoreButton(t)),
+          h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } },
+            openWorkspaceLink,
+            renderLearnMoreButton(t))),
         connected ? null : h('p', { className: 'dshEnterpriseLoginIntro' }, t('signInIntro')),
         status,
-        connected && renderSlot?.('desktop.account.usage', {
-          credits: usageText(state.usage, document.documentElement.lang, t),
-          creditsLabel: t('usageLabel'), creditsHelp: t('creditsHelp'),
-          models: h('section', { className: 'dshEnterpriseManagedModels' }, accountContent)
-        }, { fallback: h(React.Fragment, null,
-          h('p', { title: t('creditsHelp') }, `${t('usageLabel')}: ${usageText(state.usage, document.documentElement.lang, t)}`),
-          h('section', { className: 'dshEnterpriseManagedModels' }, accountContent)) }),
+        connected && (
+          typeof renderSlot === 'function'
+            ? renderSlot('desktop.account.usage', {
+                credits: usageText(state.usage, document.documentElement.lang, t),
+                creditsLabel: t('usageLabel'),
+                creditsHelp: t('creditsHelp'),
+                usage: state.usage,
+                models: h('section', { className: 'dshEnterpriseManagedModels' }, accountContent)
+              }, {
+                fallback: h(Usage, {
+                  t: settingsTranslate,
+                  credits: usageText(state.usage, document.documentElement.lang, t),
+                  creditsLabel: t('usageLabel'),
+                  creditsHelp: t('creditsHelp'),
+                  usage: state.usage,
+                  models: h('section', { className: 'dshEnterpriseManagedModels' }, accountContent)
+                })
+              })
+            : h(Usage, {
+                t: settingsTranslate,
+                credits: usageText(state.usage, document.documentElement.lang, t),
+                creditsLabel: t('usageLabel'),
+                creditsHelp: t('creditsHelp'),
+                usage: state.usage,
+                models: h('section', { className: 'dshEnterpriseManagedModels' }, accountContent)
+              })
+        ),
         connected ? logoutButton : accountContent,
         manualFallback,
         errorPanel,
@@ -1349,8 +1388,8 @@ window.__ModuleLoader__.load({
             failure && h('button', { type: 'button', onClick: () => { setFailed(false); setState(previous => ({ ...previous, phase: 'loading', settingsFailure: undefined, settingsReady: false })); void window.dshEnterpriseChat.retry().catch(() => { if (alive.current) setFailed(true) }) } }, t('retry'))))
     }
 
-    function Usage({ t, credits, creditsLabel, creditsHelp, models }) {
-      const [state, setState] = useState({ phase: 'loading' })
+    function Usage({ t, credits, creditsLabel, creditsHelp, models, usage }) {
+      const [state, setState] = useState(() => (typeof window !== 'undefined' && window.dshEnterpriseChat ? { phase: 'loading' } : { phase: 'web' }))
       const [metric, setMetric] = useState('tokens')
       const [attempt, setAttempt] = useState(0)
       const id = React.useId()
@@ -1401,7 +1440,25 @@ window.__ModuleLoader__.load({
       const unit = (quota?.limit === -1 ? quota.used : quota?.limit) < 1 ? 'MB' : 'GB'
       const failure = key => h('div', { className: 'dshSettingsStatus', role: 'alert' }, h('p', null, t(key)), h('button', { type: 'button', onClick: () => setAttempt(value => value + 1) }, t('again')))
       let content
-      if (state.phase === 'web') content = h('dl', { className: 'dshUsageOverview' }, h('div', { title: creditsHelp }, h('dt', null, creditsLabel), h('dd', null, credits ?? t('unavailable'))))
+      if (state.phase === 'web') {
+        const items = [
+          [creditsLabel, credits ?? t('unavailable'), creditsHelp]
+        ]
+        if (usage && typeof usage.used === 'number') {
+          items.push([accountTranslate?.('usedCredits') || '已消耗积分', amount(usage.used), ''])
+        }
+        if (usage && typeof usage.limit === 'number' && usage.limit > 0) {
+          items.push([accountTranslate?.('totalCredits') || '总分配额度', amount(usage.limit), ''])
+        }
+        content = h('dl', { className: 'dshUsageOverview' },
+          ...items.map(([label, count, help], index) =>
+            h('div', { key: index, title: help },
+              h('dt', null, label),
+              h('dd', null, count)
+            )
+          )
+        )
+      }
       else if (state.phase === 'signedOut') content = h('div', { className: 'dshSettingsStatus' }, h('p', null, t('signIn')), h('button', { type: 'button', onClick: openAccount }, t('openAccount')))
       else if (state.phase !== 'ready') content = h('div', { className: 'dshSettingsStatus', role: state.phase === 'error' ? 'alert' : 'status' }, h('p', null, t(state.phase === 'unsupported' ? 'restart' : state.phase === 'error' ? 'usageError' : 'loading')), state.phase === 'error' && h('button', { type: 'button', onClick: () => setAttempt(value => value + 1) }, t('again')))
       else if (!data) content = failure('usageError')
@@ -1766,6 +1823,7 @@ window.__ModuleLoader__.load({
         'enterprise: settings copy'
       )
       const settingsT = ctx.locale.bind(DESKTOP_SETTINGS_NS)
+      settingsTranslate = settingsT
 
       ctx.effect(() => {
         const style = document.createElement('style')
@@ -1801,6 +1859,24 @@ window.__ModuleLoader__.load({
         order: 90,
         label: () => settingsT('about')
       })
+
+      ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+        name: 'settings.section.icon',
+        id: ENTERPRISE_SECTION_ID,
+        inject: () => ({})
+      }, ({ size }) => h(IconUserOutlineMedium, { size: size || 18 })))
+
+      ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+        name: 'settings.section.icon',
+        id: 'desktop-about',
+        inject: () => ({})
+      }, ({ size }) => h(IconInfoOutlineMedium, { size: size || 18 })))
+
+      ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+        name: 'settings.section.icon',
+        id: 'desktop-ai-access',
+        inject: () => ({})
+      }, ({ size }) => h(IconApiOutlineMedium, { size: size || 18 })))
 
       ctx.effect(() => {
         let disposed = false, disposeEntry, revision = 0

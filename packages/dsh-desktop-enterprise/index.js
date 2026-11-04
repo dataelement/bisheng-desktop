@@ -18,7 +18,9 @@ import {
   parseConfig,
   parseModelsLenient,
   parseThirdPartyPolicy,
-  parseToken
+  parseToken,
+  parseUsageLenient,
+  unavailableUsage
 } from './contract.js'
 import { createAuditTitleSync } from './audit-title.js'
 import {
@@ -446,6 +448,44 @@ export function apply(ctx, config) {
     const body = await readJson(request)
     return inspectedBase(normalizeEnterpriseServerUrl(String(body?.base ?? ''), inspectUrlOptions()))
   })
+  const fetchSessionData = async (base, accessToken) => {
+    let models = []
+    let usage = unavailableUsage()
+    try {
+      const [modelsRes, usageRes] = await Promise.all([
+        fetch(`${base}${API_PATHS.models}`, {
+          headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' }
+        }),
+        fetch(`${base}${API_PATHS.usage}`, {
+          headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' }
+        })
+      ])
+      if (modelsRes.ok) {
+        models = parseModelsLenient(await modelsRes.json())
+      }
+      if (usageRes.ok) {
+        usage = parseUsageLenient(await usageRes.json())
+      }
+    } catch (err) {
+      console.warn('[enterprise] failed to fetch models or usage', err)
+    }
+    return { models, usage }
+  }
+
+  const refreshSessionState = async () => {
+    if (!sessionAuth) return account
+    const { models, usage } = await fetchSessionData(sessionAuth.base, sessionAuth.tokens.access_token)
+    account = {
+      ...account,
+      models,
+      modelsAvailable: models.length > 0,
+      usage,
+      revision: (account.revision || 0) + 1
+    }
+    ingestEnterpriseState(account)
+    return account
+  }
+
   const completeSessionLoginWithTicket = async (ticket) => {
     if (!ticket) throw Object.assign(new Error('A one-time login code is required.'), { status: 400 })
     if (!sessionPending || Date.now() > sessionPending.expiresAt) {
@@ -468,17 +508,7 @@ export function apply(ctx, config) {
       throw Object.assign(new Error(errorMsg), { status: tokenRes.status })
     }
     const tokens = parseToken(await tokenRes.json(), sessionPending.base)
-    let models = []
-    try {
-      const modelsRes = await fetch(`${sessionPending.base}${API_PATHS.models}`, {
-        headers: { authorization: `Bearer ${tokens.access_token}`, accept: 'application/json' }
-      })
-      if (modelsRes.ok) {
-        models = parseModelsLenient(await modelsRes.json())
-      }
-    } catch (err) {
-      console.warn('[enterprise] failed to fetch models after session login', err)
-    }
+    const { models, usage } = await fetchSessionData(sessionPending.base, tokens.access_token)
     sessionAuth = {
       base: sessionPending.base,
       tokens,
@@ -498,7 +528,8 @@ export function apply(ctx, config) {
       user: tokens.user,
       tenant: tokens.tenant,
       models,
-      modelsAvailable: models.length > 0
+      modelsAvailable: models.length > 0,
+      usage
     }
     if (account.connectionKey !== state.connectionKey) {
       await market?.stop()
@@ -642,23 +673,7 @@ export function apply(ctx, config) {
       return state
     }
     if (sessionAuth) {
-      try {
-        const modelsRes = await fetch(`${sessionAuth.base}${API_PATHS.models}`, {
-          headers: { authorization: `Bearer ${sessionAuth.tokens.access_token}`, accept: 'application/json' }
-        })
-        if (modelsRes.ok) {
-          const models = parseModelsLenient(await modelsRes.json())
-          account = {
-            ...account,
-            models,
-            modelsAvailable: models.length > 0,
-            revision: (account.revision || 0) + 1
-          }
-          ingestEnterpriseState(account)
-        }
-      } catch (err) {
-        console.warn('[enterprise] failed to refresh models', err)
-      }
+      return refreshSessionState()
     }
     return account
   })
@@ -668,6 +683,9 @@ export function apply(ctx, config) {
       const state = await brokerJson('/v1/refresh', {})
       ingestEnterpriseState(state)
       return state
+    }
+    if (sessionAuth) {
+      return refreshSessionState()
     }
     return account
   })
