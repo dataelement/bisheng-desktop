@@ -26,7 +26,8 @@ export const CHAT_REQUEST_KEYS = Object.freeze([
 ])
 export const MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024
 export const MAX_CHAT_IMAGE_TOTAL_BYTES = 20 * 1024 * 1024
-export const CHAT_HEADER_TIMEOUT_MS = 60_000
+export const CHAT_HEADER_TIMEOUT_MS = 300_000
+export const CHAT_FIRST_CHUNK_TIMEOUT_MS = 300_000
 export const CHAT_IDLE_TIMEOUT_MS = 60_000
 export const CHAT_TOTAL_TIMEOUT_MS = 30 * 60 * 1000
 export const CHAT_MAX_CONCURRENT = 8

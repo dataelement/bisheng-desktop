@@ -8,6 +8,7 @@ export interface EnterpriseChatIpcView {
   usage(): Promise<unknown>
   history(input: unknown): Promise<unknown>
   open(input: unknown): Promise<void>
+  remove(id: unknown, epoch: unknown): Promise<{ epoch: number }>
   openPage(input: unknown): Promise<void>
   focusSettings(): void
 }
@@ -71,6 +72,11 @@ export function registerEnterpriseChatIpc(
     disposers.push(registry.register('enterprise-chat:history', (_event, page) => view()?.history(page)))
     disposers.push(registry.register('enterprise-chat:open-page', (_event, id) => view()?.openPage(id)))
     disposers.push(registry.register('enterprise-chat:open', (_event, id) => view()?.open(id)))
+    disposers.push(registry.register('enterprise-chat:remove', (_event, id, epoch) => {
+      const chat = view()
+      if (!chat) throw new Error('Enterprise Chat unavailable.')
+      return chat.remove(id, epoch)
+    }))
   } catch (error) {
     try { dispose() } catch (cleanupError) {
       const failure = new EnterpriseChatIpcRegistrationError(error, cleanupError, dispose)

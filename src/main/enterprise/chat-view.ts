@@ -74,6 +74,7 @@ export class EnterpriseChatView {
   private navigationRequest = 0
   private origin?: string
   private routes = new Map<string, string>()
+  private deletedConversations = new Set<string>()
   private view?: WebContentsView
   private isolated?: Session
   private owner?: BrowserWindow
@@ -221,14 +222,54 @@ export class EnterpriseChatView {
     const result = await response.json() as { data?: unknown }
     if (epoch !== this.generation) throw new Error('Chat identity changed.')
     if (!Array.isArray(result.data) || result.data.length > 40) throw new Error('Invalid Chat history.')
-    const items = result.data.map((row: Record<string, unknown>) => {
+    const items = result.data.filter((row: Record<string, unknown>) => !this.deletedConversations.has(String(row.chat_id))).map((row: Record<string, unknown>) => {
       const id = parseChatId(row.chat_id)
       const flowType = Number(row.flow_type)
       const route = flowType === 20 ? `/workspace/linsight/${id}` : [1, 5, 10].includes(flowType) ? `/workspace/chat/${id}/${parseChatId(String(row.flow_id))}/${flowType}` : `/workspace/c/${id}`
       this.routes.set(id, route)
       return { id, title: String(row.name || row.flow_name || '').slice(0, 500), updatedAt: String(row.update_time || row.create_time || '').slice(0, 50) }
     })
-    return { epoch, items, hasMore: items.length === 40 }
+    return { epoch, items, hasMore: result.data.length === 40 }
+  }
+
+  /** The history grant and confirmation belong to one authenticated identity. */
+  async remove(input: unknown, expectedEpoch: unknown): Promise<{ epoch: number }> {
+    const id = parseChatId(input)
+    const epoch = this.generation
+    if (expectedEpoch !== epoch || !this.enterprise.snapshot().connected || !this.routes.has(id)) {
+      throw new Error('Select a conversation from current Chat history.')
+    }
+    if (this.state.phase !== 'ready') await this.connect()
+    if (epoch !== this.generation || !this.isolated || !this.origin) throw new Error('Chat identity changed.')
+    const response = await this.isolated.fetch(new URL(`/api/v1/chat/${id}`, this.origin).href, {
+      method: 'DELETE', redirect: 'error', signal: AbortSignal.timeout(15_000)
+    })
+    if (!response.ok) throw new Error(`Chat deletion failed (${response.status}).`)
+    const result: unknown = await response.json()
+    if (epoch !== this.generation) throw new Error('Chat identity changed.')
+    if (!result || typeof result !== 'object' || !('status_code' in result) || result.status_code !== 200) {
+      throw new Error('Chat deletion failed.')
+    }
+    this.deletedConversations.add(id)
+    this.routes.delete(id)
+    this.note('[enterprise-chat] conversation deleted')
+    if (this.settingsReturnRoute?.match(/^\/workspace\/(?:c|chat|linsight)\/([a-zA-Z0-9_-]+)/u)?.[1] === id) {
+      this.settingsReturnRoute = '/workspace/c/new'
+    }
+    if (this.snapshot().conversationId === id) {
+      try { await this.navigate('/workspace/c/new') }
+      catch {
+        // Deletion is already committed. navigate restores a document that stayed
+        // in the workspace, or starts the same limited recovery as a login redirect.
+        // Only an unsettled loading phase still needs the error page.
+        if (epoch === this.generation && !this.backoffScheduled && this.state.phase === 'loading') {
+          this.state = { phase: 'error', error: 'Chat navigation failed.' }
+          this.layout()
+          this.notify()
+        }
+      }
+    }
+    return { epoch }
   }
 
   async open(input: unknown): Promise<void> {
@@ -309,7 +350,20 @@ export class EnterpriseChatView {
     if (accepted === true) return
     this.state = { phase: 'loading' }
     this.layout()
-    await loadWithin(view.webContents.loadURL(this.entryURL(route, origin)), DOCUMENT_LOAD_TIMEOUT_MS)
+    try {
+      await loadWithin(view.webContents.loadURL(this.entryURL(route, origin)), DOCUMENT_LOAD_TIMEOUT_MS)
+    } catch (error) {
+      if (request === this.navigationRequest && epoch === this.generation && this.view === view) {
+        if (this.onWorkspace()) {
+          this.state = { phase: 'ready' }
+          this.layout()
+          this.notify()
+        } else {
+          this.noteDocumentLeftWorkspace()
+        }
+      }
+      throw error
+    }
   }
 
   private layout(): void {
@@ -489,6 +543,10 @@ export class EnterpriseChatView {
         })
         view.webContents.on('did-navigate-in-page', (_event, _url, isMainFrame) => {
           if (isMainFrame && generation === this.generation && this.view === view) {
+            if (!this.onWorkspace()) {
+              this.noteDocumentLeftWorkspace()
+              return
+            }
             this.modalOpen = false
             view.webContents.send('enterprise-chat:sync-modal')
             this.landing = undefined
@@ -516,15 +574,8 @@ export class EnterpriseChatView {
             // Host-owned module styles live in this document until the next full load replaces it.
             void view.webContents.insertCSS(`${MODULE_THEME_CSS}\n${chatLayoutCss(process.platform)}`).catch(() => this.note('[enterprise-chat] module_style_failed'))
             this.state = { phase: 'ready' }; void this.syncSettings(); this.layout(); this.notify()
-          } else if (this.backoffScheduled || this.offWorkspaceRecovery) {
-            this.renewalMode = true
-            this.state = { phase: 'loading' }
-            this.layout()
-            this.note('[enterprise-chat] renewal_left_workspace')
-            this.notify()
           } else {
-            this.cancelTimer()
-            this.state = { phase: 'error' }; this.layout(); this.note('[enterprise-chat] unexpected_login_redirect'); this.notify()
+            this.noteDocumentLeftWorkspace()
           }
         })
         this.isolated = isolated
@@ -537,7 +588,8 @@ export class EnterpriseChatView {
       await view.webContents.session.cookies.set({ url: credential.base, name: credential.cookieName, value: credential.cookie, path: '/', httpOnly: true, secure: new URL(credential.base).protocol === 'https:', sameSite: 'lax', expirationDate: credential.expiresAt / 1000 })
       if (generation !== this.generation) return
       stage = this.renewalMode ? 'renew' : 'load'
-      if (!this.onWorkspace()) {
+      const reloaded = !this.onWorkspace()
+      if (reloaded) {
         this.offWorkspaceRecovery = this.renewalMode
         try {
           await loadWithin(view.webContents.loadURL(this.entryURL('/workspace/', credential.base)), DOCUMENT_LOAD_TIMEOUT_MS)
@@ -545,30 +597,29 @@ export class EnterpriseChatView {
       }
       if (generation !== this.generation) return
       if (!this.onWorkspace()) {
-        if (this.renewalMode && this.view && !this.view.webContents.isDestroyed()) {
-          const redirect = new Error('Chat left the workspace.')
-          if (!this.continueOffWorkspace(key, redirect, 'renew')) this.failExchange(key, redirect, 'renew')
-          return
-        }
-        this.cancelTimer()
-        if (this.state.phase !== 'error') {
-          this.state = { phase: 'error' }
-          this.layout()
-          this.note('[enterprise-chat] unexpected_login_redirect')
-          this.notify()
-        }
+        this.noteDocumentLeftWorkspace()
         return
       }
+      // The workspace shell finishes before the client decides it is logged in.
+      // A recovery reload must keep its attempt count until a later renewal
+      // finds the document still here; otherwise every login redirect starts over.
+      const recovering = reloaded && this.offWorkspaceAttempt > 0
       this.renewalMode = true
       this.initialAttempt = 0
       this.renewalAttempt = 0
-      this.offWorkspaceAttempt = 0
+      if (!recovering) this.offWorkspaceAttempt = 0
       if (this.state.phase !== 'ready') {
         this.state = { phase: 'ready' }
         this.notify()
       }
       this.layout()
       await this.syncSettings()
+      if (generation !== this.generation) return
+      if (!this.onWorkspace()) {
+        if (!this.backoffScheduled) this.noteDocumentLeftWorkspace()
+        return
+      }
+      if (!recovering) this.offWorkspaceAttempt = 0
       this.armTimer(Math.max(1000, credential.expiresAt - Date.now() - 30_000), key, false)
       this.note('[enterprise-chat] session_ready')
     } catch (error) {
@@ -650,6 +701,38 @@ export class EnterpriseChatView {
     this.notify()
   }
 
+  /**
+   * A document that has reached /workspace can recover from a later login redirect.
+   * A redirect during an in-flight recovery must not spend another attempt.
+   * The first load, before any workspace document, stays a terminal error.
+   */
+  private noteDocumentLeftWorkspace(): void {
+    const key = this.key
+    const state = this.enterprise.snapshot()
+    const sameAccount = Boolean(key) && state.connected && state.connectionKey === key
+    const canRecover = this.renewalMode && sameAccount && !!this.view && !this.view.webContents.isDestroyed()
+    if (canRecover && (this.backoffScheduled || this.offWorkspaceRecovery)) {
+      this.renewalMode = true
+      this.state = { phase: 'loading' }
+      this.layout()
+      this.note('[enterprise-chat] renewal_left_workspace')
+      this.notify()
+      return
+    }
+    if (canRecover && key) {
+      const redirect = new Error('Chat left the workspace.')
+      if (!this.continueOffWorkspace(key, redirect, 'renew')) this.failExchange(key, redirect, 'renew')
+      return
+    }
+    this.cancelTimer()
+    if (this.state.phase !== 'error') {
+      this.state = { phase: 'error' }
+      this.layout()
+      this.note('[enterprise-chat] unexpected_login_redirect')
+      this.notify()
+    }
+  }
+
   /** did-finish-load must not reset this counter; only success and clear() do. */
   private continueOffWorkspace(key: string, error: unknown, stage: ExchangeStage): boolean {
     if (this.offWorkspaceAttempt >= INITIAL_BACKOFF_MS.length) return false
@@ -687,6 +770,7 @@ export class EnterpriseChatView {
     this.key = undefined
     this.origin = undefined
     this.routes.clear()
+    this.deletedConversations.clear()
     const view = this.view
     const isolated = this.isolated
     this.view = undefined

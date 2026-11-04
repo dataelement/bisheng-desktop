@@ -1707,6 +1707,7 @@ function registerHarnessHandlers(): void {
     }
   })
 
+
   ipcMain.removeHandler('harness:restart')
   ipcMain.handle('harness:restart', async (event) => {
     if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {

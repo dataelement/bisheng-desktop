@@ -14,6 +14,7 @@ import type { ServerResponse } from 'node:http'
 import type { AuditContextField } from 'dsh-desktop-enterprise/contract'
 import {
   CHAT_HEADER_TIMEOUT_MS,
+  CHAT_FIRST_CHUNK_TIMEOUT_MS,
   CHAT_IDLE_TIMEOUT_MS,
   CHAT_MAX_CONCURRENT,
   CHAT_TOTAL_TIMEOUT_MS,
@@ -1078,7 +1079,21 @@ export class EnterpriseService {
         spaces.push({ id: row.id, name: row.name, description: typeof row.description === 'string' ? row.description : '', group, updatedAt: typeof row.update_time === 'string' ? row.update_time : '' })
       }
     }
-    return { spaces }
+    const available = []
+    for (let offset = 0; offset < spaces.length; offset += 10) {
+      const batch = spaces.slice(offset, offset + 10)
+      const allowed = await Promise.all(batch.map(async space => {
+        const result = await call('/api/v1/permissions/check', {
+          resource_type: 'knowledge_space', resource_id: String(space.id), action: 'visible'
+        })
+        if (typeof result !== 'object' || result === null || !('allowed' in result) || typeof result.allowed !== 'boolean') {
+          throw new Error('Knowledge space permission response is invalid.')
+        }
+        return result.allowed
+      }))
+      available.push(...batch.filter((_space, index) => allowed[index]))
+    }
+    return { spaces: available }
   }
 
   /** Host-only exchange. Credentials never cross the renderer or Harness Broker. */
@@ -1336,7 +1351,7 @@ export class EnterpriseService {
     }
     const reader = upstream.body.getReader()
     let totalBytes = 0
-    let idle = setTimeout(() => response.destroy(), CHAT_IDLE_TIMEOUT_MS)
+    let idle = setTimeout(() => response.destroy(), CHAT_FIRST_CHUNK_TIMEOUT_MS)
     const resetIdle = () => {
       clearTimeout(idle)
       idle = setTimeout(() => response.destroy(), CHAT_IDLE_TIMEOUT_MS)
