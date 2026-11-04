@@ -314,6 +314,11 @@ export function apply(ctx, config) {
   let market
   let workbenches
   let capabilityPolicy
+  let fallbackPolicy = {
+    allowThirdPartyPlugins: false,
+    allowThirdPartyWorkbenches: false,
+    connectionKey: ''
+  }
   let sessionAuth = broker ? null : loadSessionFromDisk()
   let sessionPending = null
   let account = sessionAuth && !broker
@@ -456,11 +461,18 @@ export function apply(ctx, config) {
   }
 
   const thirdPartyFlags = () => {
-    const snap = capabilityPolicy?.snapshot()
-    const connected = account.connected === true && snap?.connected === true && snap?.connectionKey === account.connectionKey
+    if (capabilityPolicy) {
+      const snap = capabilityPolicy.snapshot()
+      const connected = account.connected === true && snap?.connected === true && snap?.connectionKey === account.connectionKey
+      return {
+        allowThirdPartyPlugins: connected && snap.allowThirdPartyPlugins === true,
+        allowThirdPartyWorkbenches: connected && snap.allowThirdPartyWorkbenches === true
+      }
+    }
+    const connected = account.connected === true && fallbackPolicy.connectionKey === account.connectionKey
     return {
-      allowThirdPartyPlugins: connected && snap.allowThirdPartyPlugins === true,
-      allowThirdPartyWorkbenches: connected && snap.allowThirdPartyWorkbenches === true
+      allowThirdPartyPlugins: connected && fallbackPolicy.allowThirdPartyPlugins === true,
+      allowThirdPartyWorkbenches: connected && fallbackPolicy.allowThirdPartyWorkbenches === true
     }
   }
   const readBrokerState = async () => {
@@ -472,11 +484,18 @@ export function apply(ctx, config) {
       await market?.stop()
       await workbenches?.stop()
       capabilityPolicy?.reset()
+      fallbackPolicy = { allowThirdPartyPlugins: false, allowThirdPartyWorkbenches: false, connectionKey: '' }
     }
     if ((!state.connected && account.connected) || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
     account = state
-    if (!state.connected) capabilityPolicy?.reset()
-    else void capabilityPolicy?.refresh(state.connectionKey).catch(() => undefined)
+    if (!state.connected) {
+      capabilityPolicy?.reset()
+      fallbackPolicy = { allowThirdPartyPlugins: false, allowThirdPartyWorkbenches: false, connectionKey: '' }
+    } else if (capabilityPolicy) {
+      void capabilityPolicy.refresh(state.connectionKey).catch(() => undefined)
+    } else if (fallbackPolicy.connectionKey !== state.connectionKey) {
+      await refreshFallbackPolicy(state.connectionKey)
+    }
     ingestEnterpriseState(state)
     return { ...state, ...thirdPartyFlags() }
   }
@@ -538,6 +557,35 @@ export function apply(ctx, config) {
       throw failure
     }
     return binary ? Buffer.from(await response.arrayBuffer()) : response.json()
+  }
+  let fallbackRefreshPromise = null
+  const refreshFallbackPolicy = async (connectionKey) => {
+    if (!connectionKey || account.connectionKey !== connectionKey) return
+    if (fallbackRefreshPromise) return fallbackRefreshPromise
+    fallbackRefreshPromise = (async () => {
+      try {
+        const envelope = await marketRequest('/api/v1/dsh/market/capabilities')
+        if (account.connectionKey !== connectionKey) return
+        const parsed = envelope?.status_code === 200
+          ? parseThirdPartyPolicy(envelope.data)
+          : parseThirdPartyPolicy(undefined)
+        fallbackPolicy = {
+          allowThirdPartyPlugins: parsed.allowThirdPartyPlugins === true,
+          allowThirdPartyWorkbenches: parsed.allowThirdPartyWorkbenches === true,
+          connectionKey
+        }
+      } catch {
+        if (account.connectionKey !== connectionKey) return
+        fallbackPolicy = {
+          allowThirdPartyPlugins: false,
+          allowThirdPartyWorkbenches: false,
+          connectionKey
+        }
+      } finally {
+        fallbackRefreshPromise = null
+      }
+    })()
+    return fallbackRefreshPromise
   }
   if (typeof ctx.inject === 'function') ctx.inject(['tools', 'sessions', 'systemPrompt'], scoped => { workResources = applyWorkResources(scoped, {
     state: () => account, refreshState: readBrokerState,
@@ -764,13 +812,17 @@ export function apply(ctx, config) {
       await market?.stop()
       await workbenches?.stop()
       capabilityPolicy?.reset()
+      fallbackPolicy = { allowThirdPartyPlugins: false, allowThirdPartyWorkbenches: false, connectionKey: '' }
     }
     if ((!state.connected && account.connected) || account.connectionKey !== state.connectionKey) {
       workResources?.clear(); workSkills?.clear(); workCapabilities?.clear()
     }
     account = state
     ingestEnterpriseState(state)
-    if (state.connected) await capabilityPolicy?.refresh(state.connectionKey).catch(() => undefined)
+    if (state.connected) {
+      if (capabilityPolicy) await capabilityPolicy.refresh(state.connectionKey).catch(() => undefined)
+      else await refreshFallbackPolicy(state.connectionKey)
+    }
     return { ...state, ...thirdPartyFlags() }
   }
 
@@ -869,11 +921,15 @@ export function apply(ctx, config) {
         await market?.stop()
         await workbenches?.stop()
         capabilityPolicy?.reset()
+        fallbackPolicy = { allowThirdPartyPlugins: false, allowThirdPartyWorkbenches: false, connectionKey: '' }
       }
       if ((!state.connected && account.connected) || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
       account = state
       ingestEnterpriseState(state)
-      if (state.connected) await capabilityPolicy?.refresh(state.connectionKey).catch(() => undefined)
+      if (state.connected) {
+        if (capabilityPolicy) await capabilityPolicy.refresh(state.connectionKey).catch(() => undefined)
+        else await refreshFallbackPolicy(state.connectionKey)
+      }
       return { ...state, ...thirdPartyFlags() }
     }
     return completeSessionLoginWithTicket(ticket)
@@ -932,6 +988,7 @@ export function apply(ctx, config) {
     await market?.stop()
     await workbenches?.stop()
     capabilityPolicy?.reset()
+    fallbackPolicy = { allowThirdPartyPlugins: false, allowThirdPartyWorkbenches: false, connectionKey: '' }
     if ((!state.connected && account.connected) || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
     account = state
     ingestEnterpriseState(state)

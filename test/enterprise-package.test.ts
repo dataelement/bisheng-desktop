@@ -585,4 +585,96 @@ it('keeps sign-in focused and shows unified credits without model quotas', async
       rmSync(testDir, { recursive: true, force: true })
     }
   })
+
+  it('fetches and reflects third party capabilities autonomously when enterpriseCapabilityPolicy is not injected', async () => {
+    const testDir = join(tmpdir(), `dsh-test-enterprise-cap-${Date.now()}`)
+    mkdirSync(testDir, { recursive: true })
+    const prevDshHome = process.env.DSH_HOME
+    process.env.DSH_HOME = testDir
+
+    try {
+      const sessionFile = join(testDir, 'enterprise-session.json')
+      const mockSession = {
+        base: 'https://enterprise.example.com',
+        tokens: {
+          token_type: 'Bearer',
+          access_token: 'valid-test-access-token',
+          access_expires_at: new Date(Date.now() + 3600_000).toISOString(),
+          refresh_token: 'test-refresh-token',
+          refresh_expires_at: new Date(Date.now() + 86400_000).toISOString(),
+          session_id: 'test-session-id',
+          session_expires_at: new Date(Date.now() + 86400_000).toISOString(),
+          user: { id: 'u1', username: 'testuser', display_name: 'Test' },
+          tenant: { id: 't1', name: 'Test Tenant' }
+        },
+        user: { id: 'u1', username: 'testuser', display_name: 'Test' },
+        tenant: { id: 't1', name: 'Test Tenant' }
+      }
+      writeFileSync(sessionFile, JSON.stringify(mockSession, null, 2), 'utf8')
+
+      const routes = new Map<string, (req: Request) => Promise<Response>>()
+      const ctx: Record<string, unknown> = {
+        provide: vi.fn(),
+        get: vi.fn(),
+        inject: vi.fn(),
+        on: vi.fn(() => () => undefined),
+        effect: vi.fn(),
+        connection: {
+          fetch: {
+            register: (spec: { path: string, fetch: (req: Request) => Promise<Response> }) => {
+              routes.set(spec.path, spec.fetch)
+              return () => { routes.delete(spec.path) }
+            }
+          }
+        },
+        loader: {}
+      }
+
+      const originalFetch = globalThis.fetch
+      globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('/api/v1/dsh/market/capabilities')) {
+          return new Response(JSON.stringify({
+            status_code: 200,
+            status_message: 'SUCCESS',
+            data: {
+              enabled: true,
+              contract_version: 2,
+              tenant_id: 't1',
+              allow_third_party_plugins: true,
+              allow_third_party_workbenches: true
+            }
+          }), { status: 200, headers: { 'content-type': 'application/json' } })
+        }
+        if (url.includes('/api/v1/dsh/models')) {
+          return new Response(JSON.stringify({
+            data: [{ id: 'model-1', object: 'model', display_name: 'Model 1' }]
+          }), { status: 200, headers: { 'content-type': 'application/json' } })
+        }
+        if (url.includes('/api/v1/dsh/usage')) {
+          return new Response(JSON.stringify({
+            used: 10, limit: 100, quota_state: 'available'
+          }), { status: 200, headers: { 'content-type': 'application/json' } })
+        }
+        return new Response('Not found', { status: 404 })
+      }) as unknown as typeof fetch
+
+      try {
+        applyEnterprise(ctx as unknown as Parameters<typeof applyEnterprise>[0], {})
+        const stateHandler = routes.get('/api/enterprise.state')
+        expect(stateHandler).toBeTypeOf('function')
+        const res = await stateHandler!(new Request('http://127.0.0.1/api/enterprise.state'))
+        const state = await res.json()
+        expect(state.connected).toBe(true)
+        expect(state.allowThirdPartyPlugins).toBe(true)
+        expect(state.allowThirdPartyWorkbenches).toBe(true)
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    } finally {
+      if (prevDshHome !== undefined) process.env.DSH_HOME = prevDshHome
+      else delete process.env.DSH_HOME
+      rmSync(testDir, { recursive: true, force: true })
+    }
+  })
 })
