@@ -207,6 +207,8 @@ it('keeps sign-in focused and shows unified credits without model quotas', async
     expect(client).toContain("window.open(LEARN_MORE_URL, '_blank', 'noopener,noreferrer')")
     expect(client).toContain('.dshEnterpriseTitleRow {')
     expect(client).toContain('.dshEnterpriseTitleRow h2 {')
+    expect(client).toContain('.dshEnterpriseWorkspaceBtn {')
+    expect(client).toContain("openWorkspace: '进入企业工作台'")
     expect(client).toContain('color: var(--dsw-alias-label-primary);')
     expect(client).toContain('font-size: 18px;')
     expect(client).toContain('font-weight: 600;')
@@ -319,35 +321,45 @@ it('keeps sign-in focused and shows unified credits without model quotas', async
   })
 
   it('downgrades to session storage without broker and exposes idle state with secureStorageAvailable true', async () => {
-    const routes = new Map<string, (req: Request) => Promise<Response>>()
-    const ctx: Record<string, unknown> = {
-      provide: vi.fn(),
-      get: vi.fn(),
-      inject: vi.fn(),
-      on: vi.fn(() => () => undefined),
-      effect: vi.fn(),
-      connection: {
-        fetch: {
-          register: (spec: { path: string, fetch: (req: Request) => Promise<Response> }) => {
-            routes.set(spec.path, spec.fetch)
-            return () => { routes.delete(spec.path) }
+    const testDir = join(tmpdir(), `dsh-test-idle-${Date.now()}`)
+    mkdirSync(testDir, { recursive: true })
+    const prevDshHome = process.env.DSH_HOME
+    process.env.DSH_HOME = testDir
+    try {
+      const routes = new Map<string, (req: Request) => Promise<Response>>()
+      const ctx: Record<string, unknown> = {
+        provide: vi.fn(),
+        get: vi.fn(),
+        inject: vi.fn(),
+        on: vi.fn(() => () => undefined),
+        effect: vi.fn(),
+        connection: {
+          fetch: {
+            register: (spec: { path: string, fetch: (req: Request) => Promise<Response> }) => {
+              routes.set(spec.path, spec.fetch)
+              return () => { routes.delete(spec.path) }
+            }
           }
-        }
-      },
-      loader: {}
+        },
+        loader: {}
+      }
+      applyEnterprise(ctx as unknown as Parameters<typeof applyEnterprise>[0], {})
+      const stateHandler = routes.get('/api/enterprise.state')
+      expect(stateHandler).toBeTypeOf('function')
+      const res = await stateHandler!(new Request('http://127.0.0.1/api/enterprise.state'))
+      expect(res.status).toBe(200)
+      const state = await res.json()
+      expect(state).toMatchObject({
+        connected: false,
+        secureStorageAvailable: true,
+        storageMode: 'session',
+        phase: 'idle'
+      })
+    } finally {
+      if (prevDshHome !== undefined) process.env.DSH_HOME = prevDshHome
+      else delete process.env.DSH_HOME
+      rmSync(testDir, { recursive: true, force: true })
     }
-    applyEnterprise(ctx as unknown as Parameters<typeof applyEnterprise>[0], {})
-    const stateHandler = routes.get('/api/enterprise.state')
-    expect(stateHandler).toBeTypeOf('function')
-    const res = await stateHandler!(new Request('http://127.0.0.1/api/enterprise.state'))
-    expect(res.status).toBe(200)
-    const state = await res.json()
-    expect(state).toMatchObject({
-      connected: false,
-      secureStorageAvailable: true,
-      storageMode: 'session',
-      phase: 'idle'
-    })
   })
 
   it('replaces official account settings section by disabling ui-settings-account and setting order -10', async () => {
@@ -558,6 +570,12 @@ it('keeps sign-in focused and shows unified credits without model quotas', async
         const updatedDiskSession = JSON.parse(await readFile(sessionFile, 'utf8'))
         expect(updatedDiskSession.tokens.access_token).toBe('new-refreshed-access-token')
         expect(updatedDiskSession.tokens.refresh_token).toBe('new-refreshed-refresh-token')
+
+        // Test chatHistory endpoint
+        const historyHandler = routes.get('/api/enterprise.chat.history')
+        expect(historyHandler).toBeTypeOf('function')
+        const deleteHandler = routes.get('/api/enterprise.chat.delete')
+        expect(deleteHandler).toBeTypeOf('function')
       } finally {
         globalThis.fetch = originalFetch
       }
