@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
+import { createServer } from 'node:http'
 import { CONTENT_SAFETY_ERROR_COPY } from './error-copy.js'
 import { createContentSafetyLocaleScope } from './content-safety-locale.js'
 import { applyEnterpriseSkills } from './work-skills.js'
@@ -218,6 +219,54 @@ async function requestBrokerJson(broker, path, body, signal) {
   return payload
 }
 
+function startEphemeralLoginCallbackServer(onAccepted) {
+  return new Promise((resolve) => {
+    let closed = false
+    const server = createServer((req, res) => {
+      try {
+        const port = server.address()?.port || 0
+        const url = new URL(req.url, `http://127.0.0.1:${port}`)
+        if (url.pathname === '/dsh/callback') {
+          const authId = url.searchParams.get('auth_id') || undefined
+          const state = url.searchParams.get('state') || undefined
+          const identityTicket = url.searchParams.get('identity_ticket') || undefined
+          const error = url.searchParams.get('error') || undefined
+          res.writeHead(200, {
+            'content-type': 'text/html; charset=utf-8',
+            'cache-control': 'no-store'
+          })
+          res.end('<!doctype html><html><head><meta charset="utf-8"><title>BISHENG</title></head><body><p>Sign-in complete. You may return to the application.</p><script>window.close()</script></body></html>')
+          if (!closed && onAccepted) {
+            onAccepted({ authId, state, identityTicket, error })
+          }
+          return
+        }
+      } catch {}
+      res.writeHead(400, { 'content-type': 'text/plain' })
+      res.end('Invalid request')
+    })
+    server.once('error', () => resolve(null))
+    server.listen(0, '127.0.0.1', () => {
+      const port = server.address()?.port
+      if (!port) {
+        server.close()
+        resolve(null)
+        return
+      }
+      resolve({
+        port,
+        redirectUri: `http://127.0.0.1:${port}/dsh/callback`,
+        close: () => {
+          if (!closed) {
+            closed = true
+            server.close()
+          }
+        }
+      })
+    })
+  })
+}
+
 export function apply(ctx, config) {
   const broker = brokerConfig(ctx, config)
   const brokerJson = (path, body, signal) => requestBrokerJson(broker, path, body, signal)
@@ -397,15 +446,75 @@ export function apply(ctx, config) {
     const body = await readJson(request)
     return inspectedBase(normalizeEnterpriseServerUrl(String(body?.base ?? ''), inspectUrlOptions()))
   })
-  registerJsonRoute(connection, LOCAL_PATHS.start, ['POST'], async (request) => {
-    const body = await readJson(request)
-    const base = normalizeEnterpriseServerUrl(String(body?.base ?? ''), inspectUrlOptions())
-    if (broker) {
-      return brokerJson('/v1/login/start', {
-        base,
-        ...(body?.confirmInsecurePrivateHttp === true ? { confirmInsecurePrivateHttp: true } : {})
-      })
+  const completeSessionLoginWithTicket = async (ticket) => {
+    if (!ticket) throw Object.assign(new Error('A one-time login code is required.'), { status: 400 })
+    if (!sessionPending || Date.now() > sessionPending.expiresAt) {
+      throw Object.assign(new Error('No enterprise login is waiting for a code.'), { status: 409 })
     }
+    const tokenRes = await fetch(`${sessionPending.base}${API_PATHS.token}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'identity_ticket',
+        identity_ticket: ticket,
+        auth_id: sessionPending.authId,
+        code_verifier: sessionPending.codeVerifier
+      })
+    })
+    if (!tokenRes.ok) {
+      const payload = await tokenRes.json().catch(() => ({}))
+      const errorMsg = payload.error || payload.status_message || `Login verification failed (${tokenRes.status}).`
+      console.warn('[enterprise] token exchange failed', { status: tokenRes.status, payload })
+      throw Object.assign(new Error(errorMsg), { status: tokenRes.status })
+    }
+    const tokens = parseToken(await tokenRes.json(), sessionPending.base)
+    let models = []
+    try {
+      const modelsRes = await fetch(`${sessionPending.base}${API_PATHS.models}`, {
+        headers: { authorization: `Bearer ${tokens.access_token}`, accept: 'application/json' }
+      })
+      if (modelsRes.ok) {
+        models = parseModelsLenient(await modelsRes.json())
+      }
+    } catch (err) {
+      console.warn('[enterprise] failed to fetch models after session login', err)
+    }
+    sessionAuth = {
+      base: sessionPending.base,
+      tokens,
+      user: tokens.user,
+      tenant: tokens.tenant
+    }
+    sessionPending.callbackServer?.close?.()
+    sessionPending = null
+    const state = {
+      connected: true,
+      secureStorageAvailable: true,
+      storageMode: 'session',
+      phase: 'connected',
+      connectionKey: randomUUID(),
+      revision: (account.revision || 0) + 1,
+      base: sessionAuth.base,
+      user: tokens.user,
+      tenant: tokens.tenant,
+      models,
+      modelsAvailable: models.length > 0
+    }
+    if (account.connectionKey !== state.connectionKey) {
+      await market?.stop()
+      await workbenches?.stop()
+      capabilityPolicy?.reset()
+    }
+    if ((!state.connected && account.connected) || account.connectionKey !== state.connectionKey) {
+      workResources?.clear(); workSkills?.clear(); workCapabilities?.clear()
+    }
+    account = state
+    ingestEnterpriseState(state)
+    if (state.connected) await capabilityPolicy?.refresh(state.connectionKey).catch(() => undefined)
+    return { ...state, ...thirdPartyFlags() }
+  }
+
+  const startSessionLogin = async (base) => {
     const configRes = await fetch(`${base}${API_PATHS.config}`, {
       headers: { accept: 'application/json' }
     })
@@ -415,12 +524,30 @@ export function apply(ctx, config) {
     const config = parseConfig(await configRes.json())
     if (!config.enabled) throw Object.assign(new Error('Enterprise login is disabled on this platform.'), { status: 503 })
 
+    sessionPending?.callbackServer?.close?.()
     const pkce = createPkceTransaction()
+    let callbackServer = null
+    try {
+      callbackServer = await startEphemeralLoginCallbackServer(async ({ authId, state, identityTicket }) => {
+        if (identityTicket && sessionPending && sessionPending.authId === authId && sessionPending.state === state) {
+          try {
+            await completeSessionLoginWithTicket(identityTicket)
+          } catch (err) {
+            console.warn('[enterprise] automatic callback ticket exchange failed', err)
+          }
+        }
+      })
+    } catch (err) {
+      console.warn('[enterprise] failed to start ephemeral callback server', err)
+    }
+
+    const redirectUri = callbackServer?.redirectUri || 'http://127.0.0.1:49152/dsh/callback'
     const authRes = await fetch(`${base}${API_PATHS.authorizations}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify({
         client_id: CLIENT_ID,
+        redirect_uri: redirectUri,
         code_challenge: pkce.codeChallenge,
         code_challenge_method: 'S256',
         state: pkce.state,
@@ -428,6 +555,13 @@ export function apply(ctx, config) {
       })
     })
     if (!authRes.ok) {
+      callbackServer?.close?.()
+      const errorText = await authRes.text().catch(() => '')
+      console.warn('[enterprise] authorization request failed', {
+        status: authRes.status,
+        url: `${base}${API_PATHS.authorizations}`,
+        body: errorText
+      })
       throw Object.assign(new Error(`Enterprise authorization failed (${authRes.status}).`), { status: authRes.status })
     }
     const authData = parseAuthorization(await authRes.json(), base)
@@ -437,7 +571,8 @@ export function apply(ctx, config) {
       codeVerifier: pkce.codeVerifier,
       state: pkce.state,
       authId: authData.auth_id,
-      expiresAt
+      expiresAt,
+      callbackServer
     }
     account = {
       ...account,
@@ -452,75 +587,36 @@ export function apply(ctx, config) {
       expiresIn: authData.expires_in,
       base
     }
+  }
+
+  registerJsonRoute(connection, LOCAL_PATHS.start, ['POST'], async (request) => {
+    const body = await readJson(request)
+    const base = normalizeEnterpriseServerUrl(String(body?.base ?? ''), inspectUrlOptions())
+    if (broker) {
+      return brokerJson('/v1/login/start', {
+        base,
+        ...(body?.confirmInsecurePrivateHttp === true ? { confirmInsecurePrivateHttp: true } : {})
+      })
+    }
+    return startSessionLogin(base)
   })
   registerJsonRoute(connection, LOCAL_PATHS.manual, ['POST'], async (request) => {
     const body = await readJson(request)
     const ticket = String(body?.identityTicket ?? '').trim()
-    let state
     if (broker) {
-      state = await brokerJson('/v1/login/manual', { identityTicket: ticket })
-    } else {
-      if (!ticket) throw Object.assign(new Error('A one-time login code is required.'), { status: 400 })
-      if (!sessionPending || Date.now() > sessionPending.expiresAt) {
-        throw Object.assign(new Error('No enterprise login is waiting for a code.'), { status: 409 })
+      const state = await brokerJson('/v1/login/manual', { identityTicket: ticket })
+      if (account.connectionKey !== state.connectionKey) {
+        await market?.stop()
+        await workbenches?.stop()
+        capabilityPolicy?.reset()
       }
-      const tokenRes = await fetch(`${sessionPending.base}${API_PATHS.token}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json' },
-        body: JSON.stringify({
-          grant_type: 'identity_ticket',
-          identity_ticket: ticket,
-          client_id: CLIENT_ID,
-          code_verifier: sessionPending.codeVerifier
-        })
-      })
-      if (!tokenRes.ok) {
-        const payload = await tokenRes.json().catch(() => ({}))
-        throw Object.assign(new Error(payload.error || `Login verification failed (${tokenRes.status}).`), { status: tokenRes.status })
-      }
-      const tokens = parseToken(await tokenRes.json(), sessionPending.base)
-      let models = []
-      try {
-        const modelsRes = await fetch(`${sessionPending.base}${API_PATHS.models}`, {
-          headers: { authorization: `Bearer ${tokens.access_token}`, accept: 'application/json' }
-        })
-        if (modelsRes.ok) {
-          models = parseModelsLenient(await modelsRes.json())
-        }
-      } catch (err) {
-        console.warn('[enterprise] failed to fetch models after session login', err)
-      }
-      sessionAuth = {
-        base: sessionPending.base,
-        tokens,
-        user: tokens.user,
-        tenant: tokens.tenant
-      }
-      sessionPending = null
-      state = {
-        connected: true,
-        secureStorageAvailable: true,
-        storageMode: 'session',
-        phase: 'connected',
-        connectionKey: randomUUID(),
-        revision: (account.revision || 0) + 1,
-        base: sessionAuth.base,
-        user: tokens.user,
-        tenant: tokens.tenant,
-        models,
-        modelsAvailable: models.length > 0
-      }
+      if ((!state.connected && account.connected) || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
+      account = state
+      ingestEnterpriseState(state)
+      if (state.connected) await capabilityPolicy?.refresh(state.connectionKey).catch(() => undefined)
+      return { ...state, ...thirdPartyFlags() }
     }
-    if (account.connectionKey !== state.connectionKey) {
-      await market?.stop()
-      await workbenches?.stop()
-      capabilityPolicy?.reset()
-    }
-    if ((!state.connected && account.connected) || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
-    account = state
-    ingestEnterpriseState(state)
-    if (state.connected) await capabilityPolicy?.refresh(state.connectionKey).catch(() => undefined)
-    return { ...state, ...thirdPartyFlags() }
+    return completeSessionLoginWithTicket(ticket)
   })
   registerJsonRoute(connection, LOCAL_PATHS.inspectDeepLink, ['POST'], async (request) => {
     const body = await readJson(request)
@@ -529,10 +625,14 @@ export function apply(ctx, config) {
   })
   registerJsonRoute(connection, LOCAL_PATHS.confirmDeepLink, ['POST'], async (request) => {
     const body = await readJson(request)
-    return brokerJson('/v1/login/start', {
-      base: String(body?.base ?? ''),
-      ...(body?.confirmInsecurePrivateHttp === true ? { confirmInsecurePrivateHttp: true } : {})
-    })
+    const base = normalizeEnterpriseServerUrl(String(body?.base ?? ''), inspectUrlOptions())
+    if (broker) {
+      return brokerJson('/v1/login/start', {
+        base,
+        ...(body?.confirmInsecurePrivateHttp === true ? { confirmInsecurePrivateHttp: true } : {})
+      })
+    }
+    return startSessionLogin(base)
   })
   registerJsonRoute(connection, LOCAL_PATHS.refreshModels, ['POST'], async (request) => {
     await readJson(request)

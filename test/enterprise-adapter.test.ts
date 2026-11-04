@@ -191,6 +191,46 @@ describe('enterprise adapter without a Broker', () => {
       ok: false
     })
   })
+
+  it('completes session authorization and token exchange without a Broker', async () => {
+    process.env.DSH_DESKTOP_ENTERPRISE_ALLOW_INSECURE_LOOPBACK = '1'
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    adapterCleanups.push(async () => {
+      delete process.env.DSH_DESKTOP_ENTERPRISE_ALLOW_INSECURE_LOOPBACK
+      await platform.close()
+    })
+
+    const routes = createPluginContext()
+    const started = await invoke(routes, '/api/enterprise.login.start', 'POST', { base: origin })
+    expect(started.status).toBe(200)
+    const startPayload = await started.json() as { authorizationUrl: string; base: string }
+    expect(startPayload.base).toBe(origin)
+    expect(startPayload.authorizationUrl).toContain('/desktop-login?auth_id=')
+
+    const authId = new URL(startPayload.authorizationUrl).searchParams.get('auth_id')!
+    const authResponse = await fetch(`${origin}/__mock/authorize`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        auth_id: authId,
+        email: 'alice@demo.bisheng.local',
+        password: 'WorkBuddy123!',
+        decision: 'allow'
+      })
+    })
+    const html = await authResponse.text()
+    const match = /<code>([^<]+)<\/code>/.exec(html)
+    expect(match).toBeTruthy()
+    const ticket = match![1]
+
+    const verified = await invoke(routes, '/api/enterprise.login.manual', 'POST', { identityTicket: ticket })
+    expect(verified.status).toBe(200)
+    const verifiedState = await verified.json() as { connected: boolean; storageMode: string; models: unknown[] }
+    expect(verifiedState.connected).toBe(true)
+    expect(verifiedState.storageMode).toBe('session')
+    expect(verifiedState.models.length).toBeGreaterThan(0)
+  })
 })
 
 describe('enterprise adapter with a Broker', () => {
