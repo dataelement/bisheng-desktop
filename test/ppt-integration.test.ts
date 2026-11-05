@@ -333,17 +333,17 @@ describe('opening PPT template card', () => {
   it('publishes the footer slot and restores the persisted template into a preview card', async () => {
     const types = await readFile(path.join(projectRoot, 'node_modules', '@deepseek-ai', 'dsh-client-ui-chat', 'lib', 'types', 'client', 'contract', 'slots.d.ts'), 'utf8')
     const adapter = await readFile(path.join(projectRoot, 'packages', 'ppt-runtime', 'adapter', 'lib', 'client.js'), 'utf8')
-    const card = sourceSlice(adapter, 'function OfficePptTemplateReference', 'function OfficePptOpeningTemplateCard')
-    const legacy = sourceSlice(adapter, 'function OfficePptOpeningTemplateCard', 'function firstHumanMessage')
-    const modern = sourceSlice(adapter, 'function OfficePptModernOpeningTemplate', 'function OfficePptStandardInputAccessory')
+    const card = sourceSlice(adapter, 'function PptReference', 'function PptOpeningCard')
+    const legacy = sourceSlice(adapter, 'function PptOpeningCard', 'function firstHumanMessage')
+    const modern = sourceSlice(adapter, 'function PptOpening', 'function PptAccessory')
 
     // Both hosts delegate to the same persisted-state/preview implementation.
     expect(legacy).toContain('leading === true')
-    expect(legacy).toContain('OfficePptTemplateReference')
+    expect(legacy).toContain('PptReference')
     expect(modern).toContain('first === messageId')
-    expect(modern).toContain('OfficePptTemplateReference')
+    expect(modern).toContain('PptReference')
     expect(types).toMatch(/'conversation\.chat\.userMessageFooter': \{\s*kind: 'list';\s*scope: 'session';/)
-    expect(adapter).toContain('mount("conversation.chat.userMessageFooter", OfficePptOpeningTemplateCard)')
+    expect(adapter).toContain('mount("conversation.chat.userMessageFooter", PptOpeningCard)')
     expect(card).toContain('loadTemplateState')
     expect(card).toContain('applyLoadedTemplates')
     expect(card).toContain('mode.adopt')

@@ -16,7 +16,7 @@ npm run ppt:web:pack
 
 ## 行为
 
-旧版保留原 hero 入口及 fixed 布局；新版将按钮放在 hero.options 并与 Word/Excel 同行，input.dock 放唯一面板，需要先有空白标准会话。现代 dock 使用正常文档流 flow，面板最大高度为 50dvh，不继承旧版绝对定位和零高根节点。使用公开 slots.spec/inject 管理生命周期，避免重复面板。
+旧版保留原 hero 入口及 fixed 布局；新版将按钮放在 hero.options 并与 Word/Excel 同行。宿主应用 [输入区插槽补丁](upstream-patches/ui-conversation-input-slots.patch) 后，选中模板在 input.inside，面板在 input.after；缺少新插槽时回退原 input.dock。需要先有空白标准会话。面板采用正常文档流、最大高度 50dvh，不继承旧版绝对定位；slots.inject 管理延迟声明与回退，避免重复面板。
 
 Web 会话策略在每次模型 step 前重读模式、cwd 和技能正文，只将当前 scope 中 office-pptx 的模型调用设为不可用，保留其原用户调用权限。关闭后的下一 step、scope/插件销毁时撤销；普通 Office 缺失允许继续。策略控制工作流，不是文件或进程安全沙箱。
 
@@ -37,7 +37,7 @@ npm exec -- vitest run test/pack-ppt-web.test.mjs test/ppt-web-mode-policy.test.
 
 ## 实际 Profile 试验与 Office 组合更新
 
-初次通过实际 3080 Web 插件管理页以 file: 本地目录安装；随后按宿主支持的卸载重装流程改从 tgz 安装并启用，保留 autoInstallPeers:false。旧代码已本地快照，个人模板及工程数据保留，真实 Profile 配置未纳入源码。完整 Office 组合更新后，真实客户端模块图包含 composer、Office 和新增引用接缝，三个模式控件已实际挂载。本轮布局更新后的安装目录与构建目录客户端 SHA256 相同（21537eac2f83585cf7d924a05b12225e131202ae025818fe4b941819380d5638）。Office 真实浏览器验收与宿主前置条件见 [Office Web 迁移](office-web-plugin.md)。
+初次通过实际 3080 Web 插件管理页以 file: 本地目录安装；随后按宿主支持的卸载重装流程改从 tgz 安装并启用，保留 autoInstallPeers:false。旧代码已本地快照，个人模板及工程数据保留，真实 Profile 配置未纳入源码。完整 Office 组合更新后，真实客户端模块图包含 composer、Office 和新增引用接缝，三个模式控件已实际挂载。本轮布局更新后的安装目录与构建目录客户端 SHA256 相同（2d0c4882ff13a29ef03e6fc926eab3bba4dbcb7eefdc008ac6b036531c297d39）。Office 真实浏览器验收与宿主前置条件见 [Office Web 迁移](office-web-plugin.md)。
 
 首次加载暴露了宿主 profile-resolution 对 punycode/ 的解析缺陷：jsdom → whatwg-url → tr46 请求用户态包，宿主按内置模块同名根查询搜索路径得到 null。目标宿主三处路径查询已改为包目录形式，补充 profile、linked、native 三种 importer 回归；完整解析矩阵 236/236 通过，编译与文档检查通过，真实 Profile 安装目录的无 shim 导入成功。修复后重启原服务，保留原 Node、参数、环境和 Profile，完成实际加载复验。此宿主修复是当前 alpha 版本的部署前置条件，不能仅靠插件声明解决；可重放源码补丁保存在 [Profile 解析修复](upstream-patches/profile-resolution-directory-specifier.patch)，基于相同 Harness commit；不将宿主实现复制进插件。
 
@@ -55,7 +55,7 @@ npm exec -- vitest run test/pack-ppt-web.test.mjs test/ppt-web-mode-policy.test.
 
 修复包已通过官方卸载、安装、启用流程部署到同一 3080 服务，并在页面刷新后复验。原先失败的同一 12 页 PPTX 成功进入含 12 个版式的编辑器，保存为本会话唯一命名的临时个人模板，再经悬停删除入口和名称确认正常删除，原 16 套内置模板保留。最终 Office 与 PPT 均 enabled=true、fiberPhase=active；Word 公文案例可以直接选用。未发送付费模型请求。
 
-预览兼容修复包的历史 tgz SHA256 为 9d0e21f3c0e9da0a42e54a5d9f8e46d5a08f47f79b9722f8bb2e0c708eaa49d4；后续布局更新后的当前 tgz SHA256 为 d6af4f7427817d0e061a7994fd7543dddca06a288bca9edd3ae26b5d5cee7268。预览实现与维护源码 SHA256 均为 92b764fcfb7e0c14b09c86ad2e9c7d70034fa0ab2460455c7405fe643069ea19；当前客户端哈希见上文。修复后标准 build 与 typecheck 再次通过。
+预览兼容修复包的历史 tgz SHA256 为 9d0e21f3c0e9da0a42e54a5d9f8e46d5a08f47f79b9722f8bb2e0c708eaa49d4；后续布局更新后的当前 tgz SHA256 为 eb44fa11dd66cf3680327017dee5fa1e75ce16d8bc4cab89552aa39e6443f6dd。预览实现与维护源码 SHA256 均为 92b764fcfb7e0c14b09c86ad2e9c7d70034fa0ab2460455c7405fe643069ea19；当前客户端哈希见上文。修复后标准 build 与 typecheck 再次通过。
 
 ## 回退
 

@@ -34,7 +34,7 @@ Desktop 的 Office/PPT client 仍由各自既有 pack/build 链路分发。本�
 
 ## 兼容边界与验证
 
-旧宿主继续使用原 hero/accessory/composer 和 userMessageFooter；现代宿主使用 input.left + 单个 input.dock，所选模板预览保留在 dock 内。缺少新增 references slot 的现代宿主仍可选择/预览模板，但无法显示历史消息模板引用；插件不会回退占用 source chain，也不会猜测消息身份。要达到完整现代历史引用功能，必须部署此 ui-chat 补丁。
+旧宿主继续使用原 hero/accessory/composer 和 userMessageFooter；现代宿主以 hero.options 放模式按钮，具备 [输入区插槽补丁](upstream-patches/ui-conversation-input-slots.patch) 时以 input.inside 显示所选缩略图、input.after 显示下面板，否则回退 input.dock。缺少新增 references slot 的现代宿主仍可选择/预览模板，但无法显示历史消息模板引用；插件不会回退占用 source chain，也不会猜测消息身份。要达到完整现代历史引用功能，必须部署此 ui-chat 补丁。
 
 [Office registry 回归](../test/office-harness-slots.test.mjs) 使用真实 Cordis 与 Harness SlotRegistry，覆盖新旧声明、延迟 slot/owner 重挂、停用与重新激活、Word/Excel 互斥、单 dock、所选预览、首条用户身份、无 rpcId/重复 rpcId、分页未完整、会话切换、Office/PPT 共存、取消选择和 source 装饰独立。现有 Office 26 项行为测试及 PPT 个人模板管理 36 项行为测试保留。上游真实 MessageItem 测试覆盖引用在内容之后、多引用与来源装饰共存、分页 prepend 身份和 transient/无身份排除。
 

@@ -53,17 +53,17 @@ afterEach(async () => {
 
 // Use the actual Harness registry and Cordis effects, with contract-sized owner
 // declarations. The DOM below renders registered plugin components, not host UI.
-async function fixture({ legacy = false, delayed = false, noSpec = false, history = false, withPpt = false } = {}) {
+async function fixture({ legacy = false, delayed = false, noSpec = false, history = false, withPpt = false, positioned = false, separate = false } = {}) {
   const ctx = new cordis.Context()
   const registry = ctx.plugin(SlotRegistry)
   cleanups.push(() => registry.dispose())
   await registry
   const slots = ctx.slots
   let owner
-  const names = [...(legacy ? legacySlots : modernSlots), ...(history ? ['conversation.chat.user.references'] : []), ...(withPpt ? ['conversation.chat.user.before'] : [])]
+  const names = [...(legacy ? legacySlots : modernSlots), ...(positioned ? ['conversation.input.after', 'conversation.input.inside'] : []), ...(history ? ['conversation.chat.user.references'] : []), ...(withPpt ? ['conversation.chat.user.before'] : [])]
   const declare = () => {
     owner = slots.register({ name: 'root', id: 'conversation-test-owner', children: Object.fromEntries(
-      names.map(name => [name, { kind: name === 'conversation.chat.user.before' ? 'chain' : 'list', scope: name.startsWith('conversation.hero') ? 'session-maybe' : 'session' }])
+      names.filter(name => !separate || !['conversation.input.after', 'conversation.input.inside'].includes(name)).map(name => [name, { kind: name === 'conversation.chat.user.before' ? 'chain' : 'list', scope: name.startsWith('conversation.hero') ? 'session-maybe' : 'session' }])
     ) }, () => null)
   }
   if (!delayed) declare()
@@ -119,11 +119,11 @@ async function fixture({ legacy = false, delayed = false, noSpec = false, histor
   cleanups.push(async () => { await act(async () => root.unmount()); container.remove() })
   const propsCache = new Map()
   const entries = name => slots.entries(name).filter(entry => entry.options.id === 'desktop-office' || (withPpt && entry.options.id === 'dsh-ppt'))
-  async function render({ sessionId = 'session-a', blank = true, hero = true, rows = [], hasMore = false } = {}) {
+  async function render({ sessionId = 'session-a', blank = true, hero = true, rows = [], hasMore = false, insideOwner } = {}) {
     const outlets = legacy ? [
       'conversation.hero.modeActions', 'conversation.input.accessory',
       hero ? 'conversation.hero.dock' : 'conversation.composer.dock'
-    ] : modernSlots.filter(name => name !== 'conversation.chat.user.references')
+    ] : [...modernSlots, ...(positioned ? ['conversation.input.after', 'conversation.input.inside'] : [])]
     await act(async () => root.render(React.createElement(React.Fragment, null,
       ...outlets.map(name => React.createElement('div', { key: name, 'data-slot': name },
         ...(sessionId == null && !legacy ? [] : entries(name)).map(entry => {
@@ -131,7 +131,7 @@ async function fixture({ legacy = false, delayed = false, noSpec = false, histor
           if (propsCache.get(key)?.entry !== entry) propsCache.set(key, { entry, props: entry.inject(sessionId) })
           return React.createElement(entry.component, {
             ...propsCache.get(key).props, key: entry.options.id, sessionId,
-            session: sessionId ? { blank } : undefined, t: translator(entry.options.id)
+            ...(name === 'conversation.input.inside' && insideOwner !== undefined ? insideOwner : { session: sessionId ? { blank } : undefined }), t: translator(entry.options.id)
           })
         }))),
       ...rows.map(row => React.createElement('div', { key: row.key, 'data-history-message': row.data.messageId },
@@ -145,6 +145,7 @@ async function fixture({ legacy = false, delayed = false, noSpec = false, histor
   }
   return {
     container, calls, entries, render, declare, activate,
+    declareExtra(name) { return slots.register({ name: name.endsWith('after') ? 'conversation.input.left' : 'conversation.composer.dock', id: 'owner-' + name, children: { [name]: { kind: 'list', scope: 'session' } } }, () => null) },
     collapse: () => owner(), dispose: () => plugin.dispose(),
     registrations: () => names.filter(name => entries(name).length),
     async unmount() { await act(async () => root.render(null)) },
@@ -205,6 +206,72 @@ it('uses one modern input dock and keeps Word/Excel selection and preview mutual
   await f.render({ blank: false })
   expect(f.container.querySelector('[data-office-dock]')).toBeNull()
   expect(f.container.querySelector('[data-office-mode]')).toBeNull()
+})
+
+it('uses positioned modern slots without duplicating the selected thumbnail', async () => {
+  const f = await fixture({ positioned: true, delayed: true })
+  f.declare()
+  expect(f.registrations().sort()).toEqual(['conversation.hero.options', 'conversation.input.after', 'conversation.input.inside'].sort())
+  await f.render()
+  await f.click('Word')
+  expect(f.container.querySelectorAll('[data-office-dock]')).toHaveLength(1)
+  expect(f.container.querySelector('[data-slot="conversation.input.after"] [data-office-dock]')).not.toBeNull()
+  expect(f.container.querySelector('[data-slot="conversation.input.dock"] [data-office-dock]')).toBeNull()
+  await f.click('选用案例 中国现制咖啡市场调研报告')
+  expect(f.container.querySelectorAll('[data-office-selected]')).toHaveLength(1)
+  expect(f.container.querySelector('[data-slot="conversation.input.inside"] [data-office-selected]')).not.toBeNull()
+  await f.click('取消选择案例')
+  expect(f.container.querySelector('[data-office-selected]')).toBeNull()
+  await f.unmount()
+  f.collapse()
+  expect(f.registrations()).toEqual([])
+  f.declare()
+  expect(f.registrations()).toHaveLength(3)
+  await f.dispose()
+  expect(f.registrations()).toEqual([])
+})
+
+it('requires the inside outlet owner session to show the selected thumbnail', async () => {
+  const f = await fixture({ positioned: true })
+  await f.render()
+  await f.click('Word')
+  await f.click('选用案例 中国现制咖啡市场调研报告')
+  const selected = () => f.container.querySelector('[data-slot="conversation.input.inside"] [data-office-selected]')
+  expect(selected()).not.toBeNull()
+  await f.render({ insideOwner: {} })
+  expect(selected()).toBeNull()
+  await f.render({ insideOwner: { session: { blank: true } } })
+  expect(selected()).not.toBeNull()
+  await f.render({ insideOwner: { session: { blank: false } } })
+  expect(selected()).toBeNull()
+})
+
+it('switches and restores fallback as positioned slots arrive and leave independently', async () => {
+  const f = await fixture({ positioned: true, separate: true })
+  await f.render()
+  await f.click('Word')
+  await f.click('选用案例 中国现制咖啡市场调研报告')
+  const check = async (panel, thumb) => {
+    await f.render()
+    expect(f.container.querySelectorAll('[data-office-dock]')).toHaveLength(1)
+    expect(f.container.querySelectorAll('[data-office-selected]')).toHaveLength(1)
+    expect(f.container.querySelector(`[data-slot="${panel}"] [data-office-dock]`)).not.toBeNull()
+    expect(f.container.querySelector(`[data-slot="${thumb}"] [data-office-selected]`)).not.toBeNull()
+  }
+  await check('conversation.input.dock', 'conversation.input.dock')
+  const after = f.declareExtra('conversation.input.after')
+  await check('conversation.input.dock', 'conversation.input.dock')
+  let inside = f.declareExtra('conversation.input.inside')
+  await check('conversation.input.after', 'conversation.input.inside')
+  inside()
+  await check('conversation.input.dock', 'conversation.input.dock')
+  inside = f.declareExtra('conversation.input.inside')
+  await check('conversation.input.after', 'conversation.input.inside')
+  after()
+  await check('conversation.input.dock', 'conversation.input.dock')
+  inside()
+  await f.dispose()
+  expect(f.registrations()).toEqual([])
 })
 
 it.each([false, true])('retains legacy hero and composer behavior (missing spec: %s)', async noSpec => {

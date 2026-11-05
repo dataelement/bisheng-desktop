@@ -14,6 +14,7 @@ function slice(source, start, end) {
 
 function normalizedStoreSource(source) {
   return slice(source, 'const STAGED_MODE_KEY', 'function useMode')
+    .replace(/OfficePptHeroStore/g, 'PptStore')
     .replace(/\r\n/g, '\n')
     .replace(
       /^([ \t]*)constructor\(\) \{\n\1[ \t]+this\.states = \/\* @__PURE__ \*\/ new Map\(\);\n\1[ \t]+this\.listeners = \/\* @__PURE__ \*\/ new Map\(\);\n\1\}/m,
@@ -21,7 +22,7 @@ function normalizedStoreSource(source) {
     )
 }
 
-const Store = new Function(`${slice(adapter, 'const STAGED_MODE_KEY', 'function useMode')}\nreturn OfficePptHeroStore;`)()
+const Store = new Function(`${slice(adapter, 'const STAGED_MODE_KEY', 'function useMode')}\nreturn PptStore;`)()
 const createOfficePptClient = new Function(`${slice(adapter, 'function createOfficePptClient', 'const standardInject')}\nreturn createOfficePptClient;`)()
 
 function client(handler) {
@@ -276,7 +277,7 @@ describe('unbound PPT mode', () => {
 
   it('reloads the catalog when the mode revision changes and does not stop because loading is true', () => {
     // The opening-template card has its own catalog effect; compare the chooser's.
-    const chooser = source => source.slice(source.indexOf('function OfficePptChooser('))
+    const chooser = source => source.slice(source.indexOf(source === core ? 'function OfficePptChooser(' : 'function PptChooser('))
     const effect = slice(chooser(adapter), 'const catalogRevision = mode.revision(sessionId);', 'const deselect = () =>')
     expect(effect).toContain('if (!loadTemplates || state.templates.length > 0 || state.error !== "") return;')
     expect(effect).not.toContain('state.loading ||')
@@ -336,9 +337,9 @@ describe('PPT hero and session dock routing', () => {
     const mode = new Store()
     const injectHero = sessionId => ({ mode, sessionId })
     const openingCard = () => null
-    const apply = new Function('officePptHeroInjection', 'OfficePptStandardModeAction', 'OfficePptStandardInputAccessory', 'OfficePptOpeningTemplateCard', 'OfficePptStandardComposerDock', 'NS',
+    const apply = new Function('officePptHeroInjection', 'PptModeAction', 'PptAccessory', 'PptOpeningCard', 'PptOpening', 'PptDock', 'NS',
       `${slice(adapter, 'function applyStandard(ctx)', '//#endregion')}\nreturn applyStandard;`
-    )(() => injectHero, () => null, () => null, openingCard, dock, 'dsh-ppt')
+    )(() => injectHero, () => null, () => null, openingCard, () => null, dock, 'dsh-ppt')
     apply({ slots: { inject: (_name, register) => register(), register: (config, component) => registered.set(config.name, { config, component }) } })
     for (const name of ['conversation.hero.dock', 'conversation.composer.dock']) {
       expect(registered.get(name).component).toBe(dock)

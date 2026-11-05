@@ -4,9 +4,9 @@
 
 Office 使用现有 dsh-desktop-office 维护源，PPT 继续使用 dsh-ppt-composer adapter；没有替换成另一套简化模板组件。原 Desktop 组合同时加载这两个包，上一轮独立 Web 试验只迁了 PPT。
 
-现代 Harness 移除了旧 hero.modeActions、hero.dock、input.accessory 和 userMessageFooter。空白会话的 PPT、Word、Excel 模式按钮现分别注册到公开 hero.options，同一行排列在输入框上方；模板面板注册到 input.dock，保留原卡片、预览和选择交互。现代 dock 位于输入卡上方，按正常文档流布局并限制最大半屏高度；这与原 Desktop 的输入卡下方绝对定位面板仍有区别。已选模板缩略图移入模板 dock，不能宣称与旧 reference rail 像素等价。
+现代 Harness 移除了旧 hero.modeActions、hero.dock、input.accessory 和 userMessageFooter。空白会话的 PPT、Word、Excel 模式按钮注册到 hero.options，同一行排列在输入框上方。新增 [ui-conversation 输入区插槽补丁](upstream-patches/ui-conversation-input-slots.patch) 后，已选模板缩略图通过 input.inside 位于输入卡内编辑器左侧；模板面板通过 input.after 位于输入卡下方，与 main 的排列一致。面板采用正常文档流并限制最大半屏高度，未复制 main 的绝对定位实现；无新接缝的现代宿主回退原 input.dock 上方面板，旧宿主保持原路径。
 
-本轮已在实际 3080 通过官方插件管理更新并刷新，确认三按钮同一高度、按 PPT/Word/Excel 排列，Word 与 Excel 模板面板和 PPT 预览正常切换；较窄窗口下按钮可点击、无横向滚动。无会话时 hero.options 由宿主隐藏，需进入标准空白会话。新版 Office tgz SHA256 为 2fbaf6df7d519fc0f7afea3fff2736d0559315f985600c50cc2613a6c41002c7，PPT tgz 为 d6af4f7427817d0e061a7994fd7543dddca06a288bca9edd3ae26b5d5cee7268。
+已在实际 3080 通过官方插件管理更新并刷新，实测 Word/PPT 选择缩略图在输入卡内、模板面板在输入卡下且宽度与卡一致；Excel 工作表预览、PPT 预览与焦点恢复、模式互斥及较窄窗口按钮命中正常。无会话时 hero.options 由宿主隐藏，需进入标准空白会话。当前 Office tgz SHA256 为 3d3ca75ab5bf831a0628ded4bf41d2e44b3a13bd7618326d89023e9168a18b99，PPT tgz 为 eb44fa11dd66cf3680327017dee5fa1e75ce16d8bc4cab89552aa39e6443f6dd。
 
 | 模式 | 原有案例 |
 | --- | --- |
@@ -55,7 +55,7 @@ Office 与 PPT 通过公开会话模型定位首条真实用户消息，历史�
 
 正常和窄屏下模式按钮中心命中正确，无横向溢出；系统深色媒体切换使 Office 前景 token 从 rgb(15,17,21) 变为 rgb(249,250,251)，测试后恢复原媒体和窗口尺寸。
 
-当前认证页面的实际模块图与脚本响应包含 Office、PPT 和新增 ui-chat references 接缝；已刷新实际 3080 页面验收，不依赖另一台开发服务器。本轮布局更新后，Office 安装目录与生成目录的 client SHA256 均为 015f7f4d1adf2e49f0f4e969e63e15f00276eaa8a44857aa6500fa7cc7e26cb7。未设置 DSH_HOME 的当前服务，其 Office 数据实际保存在用户 DSH home 的 office-web 目录。
+当前认证页面的实际模块图与脚本响应包含 Office、PPT 和新增 ui-chat references 接缝；已刷新实际 3080 页面验收，不依赖另一台开发服务器。本轮布局更新后，Office 安装目录与生成目录的 client SHA256 均为 b70ef1212bcd4d4c7a9988f3315c4884c3f63b7ebf5005c56fe1631ad142e6cf。未设置 DSH_HOME 的当前服务，其 Office 数据实际保存在用户 DSH home 的 office-web 目录。
 
 Office 后端和打包回归 47 项与额外 native-target guard 通过，Office/PPT 客户端 4 文件 78 项通过，PPT 集成/打包/兼容/真实 HTTP 补充 40 项通过；这些分批结果不合并计算成全仓总数。typecheck、标准 build、git diff --check 通过。全仓测试此前受已有 desktop-modes-ui 的 CloudHistoryRow 循环告警影响而停止，未声称全量通过。预览兼容修复后，再以真实 Profile 正常安装的 Kit 复验完整 Word/Excel 原生链路通过，[运行收据](../.build/office-web-target-receipt/receipt.json) 记录了实际 Kit 入口与 SHA256。PPT 的同一 12 页文件在 3080 成功导入、保存和确认删除临时模板，额外 13 项预览回归通过。最终 PPT 产物和兼容结果见 [PPT Web 记录](ppt-web-plugin.md)。
 

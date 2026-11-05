@@ -200,7 +200,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
         h('path', { d: mode === 'word' ? 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13h8M8 17h6' : 'M4 3h16a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1ZM3 9h18M3 15h18M9 3v18M15 3v18' })), mode === 'word' ? 'Word' : 'Excel')),
       state.error ? h('span', { role: 'alert' }, state.error, h('button', { type: 'button', onClick: () => store.load(sessionId, true) }, t('retry'))) : null)
   }
-  function Dock({ store, sessionId, session, t, flow = false }) {
+  function Dock({ store, sessionId, session, t, flow = false, inlineAccessory = flow }) {
     const state = useOffice(store, sessionId), [opened, setOpened] = React.useState(null)
     const root = React.useRef(), panel = React.useRef(), visible = !!state.mode && (session == null || session.blank === true)
     useDockGeometry(root, panel, visible, flow)
@@ -209,7 +209,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     if (!visible) return null
     const items = state.templates.filter(item => item.mode === state.mode)
     return h('div', { ref: root, className: 'dso-dock-root', 'data-layout': flow ? 'flow' : undefined }, h('section', { ref: panel, className: 'dso-dock', 'data-office-dock': state.mode, 'aria-label': t('templates') },
-      flow ? h(Accessory, { store, sessionId, session, t }) : null,
+      inlineAccessory ? h(Accessory, { store, sessionId, session, t }) : null,
       h('div', { className: 'dso-viewport', 'data-native-wheel-owner': '' },
       state.error ? h('div', { role: 'alert' }, state.error, h('button', { type: 'button', onClick: () => store.load(sessionId, true) }, t('retry'))) : null,
       state.selectionExpired ? h('p', { role: 'status' }, t('expired')) : null,
@@ -221,6 +221,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
   }
   // Modern hero options own the controls; the shared dock owns the panel.
   function ModernDock(props) { return h(Dock, { ...props, flow: true }) }
+  function PositionedDock(props) { return h(Dock, { ...props, flow: true, inlineAccessory: false }) }
   function Accessory({ store, sessionId, session, t }) {
     const state = useOffice(store, sessionId), [opened, setOpened] = React.useState(false)
     React.useEffect(() => setOpened(false), [sessionId, state.selectedTemplateId, session?.blank])
@@ -304,7 +305,30 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     const register = (seat, component) => ctx.slots.register({ name: seat, id: NS, order: seat === 'conversation.hero.modeActions' || seat === 'conversation.hero.options' ? 30 : 10, locale: NS, inject: () => ({ store }) }, component)
     const mount = (seat, component) => ctx.slots.inject(seat, () => register(seat, component))
     const legacy = () => typeof ctx.slots.spec !== 'function' || ctx.slots.spec('conversation.hero.modeActions') !== undefined
-    ctx.slots.inject('conversation.input.dock', () => legacy() ? () => {} : [register('conversation.input.dock', ModernDock), mount('conversation.hero.options', ModeActions)])
+    ctx.slots.inject('conversation.input.dock', () => {
+      if (legacy()) return () => {}
+      const stopActions = mount('conversation.hero.options', ModeActions)
+      let stopping = false
+      let fallback = register('conversation.input.dock', ModernDock)
+      const stopAfter = ctx.slots.inject('conversation.input.after', () =>
+        ctx.slots.inject('conversation.input.inside', () => {
+          fallback?.()
+          fallback = undefined
+          const stopPanel = register('conversation.input.after', PositionedDock)
+          const stopAccessory = register('conversation.input.inside', Accessory)
+          return () => {
+            stopAccessory()
+            stopPanel()
+            if (!stopping) fallback = register('conversation.input.dock', ModernDock)
+          }
+        }))
+      return () => {
+        stopping = true
+        stopAfter()
+        fallback?.()
+        stopActions()
+      }
+    })
     for (const [seat, component] of [['conversation.hero.modeActions', ModeActions], ['conversation.input.accessory', Accessory], ['conversation.chat.userMessageFooter', LegacyOpeningTemplate], ['conversation.hero.dock', Dock]]) mount(seat, component)
     ctx.slots.inject('conversation.chat.user.references', () => ctx.slots.register({ name: 'conversation.chat.user.references', id: NS, locale: NS, inject: () => ({ store }) }, ModernOpeningTemplate))
     ctx.slots.inject('conversation.composer.dock', () => legacy() ? register('conversation.composer.dock', Dock) : () => {})

@@ -1,0 +1,314 @@
+diff --git a/packages/client/ui-conversation/README.i18n.yaml b/packages/client/ui-conversation/README.i18n.yaml
+index f17358e4b5..4d782ce297 100644
+--- a/packages/client/ui-conversation/README.i18n.yaml
++++ b/packages/client/ui-conversation/README.i18n.yaml
+@@ -24,8 +24,8 @@
+   en: 99ec447f0a6bda48
+   zh: 922cf64666676530
+ /deepseek-ai-dsh-client-ui-conversation/temporary-composer-entries:
+-  en: 59cd63057dfb6eeb
+-  zh: b2e2c86e810b7bb8
++  en: 678fb6c87c832be3
++  zh: d5b862e51ff9dfbd
+ /deepseek-ai-dsh-client-ui-conversation/model-experience:
+   en: e0a05b73ba3e4318
+   zh: dc85ab8433bb4456
+diff --git a/packages/client/ui-conversation/README.md b/packages/client/ui-conversation/README.md
+index 14f54dc287..108343f4ae 100644
+--- a/packages/client/ui-conversation/README.md
++++ b/packages/client/ui-conversation/README.md
+@@ -182,6 +182,8 @@ The selector must be a pure function of the owner currency. Its non-null return
+ 
+ `InputActions.captureInsertion()` captures the draft selection and revision; `insertText(text, span)` inserts one undoable plain-text edit only while that revision is current and the editor permits editing. Asynchronous consumers retain rejected results for user action.
+ 
++`conversation.input.after` is a session-scoped list after the composer bar and receives the same `InputZone` owner as `conversation.input.dock`. `conversation.input.inside` is a session-scoped list after attachments and to the left of the draft editor; its owner supplies the current `session` snapshot (undefined while unavailable), and it does not replace the existing `accessory` prop. Fixed overlays must portal to the document body.
++
+ `conversation.input.activity` hosts one control between the model selector and Send. Its `onActiveChange` callback expands that control across the toolbar and hides ordinary accessory controls and the context meter while preserving the editor and submit action. Closing the activity restores those controls with context details closed. The empty hero dock remains collapsed when it has no content. The occupant releases expansion on unmount and owns any activity-specific feedback.
+ 
+ Session title context gestures use the shared [context menu](../ui-context-menu/README.md) with the clicked breadcrumb’s Session. The reusable image gallery receives `getTriggerProps` from its Factory’s injected `useContextMenu` hook.
+diff --git a/packages/client/ui-conversation/README.zh.md b/packages/client/ui-conversation/README.zh.md
+index 473e15825e..6bf78bbcbf 100644
+--- a/packages/client/ui-conversation/README.zh.md
++++ b/packages/client/ui-conversation/README.zh.md
+@@ -182,6 +182,8 @@ selector 必须是 owner currency 的纯函数。非 null 返回值作为 `match
+ 
+ `InputActions.captureInsertion()` 捕获草稿选区与版本；`insertText(text, span)` 仅在版本未变且编辑器允许编辑时，插入一次可撤销的纯文本编辑。异步消费者在插入被拒绝后负责保留结果，等待用户操作。
+ 
++`conversation.input.after` 是输入栏之后的 session 作用域列表，接收与 `conversation.input.dock` 相同的 `InputZone` owner。`conversation.input.inside` 是附件之后、草稿编辑器左侧的 session 作用域列表，其 owner 提供当前 `session` 快照（尚不可用时为 undefined），不替代既有 `accessory` 属性。固定定位浮层必须 portal 到 document body。
++
+ `conversation.input.activity` 在模型选择器与发送按钮之间承载一个控件。其 `onActiveChange` 回调将控件展开至整条工具栏并隐藏普通辅助控件和上下文用量按钮，同时保留编辑器与提交按钮。关闭活动后恢复这些控件，上下文详情保持关闭。首页输入框下方没有内容时，该区域保持收起。占用者在卸载时释放展开状态，并拥有活动专属反馈。
+ 
+ 会话标题右键使用共享[右键菜单](../ui-context-menu/README.zh.md)，目标是被点击面包屑所属会话。可复用图片库从其 Factory 注入的 `useContextMenu` hook 获取 `getTriggerProps`。
+diff --git a/packages/client/ui-conversation/src/client/apply.ts b/packages/client/ui-conversation/src/client/apply.ts
+index 3328e1e5da..452ba9656c 100644
+--- a/packages/client/ui-conversation/src/client/apply.ts
++++ b/packages/client/ui-conversation/src/client/apply.ts
+@@ -349,6 +349,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
+       'conversation.composer': { kind: 'chain', scope: 'session' },
+       'conversation.composer.bar': { kind: 'single', scope: 'session-maybe' },
+       'conversation.input.dock': { kind: 'list', scope: 'session' },
++      'conversation.input.after': { kind: 'list', scope: 'session' },
+       'conversation.hero.brand.mark': { kind: 'single', scope: 'root' },
+       'conversation.hero.workspace': { kind: 'single', scope: 'root' },
+       'conversation.hero.agentPreset': { kind: 'single', scope: 'session-maybe' },
+@@ -465,6 +466,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
+     children: {
+       'conversation.input.attachments': { kind: 'single', scope: 'session-maybe' },
+       'conversation.input.overlay': { kind: 'list', scope: 'session' },
++      'conversation.input.inside': { kind: 'list', scope: 'session' },
+       'conversation.input.permission': { kind: 'single', scope: 'session' },
+       'conversation.input.left': { kind: 'list', scope: 'session' },
+       'conversation.input.plan': { kind: 'single', scope: 'session' },
+diff --git a/packages/client/ui-conversation/src/client/contract/slots.ts b/packages/client/ui-conversation/src/client/contract/slots.ts
+index 0c438e0f4c..95b1f16dbc 100644
+--- a/packages/client/ui-conversation/src/client/contract/slots.ts
++++ b/packages/client/ui-conversation/src/client/contract/slots.ts
+@@ -294,6 +294,10 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+      * because the docked composer contains them.
+      */
+     'conversation.input.dock': { kind: 'list'; scope: 'session'; owner: InputZone }
++    /** Entries after the composer bar; fixed overlays must portal to the document body. */
++    'conversation.input.after': { kind: 'list'; scope: 'session'; owner: InputZone }
++    /** Compact entries to the left of the draft editor, after attachments. */
++    'conversation.input.inside': { kind: 'list'; scope: 'session'; owner: { session: SessionSnapshot | undefined } }
+     /**
+      * Floating entries rendered inside the resident composer card; fixed overlays must portal to
+      * the document body because the docked composer contains them.
+@@ -363,6 +367,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+         'conversation.composer': { kind: 'chain'; scope: 'session' }
+         'conversation.composer.bar': { kind: 'single'; scope: 'session-maybe' }
+         'conversation.input.dock': { kind: 'list'; scope: 'session' }
++        'conversation.input.after': { kind: 'list'; scope: 'session' }
+         'conversation.hero.brand.mark': { kind: 'single'; scope: 'root' }
+         'conversation.hero.workspace': { kind: 'single'; scope: 'root' }
+         'conversation.hero.agentPreset': { kind: 'single'; scope: 'session-maybe' }
+@@ -597,7 +602,7 @@ export interface InputActivityOwnerProps extends InputControlOwnerProps {
+ export type ComposerBarProps =
+   PropsRuntime<'conversation.composer.bar'>
+   & PropsRenderSlots<
+-    | 'conversation.input.attachments' | 'conversation.input.overlay'
++    | 'conversation.input.attachments' | 'conversation.input.overlay' | 'conversation.input.inside'
+     | 'conversation.input.permission'
+     | 'conversation.input.left' | 'conversation.input.plan'
+     | 'conversation.input.right' | 'conversation.input.model' | 'conversation.input.activity'
+diff --git a/packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx b/packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx
+index 218082ae31..a968162183 100644
+--- a/packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx
++++ b/packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx
+@@ -167,6 +167,7 @@ export function ConversationContent(props: ConversationContentProps) {
+       {hero && heroWorkspaceRow}
+       {zone !== undefined && renderSlot('conversation.input.dock', zone)}
+       {inputBar}
++      {zone !== undefined && renderSlot('conversation.input.after', zone)}
+     </div>
+   )
+ 
+diff --git a/packages/client/ui-conversation/src/client/skeleton/InputBar.module.css b/packages/client/ui-conversation/src/client/skeleton/InputBar.module.css
+index b3cd1dd271..e370100d00 100644
+--- a/packages/client/ui-conversation/src/client/skeleton/InputBar.module.css
++++ b/packages/client/ui-conversation/src/client/skeleton/InputBar.module.css
+@@ -124,6 +124,28 @@
+   }
+ }
+ 
++.promptRow {
++  display: flex;
++  align-items: flex-start;
++  min-width: 0;
++}
++
++.promptAccessory {
++  display: flex;
++  align-items: flex-start;
++  padding: 4px 0 0 12px;
++}
++
++/* The slot outlet is a stable display:contents anchor even when empty. */
++.promptAccessory:not(:has(> [data-slot] > *)) {
++  display: none;
++}
++
++.promptRow > .scroll {
++  flex: 1;
++  min-width: 0;
++}
++
+ .accessory {
+   display: flex;
+   align-items: center;
+diff --git a/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx b/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
+index 892a410223..c89dda017d 100644
+--- a/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
++++ b/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
+@@ -68,6 +68,7 @@ export const InputBar = memo(function InputBar({
+   const commandMenuOpen = useMenuLauncher(source => source === 'command')
+   const [activity, setActivity] = useState(false)
+   useEffect(() => { setActivity(false) }, [sessionId])
++  const session = useSession(s => s)
+   const promptError = useSession(s => s.promptError) ?? null
+   const running = useSession(s => s.running) ?? false
+   const subagent = useSession(s => s.subagent) ?? null
+@@ -466,21 +467,26 @@ export const InputBar = memo(function InputBar({
+             thing that scrolls. Chips are decorator portals inside the same
+             surface, so wrapping, caret geometry, and scrolling are the
+             browser's own. */}
+-        <DraftEditor
+-          classNames={css}
+-          editor={editor}
+-          scrollRef={scrollRef}
+-          editable={editable}
+-          editorDisabled={editorDisabled}
+-          phase={input?.phase ?? 'inert'}
+-          placeholderText={placeholderText}
+-          ariaLabel={workspaceTrigger ? t('hero.chooseWorkspace') : placeholderText}
+-          workspaceTrigger={workspaceTrigger}
+-          workspacePickerOpen={workspacePickerOpen}
+-          onWorkspaceKeyDown={onWorkspaceKeyDown}
+-          hint={hint}
+-          showPlaceholder={draft === '' && attachments.length === 0 && !claimActive}
+-        />
++        <div className={css.promptRow}>
++          {sessionId !== undefined && (
++            <div className={css.promptAccessory}>{renderSlot('conversation.input.inside', { session })}</div>
++          )}
++          <DraftEditor
++            classNames={css}
++            editor={editor}
++            scrollRef={scrollRef}
++            editable={editable}
++            editorDisabled={editorDisabled}
++            phase={input?.phase ?? 'inert'}
++            placeholderText={placeholderText}
++            ariaLabel={workspaceTrigger ? t('hero.chooseWorkspace') : placeholderText}
++            workspaceTrigger={workspaceTrigger}
++            workspacePickerOpen={workspacePickerOpen}
++            onWorkspaceKeyDown={onWorkspaceKeyDown}
++            hint={hint}
++            showPlaceholder={draft === '' && attachments.length === 0 && !claimActive}
++          />
++        </div>
+         <div ref={rowRef} className={css.row}>
+           <div className={css.tools} hidden={activity}>
+             <Tooltip label={t('input.commands')} side="top" delayMs={500} portal>
+diff --git a/packages/client/ui-conversation/tests/composer-seat-styles.client.spec.ts b/packages/client/ui-conversation/tests/composer-seat-styles.client.spec.ts
+index 657c0007e6..8678592c5c 100644
+--- a/packages/client/ui-conversation/tests/composer-seat-styles.client.spec.ts
++++ b/packages/client/ui-conversation/tests/composer-seat-styles.client.spec.ts
+@@ -43,6 +43,14 @@ describe('docked composer seat styles', () => {
+   })
+ })
+ 
++describe('inside prompt seat styles', () => {
++  it('pads populated entries and hides the stable empty slot anchor', () => {
++    expect(rule(inputBarCss, '.promptAccessory')).toMatch(/padding:\s*4px 0 0 12px;/)
++    expect(rule(inputBarCss, '.promptAccessory:not(:has(> [data-slot] > *))')).toMatch(/display:\s*none;/)
++    expect(rule(inputBarCss, '.promptRow > .scroll')).toMatch(/min-width:\s*0;/)
++  })
++})
++
+ describe('composer statistics row styles', () => {
+   it('reserves one reading row in the docked composer only', () => {
+     expect(rule(inputBarCss, '.root:not(.hero) > .dock'))
+diff --git a/packages/client/ui-conversation/tests/input-bar.client.spec.tsx b/packages/client/ui-conversation/tests/input-bar.client.spec.tsx
+index bf3f83e133..b00041fce5 100644
+--- a/packages/client/ui-conversation/tests/input-bar.client.spec.tsx
++++ b/packages/client/ui-conversation/tests/input-bar.client.spec.tsx
+@@ -98,6 +98,8 @@ interface BenchOptions {
+   placeholder?: string
+   t?: InputBarProps['t']
+   accessory?: React.ReactNode
++  inside?: React.ReactNode
++  insideForSession?: (session: SessionSnapshot | undefined) => React.ReactNode
+   overlay?: React.ReactNode
+   leftItems?: React.ReactNode
+   rightItems?: React.ReactNode
+@@ -169,6 +171,8 @@ function bench(over?: BenchOptions) {
+   const slotCalls: { key: string; owner: unknown }[] = []
+   const renderSlot = ((key: string, owner: object) => {
+     slotCalls.push({ key, owner })
++    if (key === 'conversation.input.inside') return <div data-slot={key} style={{ display: 'contents' }}>{over?.insideForSession ? over.insideForSession((owner as { session: SessionSnapshot | undefined }).session) : over?.inside}</div>
++    if (key === 'conversation.input.attachments') return <i data-testid="attachment-seat" />
+     if (key === 'conversation.input.overlay') return over?.overlay ?? null
+     if (key === 'conversation.input.left') return over?.leftItems ?? null
+     if (key === 'conversation.input.right') return over?.rightItems ?? null
+@@ -2069,6 +2073,40 @@ describe('strips and variants', () => {
+     expect(view.container.querySelector('[class*="hero"]')).not.toBeNull()
+   })
+ 
++  it('places inside after attachments and before the editor without replacing accessory', () => {
++    const { view } = bench({ accessory: <i data-testid="acc" />, inside: <><button data-testid="inside">inside</button><button data-testid="inside-two">second</button></> })
++    const accessory = view.getByTestId('acc')
++    const attachment = view.getByTestId('attachment-seat')
++    const inside = view.getByTestId('inside')
++    const editor = view.container.querySelector('[data-input-scroll]')!
++    expect(accessory.compareDocumentPosition(attachment) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
++    expect(attachment.compareDocumentPosition(inside) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
++    const wrapper = inside.closest('[data-slot]')?.parentElement
++    expect(view.getByTestId('inside-two').parentElement).toBe(inside.parentElement)
++    expect(wrapper?.nextElementSibling).toBe(editor)
++    expect(editor.parentElement?.children.length).toBe(2)
++  })
++
++  it('passes the live session to inside entries as blank state changes', () => {
++    const b = bench({ insideForSession: session => session?.blank ? <i data-testid="blank-entry" /> : null })
++    act(() => { b.session.set(snapshotOf({ blank: true })) })
++    expect(b.view.getByTestId('blank-entry')).toBeTruthy()
++    expect(b.slotCalls.filter(call => call.key === 'conversation.input.inside').at(-1)?.owner)
++      .toEqual({ session: b.session.getSnapshot() })
++    act(() => { b.session.set(snapshotOf({ blank: false })) })
++    expect(b.view.queryByTestId('blank-entry')).toBeNull()
++    expect(b.slotCalls.filter(call => call.key === 'conversation.input.inside').at(-1)?.owner)
++      .toEqual({ session: b.session.getSnapshot() })
++  })
++
++  it('renders the editor alone in the empty prompt row', () => {
++    const { view } = bench()
++    const editor = view.container.querySelector('[data-input-scroll]')!
++    const anchor = editor.parentElement?.querySelector('[data-slot="conversation.input.inside"]')
++    expect(anchor?.children.length).toBe(0)
++    expect(anchor?.parentElement?.nextElementSibling).toBe(editor)
++  })
++
+   it('renders overlay, left/right, and footer slots at their layout positions', () => {
+     const { view } = bench({
+       overlay: <i data-testid="ov" />,
+@@ -2092,7 +2130,7 @@ describe('command launcher chrome and control seats', () => {
+     // Every seat dispatched, nothing rendered (render passes may repeat; the
+     // seat set is the contract).
+     expect([...new Set(slotCalls.map(c => c.key))]).toEqual([
+-      'conversation.input.overlay', 'conversation.input.attachments',
++      'conversation.input.overlay', 'conversation.input.attachments', 'conversation.input.inside',
+       'conversation.input.permission', 'conversation.input.plan', 'conversation.input.left',
+       'conversation.input.right', 'conversation.input.model', 'conversation.input.activity',
+       'conversation.composer.dock',
+diff --git a/packages/client/ui-conversation/tests/skeleton.client.spec.tsx b/packages/client/ui-conversation/tests/skeleton.client.spec.tsx
+index 8eb125df03..51d6a876ad 100644
+--- a/packages/client/ui-conversation/tests/skeleton.client.spec.tsx
++++ b/packages/client/ui-conversation/tests/skeleton.client.spec.tsx
+@@ -208,6 +208,8 @@ function mount(
+     if (key === 'conversation.input.model' || key === 'conversation.input.plan') {
+       seatOwners.push({ key, owner })
+     }
++    if (key === 'conversation.input.dock') { seatOwners.push({ key, owner }); return null }
++    if (key === 'conversation.input.after') { seatOwners.push({ key, owner }); return <i data-testid="input-after" /> }
+     if (key === 'conversation.hero.workspace') { pickerOwner = owner; return null }
+     if (key === 'conversation.session.header.views.actions') {
+       actionsOwner = owner as ConversationViewActionsOwnerProps
+@@ -438,6 +440,17 @@ describe('ConversationRoot resident composer', () => {
+     expect(b.view.queryByTestId('view-conversation.session.header.corner')).toBeNull()
+   })
+ 
++  it('renders input after below the bar with the input zone only for a Session', () => {
++    const b = mount(sessionSnapshotOf())
++    const after = b.view.getByTestId('input-after')
++    expect(after.previousElementSibling?.querySelector('[data-composer-card]')).not.toBeNull()
++    expect(b.seatOwners.find(call => call.key === 'conversation.input.after')?.owner).toEqual(
++      b.seatOwners.find(call => call.key === 'conversation.input.dock')?.owner,
++    )
++    const noSession = mount(sessionSnapshotOf(), [], undefined, { sessionId: undefined })
++    expect(noSession.view.container.querySelector('[data-testid="input-after"]')).toBeNull()
++  })
++
+   it('does not redispatch composer child slots for an unrelated Session publication', () => {
+     const b = mount(sessionSnapshotOf())
+     const childKeys = new Set([

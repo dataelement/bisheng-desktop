@@ -114,7 +114,7 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 			error: ""
 		};
 		/** Session-keyed presentation state shared by the action tray and composer accessory. */
-		var OfficePptHeroStore = class {
+		var PptStore = class {
 			constructor() {
 				this.states = /* @__PURE__ */ new Map();
 				this.listeners = /* @__PURE__ */ new Map();
@@ -603,7 +603,7 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
             });
         }
 		/** Compact selected-template thumbnail inside the resident input card. */
-		function OfficePptInputAccessory({ client, mode, sessionId, t, onPreview, previewButtonRef }) {
+		function PptThumb({ client, mode, sessionId, t, onPreview, previewButtonRef }) {
 			const state = useMode(mode, sessionId);
 			const selected = state.templates.find((template) => template.id === state.selectedId);
 			const selectedId = state.activeMode !== null && selected !== void 0 ? selected.id : null;
@@ -703,7 +703,7 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 			});
 		}
 		/** Selected template pinned under the opening user message after PPT starts. */
-		function OfficePptTemplateReference({ client, mode, sessionId, t, accessory = false }) {
+		function PptReference({ client, mode, sessionId, t, accessory = false }) {
 			ensureOpeningTemplateStyles();
 			const state = useMode(mode, sessionId);
 			const bindingRef = (0, react.useRef)({ client, sessionId });
@@ -766,7 +766,7 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 			const closePreview = () => {
 				setOpen(false);
 			};
-			return /* @__PURE__ */ (0, jsx.jsxs)(jsx.Fragment, { children: [accessory ? (0, jsx.jsx)(OfficePptInputAccessory, { client, mode, sessionId, t, previewButtonRef: buttonRef, onPreview: () => { setPage(0); setOpen(true); } }) : /* @__PURE__ */ (0, jsx.jsxs)("div", {
+			return /* @__PURE__ */ (0, jsx.jsxs)(jsx.Fragment, { children: [accessory ? (0, jsx.jsx)(PptThumb, { client, mode, sessionId, t, previewButtonRef: buttonRef, onPreview: () => { setPage(0); setOpen(true); } }) : /* @__PURE__ */ (0, jsx.jsxs)("div", {
 				className: "dsh-ppt-opening-row",
 				"data-ppt-opening-template": selected.id,
 				children: [/* @__PURE__ */ (0, jsx.jsx)(OpeningPptFileIcon, {}), /* @__PURE__ */ (0, jsx.jsx)("button", {
@@ -849,8 +849,8 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 			})] });
 		}
 		/** Selected-template reference shown only while the standard Session is blank. */
-        function OfficePptOpeningTemplateCard({ leading, ...props }) {
-            return leading === true ? (0, jsx.jsx)(OfficePptTemplateReference, props) : null;
+        function PptOpeningCard({ leading, ...props }) {
+            return leading === true ? (0, jsx.jsx)(PptReference, props) : null;
         }
         function firstHumanMessage(chat) {
             for (const key of chat.order) {
@@ -858,13 +858,13 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
                 if (node?.kind === "user" && node.data.source?.kind === "user") return node.data.messageId;
             }
         }
-        function OfficePptModernOpeningTemplate({ messageId, source, kind, useChat, useSession, ...props }) {
+        function PptOpening({ messageId, source, kind, useChat, useSession, ...props }) {
             const first = useChat(firstHumanMessage), hasMore = useSession(session => session.hasMore);
-            return kind === "user" && source?.kind === "user" && typeof messageId === "string" && hasMore === false && first === messageId ? (0, jsx.jsx)(OfficePptTemplateReference, props) : null;
+            return kind === "user" && source?.kind === "user" && typeof messageId === "string" && hasMore === false && first === messageId ? (0, jsx.jsx)(PptReference, props) : null;
         }
-		function OfficePptStandardInputAccessory(props) {
+		function PptAccessory(props) {
 			if (props.session == null || !props.session.blank) return null;
-			return /* @__PURE__ */ (0, jsx.jsx)(OfficePptInputAccessory, { ...props });
+			return /* @__PURE__ */ (0, jsx.jsx)(PptThumb, { ...props });
 		}
 		/** Monochrome presentation screen used by both PPT mode controls. */
 		function DesktopPptIcon() {
@@ -881,7 +881,7 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 		// Shared manager also serves the core client and retains its existing style binding.
 		const OfficePptHero_module_css_default = pptStyles;
 		/* PERSONAL_TEMPLATE_MANAGER */
-		function OfficePptChooser({ client, mode, sessionId, t, placement, loadTemplates = true }) {
+		function PptChooser({ client, mode, sessionId, t, placement, loadTemplates = true }) {
 			const state = useMode(mode, sessionId);
 			const modeRootRef = (0, react.useRef)(null);
 			const templatePanelRef = (0, react.useRef)(null);
@@ -1099,15 +1099,15 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 			});
 		}
 		/** Composer chooser: modern flow placement or legacy fixed-seat geometry. */
-		function OfficePptStandardComposerDock(props) {
+		function PptDock(props) {
 			if (props.session != null && props.session.blank !== true) return null;
 			return (0, jsx.jsxs)(react.Fragment, { children: [
-                props.placement === "flow" ? (0, jsx.jsx)(OfficePptTemplateReference, { ...props, accessory: true }) : null,
-                (0, jsx.jsx)(OfficePptChooser, { ...props, placement: props.placement ?? "fixed", loadTemplates: false })
+                props.placement === "flow" && !props.separateReference ? (0, jsx.jsx)(PptReference, { ...props, accessory: true }) : null,
+                (0, jsx.jsx)(PptChooser, { ...props, placement: props.placement ?? "fixed", loadTemplates: false })
             ] });
 		}
 		/** PPT mode control beside the blank-session agent preset. */
-		function OfficePptStandardModeAction(props) {
+		function PptModeAction(props) {
             const state = useMode(props.mode, props.sessionId);
             (0, react.useEffect)(() => {
                 if (!props.client?.bound) return;
@@ -1120,7 +1120,7 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
                 return () => { active = false; };
             }, [props.client, props.mode, props.sessionId]);
             return (0, jsx.jsxs)(react.Fragment, { children: [
-                (0, jsx.jsx)(OfficePptChooser, { ...props, placement: "trigger" }),
+                (0, jsx.jsx)(PptChooser, { ...props, placement: "trigger" }),
                 state.error && state.activeMode === null ? (0, jsx.jsx)("span", { role: "alert", children: state.error }) : null,
                 state.notice && state.activeMode !== null ? (0, jsx.jsx)("span", {
                     role: "status", "data-ppt-template-migration": "",
@@ -1389,7 +1389,7 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 				en
 			}), "dsh-ppt: dictionaries");
 			const connection = ctx.get("connection");
-			const mode = new OfficePptHeroStore();
+			const mode = new PptStore();
             ctx.effect(() => {
                 const listener = event => {
                     const detail = event.detail;
@@ -1415,18 +1415,27 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 			const legacyComposer = () => typeof ctx.slots.spec !== "function" || ctx.slots.spec("conversation.hero.modeActions") !== void 0;
 			ctx.slots.inject("conversation.input.dock", () => {
 				if (legacyComposer()) return () => {};
-				return [
-					register("conversation.input.dock", props => (0, jsx.jsx)(OfficePptStandardComposerDock, { ...props, placement: "flow" })),
-					mount("conversation.hero.options", OfficePptStandardModeAction)
-				];
+				let fallback = register("conversation.input.dock", props => (0, jsx.jsx)(PptDock, { ...props, placement: "flow" }));
+				let stopping = false;
+				const upgrade = ctx.slots.inject("conversation.input.after", () => ctx.slots.inject("conversation.input.inside", () => {
+					fallback();
+					const panel = register("conversation.input.after", props => (0, jsx.jsx)(PptDock, { ...props, placement: "flow", separateReference: true }));
+					const reference = register("conversation.input.inside", props => props.session?.blank === true ? (0, jsx.jsx)(PptReference, { ...props, accessory: true }) : null);
+					return () => {
+						reference(); panel();
+						if (!stopping) fallback = register("conversation.input.dock", props => (0, jsx.jsx)(PptDock, { ...props, placement: "flow" }));
+					};
+				}));
+				const action = mount("conversation.hero.options", PptModeAction);
+				return () => { stopping = true; action(); upgrade(); fallback(); };
 			});
-			mount("conversation.hero.modeActions", OfficePptStandardModeAction);
-			mount("conversation.input.accessory", OfficePptStandardInputAccessory);
-			mount("conversation.chat.userMessageFooter", OfficePptOpeningTemplateCard);
-            ctx.slots.inject("conversation.chat.user.references", () => ctx.slots.register({ name: "conversation.chat.user.references", id: "dsh-ppt", order: 20, locale: NS, inject: injectHero }, OfficePptModernOpeningTemplate));
-			mount("conversation.hero.dock", OfficePptStandardComposerDock);
+			mount("conversation.hero.modeActions", PptModeAction);
+			mount("conversation.input.accessory", PptAccessory);
+			mount("conversation.chat.userMessageFooter", PptOpeningCard);
+            ctx.slots.inject("conversation.chat.user.references", () => ctx.slots.register({ name: "conversation.chat.user.references", id: "dsh-ppt", order: 20, locale: NS, inject: injectHero }, PptOpening));
+			mount("conversation.hero.dock", PptDock);
 			// Avoid a second panel in modern composer.dock.
-			ctx.slots.inject("conversation.composer.dock", () => legacyComposer() ? register("conversation.composer.dock", OfficePptStandardComposerDock) : () => {});
+			ctx.slots.inject("conversation.composer.dock", () => legacyComposer() ? register("conversation.composer.dock", PptDock) : () => {});
 		}
 		//#endregion
 		//#region src/client/index.ts

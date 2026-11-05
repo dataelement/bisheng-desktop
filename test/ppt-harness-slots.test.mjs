@@ -39,7 +39,7 @@ function load(source) {
 }
 const { SlotRegistry } = load(rendererSource)
 const adapter = load(adapterSource)
-const modernSlots = ['conversation.hero.options', 'conversation.input.dock', 'conversation.composer.dock']
+const modernSlots = ['conversation.hero.options', 'conversation.input.dock', 'conversation.composer.dock', 'conversation.input.after', 'conversation.input.inside']
 const legacyOnlySlots = ['conversation.hero.modeActions', 'conversation.input.accessory',
   'conversation.chat.userMessageFooter', 'conversation.hero.dock']
 const legacySlots = [...modernSlots, ...legacyOnlySlots]
@@ -51,14 +51,14 @@ afterEach(async () => {
 
 // Use the actual Harness registry and Cordis effects, with contract-sized owner
 // declarations. The DOM below renders registered plugin components, not host UI.
-async function fixture({ legacy = false, delayed = false, noSpec = false } = {}) {
+async function fixture({ legacy = false, delayed = false, noSpec = false, missing = [] } = {}) {
   const ctx = new cordis.Context()
   const registry = ctx.plugin(SlotRegistry)
   cleanups.push(() => registry.dispose())
   await registry
   const slots = ctx.slots
   let owner
-  const names = legacy ? legacySlots : modernSlots
+  const names = (legacy ? legacySlots : modernSlots).filter(name => !missing.includes(name))
   const declare = () => {
     owner = slots.register({ name: 'root', id: 'conversation-test-owner', children: Object.fromEntries(
       names.map(name => [name, { kind: 'list', scope: name.startsWith('conversation.hero') ? 'session-maybe' : 'session' }])
@@ -116,7 +116,7 @@ async function fixture({ legacy = false, delayed = false, noSpec = false } = {})
         }))))))
   }
   return {
-    container, calls, entries, render, declare, activate,
+    container, calls, entries, render, declare, activate, slots,
     collapse: () => owner(), dispose: () => plugin.dispose(),
     registrations: () => names.filter(name => entries(name).length),
     async clickPpt() { await act(async () => container.querySelector('button[data-desktop-ppt]').click()) },
@@ -126,14 +126,14 @@ async function fixture({ legacy = false, delayed = false, noSpec = false } = {})
 
 it('renders the modern PPT control and a single input dock, despite composer.dock also existing', async () => {
   const f = await fixture()
-  expect(f.registrations()).toEqual(['conversation.hero.options', 'conversation.input.dock'])
+  expect(f.registrations()).toEqual(['conversation.hero.options', 'conversation.input.after', 'conversation.input.inside'])
   await f.render()
   expect(f.container.querySelectorAll('button[data-desktop-ppt]')).toHaveLength(1)
   expect(f.container.querySelector('[data-slot="conversation.hero.options"] button')?.textContent).toBe('PPT')
   expect(f.container.querySelectorAll('[data-office-ppt-template-panel]')).toHaveLength(0)
   await f.clickPpt()
   expect(f.container.querySelectorAll('[data-office-ppt-template-panel]')).toHaveLength(1)
-  expect(f.container.querySelector('[data-slot="conversation.input.dock"] [data-office-ppt-template-panel]')).not.toBeNull()
+  expect(f.container.querySelector('[data-slot="conversation.input.after"] [data-office-ppt-template-panel]')).not.toBeNull()
   expect(f.container.querySelector('[data-slot="conversation.composer.dock"]')?.childElementCount).toBe(0)
   // jsdom checks declared layout and interactions; real hit-testing is a browser gate.
   const panel = f.container.querySelector('[data-office-ppt-template-panel]')
@@ -160,14 +160,16 @@ it('renders the modern PPT control and a single input dock, despite composer.doc
   await f.choose()
   const preview = f.container.querySelector('button[aria-haspopup="dialog"]')
   expect(preview).not.toBeNull()
+  expect(f.container.querySelectorAll('[data-slot="conversation.input.inside"] button[aria-haspopup="dialog"]')).toHaveLength(1)
+  expect(f.container.querySelectorAll('button[aria-haspopup="dialog"]')).toHaveLength(1)
   const showModal = HTMLDialogElement.prototype.showModal
   const close = HTMLDialogElement.prototype.close
   HTMLDialogElement.prototype.showModal = function () { this.open = true }
   HTMLDialogElement.prototype.close = function () { this.open = false }
   try {
     await act(async () => preview.click())
-    expect(f.container.querySelector('dialog').open).toBe(true)
-    await act(async () => f.container.querySelector('dialog button[aria-label="关闭预览"]').click())
+    expect(f.container.querySelector('dialog[open]')?.open).toBe(true)
+    await act(async () => f.container.querySelector('dialog[open] button[aria-label="关闭预览"]').click())
     expect(document.activeElement).toBe(preview)
   } finally {
     HTMLDialogElement.prototype.showModal = showModal
@@ -207,7 +209,7 @@ it.each([false, true])('waits for declarations and removes/reinstalls contributi
   const f = await fixture({ legacy, delayed: true })
   expect(f.registrations()).toEqual([])
   f.declare()
-  const expected = legacy ? 5 : 2
+  const expected = legacy ? 5 : 3
   expect(f.registrations()).toHaveLength(expected)
   f.collapse()
   expect(f.registrations()).toEqual([])
@@ -249,6 +251,37 @@ it('hides the chooser once the modern session is no longer blank', async () => {
   await f.render()
   await f.clickPpt()
   expect(f.container.querySelectorAll('[data-office-ppt-template-panel]')).toHaveLength(1)
+  await f.choose()
+  expect(f.container.querySelectorAll('[data-slot="conversation.input.inside"] button[aria-haspopup="dialog"]')).toHaveLength(1)
   await f.render({ blank: false })
   expect(f.container.querySelectorAll('[data-office-ppt-template-panel]')).toHaveLength(0)
+  expect(f.container.querySelectorAll('[data-slot="conversation.input.inside"] button[aria-haspopup="dialog"]')).toHaveLength(0)
+})
+
+it.each(['conversation.input.after', 'conversation.input.inside'])('falls back to the input dock when %s is absent', async missing => {
+  const f = await fixture({ missing: [missing] })
+  expect(f.registrations()).toEqual(['conversation.hero.options', 'conversation.input.dock'])
+  await f.render()
+  await f.clickPpt()
+  expect(f.container.querySelectorAll('[data-slot="conversation.input.dock"] [data-office-ppt-template-panel]')).toHaveLength(1)
+  await f.choose()
+  expect(f.container.querySelectorAll('button[aria-haspopup="dialog"]')).toHaveLength(1)
+})
+
+it('upgrades a live fallback when slots arrive separately and restores it on collapse', async () => {
+  const f = await fixture({ missing: ['conversation.input.after', 'conversation.input.inside'] })
+  await f.render()
+  await f.clickPpt()
+  const after = f.slots.register({ name: 'root', id: 'late-after', priority: 1, children: { 'conversation.input.after': { kind: 'list', scope: 'session' } } }, () => null)
+  expect(f.entries('conversation.input.dock')).toHaveLength(1)
+  const inside = f.slots.register({ name: 'root', id: 'late-inside', priority: 2, children: { 'conversation.input.inside': { kind: 'list', scope: 'session' } } }, () => null)
+  expect(f.entries('conversation.input.dock')).toHaveLength(0)
+  expect(f.entries('conversation.input.after')).toHaveLength(1)
+  expect(f.entries('conversation.input.inside')).toHaveLength(1)
+  await f.render()
+  expect(f.container.querySelectorAll('[data-office-ppt-template-panel]')).toHaveLength(1)
+  inside()
+  expect(f.entries('conversation.input.dock')).toHaveLength(1)
+  expect(f.entries('conversation.input.after')).toHaveLength(0)
+  after()
 })
