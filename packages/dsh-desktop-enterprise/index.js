@@ -7,6 +7,7 @@ import { readFileSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs'
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { CONTENT_SAFETY_ERROR_COPY } from './error-copy.js'
 import { createContentSafetyLocaleScope } from './content-safety-locale.js'
+import { completionProjection } from './completion-projection.js'
 import { applyEnterpriseSkills } from './work-skills.js'
 import { applyWorkResources } from './work-resources.js'
 import { applyWorkCapabilities } from './work-capabilities.js'
@@ -596,6 +597,9 @@ export function apply(ctx, config) {
     })()
     return fallbackRefreshPromise
   }
+  if (typeof ctx.inject === 'function') ctx.inject(['sessionProjections'], scoped => {
+    scoped.sessionProjections?.register(completionProjection)
+  })
   if (typeof ctx.inject === 'function') ctx.inject(['tools', 'sessions', 'systemPrompt'], scoped => { workResources = applyWorkResources(scoped, {
     state: () => account, refreshState: readBrokerState,
     request: (body, signal) => enterpriseClient.handleWorkResources(body, signal)
