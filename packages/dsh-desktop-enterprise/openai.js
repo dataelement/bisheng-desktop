@@ -288,7 +288,7 @@ function isChineseLocale(language) {
 }
 
 function readUiLanguage() {
-  return typeof navigator === 'object' && navigator && typeof navigator.language === 'string'
+  return typeof window === 'object' && typeof navigator === 'object' && typeof navigator.language === 'string'
     ? navigator.language
     : 'en'
 }

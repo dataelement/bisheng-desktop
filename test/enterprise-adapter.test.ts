@@ -1,13 +1,14 @@
 // Coverage AC: AC-03, AC-30, AC-31, AC-56.
 import { createServer, type Server } from 'node:http'
+import { unlinkSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { zipSync } from 'fflate'
 // @ts-expect-error Runtime plugin is authored as JavaScript.
 import { skillContentHash } from '../packages/dsh-desktop-enterprise/work-skills.js'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { requestImageDimensions } from '@deepseek-ai/dsh-attachment'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { apply as applyEnterprise } from '../packages/dsh-desktop-enterprise/index.js'
 import { startEnterpriseCredentialBroker } from '../src/main/enterprise/credential-broker'
@@ -126,10 +127,23 @@ async function invoke(routes: RegisteredRoute[], path: string, method = 'GET', b
 
 const adapterCleanups: Array<() => Promise<void>> = []
 
+let testDshHome: string | undefined
+
+beforeEach(async () => {
+  testDshHome = await mkdtemp(join(tmpdir(), 'dsh-test-enterprise-'))
+  process.env.DSH_HOME = testDshHome
+})
+
 afterEach(async () => {
   delete process.env.DSH_DESKTOP_ENTERPRISE_BROKER_URL
   delete process.env.DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY
   delete process.env.DSH_DESKTOP_ENTERPRISE_ALLOW_INSECURE_LOOPBACK
+  delete process.env.DSH_HOME
+  if (testDshHome) {
+    await rm(testDshHome, { recursive: true, force: true }).catch(() => {})
+    testDshHome = undefined
+  }
+  try { unlinkSync(join(homedir(), '.dsh', 'enterprise-session.json')) } catch {}
   while (adapterCleanups.length > 0) await adapterCleanups.pop()?.()
 })
 
@@ -327,7 +341,7 @@ describe('enterprise adapter with a Broker', () => {
     expect(verified.status).toBe(200)
     await expect(verified.json()).resolves.toEqual({ ok: true })
     expect(calls.some(call => call.path === '/v1/state')).toBe(true)
-    expect(calls.map(call => call.path).filter(path => path !== '/v1/state')).toEqual(['/v1/market', '/v1/workbench/verify'])
+    expect(calls.map(call => call.path).filter(path => path !== '/v1/state')).toEqual(['/v1/market', '/v1/market', '/v1/workbench/verify'])
     expect(calls.every(call => call.authorization === 'Bearer ' + capability)).toBe(true)
   })
 

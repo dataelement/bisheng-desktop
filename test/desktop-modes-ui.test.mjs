@@ -52,7 +52,8 @@ async function mount(connected = false, collection = {}, inert = false, workbenc
     retry: vi.fn(async () => {}),
     history: vi.fn(async () => ({ epoch: 1, items: [{ id: 'cloud-a', title: 'Cloud chat', updatedAt: '2026-10-16' }], hasMore: false })),
     openPage: vi.fn(async () => {}),
-    open: vi.fn(async () => {})
+    open: vi.fn(async () => {}),
+    prewarm: vi.fn(async () => {})
   }
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   let plugin, navigate
@@ -263,7 +264,8 @@ it('keeps one shared history across modes and routes records to their owner', as
   await ui.account(false)
   expect(sidebar.textContent).not.toContain('Cloud chat')
   expect(sidebar.textContent).toContain('Local task')
-  expect([...sidebar.querySelectorAll('.dshRecentHistory button')].map(button => button.textContent)).toEqual(['Local task'])
+  expect([...sidebar.querySelectorAll('[data-history-kind=work] button')].map(button => button.textContent)).toEqual(['Local task'])
+  expect(sidebar.querySelectorAll('.dshRecentHistory [data-history-kind=chat]')).toHaveLength(0)
 })
 it('creates cloud chats through the shared New Session action and clears the view for settings', async () => {
   const ui = await mount(true)
@@ -280,12 +282,14 @@ it('creates cloud chats through the shared New Session action and clears the vie
   expect(handled).toBeUndefined()
 })
 
-it('interleaves recent cloud and unassigned local rows while projects appear once', async () => {
+it('groups unassigned local rows with projects and reserves recent history for cloud chats', async () => {
   const ui = await mount(true)
   const rows = [...container.querySelectorAll('[data-history-kind]')]
   expect(rows.map(row => row.dataset.historyKind)).toEqual(['work', 'chat'])
   expect(container.querySelectorAll('[data-project]')).toHaveLength(1)
   expect(container.querySelector('.dshRecentHistory').textContent).not.toContain('Project task')
+  expect(container.querySelector('.dshRecentHistory').textContent).not.toContain('Local task')
+  expect(container.querySelector('.dshRecentHistory').textContent).toContain('Cloud chat')
   expect(container.querySelector('[data-local-row]').getAttribute('aria-current')).toBeNull()
   await act(async () => container.querySelector('[data-local-row]').click())
   expect(container.querySelector('[data-local-row]').getAttribute('aria-current')).toBe('page')
@@ -401,9 +405,51 @@ it('shares account navigation across Chat and Work and keeps Plugins directly ac
   await choose('Skills')
   expect(window.dshEnterpriseChat.openPage).toHaveBeenLastCalledWith('skills')
   expect(ui.selected()).toBe('chat')
+  await act(async () => window.dispatchEvent(new Event('focus')))
+  expect(sidebar.querySelector('[data-navigation-id=more]').getAttribute('aria-current')).toBe('page')
+  expect(ui.picker()).toBeNull()
   await ui.account(false)
   expect(sidebar.querySelector('[data-navigation-id=plugins]')).not.toBeNull()
   expect(sidebar.querySelector('[data-navigation-id=more]')).toBeNull()
+})
+
+it('prewarms chat in Electron to obtain navigation when connected without navigation', async () => {
+  const ui = await mount(true)
+  expect(window.dshEnterpriseChat.prewarm).toHaveBeenCalled()
+})
+
+it('preserves established navigation when subsequent sync or enterprise.state read has no navigation', async () => {
+  const ui = await mount(true)
+  await ui.navigation([
+    { id: 'knowledge', label: 'Custom Knowledge', path: '/knowledge', primary: true, active: false }
+  ])
+  const sidebar = container.querySelector('aside')
+  const openMore = () => act(async () => sidebar.querySelector('[data-navigation-id=more]').click())
+  await openMore()
+  expect([...sidebar.querySelectorAll('[role=menuitem]')].map(node => node.textContent)).toEqual(['Custom Knowledge'])
+  const choose = label => act(async () => [...sidebar.querySelectorAll('[role=menuitem]')].find(node => node.textContent === label).click())
+  await choose('Custom Knowledge')
+  window.dshEnterpriseChat.state.mockResolvedValueOnce({ connected: true, phase: 'ready', epoch: 1, conversationId: 'new' })
+  await act(async () => window.dispatchEvent(new Event('focus')))
+  await openMore()
+  expect([...sidebar.querySelectorAll('[role=menuitem]')].map(node => node.textContent)).toEqual(['Custom Knowledge'])
+})
+
+it('preserves cached navigation across page reloads (Ctrl+R) without falling back to empty', async () => {
+  const ui = await mount(true)
+  await ui.navigation([
+    { id: 'knowledge', label: 'Knowledge Base', path: '/knowledge', primary: true, active: false },
+    { id: 'apps', label: 'App Center', path: '/apps', primary: false, active: false }
+  ])
+  expect(localStorage.getItem('dsh:enterprise-navigation')).toContain('Knowledge Base')
+  if (root) await act(async () => root.unmount())
+  container?.remove()
+  window.dshEnterpriseChat.state.mockResolvedValue({ connected: true, phase: 'ready', epoch: 1, conversationId: 'new' })
+  const reloadedUi = await mount(true)
+  const sidebar = container.querySelector('aside')
+  const openMore = () => act(async () => sidebar.querySelector('[data-navigation-id=more]').click())
+  await openMore()
+  expect([...sidebar.querySelectorAll('[role=menuitem]')].map(node => node.textContent)).toEqual(['Knowledge Base', 'App Center'])
 })
 
 it('starts a new conversation without forwarding the click event as a workspace identity', async () => {

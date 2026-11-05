@@ -35,6 +35,7 @@ export function initializeEnterpriseLoginBridge(): () => void {
       openPage: (id: string): Promise<void> => ipcRenderer.invoke('enterprise-chat:open-page', id),
       open: (id: string): Promise<void> => ipcRenderer.invoke('enterprise-chat:open', id),
       remove: (id: string, epoch: number): Promise<{ epoch: number }> => ipcRenderer.invoke('enterprise-chat:remove', id, epoch),
+      prewarm: (): Promise<void> => ipcRenderer.invoke('enterprise-chat:prewarm'),
       subscribe: (listener: (state: EnterpriseChatViewState) => void): (() => void) => {
         const receive = (_event: Electron.IpcRendererEvent, state: EnterpriseChatViewState): void => listener(state)
         ipcRenderer.on('enterprise-chat:changed', receive)

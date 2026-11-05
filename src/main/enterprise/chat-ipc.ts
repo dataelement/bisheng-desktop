@@ -11,6 +11,7 @@ export interface EnterpriseChatIpcView {
   remove(id: unknown, epoch: unknown): Promise<{ epoch: number }>
   openPage(input: unknown): Promise<void>
   focusSettings(): void
+  prewarm?(owner?: BrowserWindow): Promise<void>
 }
 
 export function createEnterpriseChatDisposer(disposeIpc: () => void, disposeView: () => void): () => void {
@@ -76,6 +77,11 @@ export function registerEnterpriseChatIpc(
       const chat = view()
       if (!chat) throw new Error('Enterprise Chat unavailable.')
       return chat.remove(id, epoch)
+    }))
+    disposers.push(registry.register('enterprise-chat:prewarm', () => {
+      const chat = view()
+      const owner = window()
+      return chat?.prewarm?.(owner)
     }))
   } catch (error) {
     try { dispose() } catch (cleanupError) {

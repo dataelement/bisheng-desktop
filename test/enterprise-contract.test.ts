@@ -126,7 +126,9 @@ describe('BiSheng compatible client API mock', () => {
       '/api/enterprise.deep-link.confirm',
       '/api/enterprise.models.refresh',
       '/api/enterprise.refresh',
-      '/api/enterprise.logout'
+      '/api/enterprise.logout',
+      '/api/enterprise.chat.history',
+      '/api/enterprise.chat.delete'
     ])
     expect(routes.every(route => route.requestBody === 'buffered')).toBe(true)
   })

@@ -598,6 +598,8 @@ window.__ModuleLoader__.load({
       loading: '正在读取企业插件…', empty: '企业暂未提供插件，请联系管理员导入。',
       failed: '暂时无法读取企业插件，请重试或联系管理员。',
       protocolMismatch: '当前客户端需要更新后的企业市场，请联系管理员升级服务端。',
+      authorizationUnavailable: '企业插件需要桌面授权服务，请在 BISHENG Desktop 中打开市场或联系管理员。',
+      endpointUnavailable: '企业市场接口不可用，请检查企业插件是否已加载或联系管理员。',
       install: '安装', update: '更新',
       installed: '已安装', uninstall: '卸载', enable: '启用', disable: '停用', disabled: '已停用',
       version: '版本', incompatible: '当前系统或版本暂不支持',
@@ -608,6 +610,8 @@ window.__ModuleLoader__.load({
       loading: 'Loading enterprise plugins…', empty: 'Your enterprise has no plugins yet. Contact your administrator.',
       failed: 'Enterprise plugins are unavailable. Try again or contact your administrator.',
       protocolMismatch: 'This Desktop requires a newer enterprise market. Ask an administrator to upgrade the server.',
+      authorizationUnavailable: 'Enterprise plugins require the desktop authorization service. Open the market in BISHENG Desktop or contact your administrator.',
+      endpointUnavailable: 'The enterprise market endpoint is unavailable. Check that the enterprise plugin is loaded or contact your administrator.',
       install: 'Install', update: 'Update',
       installed: 'Installed', uninstall: 'Uninstall', enable: 'Enable', disable: 'Disable', disabled: 'Disabled',
       version: 'Version', incompatible: 'Unsupported system or Desktop version',
@@ -621,6 +625,8 @@ window.__ModuleLoader__.load({
     function marketStatusCopy(cause) {
       const code = typeof cause?.errorCode === 'string' ? cause.errorCode : ''
       if (code === 'protocol_mismatch') return marketLabels().protocolMismatch
+      if (code === 'authorization_unavailable') return marketLabels().authorizationUnavailable
+      if (code === 'market_endpoint_unavailable') return marketLabels().endpointUnavailable
       if ((code === 'seat_revoked' || code === 'session_expired') && accountTranslate) {
         const known = accountErrorCopy(code, accountTranslate)
         if (known) return known
@@ -730,7 +736,9 @@ window.__ModuleLoader__.load({
           h('button', { type: 'button', disabled: loading, onClick: refresh }, marketCopy.refresh)),
         loading ? h('p', { role: 'status' }, marketCopy.loading) : null,
         error ? h('div', { role: 'alert', className: 'dshEnterpriseMarketError' }, error) : null,
-        catalog && !catalog.installReady && !showEmpty ? h('p', null, marketCopy.setup) : null,
+        catalog && !catalog.installReady && catalog.failureCode === 'authorization_unavailable'
+          ? h('p', { role: 'alert', className: 'dshEnterpriseMarketError' }, marketCopy.authorizationUnavailable)
+          : catalog && !catalog.installReady && !showEmpty ? h('p', null, marketCopy.setup) : null,
         showEmpty ? h('p', null, marketCopy.empty) : null,
         h('div', { className: 'dshEnterpriseMarketList' }, rows.map(plugin => {
           const current = plugin.versions.find(version => version.id === plugin.current_version_id)
@@ -836,10 +844,12 @@ window.__ModuleLoader__.load({
         headers: body === undefined ? {} : { 'content-type': 'application/json' },
         ...(body === undefined ? {} : { body: JSON.stringify(body) })
       })
-      const payload = await response.json().catch(() => ({}))
-      if (!response.ok || payload.ok === false) {
-        const failure = new Error(payload.error || `Request failed (${response.status})`)
-        if (typeof payload.errorCode === 'string' && payload.errorCode) failure.errorCode = payload.errorCode
+      let invalidJson = false
+      const payload = await response.json().catch(() => { invalidJson = true; return {} })
+      if (!response.ok || payload?.ok === false) {
+        const failure = new Error(payload?.error || `Request failed (${response.status})`)
+        if (typeof payload?.errorCode === 'string' && payload.errorCode) failure.errorCode = payload.errorCode
+        else if (invalidJson && response.status === 404 && path.startsWith('/api/enterprise.market.')) failure.errorCode = 'market_endpoint_unavailable'
         throw failure
       }
       if (!path.startsWith('/api/enterprise.market.') && path !== '/api/enterprise.models.refresh') window.dispatchEvent(new CustomEvent(ACCOUNT_CHANGED_EVENT))
@@ -1136,6 +1146,7 @@ window.__ModuleLoader__.load({
       const models = Array.isArray(state?.models) ? state.models : []
       const userLabel = state?.user?.display_name || state?.user?.username || state?.user?.id || '—'
       const language = readUiLanguage()
+      const usageIdentity = JSON.stringify([state?.base ?? null, state?.tenant?.id ?? null, state?.user?.id ?? state?.user?.username ?? null])
 
       const logoutButton = connected && h(Button, {
         variant: 'ghost', size: 'md',
@@ -1299,6 +1310,7 @@ window.__ModuleLoader__.load({
         connected && (
           typeof renderSlot === 'function'
             ? renderSlot('desktop.account.usage', {
+                usageIdentity,
                 credits: usageText(state.usage, document.documentElement.lang, t),
                 creditsLabel: t('usageLabel'),
                 creditsHelp: t('creditsHelp'),
@@ -1307,6 +1319,7 @@ window.__ModuleLoader__.load({
               }, {
                 fallback: h(Usage, {
                   t: settingsTranslate,
+                  usageIdentity,
                   credits: usageText(state.usage, document.documentElement.lang, t),
                   creditsLabel: t('usageLabel'),
                   creditsHelp: t('creditsHelp'),
@@ -1316,6 +1329,7 @@ window.__ModuleLoader__.load({
               })
             : h(Usage, {
                 t: settingsTranslate,
+                usageIdentity,
                 credits: usageText(state.usage, document.documentElement.lang, t),
                 creditsLabel: t('usageLabel'),
                 creditsHelp: t('creditsHelp'),
@@ -1442,8 +1456,67 @@ window.__ModuleLoader__.load({
             failure && h('button', { type: 'button', onClick: () => { setFailed(false); setState(previous => ({ ...previous, phase: 'loading', settingsFailure: undefined, settingsReady: false })); void window.dshEnterpriseChat.retry().catch(() => { if (alive.current) setFailed(true) }) } }, t('retry'))))
     }
 
-    function Usage({ t, credits, creditsLabel, creditsHelp, models, usage }) {
-      const [state, setState] = useState(() => (typeof window !== 'undefined' && window.dshEnterpriseChat ? { phase: 'loading' } : { phase: 'web' }))
+    // Mirrors src/shared/enterprise-usage.ts at the browser boundary; keep both contracts aligned.
+    function parseWebUsage(value, storage = false) {
+      const object = row => { if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error('Invalid usage response'); return row }
+      if (storage) {
+        if (!Array.isArray(value) || value.length > 1000) throw new Error('Invalid storage quota')
+        const item = value.map(object).find(row => row.resource_type === 'knowledge_space_file')
+        if (!item) return null
+        const used = item.user_used, limit = item.effective
+        if (typeof used !== 'number' || !Number.isFinite(used) || used < 0 || typeof limit !== 'number' || !Number.isFinite(limit) || (limit < 0 && limit !== -1)) throw new Error('Invalid storage quota')
+        return { used, limit }
+      }
+      const count = number => { if (!Number.isSafeInteger(number) || number < 0) throw new Error('Invalid usage count'); return number }
+      const metrics = value => { const row = object(value), token = key => row[key] === null ? null : count(row[key]); return { message_count: count(row.message_count), missing_usage_count: count(row.missing_usage_count), input_tokens: token('input_tokens'), output_tokens: token('output_tokens'), total_tokens: token('total_tokens') } }
+      const timestamp = value => { if (typeof value !== 'string' || value.length > 64 || !Number.isFinite(Date.parse(value))) throw new Error('Invalid usage timestamp'); return value }
+      const row = object(value)
+      if (row.timezone !== 'Asia/Shanghai' || row.granularity !== 'day' || !Array.isArray(row.points) || row.points.length > 366) throw new Error('Invalid daily usage summary')
+      const start_at = timestamp(row.start_at), end_at = timestamp(row.end_at)
+      if (Date.parse(end_at) < Date.parse(start_at)) throw new Error('Invalid usage range')
+      let previous = -Infinity
+      const points = row.points.map(value => {
+        const point = object(value), start = timestamp(point.start_at), end = timestamp(point.end_at), time = Date.parse(start)
+        if (time <= previous || Date.parse(end) <= time || time < Date.parse(start_at) || time > Date.parse(end_at)) throw new Error('Invalid usage bucket')
+        previous = time
+        return { ...metrics(point), start_at: start, end_at: end }
+      })
+      return { start_at, end_at, totals: metrics(row.totals), points }
+    }
+
+    async function fetchWebUsage(signal) {
+      const section = async (path, storage) => {
+        try {
+          const response = await fetch(path, { credentials: 'same-origin', signal })
+          if (!response.ok || response.redirected || !response.body) throw new Error('Usage request failed')
+          const reader = response.body.getReader(), chunks = []
+          let length = 0
+          try {
+            while (true) {
+              const next = await reader.read()
+              if (next.done) break
+              length += next.value.byteLength
+              if (length > 512 * 1024) throw new Error('Usage response too large')
+              chunks.push(next.value)
+            }
+          } finally { await reader.cancel(); reader.releaseLock() }
+          const bytes = new Uint8Array(length)
+          let offset = 0
+          for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
+          const envelope = JSON.parse(new TextDecoder().decode(bytes))
+          if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope) || envelope.status_code !== 200 || !('data' in envelope)) throw new Error('Invalid usage envelope')
+          return { status: 'ready', data: parseWebUsage(envelope.data, storage) }
+        } catch (error) {
+          if (signal.aborted) throw error
+          return { status: 'error' }
+        }
+      }
+      const [summary, storage] = await Promise.all([section('/api/v1/dsh/me/usage-summary', false), section('/api/v1/quota/effective', true)])
+      return { summary, storage }
+    }
+
+    function Usage({ t, credits, creditsLabel, creditsHelp, models, usage, usageIdentity }) {
+      const [state, setState] = useState({ phase: 'loading' })
       const [metric, setMetric] = useState('tokens')
       const [attempt, setAttempt] = useState(0)
       const id = React.useId()
@@ -1472,11 +1545,17 @@ window.__ModuleLoader__.load({
         }
         const unsubscribe = bridge?.subscribe(next => { if (!disposed) receive(next) })
         const initial = revision
-        if (!bridge) setState({ phase: 'web' })
-        else if (bridge.usage) void bridge.state().then(next => { if (!disposed && initial === revision) receive(next, true) }).catch(() => { if (!disposed && initial === revision) setState({ phase: 'error' }) })
+        const controller = !bridge ? new AbortController() : null
+        let timer
+        if (!bridge) {
+          let timedOut = false
+          setState({ phase: 'loading', identity: usageIdentity })
+          timer = window.setTimeout(() => { timedOut = true; controller.abort(); if (!disposed) setState({ phase: 'error', identity: usageIdentity }) }, 15_000)
+          void fetchWebUsage(controller.signal).then(data => { if (!disposed && !timedOut) setState({ phase: 'ready', data, identity: usageIdentity }) }).catch(() => { if (!disposed && !timedOut) setState({ phase: 'error', identity: usageIdentity }) }).finally(() => window.clearTimeout(timer))
+        } else if (bridge.usage) void bridge.state().then(next => { if (!disposed && initial === revision) receive(next, true) }).catch(() => { if (!disposed && initial === revision) setState({ phase: 'error' }) })
         else setState({ phase: 'unsupported' })
-        return () => { disposed = true; revision++; unsubscribe?.() }
-      }, [attempt])
+        return () => { disposed = true; revision++; window.clearTimeout(timer); controller?.abort(); unsubscribe?.() }
+      }, [attempt, usageIdentity])
       const locale = t('numberLocale')
       const amount = value => value == null ? t('unavailable') : new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 2 }).format(value)
       const tokenAmount = value => {
@@ -1488,35 +1567,16 @@ window.__ModuleLoader__.load({
         return new Intl.NumberFormat(locale, { notation: 'compact', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value)
       }
       const size = (value, unit) => `${Number((unit === 'MB' ? value * 1024 : value).toFixed(2))} ${unit}`
-      const data = state.data?.summary.status === 'ready' ? state.data.summary.data : null
-      const storage = state.data?.storage
+      // Hide the prior account immediately, before the replacement effect runs.
+      const current = !window.dshEnterpriseChat && state.identity !== usageIdentity ? { phase: 'loading' } : state
+      const data = current.data?.summary.status === 'ready' ? current.data.summary.data : null
+      const storage = current.data?.storage
       const quota = storage?.status === 'ready' ? storage.data : null
       const unit = (quota?.limit === -1 ? quota.used : quota?.limit) < 1 ? 'MB' : 'GB'
       const failure = key => h('div', { className: 'dshSettingsStatus', role: 'alert' }, h('p', null, t(key)), h('button', { type: 'button', onClick: () => setAttempt(value => value + 1) }, t('again')))
       let content
-      if (state.phase === 'web') {
-        const items = [
-          [creditsLabel, credits ?? t('unavailable'), creditsHelp]
-        ]
-        if (usage && typeof usage.used === 'number') {
-          items.push([accountTranslate?.('usedCredits') || '已消耗积分', amount(usage.used), ''])
-        }
-        if (usage && typeof usage.limit === 'number' && usage.limit > 0) {
-          items.push([accountTranslate?.('totalCredits') || '总分配额度', amount(usage.limit), ''])
-        } else if (usage && (usage.limit === -1 || (usage.limit === null && typeof usage.used === 'number'))) {
-          items.push([accountTranslate?.('totalCredits') || '总分配额度', accountTranslate?.('unlimitedUsage') || '不限额度', ''])
-        }
-        content = h('dl', { className: 'dshUsageOverview' },
-          ...items.map(([label, count, help], index) =>
-            h('div', { key: index, title: help },
-              h('dt', null, label),
-              h('dd', null, count)
-            )
-          )
-        )
-      }
-      else if (state.phase === 'signedOut') content = h('div', { className: 'dshSettingsStatus' }, h('p', null, t('signIn')), h('button', { type: 'button', onClick: openAccount }, t('openAccount')))
-      else if (state.phase !== 'ready') content = h('div', { className: 'dshSettingsStatus', role: state.phase === 'error' ? 'alert' : 'status' }, h('p', null, t(state.phase === 'unsupported' ? 'restart' : state.phase === 'error' ? 'usageError' : 'loading')), state.phase === 'error' && h('button', { type: 'button', onClick: () => setAttempt(value => value + 1) }, t('again')))
+      if (current.phase === 'signedOut') content = h('div', { className: 'dshSettingsStatus' }, h('p', null, t('signIn')), h('button', { type: 'button', onClick: openAccount }, t('openAccount')))
+      else if (current.phase !== 'ready') content = h('div', { className: 'dshSettingsStatus', role: current.phase === 'error' ? 'alert' : 'status' }, h('p', null, t(current.phase === 'unsupported' ? 'restart' : current.phase === 'error' ? 'usageError' : 'loading')), current.phase === 'error' && h('button', { type: 'button', onClick: () => setAttempt(value => value + 1) }, t('again')))
       else if (!data) content = failure('usageError')
       else {
         const value = point => metric === 'tokens' ? point.total_tokens : point.message_count
@@ -1556,7 +1616,7 @@ window.__ModuleLoader__.load({
               data.totals.missing_usage_count > 0 && h('p', { role: 'status', className: 'dshSettingsHint' }, t('missingUsage', { count: data.totals.missing_usage_count })))),
         )
       }
-      return h('section', { className: 'dshSettingsSection dshUsage', 'aria-busy': state.phase === 'loading' },
+      return h('section', { className: 'dshSettingsSection dshUsage', 'aria-busy': current.phase === 'loading' },
         content,
         models,
         storage?.status === 'error' ? failure('storageError') : storage?.status === 'ready' && h(React.Fragment, null,

@@ -35,13 +35,14 @@ describe('enterprise preload composition', () => {
     initializeEnterpriseLoginBridge()()
     expect(mocks.expose.mock.calls.map(call => call[0])).toEqual(['dshEnterpriseChat', 'dshDesktopEnterprise'])
     const chat = mocks.expose.mock.calls[0]![1]
-    expect(Object.keys(chat)).toEqual(['onToolsChanged', 'focusSettings', 'present', 'state', 'retry', 'usage', 'history', 'openPage', 'open', 'subscribe'])
+    expect(Object.keys(chat)).toEqual(['onToolsChanged', 'focusSettings', 'present', 'state', 'retry', 'usage', 'history', 'openPage', 'open', 'remove', 'prewarm', 'subscribe'])
     const input = { visible: true }
-    chat.focusSettings(); chat.present(input); chat.state(); chat.retry(); chat.usage(); chat.history(2); chat.openPage('a'); chat.open('b')
+    chat.focusSettings(); chat.present(input); chat.state(); chat.retry(); chat.usage(); chat.history(2); chat.openPage('a'); chat.open('b'); chat.remove('c', 1); chat.prewarm()
     expect(mocks.invoke.mock.calls).toEqual([
       ['enterprise-chat:focus-settings'], ['enterprise-chat:present', input], ['enterprise-chat:state'],
       ['enterprise-chat:retry'], ['enterprise-chat:usage'], ['enterprise-chat:history', 2],
-      ['enterprise-chat:open-page', 'a'], ['enterprise-chat:open', 'b']
+      ['enterprise-chat:open-page', 'a'], ['enterprise-chat:open', 'b'],
+      ['enterprise-chat:remove', 'c', 1], ['enterprise-chat:prewarm']
     ])
     const tools = vi.fn(), changed = vi.fn()
     const offTools = chat.onToolsChanged(tools), offChanged = chat.subscribe(changed)

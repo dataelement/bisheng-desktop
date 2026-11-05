@@ -34,6 +34,8 @@ import {
   parseEnterpriseLoginDeepLink
 } from './deep-link.js'
 import { EnterpriseLlmAdapter, pickAttributionHeaders } from './openai.js'
+import { createEnterpriseProxyHandler, PROXY_ROUTE_PREFIXES } from './enterprise-proxy.js'
+import { EnterpriseClient, EnterpriseHttpError } from './enterprise-client.js'
 
 export { EnterpriseAuthError } from './enterprise-auth.js'
 
@@ -166,8 +168,9 @@ function registerJsonRoute(connection, path, methods, handler) {
       try {
         return jsonResponse(await handler(request))
       } catch (error) {
-        const status = Number(error?.status) || 400
-        return jsonResponse({ ok: false, error: errorMessage(error) }, status)
+        const status = Number(error?.status) || (error instanceof EnterpriseHttpError ? error.status : 400)
+        const errorCode = error?.code || (status === 401 ? 'UNAUTHORIZED' : status === 403 ? 'FORBIDDEN' : 'BAD_REQUEST')
+        return jsonResponse({ ok: false, error: errorMessage(error), errorCode }, status)
       }
     }
   })
@@ -435,6 +438,12 @@ export function apply(ctx, config) {
     return sessionAuth
   }
 
+  const enterpriseClient = new EnterpriseClient({
+    getSessionAuth: ensureValidSessionAuth,
+    refreshSessionTokens,
+    getBroker: () => broker
+  })
+
   let refreshPromise = null
   const refreshSessionState = async () => {
     if (!sessionAuth) return account
@@ -589,24 +598,16 @@ export function apply(ctx, config) {
   }
   if (typeof ctx.inject === 'function') ctx.inject(['tools', 'sessions', 'systemPrompt'], scoped => { workResources = applyWorkResources(scoped, {
     state: () => account, refreshState: readBrokerState,
-    request: (body, signal) => brokerJson('/v1/work-resources', body, signal)
+    request: (body, signal) => enterpriseClient.handleWorkResources(body, signal)
   }) })
   if (typeof ctx.inject === 'function') ctx.inject(['skills'], scoped => { workSkills = applyEnterpriseSkills(scoped, {
     state: () => account, refreshState: readBrokerState,
-    request: async (body, signal) => {
-      if (!broker) unavailable()
-      const response = await fetch(new URL('/v1/work-skills', broker.origin), {
-        method: 'POST', redirect: 'error', signal,
-        headers: { authorization: `Bearer ${broker.capability}`, 'content-type': 'application/json' }, body: JSON.stringify(body)
-      })
-      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || `Skill request failed (${response.status}).`)
-      return body.operation === 'bundle' ? Buffer.from(await response.arrayBuffer()) : response.json()
-    }
+    request: (body, signal) => enterpriseClient.handleWorkSkills(body, signal)
   }) })
   if (typeof ctx.inject === 'function') ctx.inject(['tools', 'sessions'], scoped => {
     workCapabilities = applyWorkCapabilities(scoped, {
       state: () => account, refreshState: readBrokerState,
-      request: (body, signal) => brokerJson('/v1/work-mcp', body, signal)
+      request: (body, signal) => enterpriseClient.handleWorkCapabilities(body, signal)
     })
   })
   const verifyWorkbenchArtifact = async (input) => {
@@ -715,7 +716,7 @@ export function apply(ctx, config) {
     materializeWorkbenchArtifact,
     releaseWorkbenchArtifact
   }
-  market = applyEnterpriseMarket(ctx, accountController, { auth })
+  market = applyEnterpriseMarket(ctx, accountController, { auth, authorizationAvailable: Boolean(broker) })
   workbenches = applyEnterpriseWorkbenchMarket(ctx, accountController)
   if (typeof ctx.provide === 'function') {
     ctx.provide('enterpriseWorkbenchPackages', {
@@ -806,7 +807,8 @@ export function apply(ctx, config) {
       models,
       modelsAvailable: models.length > 0,
       usage,
-      desktopVersion: process.env.DSH_DESKTOP_VERSION || '1.0.1'
+      desktopVersion: process.env.DSH_DESKTOP_VERSION || '1.0.1',
+      ...(account.navigation ? { navigation: account.navigation } : {})
     }
     if (account.connectionKey !== state.connectionKey) {
       await market?.stop()
@@ -998,20 +1000,7 @@ export function apply(ctx, config) {
     const url = new URL(request.url, 'http://127.0.0.1')
     const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10) || 1)
     if (!broker) {
-      const auth = await ensureValidSessionAuth()
-      if (!auth?.tokens?.access_token || !auth?.base) {
-        throw Object.assign(new Error('Enterprise chat unavailable.'), { status: 401 })
-      }
-      const targetUrl = new URL(`/api/v1/chat/list?page=${page}&limit=40`, auth.base)
-      const res = await fetch(targetUrl.href, {
-        headers: {
-          authorization: `Bearer ${auth.tokens.access_token}`,
-          accept: 'application/json'
-        },
-        signal: AbortSignal.timeout(15_000)
-      })
-      if (!res.ok) throw Object.assign(new Error(`Chat history request failed (${res.status}).`), { status: res.status })
-      const result = await res.json()
+      const result = await enterpriseClient.requestJson(`/api/v1/chat/list?page=${page}&limit=40`)
       const rawItems = Array.isArray(result?.data) ? result.data : []
       const items = rawItems.map(row => ({
         id: String(row.chat_id || ''),
@@ -1031,20 +1020,9 @@ export function apply(ctx, config) {
     const id = String(body?.id || '').trim()
     if (!id) throw Object.assign(new Error('Chat id required.'), { status: 400 })
     if (!broker) {
-      const auth = await ensureValidSessionAuth()
-      if (!auth?.tokens?.access_token || !auth?.base) {
-        throw Object.assign(new Error('Enterprise chat unavailable.'), { status: 401 })
-      }
-      const targetUrl = new URL(`/api/v1/chat/${encodeURIComponent(id)}`, auth.base)
-      const res = await fetch(targetUrl.href, {
-        method: 'DELETE',
-        headers: {
-          authorization: `Bearer ${auth.tokens.access_token}`,
-          accept: 'application/json'
-        },
-        signal: AbortSignal.timeout(15_000)
+      await enterpriseClient.requestJson(`/api/v1/chat/${encodeURIComponent(id)}`, {
+        method: 'DELETE'
       })
-      if (!res.ok) throw Object.assign(new Error(`Chat deletion failed (${res.status}).`), { status: res.status })
       return { epoch: body?.epoch ?? (account.revision || 1) }
     }
     return { epoch: body?.epoch ?? (account.revision || 1) }
@@ -1061,6 +1039,20 @@ export function apply(ctx, config) {
     ingestEnterpriseState(account)
     void refreshSessionState().catch((err) => {
       console.warn('[enterprise] failed to refresh restored session', err)
+    })
+  }
+  if (typeof ctx.inject === 'function') {
+    ctx.inject(['webServer'], (webCtx) => {
+      const proxyHandler = createEnterpriseProxyHandler({
+        enterpriseClient
+      })
+      for (const prefix of PROXY_ROUTE_PREFIXES) {
+        webCtx.effect(() => webCtx.webServer.register({
+          kind: 'prefix',
+          path: prefix,
+          handler: proxyHandler
+        }), `enterprise-proxy: ${prefix}`)
+      }
     })
   }
 }

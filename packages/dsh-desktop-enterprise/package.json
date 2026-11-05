@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop-enterprise",
-  "version": "0.3.14",
+  "version": "0.3.18",
   "description": "Built-in BiSheng enterprise identity and model integration for DSH Desktop.",
   "private": true,
   "type": "module",

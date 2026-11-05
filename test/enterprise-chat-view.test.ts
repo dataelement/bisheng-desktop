@@ -93,6 +93,32 @@ describe('enterprise Chat host boundary', () => {
     } finally { f.host.dispose() }
   })
 
+  it('prewarms the hidden view to obtain navigation while Work remains visible', async () => {
+    const f = fixture()
+    try {
+      f.host.present(f.owner, { ...presentation, visible: false })
+      await flush()
+      expect(fake.views).toHaveLength(0)
+      await f.host.prewarm()
+      await flush()
+      expect(fake.views).toHaveLength(1)
+      expect(fake.views[0].setVisible).toHaveBeenLastCalledWith(false)
+      expect(fake.views[0].webContents.loadURL).toHaveBeenCalledWith('https://enterprise.example/workspace/?embed=dsh&dshTheme=dark')
+      const wc = fake.views[0].webContents
+      wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:navigation', {
+        path: '/workspace/',
+        navigation: {
+          entries: [
+            { id: 'knowledge', path: '/knowledge', label: 'Knowledge', active: false, primary: true },
+            { id: 'apps', path: '/apps', label: 'Apps', active: false, primary: true }
+          ]
+        }
+      })
+      expect(f.host.snapshot().navigation?.entries).toHaveLength(2)
+      expect(f.host.snapshot().navigation?.entries[0]?.id).toBe('knowledge')
+    } finally { f.host.dispose() }
+  })
+
   it('does not exchange or replace the cookie on unchanged connected publishes', async () => {
     vi.useFakeTimers()
     const f = fixture()

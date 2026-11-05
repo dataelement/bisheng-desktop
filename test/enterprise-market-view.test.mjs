@@ -13,7 +13,7 @@ const localeSource = await readFile(new URL('../node_modules/@deepseek-ai/dsh-cl
 let cleanup
 afterEach(async () => { await cleanup?.(); vi.unstubAllGlobals() })
 
-async function mountMarket({ action, update = false, holdRefresh = false, plugins, installReady = true, catalogFailure } = {}) {
+async function mountMarket({ action, update = false, holdRefresh = false, plugins, installReady = true, catalogFailure, failureCode, language = 'zh-CN' } = {}) {
   const dom = new JSDOM('<html lang="zh-CN"><div id="root"></div></html>', { url: 'http://localhost/' })
   vi.stubGlobal('window', dom.window)
   vi.stubGlobal('document', dom.window.document)
@@ -28,7 +28,7 @@ async function mountMarket({ action, update = false, holdRefresh = false, plugin
   let catalogReads = 0
   if (installed) installedById.set(plugin.id, { plugin_id: plugin.id, version_id: update ? 'd'.repeat(32) : plugin.current_version_id, version: update ? '0.9.0' : '1.0.0', enabled })
   const catalogPlugins = plugins ?? [plugin, other]
-  const snapshot = () => ({ ...account, tenant: { id: '1', name: company }, target: 'darwin-arm64', desktopVersion: '0.1.1', installReady, data: catalogPlugins, total: catalogPlugins.length, installed: structuredClone([...installedById.values()]) })
+  const snapshot = () => ({ ...account, tenant: { id: '1', name: company }, target: 'darwin-arm64', desktopVersion: '0.1.1', installReady, failureCode, data: catalogPlugins, total: catalogPlugins.length, installed: structuredClone([...installedById.values()]) })
   const requests = []
   const fetch = async (path, options) => {
     requests.push({ path, body: options?.body && JSON.parse(options.body) })
@@ -36,13 +36,14 @@ async function mountMarket({ action, update = false, holdRefresh = false, plugin
     if (path === '/api/enterprise.market.action') {
       const input = JSON.parse(options.body)
       const error = action && await new Promise(resolve => pendingActions.set(input.plugin_id, resolve))
-      if (error) return { ok: false, json: async () => ({ error }) }
+      if (error) return { ok: false, json: async () => typeof error === 'string' ? ({ error }) : error }
       if (input.action === 'uninstall') installedById.delete(input.plugin_id)
       else installedById.set(input.plugin_id, { plugin_id: input.plugin_id, version_id: plugin.current_version_id, version: '1.0.0', enabled: input.action !== 'disable' })
       const result = snapshot()
       return { ok: true, json: async () => result }
     }
     if (String(path).startsWith('/api/enterprise.market.catalog') && catalogFailure) {
+      if (catalogFailure === 'plain-not-found') return new Response('Not Found', { status: 404 })
       return { ok: false, json: async () => catalogFailure }
     }
     const result = snapshot()
@@ -56,7 +57,7 @@ async function mountMarket({ action, update = false, holdRefresh = false, plugin
   const { LocaleRuntime } = definitions.get('@deepseek-ai/dsh-client-locale').factory(name =>
     name === 'react' ? React : name === 'react/jsx-runtime' ? jsx : {})
   const localeContext = new Context()
-  const locale = new LocaleRuntime(localeContext, undefined, { languages: ['zh-CN'], preference: null })
+  const locale = new LocaleRuntime(localeContext, undefined, { languages: [language], preference: null })
   const disposers = [], root = createRoot(dom.window.document.getElementById('root'))
   cleanup = async () => { await act(async () => { disposers.reverse().forEach(dispose => dispose()); root.unmount() }); await localeContext.fiber.dispose(); dom.window.close() }
   await act(async () => {
@@ -119,6 +120,39 @@ it.each([
   expect(text()).toContain(copy)
   expect(text()).not.toContain('暂时无法读取企业插件，请重试或联系管理员。')
   expect(text()).not.toContain('raw server text')
+})
+
+it.each([
+  ['zh-CN', '企业市场接口不可用，请检查企业插件是否已加载或联系管理员。'],
+  ['en-US', 'The enterprise market endpoint is unavailable. Check that the enterprise plugin is loaded or contact your administrator.']
+])('shows actionable guidance for a plain-text 404 in %s', async (language, copy) => {
+  const { text } = await mountMarket({ catalogFailure: 'plain-not-found', language })
+  expect(text()).toContain(copy)
+  expect(text()).not.toContain('Not Found')
+})
+
+it.each([
+  ['zh-CN', '企业插件需要桌面授权服务，请在 BISHENG Desktop 中打开市场或联系管理员。'],
+  ['en-US', 'Enterprise plugins require the desktop authorization service. Open the market in BISHENG Desktop or contact your administrator.']
+])('shows actionable authorization guidance in %s while retaining browsing', async (language, copy) => {
+  const { text, card } = await mountMarket({ language, installReady: false, failureCode: 'authorization_unavailable' })
+  expect(text()).toContain(copy)
+  expect(card('JSON 格式化')).toBeTruthy()
+  expect(card('JSON 格式化').querySelector('button').disabled).toBe(true)
+})
+
+it('shows authorization guidance even for an empty catalog', async () => {
+  const { text } = await mountMarket({ plugins: [], installReady: false, failureCode: 'authorization_unavailable' })
+  expect(text()).toContain('企业插件需要桌面授权服务')
+  expect(text()).toContain('企业暂未提供插件')
+})
+
+it('localizes authorization errors from failed actions', async () => {
+  const { card, click, finish } = await mountMarket({ action: 'install' })
+  await click('安装')
+  await finish({ error: 'raw server text', errorCode: 'authorization_unavailable' })
+  expect(card('JSON 格式化').querySelector('[role="alert"]').textContent).toContain('企业插件需要桌面授权服务')
+  expect(card('URL 编码')).toBeTruthy()
 })
 
 it('keeps the intro and setup notice when plugins exist but the market is not ready', async () => {

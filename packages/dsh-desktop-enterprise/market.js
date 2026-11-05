@@ -134,6 +134,7 @@ export function createMarketController(ctx, accountController, options = {}) {
   const sessionOpen = () => !(account?.sessionExpiresAt && Date.parse(account.sessionExpiresAt) <= Date.now())
   const requireOnline = () => {
     if (!sessionOpen()) throw marketFailure('Enterprise session expired.', 'session_expired')
+    if (options.authorizationAvailable === false) throw marketFailure('Enterprise plugins require the desktop authorization service. Open the market in BISHENG Desktop or contact your administrator.', 'authorization_unavailable')
     if (!online || !policy) throw marketFailure(lastError || 'Connect to the enterprise market to enable plugins.', failureCode || 'offline')
     return policy
   }
@@ -246,7 +247,8 @@ export function createMarketController(ctx, accountController, options = {}) {
       const data = catalog.data.map(plugin => ({ ...plugin, versions: plugin.versions.map(version => ({
         ...version, compatible: Boolean(version.manifest?.targets?.[target]) && isMarketVersionCompatible(desktopVersion(), version.manifest?.plugin?.desktop_min)
       })) }))
-      return { ...state(), data, total: catalog.total, installReady: online }
+      return { ...state(), data, total: catalog.total, installReady: online && options.authorizationAvailable !== false,
+        ...(online && options.authorizationAvailable === false ? { error: 'Enterprise plugins require the desktop authorization service. Open the market in BISHENG Desktop or contact your administrator.', failureCode: 'authorization_unavailable' } : {}) }
     }),
     act: input => serialized(async () => {
       if (!['install', 'enable', 'disable', 'uninstall', 'configure'].includes(input.action)) throw new Error('Unknown plugin operation.')
@@ -271,7 +273,7 @@ export function createMarketController(ctx, accountController, options = {}) {
         await save(); return state()
       }
       await synchronize()
-      if (!online) throw marketFailure(lastError || 'Connect to the enterprise market to enable plugins.', failureCode || 'offline')
+      requireOnline()
       if (input.action === 'configure') {
         if (!previous || input.config === undefined) throw new Error('Choose an installed plugin and provide its configuration.')
         const saved = { ...previous }
@@ -376,9 +378,10 @@ export function applyEnterpriseMarket(ctx, accountController, options = {}) {
     }
   } })
   register('/api/enterprise.market.state', ['GET'], () => market.state())
-  register('/api/enterprise.market.catalog', ['GET'], request => {
+  register('/api/enterprise.market.catalog', ['GET'], async request => {
     const url = new URL(request.url)
-    return market.catalog(url.searchParams.get('q') || '', Math.max(1, Number(url.searchParams.get('page') || 1)))
+    const catalog = await market.catalog(url.searchParams.get('q') || '', Math.max(1, Number(url.searchParams.get('page') || 1)))
+    return ctx.get('pluginManager')?.managedBundleSourceContract === 1 ? catalog : { ...catalog, installReady: false }
   })
   register('/api/enterprise.market.action', ['POST'], async request => {
     const body = await request.text()

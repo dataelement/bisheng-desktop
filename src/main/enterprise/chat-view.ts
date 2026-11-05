@@ -138,6 +138,19 @@ export class EnterpriseChatView {
 
   retry(): void { this.clear(); void this.connect() }
 
+  async prewarm(owner?: BrowserWindow): Promise<void> {
+    if (owner && this.owner !== owner) {
+      this.owner = owner
+      owner.once('closed', () => { this.clear(); this.owner = undefined })
+      owner.webContents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => {
+        if (isMainFrame && this.presentation) { this.presentation.visible = false; this.layout() }
+      })
+    }
+    if (!this.view && this.state.phase !== 'error' && this.enterprise.snapshot().connected && this.owner && !this.owner.isDestroyed()) {
+      await this.connect()
+    }
+  }
+
   private isSettingsReady(): boolean {
     if (!this.view || !this.settingsSection || !this.settingsReady) return false
     const url = new URL(this.view.webContents.getURL() || 'about:blank')
