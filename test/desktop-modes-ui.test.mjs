@@ -31,7 +31,7 @@ afterEach(async () => {
   delete window.__ModuleLoader__
   vi.unstubAllGlobals()
 })
-async function mount(connected = false, collection = {}, inert = false, workbench) {
+async function mount(connected = false, collection = {}, inert = false, workbench, prepare) {
   let workbenchSnapshot = workbench
   let bindWorkbench, disposeWorkbench
   const workbenchListeners = new Set()
@@ -54,6 +54,7 @@ async function mount(connected = false, collection = {}, inert = false, workbenc
     openPage: vi.fn(async () => {}),
     open: vi.fn(async () => {})
   }
+  prepare?.()
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   let plugin, navigate
   let sessionList = { phase: 'ready', byId: { draft: { id: 'draft', blank: true, retainedBy: { mainView: 1 } } } }
@@ -852,13 +853,167 @@ it('keeps a confirmed empty state visible while refreshing an empty history', as
   await act(async () => pending.resolve(historyResult([])))
 })
 
-it('refreshes cloud history on push transitions and focus without periodic state polling', async () => {
-  const ui = await mount(true)
-  const bridge = window.dshEnterpriseChat
-  expect(bridge.history).toHaveBeenCalledTimes(1)
-  const stateCalls = bridge.state.mock.calls.length
-  vi.useFakeTimers()
+const enterpriseNavigation = {
+  entries: [{ id: 'knowledge', label: 'Knowledge', path: '/knowledge', primary: true, active: false }],
+  homeLabel: 'Welcome'
+}
+const readyEnterpriseState = (navigation) => ({ connected: true, phase: 'ready', epoch: 1, conversationId: 'new', settingsProtocolVersion: 1, ...(navigation ? { navigation } : {}) })
+async function moreLabels() {
+  const sidebar = container.querySelector('aside')
+  await act(async () => sidebar.querySelector('[data-navigation-id=more]').click())
+  return [...sidebar.querySelectorAll('[role=menuitem]')].map(node => node.textContent)
+}
+it.each(['rejection', 'empty response'])('restores enterprise navigation after the startup state read gets a %s', async failure => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
   try {
+    let attempt = 0
+    await mount(true, {}, false, undefined, () => {
+      window.dshEnterpriseChat.state.mockImplementation(async () => {
+        attempt += 1
+        if (attempt === 1) {
+          if (failure === 'rejection') throw new Error('state unavailable')
+          return undefined
+        }
+        return readyEnterpriseState(enterpriseNavigation)
+      })
+    })
+    expect(container.querySelector('[data-navigation-id=more]')).toBeNull()
+    await act(async () => { await vi.advanceTimersByTimeAsync(249) })
+    expect(window.dshEnterpriseChat.state).toHaveBeenCalledTimes(1)
+    await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+    expect(await moreLabels()).toEqual(['Knowledge'])
+    const calls = window.dshEnterpriseChat.state.mock.calls.length
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+    expect(window.dshEnterpriseChat.state).toHaveBeenCalledTimes(calls)
+  } finally { vi.useRealTimers() }
+})
+
+it('stops startup state retries after the bounded delays', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    await mount(true, {}, false, undefined, () => {
+      window.dshEnterpriseChat.state.mockRejectedValue(new Error('state unavailable'))
+    })
+    expect(window.dshEnterpriseChat.state).toHaveBeenCalledTimes(1)
+    await act(async () => { await vi.advanceTimersByTimeAsync(250) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+    expect(window.dshEnterpriseChat.state).toHaveBeenCalledTimes(4)
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+    expect(window.dshEnterpriseChat.state).toHaveBeenCalledTimes(4)
+    await act(async () => window.dispatchEvent(new Event('focus')))
+    expect(window.dshEnterpriseChat.state).toHaveBeenCalledTimes(5)
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+    expect(window.dshEnterpriseChat.state).toHaveBeenCalledTimes(5)
+  } finally { vi.useRealTimers() }
+})
+
+it('rereads a connected startup snapshot until navigation arrives or the bounded retries end', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    let attempt = 0
+    await mount(true, {}, false, undefined, () => {
+      window.dshEnterpriseChat.state.mockImplementation(async () => {
+        attempt += 1
+        return attempt < 3 ? readyEnterpriseState() : readyEnterpriseState(enterpriseNavigation)
+      })
+    })
+    expect(container.querySelector('[data-navigation-id=more]')).toBeNull()
+    expect(window.dshEnterpriseChat.history).toHaveBeenCalledTimes(1)
+    await act(async () => { await vi.advanceTimersByTimeAsync(250) })
+    expect(container.querySelector('[data-navigation-id=more]')).toBeNull()
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+    expect(await moreLabels()).toEqual(['Knowledge'])
+    expect(window.dshEnterpriseChat.history).toHaveBeenCalledTimes(1)
+    const calls = window.dshEnterpriseChat.state.mock.calls.length
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+    expect(window.dshEnterpriseChat.state).toHaveBeenCalledTimes(calls)
+    expect(window.dshEnterpriseChat.history).toHaveBeenCalledTimes(1)
+  } finally { vi.useRealTimers() }
+})
+
+it('uses the remaining startup retries when navigation stays absent and stops after an empty report', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    await mount(true, {}, false, undefined, () => {
+      window.dshEnterpriseChat.state.mockResolvedValue(readyEnterpriseState())
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(250 + 1000 + 3000) })
+    expect(window.dshEnterpriseChat.state).toHaveBeenCalledTimes(4)
+    expect(window.dshEnterpriseChat.history).toHaveBeenCalledTimes(1)
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+    expect(window.dshEnterpriseChat.state).toHaveBeenCalledTimes(4)
+    await act(async () => root.unmount())
+    container.remove()
+    root = undefined
+    await mount(true, {}, false, undefined, () => {
+      window.dshEnterpriseChat.state.mockResolvedValue(readyEnterpriseState({ entries: [] }))
+    })
+    const calls = window.dshEnterpriseChat.state.mock.calls.length
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+    expect(window.dshEnterpriseChat.state).toHaveBeenCalledTimes(calls)
+  } finally { vi.useRealTimers() }
+})
+
+it('keeps pushed navigation when the startup state response is older', async () => {
+  let resolveState
+  const ui = await mount(true, {}, false, undefined, () => {
+    window.dshEnterpriseChat.state.mockReturnValue(new Promise(resolve => { resolveState = resolve }))
+  })
+  await ui.navigation(enterpriseNavigation.entries)
+  await act(async () => resolveState(readyEnterpriseState()))
+  expect(await moreLabels()).toEqual(['Knowledge'])
+})
+
+it('stops startup state retries when navigation is pushed', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    const ui = await mount(true, {}, false, undefined, () => {
+      window.dshEnterpriseChat.state.mockRejectedValue(new Error('state unavailable'))
+    })
+    expect(window.dshEnterpriseChat.state).toHaveBeenCalledTimes(1)
+    await ui.navigation(enterpriseNavigation.entries)
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+    expect(window.dshEnterpriseChat.state).toHaveBeenCalledTimes(1)
+    expect(await moreLabels()).toEqual(['Knowledge'])
+  } finally { vi.useRealTimers() }
+})
+
+it('cancels startup state retries when the account is reread or navigation unmounts', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    const ui = await mount(true, {}, false, undefined, () => {
+      window.dshEnterpriseChat.state.mockRejectedValueOnce(new Error('state unavailable'))
+    })
+    expect(window.dshEnterpriseChat.state).toHaveBeenCalledTimes(1)
+    await ui.account(true)
+    expect(window.dshEnterpriseChat.state).toHaveBeenCalledTimes(2)
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+    expect(window.dshEnterpriseChat.state).toHaveBeenCalledTimes(2)
+    await act(async () => root.unmount())
+    container.remove()
+    root = undefined
+    await mount(true, {}, false, undefined, () => {
+      window.dshEnterpriseChat.state.mockRejectedValue(new Error('state unavailable'))
+    })
+    expect(window.dshEnterpriseChat.state).toHaveBeenCalledTimes(1)
+    await act(async () => root.unmount())
+    root = undefined
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+    expect(window.dshEnterpriseChat.state).toHaveBeenCalledTimes(1)
+  } finally { vi.useRealTimers() }
+})
+
+it('refreshes cloud history on push transitions and focus without periodic state polling', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    const ui = await mount(true)
+    const bridge = window.dshEnterpriseChat
+    expect(bridge.history).toHaveBeenCalledTimes(1)
+    await act(async () => { await vi.advanceTimersByTimeAsync(250 + 1000 + 3000) })
+    expect(bridge.state).toHaveBeenCalledTimes(4)
+    expect(bridge.history).toHaveBeenCalledTimes(1)
+    const stateCalls = bridge.state.mock.calls.length
     await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
     expect(bridge.state).toHaveBeenCalledTimes(stateCalls)
     expect(bridge.history).toHaveBeenCalledTimes(1)
