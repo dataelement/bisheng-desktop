@@ -45,6 +45,34 @@ describe('market download error locale contract', () => {
     try { await expect(service.marketPackage('/update', 'owner/tool')).rejects.toThrow(label) }
     finally { service.dispose() }
   })
+  it('reports a plain-text 404 as an HTTP error without leaking its body', async () => {
+    const service = setup('en', {})
+    service.request = async () => new Response('Not found: private details', { status: 404 })
+    try {
+      await expect(service.marketPackage('/update', 'owner/tool')).rejects.toMatchObject({ message: 'HTTP 404' })
+      expect(service.installing).toBeNull()
+      await expect(service.readInstalls()).rejects.toMatchObject({ message: 'HTTP 404' })
+    } finally { service.dispose() }
+  })
+  it('preserves confirmation metadata from structured errors', async () => {
+    const service = setup('en', {})
+    service.request = async () => new Response(JSON.stringify({ code: 'confirmation_required', params: { updateRisk: 'modified' }, error: 'Confirm update' }), { status: 409 })
+    try {
+      await expect(service.marketPackage('/update', 'owner/tool')).rejects.toMatchObject({ message: 'Confirm update', code: 'confirmation_required', updateRisk: 'modified' })
+      expect(service.installing).toBeNull()
+    } finally { service.dispose() }
+  })
+  it('retains successful JSON results and rejects malformed successful responses', async () => {
+    const service = setup('en', {})
+    try {
+      service.request = async () => new Response(JSON.stringify({ restartRequired: true }))
+      await expect(service.marketPackage('/update', 'owner/tool')).resolves.toEqual({ restartRequired: true })
+      expect(service.restartNeeded).toBe(true)
+      service.request = async () => new Response('invalid')
+      await expect(service.marketPackage('/update', 'owner/tool')).rejects.toMatchObject({ name: 'SyntaxError' })
+      await expect(service.readInstalls()).rejects.toMatchObject({ name: 'SyntaxError' })
+    } finally { service.dispose() }
+  })
   it.each([
     { code: 'future_error', error: 'original failure' },
     { code: 'download_failed', params: { diagnostic: 'https://private/' }, error: 'original failure' },

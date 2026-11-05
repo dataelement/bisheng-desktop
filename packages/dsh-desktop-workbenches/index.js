@@ -6,7 +6,7 @@ import { selectMarketFetch } from './market-fetch.mjs'
 import { awaitHandle, createMarketInstallStore, MarketInstallError, resolveInstallTarget } from './market-install.mjs'
 import { readSubmissionStatus, SubmissionStatusError } from './submission-status.mjs'
 import { createStateStore, MAX_STATE_BYTES, StateError } from './state.mjs'
-import { readFile, rename, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { consumeLocalWorkbenchCapability, localCapabilityMatches, LOCAL_WORKBENCH_CAPABILITY_HEADER, readLocalWorkbenchPackage } from './local-install.mjs'
 import { dirname, isAbsolute, join } from 'node:path'
 import { homedir } from 'node:os'
@@ -213,9 +213,10 @@ export function apply(ctx, config) {
       }
     }
   })
-  const known = (error) => error instanceof MarketInstallError || error instanceof CatalogError || error instanceof StateError
+  const known = (error) => error instanceof MarketInstallError || error?.name === 'MarketInstallError' || error instanceof CatalogError || error?.name === 'CatalogError' || error instanceof StateError || error?.name === 'StateError'
+  const isMarketInstallError = (error) => error instanceof MarketInstallError || error?.name === 'MarketInstallError'
   const installFailure = (error, fallback) => Response.json({ error: known(error) ? error.message : fallback,
-    ...(error instanceof MarketInstallError && error.code ? { code: error.code, params: error.params } : {})
+    ...(isMarketInstallError(error) && error.code ? { code: error.code, params: error.params } : {})
   }, {
     status: known(error) ? error.status : 500,
     headers: { 'cache-control': 'no-store' }
@@ -240,44 +241,65 @@ export function apply(ctx, config) {
       catch (error) { return installFailure(error, 'Could not read workbench market installs.') }
     }
   })
-  // Installing needs Desktop's package service; without it the market stays browse-only.
-  ctx.inject(['desktopPnpm'], (ctx) => {
-    ctx.connection.fetch.register({
-      path: '/api/desktop-workbenches/market-install',
-      methods: ['POST'],
-      requestBody: 'buffered',
-      async fetch(request) {
-        try {
-          try { await ctx.desktopPnpm.authorizeWorkbenchMarketInstall() }
+  // Keep market routes available while the optional package service comes and goes.
+  let marketPnpm
+  ctx.inject(['desktopPnpm'], (scoped) => {
+    const service = scoped.desktopPnpm
+    marketPnpm = service
+    return () => { if (marketPnpm === service) marketPnpm = undefined }
+  })
+  let marketPluginManager
+  ctx.inject(['pluginManager'], (scoped) => {
+    const service = scoped.pluginManager
+    marketPluginManager = service
+    return () => { if (marketPluginManager === service) marketPluginManager = undefined }
+  })
+  let marketEnterprisePolicy
+  ctx.inject(['enterpriseCapabilityPolicy'], (scoped) => {
+    const service = scoped.enterpriseCapabilityPolicy
+    marketEnterprisePolicy = service
+    return () => { if (marketEnterprisePolicy === service) marketEnterprisePolicy = undefined }
+  })
+  ctx.connection.fetch.register({
+    path: '/api/desktop-workbenches/market-install',
+    methods: ['POST'],
+    requestBody: 'buffered',
+    async fetch(request) {
+      try {
+        const desktopPnpm = marketPnpm
+        const pluginManager = marketPluginManager
+        if (!desktopPnpm && !pluginManager) throw new MarketInstallError('Workbench package installation is unavailable: Desktop package service is not available.', 503)
+        const policyService = desktopPnpm?.authorizeWorkbenchMarketInstall ? desktopPnpm : marketEnterprisePolicy
+        if (policyService?.authorizeWorkbenchMarketInstall) {
+          try { await policyService.authorizeWorkbenchMarketInstall() }
           catch (error) {
             const message = error instanceof Error ? error.message : String(error)
             throw new MarketInstallError(message.startsWith('POLICY_DISABLED') ? 'POLICY_DISABLED' : message, 403)
           }
-          const { id, confirmedReplacement } = await catalogPayloadFrom(request)
-          // The install source always comes from the Awesome catalog, never from the request.
-          const entry = (await readCatalog()).catalog.workbenches.find((item) => item.id === id)
-          if (!entry) throw new MarketInstallError('This workbench is no longer listed in the workbench market.', 404)
-          const installs = await marketInstalls.read()
-          const requireReplacement = async (names) => {
-            if (confirmedReplacement === true) return
-            const packages = await readInstallEvidence(installs, undefined, names)
-            const risk = names.map(name => packages[name]).find(item => item && (item.origin === 'local' || ['local', 'modified'].includes(item.updateRisk)))
-            if (risk) {
-              const updateRisk = risk.origin === 'local' || risk.updateRisk === 'local' ? 'local' : 'modified'
-              throw new MarketInstallError('Confirm updating the installed workbench code; local changes may be overwritten.', 409, 'confirmation_required', { updateRisk })
-            }
+        }
+        const { id, confirmedReplacement } = await catalogPayloadFrom(request)
+        // The install source always comes from the Awesome catalog, never from the request.
+        const entry = (await readCatalog()).catalog.workbenches.find((item) => item.id === id)
+        if (!entry) throw new MarketInstallError('This workbench is no longer listed in the workbench market.', 404)
+        const installs = await marketInstalls.read()
+        const requireReplacement = async (names) => {
+          if (confirmedReplacement === true) return
+          const packages = await readInstallEvidence(installs, undefined, names)
+          const risk = names.map(name => packages[name]).find(item => item && (item.origin === 'local' || ['local', 'modified'].includes(item.updateRisk)))
+          if (risk) {
+            const updateRisk = risk.origin === 'local' || risk.updateRisk === 'local' ? 'local' : 'modified'
+            throw new MarketInstallError('Confirm updating the installed workbench code; local changes may be overwritten.', 409, 'confirmation_required', { updateRisk })
           }
-          // Check known package identities before resolving or downloading the target.
-          await requireReplacement([entry.distribution.name, installs[id]?.pluginName].filter(Boolean))
-          const target = await resolveInstallTarget(entry)
-          try {
-            await requireReplacement([target.expectedPluginName])
-            if (!ctx.desktopPnpm?.installWorkbenchGeneration) {
-              throw new MarketInstallError('Workbench package installation is unavailable in this environment.', 503)
-            }
+        }
+        // Check known package identities before resolving or downloading the target.
+        await requireReplacement([entry.distribution.name, installs[id]?.pluginName].filter(Boolean))
+        const target = await resolveInstallTarget(entry)
+        try {
+          await requireReplacement([target.expectedPluginName])
+          if (desktopPnpm?.installWorkbenchGeneration) {
             let handle
             try {
-              handle = ctx.desktopPnpm.installWorkbenchGeneration({
+              handle = desktopPnpm.installWorkbenchGeneration({
                 source: 'market',
                 pluginSpec: target.pluginSpec,
                 expectedPluginName: target.expectedPluginName,
@@ -286,33 +308,59 @@ export function apply(ctx, config) {
               }, root)
             } catch (error) { throw new MarketInstallError(error instanceof Error ? error.message : String(error), 409) }
             await awaitHandle(handle)
-          } finally { await target.cleanup() }
-          const install = { catalogId: entry.id, pluginName: target.expectedPluginName, version: entry.version, source: entry.distribution.type, installedAt: new Date().toISOString() }
-          const evidence = (await readInstallEvidence({}, undefined, [install.pluginName]))[install.pluginName]
-          if (evidence?.fingerprint) install.fingerprint = evidence.fingerprint
-          await marketInstalls.record(id, install)
-          return Response.json({ install, restartRequired: true }, { headers: { 'cache-control': 'no-store' } })
-        } catch (error) { return installFailure(error, 'Could not install the workbench.') }
-      }
-    })
-    ctx.connection.fetch.register({
-      path: '/api/desktop-workbenches/local-install',
-      methods: ['POST'],
-      requestBody: 'buffered',
-      async fetch(request) {
-        try {
-          const provided = request.headers.get(LOCAL_WORKBENCH_CAPABILITY_HEADER)
-          if (!localCapabilityMatches(localWorkbenchCapability, provided)) {
-            throw new MarketInstallError('Local workbench install was not authorized by the desktop.', 403)
+          } else if (pluginManager?.installBundle) {
+            let spec = target.pluginSpec
+            let persistentFile
+            if (spec.startsWith('file:')) {
+              const tempFile = spec.slice('file:'.length)
+              const packagesDir = join(root, 'packages')
+              await mkdir(packagesDir, { recursive: true })
+              persistentFile = join(packagesDir, `${target.expectedPluginName}-${target.expectedVersion}.tgz`)
+              await copyFile(tempFile, persistentFile)
+              spec = `file:${persistentFile}`
+            }
+            let result
+            try {
+              result = await pluginManager.installBundle(spec, { enabled: true })
+            } catch (error) {
+              if (persistentFile) await rm(persistentFile, { force: true }).catch(() => {})
+              throw new MarketInstallError(error instanceof Error ? error.message : String(error), 502)
+            }
+            if (!result || !['applied', 'restart-required', 'overridden'].includes(result.application)) {
+              if (persistentFile) await rm(persistentFile, { force: true }).catch(() => {})
+              const detail = result?.error?.diagnostic || result?.error?.message || result?.error?.code || 'Plugin installation did not complete.'
+              throw new MarketInstallError(detail, 502)
+            }
+          } else {
+            throw new MarketInstallError('Workbench package installation is unavailable in this environment.', 503)
           }
-          const payload = await readPayload(request, 4096, 'Request is too large.')
-          const pkg = await readLocalWorkbenchPackage(payload?.path)
-          if (!ctx.desktopPnpm?.installWorkbenchGeneration) {
-            throw new MarketInstallError('Local workbench install is unavailable in this environment.', 503)
-          }
+        } finally { await target.cleanup() }
+        const install = { catalogId: entry.id, pluginName: target.expectedPluginName, version: entry.version, source: entry.distribution.type, installedAt: new Date().toISOString() }
+        const evidence = (await readInstallEvidence({}, undefined, [install.pluginName]))[install.pluginName]
+        if (evidence?.fingerprint) install.fingerprint = evidence.fingerprint
+        await marketInstalls.record(id, install)
+        return Response.json({ install, restartRequired: true }, { headers: { 'cache-control': 'no-store' } })
+      } catch (error) { return installFailure(error, 'Could not install the workbench.') }
+    }
+  })
+  ctx.connection.fetch.register({
+    path: '/api/desktop-workbenches/local-install',
+    methods: ['POST'],
+    requestBody: 'buffered',
+    async fetch(request) {
+      try {
+        const desktopPnpm = marketPnpm
+        const pluginManager = marketPluginManager
+        const provided = request.headers.get(LOCAL_WORKBENCH_CAPABILITY_HEADER)
+        if (!localCapabilityMatches(localWorkbenchCapability, provided)) {
+          throw new MarketInstallError('Local workbench install was not authorized by the desktop.', 403)
+        }
+        const payload = await readPayload(request, 4096, 'Request is too large.')
+        const pkg = await readLocalWorkbenchPackage(payload?.path)
+        if (desktopPnpm?.installWorkbenchGeneration) {
           let handle
           try {
-            handle = ctx.desktopPnpm.installWorkbenchGeneration({
+            handle = desktopPnpm.installWorkbenchGeneration({
               source: 'local',
               pluginSpec: pkg.directory,
               path: pkg.directory,
@@ -321,54 +369,87 @@ export function apply(ctx, config) {
             }, root)
           } catch (error) { throw new MarketInstallError(error instanceof Error ? error.message : String(error), 409) }
           await awaitHandle(handle)
-          const install = {
-            source: 'local',
-            pluginName: pkg.name,
-            version: pkg.version,
-            path: pkg.directory,
-            installedAt: new Date().toISOString()
+        } else if (pluginManager?.installBundle) {
+          let result
+          try {
+            result = await pluginManager.installBundle(pkg.directory, { enabled: true })
+          } catch (error) { throw new MarketInstallError(error instanceof Error ? error.message : String(error), 502) }
+          if (!result || !['applied', 'restart-required', 'overridden'].includes(result.application)) {
+            const detail = result?.error?.diagnostic || result?.error?.message || result?.error?.code || 'Local workbench install did not complete.'
+            throw new MarketInstallError(detail, 502)
           }
-          await recordLocalInstall(root, install)
-          return Response.json({ install, restartRequired: true }, { headers: { 'cache-control': 'no-store' } })
-        } catch (error) { return installFailure(error, 'Could not install the local workbench.') }
-      }
-    })
-    ctx.connection.fetch.register({
-      path: '/api/desktop-workbenches/market-uninstall',
-      methods: ['POST'],
-      requestBody: 'buffered',
-      async fetch(request) {
-        try {
-          const { id } = await catalogPayloadFrom(request)
-          const install = (await marketInstalls.read())[id]
-          if (!install) throw new MarketInstallError('This workbench was not installed from the workbench market.', 404)
-          if (!ctx.desktopPnpm?.removeWorkbenchGeneration) {
-            throw new MarketInstallError('Workbench package uninstallation is unavailable in this environment.', 503)
-          }
+        } else {
+          throw new MarketInstallError('Local workbench install is unavailable in this environment.', 503)
+        }
+        const install = {
+          source: 'local',
+          pluginName: pkg.name,
+          version: pkg.version,
+          path: pkg.directory,
+          installedAt: new Date().toISOString()
+        }
+        await recordLocalInstall(root, install)
+        return Response.json({ install, restartRequired: true }, { headers: { 'cache-control': 'no-store' } })
+      } catch (error) { return installFailure(error, 'Could not install the local workbench.') }
+    }
+  })
+  ctx.connection.fetch.register({
+    path: '/api/desktop-workbenches/market-uninstall',
+    methods: ['POST'],
+    requestBody: 'buffered',
+    async fetch(request) {
+      try {
+        const desktopPnpm = marketPnpm
+        const pluginManager = marketPluginManager
+        if (!desktopPnpm && !pluginManager) throw new MarketInstallError('Workbench package uninstallation is unavailable: Desktop package service is not available.', 503)
+        const { id } = await catalogPayloadFrom(request)
+        const install = (await marketInstalls.read())[id]
+        if (!install) throw new MarketInstallError('This workbench was not installed from the workbench market.', 404)
+        if (desktopPnpm?.removeWorkbenchGeneration) {
           let handle
-          try { handle = ctx.desktopPnpm.removeWorkbenchGeneration(install.pluginName, root) }
+          try { handle = desktopPnpm.removeWorkbenchGeneration(install.pluginName, root) }
           catch (error) { throw new MarketInstallError(error instanceof Error ? error.message : String(error), 409) }
           await awaitHandle(handle)
-          await marketInstalls.forget(id)
-          return Response.json({ restartRequired: true }, { headers: { 'cache-control': 'no-store' } })
-        } catch (error) { return installFailure(error, 'Could not uninstall the workbench.') }
-      }
-    })
-  })
-  ctx.inject(['pluginManager', 'enterpriseWorkbenchPackages'], (scoped) => {
-    scoped.connection.fetch.register({
-      path: '/api/desktop-workbenches/enterprise-install',
-      methods: ['POST'],
-      requestBody: 'buffered',
-      async fetch(request) {
-        try {
-          const payload = await readPayload(request, 4096, 'Request is too large.')
-          const result = await installEnterpriseWorkbench(scoped.pluginManager, scoped.enterpriseWorkbenchPackages, payload?.id)
-          return Response.json(result.body, { status: result.status, headers: { 'cache-control': 'no-store' } })
-        } catch (error) {
-          return installFailure(error, 'Could not install the enterprise workbench.')
+        } else if (pluginManager?.removeBundle) {
+          let result
+          try {
+            result = await pluginManager.removeBundle(install.pluginName)
+          } catch (error) { throw new MarketInstallError(error instanceof Error ? error.message : String(error), 502) }
+          if (result && !['applied', 'restart-required', 'overridden'].includes(result.application)) {
+            const detail = result?.error?.diagnostic || result?.error?.message || result?.error?.code || 'Plugin uninstallation did not complete.'
+            throw new MarketInstallError(detail, 502)
+          }
+          await rm(join(root, 'packages', `${install.pluginName}-${install.version}.tgz`), { force: true }).catch(() => {})
+        } else {
+          throw new MarketInstallError('Workbench package uninstallation is unavailable in this environment.', 503)
         }
+        await marketInstalls.forget(id)
+        return Response.json({ restartRequired: true }, { headers: { 'cache-control': 'no-store' } })
+      } catch (error) { return installFailure(error, 'Could not uninstall the workbench.') }
+    }
+  })
+  // Keep the route discoverable when the host cannot supply the trusted package
+  // provider (for example standalone Web). Never fall back to an unverified URL.
+  let enterpriseInstaller
+  ctx.inject(['pluginManager', 'enterpriseWorkbenchPackages'], (scoped) => {
+    const installer = { manager: scoped.pluginManager, packages: scoped.enterpriseWorkbenchPackages }
+    enterpriseInstaller = installer
+    return () => { if (enterpriseInstaller === installer) enterpriseInstaller = undefined }
+  })
+  ctx.connection.fetch.register({
+    path: '/api/desktop-workbenches/enterprise-install',
+    methods: ['POST'],
+    requestBody: 'buffered',
+    async fetch(request) {
+      try {
+        const payload = await readPayload(request, 4096, 'Request is too large.')
+        const installer = enterpriseInstaller
+        if (!installer) throw new MarketInstallError('Enterprise workbench installation is unavailable: the host must provide Plugin Manager and a verified enterprise package service.', 503)
+        const result = await installEnterpriseWorkbench(installer.manager, installer.packages, payload?.id)
+        return Response.json(result.body, { status: result.status, headers: { 'cache-control': 'no-store' } })
+      } catch (error) {
+        return installFailure(error, 'Could not install the enterprise workbench.')
       }
-    })
+    }
   })
 }

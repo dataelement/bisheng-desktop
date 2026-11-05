@@ -9,6 +9,8 @@ import { MarketInstallError } from './market-install.mjs'
  */
 export async function installEnterpriseWorkbench(manager, packages, id) {
   if (typeof id !== 'string' || !/^[a-f0-9]{32}$/u.test(id)) throw new MarketInstallError('An enterprise workbench is required.')
+  // A backend capability alone cannot prove that the Manager forwards or enforces identity.
+  if (manager?.verifiedInstallContract !== 1) throw new MarketInstallError('Plugin Manager does not support verified enterprise installs.', 503)
   const opened = await packages.open(id)
   try {
     if (!opened || typeof opened.path !== 'string' || !isAbsolute(opened.path) ||
@@ -23,6 +25,9 @@ export async function installEnterpriseWorkbench(manager, packages, id) {
       throw new MarketInstallError('Plugin Manager returned no lifecycle outcome.', 502)
     }
     const failed = !['applied', 'restart-required'].includes(result.application)
+    if (!failed && (result.bundle !== opened.packageName || result.stage !== 'enable')) {
+      throw new MarketInstallError('Plugin Manager returned an unexpected installation outcome.', 502)
+    }
     return {
       status: failed ? 409 : 200,
       body: {

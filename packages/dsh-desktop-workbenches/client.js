@@ -704,8 +704,13 @@ window.__ModuleLoader__.load({
         const names = [...new Set([...this.providers.keys(), ...Object.values(this.knownProviders).map(item => item.sourcePackage)])].filter(name => typeof name === 'string').slice(0, 64)
         const evidenceQuery = names.map(name => `package=${encodeURIComponent(name)}`).join('&')
         const response = await this.request(evidenceQuery ? `${MARKET_INSTALLS_API}?${evidenceQuery}` : MARKET_INSTALLS_API, { credentials: 'same-origin', cache: 'no-store' })
-        const data = await response.json()
-        if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`)
+        let data
+        try { data = await response.json() }
+        catch (error) {
+          if (response.ok || error?.name !== 'SyntaxError') throw error
+          data = {}
+        }
+        if (!response.ok) throw new Error(data?.error || `HTTP ${response.status}`)
         if (data.packages && typeof data.packages === 'object') this.packageEvidence = data.packages
         return data.installs && typeof data.installs === 'object' ? data.installs : {}
       }
@@ -718,11 +723,16 @@ window.__ModuleLoader__.load({
           const response = await this.request(path, {
             method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: catalogId, ...options })
           })
-          const data = await response.json()
+          let data
+          try { data = await response.json() }
+          catch (error) {
+            if (response.ok || error?.name !== 'SyntaxError') throw error
+            data = {}
+          }
           if (!response.ok) {
             const policyDisabled = data?.error === 'POLICY_DISABLED' || (typeof data?.error === 'string' && data.error.startsWith('POLICY_DISABLED:'))
             const error = new Error(policyDisabled ? apiErrorMessage(data, response.status, this.ctx) : installErrorMessage(this.ctx, data, response.status))
-            if (response.status === 409 && data.code === 'confirmation_required' && (data.params?.updateRisk === 'local' || data.params?.updateRisk === 'modified')) {
+            if (response.status === 409 && data?.code === 'confirmation_required' && (data.params?.updateRisk === 'local' || data.params?.updateRisk === 'modified')) {
               error.code = 'confirmation_required'
               error.updateRisk = data.params.updateRisk
             }
