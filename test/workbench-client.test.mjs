@@ -949,6 +949,78 @@ describe('desktop workbench client navigation', () => {
     service.dispose()
   })
 
+  it.each(['private-workbench', '@private/workbench'])('loads and reopens the repository-free package %s with its stable local identity', async name => {
+    const { service, ctx, saved } = await fixture()
+    const id = `local:${name}`
+    setFiberPackage(ctx, name, 'generated-fiber')
+    const unregister = service.register({ title: 'Private workbench' }, () => null)
+    await service.queue
+    expect(service.getSnapshot().catalog).toContainEqual(expect.objectContaining({ id, sourcePackage: name, local: true, installed: true, listed: false }))
+    expect(saved().state.added).toContain(id)
+    expect(saved().state.pinned).toContain(id)
+    await service.open(id)
+    expect(service.isActive()).toBe(true)
+    const session = await service.ensureSession({ folder: '/chosen/private-project' })
+    expect(saved().state.sessionBindings[session]).toBe(id)
+    unregister()
+    setFiberPackage(ctx, name, 'another-fiber')
+    service.register({ title: 'Updated private workbench', version: '2.0.0' }, () => null)
+    await service.load()
+    await service.queue
+    expect(service.state.active).toBe(id)
+    expect(service.state.sessionBindings[session]).toBe(id)
+    expect(service.catalog.get(id).title).toBe('Updated private workbench')
+    service.dispose()
+  })
+
+  it('does not reidentify saved local sessions when a market listing appears after clearing the provider cache', async () => {
+    const { service, ctx, saved } = await fixture()
+    const id = 'local:private-workbench'
+    setFiberPackage(ctx, 'private-workbench')
+    service.register({ title: 'Private workbench' }, () => null)
+    await service.queue
+    await service.open(id)
+    const session = await service.ensureSession({ folder: '/chosen/private-project' })
+    service.knownProviders = {}
+    service.native = { status: 'ready', bundles: { 'private-workbench': { installed: true, enabled: true } } }
+    service.remoteCatalog = [{ id: 'owner/published', name: 'Published workbench', categoryName: 'Other', description: { zh: 'Published' }, screenshots: [], distribution: { name: 'private-workbench' } }]
+    service.rebuildProviders({ preserveActive: true })
+    service.migrateLegacyWorkbenchIds()
+    await service.queue
+    expect(service.catalog.has(id)).toBe(true)
+    expect(service.catalog.has('owner/published')).toBe(false)
+    expect(saved().state.active).toBe(id)
+    expect(saved().state.sessionBindings[session]).toBe(id)
+    service.dispose()
+  })
+
+  it('preserves a saved repository identity when a later descriptor omits its repository', async () => {
+    const { service, ctx, saved } = await fixture()
+    const id = 'owner/private'
+    setFiberPackage(ctx, 'private-workbench')
+    const unregister = service.register({ title: 'Private', repository: 'https://github.com/owner/private' }, () => null)
+    await service.queue
+    await service.open(id)
+    unregister()
+    service.register({ title: 'Private updated' }, () => null)
+    await service.queue
+    expect(service.catalog.has(id)).toBe(true)
+    expect(service.catalog.has('local:private-workbench')).toBe(false)
+    expect(saved().state.active).toBe(id)
+    service.dispose()
+  })
+
+  it('does not fall back to a local identity when installed and declared repositories conflict', async () => {
+    const { service, ctx } = await fixture()
+    service.installs['owner/original'] = { catalogId: 'owner/original', pluginName: 'private-workbench', version: '1.0.0' }
+    setFiberPackage(ctx, 'private-workbench')
+    service.register({ title: 'Conflicting', repository: 'https://github.com/owner/other' }, () => null)
+    expect(service.catalog.has('local:private-workbench')).toBe(false)
+    expect(service.catalog.has('owner/other')).toBe(false)
+    expect(() => service.identityForSource('private-workbench', 'https://github.com/owner/other')).toThrow('multiple workbenches')
+    service.dispose()
+  })
+
   it('pins an existing local provider and keeps explicit removal after reload', async () => {
     const id = 'owner/local'
     const { service, ctx, saved } = await fixture({ ...emptyState(), added: [id] })

@@ -1,6 +1,6 @@
 # Workbench Development Standard
 
-Version: 2026-10-12 · The website is authoritative; DSH Desktop bundles a copy for offline use.
+Version: 2026-11-05 · The website is authoritative; DSH Desktop bundles a copy for offline use.
 
 Official page: https://dshdesktop.com/workbench/docs/development-en/
 
@@ -48,15 +48,16 @@ A workbench package is simultaneously:
 
 - **An npm package** with `name` and `version`, installable from a local directory or `.tgz`, and after listing potentially from npm or GitHub.
 - **A DSH plugin (bundle)** whose `package.json` declares `dsh.bundle.patch`; `cordis.patch.yml` inserts the server entry into the Harness plugin tree.
-- **A Desktop workbench** whose client calls `desktopWorkbenches.register()` to register a business panel. Desktop resolves repository identity from `repository`, installation records, and market distribution mapping.
+- **A Desktop workbench** whose client calls `desktopWorkbenches.register()` to register a business panel. When a local package omits `repository`, Desktop derives a stable local identity from its real client npm package name; existing repository identities remain compatible.
 
-Three identifiers have distinct purposes and must not be conflated:
+These identifiers have distinct purposes and must not be conflated:
 
 | Identifier | Location | Purpose |
 |---|---|---|
 | npm package name | `package.json` `name` | Installation, dependency resolution, `cordis.patch.yml` `name:` |
 | Plugin entry ID | `id` of an `insert` row in `cordis.patch.yml` | Locate that row in the Harness plugin tree |
-| Workbench identity | Canonical GitHub `repository` URL and market entry `id` | Lowercase `owner/repository`, shared by market card, sidebar entry, and session ownership |
+| Local workbench identity | Derived by the host from the real client npm package name | `local:<npm package name>`, including `local:@scope/name`; shared by sidebar and session ownership, never handwritten |
+| Repository workbench identity | Valid GitHub `repository` URL, market entry `id`, and existing ownership records | Lowercase `owner/repository`; preserves existing identity and sessions |
 | Legacy ID for compatibility | Old `register({ id })` and catalog `workbenchId` | Migration of old data only; omit from new packages and submissions |
 
 Desktop lowercases GitHub owner and repository, so `https://github.com/Owner/Repo` corresponds to `owner/repo`. A rename or transfer changes workbench identity; migrate existing sessions under the migration rules rather than changing only the URL. The legacy `wb-owner-repo` is only a compatibility mapping, not a registration ID for new packages.
@@ -144,7 +145,6 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       ctx.effect(() => ctx.desktopWorkbenches.register({
         title: 'My Workbench',
-        repository: 'https://github.com/owner/repository',
         description: 'Describe the problem it solves'
       }, BusinessPanel))
     }
@@ -154,7 +154,8 @@ window.__ModuleLoader__.load({
 ```
 
 - `require` can access only the shared baseline (React, Cordis, etc.), loaded plugins, and modules listed in `dsh.client.external`. Bundle other dependencies into the client file at build time.
-- `register()` **must** provide a `title`, business component, and canonical GitHub `repository` URL. New packages **must not specify** `register({ id })`. Desktop resolves `owner/repo` from `repository` and cross-checks the caller client package, market distribution, or installation record. A source conflict prevents provider exposure. An old package's `id` is only for migration, not the new protocol.
+- `register()` **must** provide a `title` and business component. Local development omits `repository` by default: the host derives `local:<npm package name>` from the real client npm package. No GitHub account, repository, or code upload is required; do not fabricate a placeholder repository. New packages **must not specify** `register({ id })`. Existing valid repository identities are retained, and source conflicts cannot fall back to a local identity. An old package's `id` is only for compatibility migration.
+- Add `repository` only when preparing a market submission with a real repository. Updating the version or moving the directory does not change local identity; changing the npm package name creates a new identity. A later market listing does not automatically migrate existing local sessions; migration needs separate confirmation.
 - `workbench.json` and submission YAML `workbenchId` are not required for new workbenches. The runtime package name must correspond to `window.__ModuleLoader__.load({ id })`.
 - Optional registration fields: `description`, `panelTitle`, `icon`, `audience`, `requirements`, `layout` (`businessSide` is `left` or `right`; `businessWidth` is 0.25–0.7), `customFrame` (boolean; Section 4), `headerLayout` (Section 4), and `initialization`.
 - Give the unregister function returned by registration to `ctx.effect`.
@@ -258,6 +259,8 @@ Mode switching must not collapse or expand the left session sidebar automaticall
 First entry may show a home page, empty-session state, or initialize a session under workbench conventions, but the business panel must not depend on session initialization. Later entries restore that workbench's most recent session. Navigation and switching must not delete sessions, business records, project files, favorites, or notes.
 
 ## 8. Local self-test checklist
+
+Verify repository-free local packages, including scoped names, appear with a Local badge, join the switch menu, and open their business panels. Reloads and updates must retain local identity, session ownership, notes, and favorites. Verify in a real Desktop: source tests alone do not prove loading.
 
 Check each applicable responsibility after development. “Host responsibility” means observe current Desktop behavior and report issues; plugin authors must not copy host UI. For “only when using this capability,” mark “not applicable” with a reason if unused. Claim local self-test passed only with evidence for all applicable items.
 

@@ -1,6 +1,6 @@
 # 工作台开发规范
 
-版本：2026-10-12 · 以官网版本为准，DSH Desktop 内附文档副本供离线取用。
+版本：2026-11-05 · 以官网版本为准，DSH Desktop 内附文档副本供离线取用。
 
 官方地址：https://dshdesktop.com/workbench/docs/development/
 
@@ -48,15 +48,16 @@ Markdown 原文（供 Agent 读取）：https://dshdesktop.com/workbench/docs/de
 
 - **一个 npm 包**：有 `name`、`version`，可以从本地目录或 `.tgz` 文件安装，上架后也可以从 npm 或 GitHub 安装。
 - **一个 DSH 插件（bundle）**：`package.json` 声明 `dsh.bundle.patch`，由 `cordis.patch.yml` 把服务端入口插入 Harness 的插件树。
-- **一个 Desktop 工作台**：客户端通过 `desktopWorkbenches.register()` 注册业务面板。Desktop 从 `repository`、安装记录和市场分发映射解析仓库身份。
+- **一个 Desktop 工作台**：客户端通过 `desktopWorkbenches.register()` 注册业务面板。本地包省略 `repository` 时，Desktop 根据真实客户端 npm 包名生成稳定的本地身份；已有仓库身份继续兼容。
 
-同一个工作台有三个标识，职责不同，不能混用：
+以下标识职责不同，不能混用：
 
 | 标识 | 在哪里 | 用途 |
 |---|---|---|
 | npm 包名 | `package.json` 的 `name` | 安装、依赖解析、`cordis.patch.yml` 的 `name:` |
 | 插件条目 id | `cordis.patch.yml` 中 `insert` 行的 `id` | Harness 插件树中定位这一行 |
-| 工作台身份 | 规范的 GitHub `repository` URL、市场条目 `id` | 小写 `owner/repository`；市场卡片、侧栏入口和会话归属共用 |
+| 本地工作台身份 | 宿主根据真实客户端 npm 包名生成 | `local:<npm 包名>`，包括 `local:@scope/name`；侧栏和会话归属共用，不由作者手填 |
+| 仓库工作台身份 | 有效的 GitHub `repository` URL、市场条目 `id` 及已有归属记录 | 小写 `owner/repository`，保持既有身份与会话兼容 |
 | 兼容用旧 ID | 老包 `register({ id })`、旧目录 `workbenchId` | 仅迁移旧数据时使用；新包和新投稿都不填写 |
 
 Desktop 将 GitHub owner 和 repo 规范化为小写，例如 `https://github.com/Owner/Repo` 对应 `owner/repo`。仓库改名或转移会改变工作台身份，需按迁移规则处理原有会话，不能仅改 URL。旧版 `wb-owner-repo` 只作为兼容映射，不是新包的注册 ID。
@@ -144,7 +145,6 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       ctx.effect(() => ctx.desktopWorkbenches.register({
         title: '我的工作台',
-        repository: 'https://github.com/owner/repository',
         description: '说明它解决什么问题'
       }, BusinessPanel))
     }
@@ -154,7 +154,8 @@ window.__ModuleLoader__.load({
 ```
 
 - `require` 只能拿到共享基线（React、Cordis 等）、已加载的插件和 `dsh.client.external` 中列出的模块。其他依赖要在构建时打进客户端文件。
-- `register()` **必须**提供 `title`、业务组件和规范的 GitHub `repository` URL。新包**不要填写** `register({ id })`；Desktop 用 `repository` 解析 `owner/repo`，并用调用方客户端包、市场分发或安装记录交叉核对，来源冲突时不会暴露 provider。旧包的 `id` 仅用于迁移，不是新协议。
+- `register()` **必须**提供 `title` 和业务组件。本地开发默认省略 `repository`，由宿主根据真实客户端 npm 包名生成 `local:<npm 包名>`；无需 GitHub 账号、仓库或上传代码，不得填写占位仓库。新包**不要填写** `register({ id })`。已有有效仓库身份仍保留，来源冲突不会回退为本地身份；旧包 `id` 只用于兼容迁移。
+- 只有准备市场投稿且具备真实仓库时才另加 `repository`。升级版本或移动目录不改变本地身份；改 npm 包名会生成新身份。后续出现市场条目不会自动迁移已有本地会话，迁移必须另行确认。
 - `workbench.json` 和投稿 YAML 的 `workbenchId` 不是新工作台的必填协议；运行时包名必须与 `window.__ModuleLoader__.load({ id })` 对应。
 - 可选注册字段：`description`、`panelTitle`、`icon`、`audience`、`requirements`、`layout`（`businessSide` 为 `left` 或 `right`，`businessWidth` 在 0.25–0.7 之间）、`customFrame`（布尔值，见第 4 节）、`headerLayout`（第 4 节）、`initialization`。
 - 注册返回的函数用于注销，要交给 `ctx.effect` 管理。
@@ -258,6 +259,8 @@ React.createElement('header', { 'data-dsh-workbench-toolbar': '' },
 首次进入工作台可以显示首页、空会话状态或按工作台约定初始化会话，但业务面板不能依赖会话初始化完成。后续进入恢复该工作台最近会话。导航和切换不得删除会话、业务资料、项目文件、收藏或笔记。
 
 ## 8. 本地自测清单
+
+验证省略 `repository` 的本地包（包括 scoped 包名）能显示「本地」条目、进入切换入口并打开业务面板；重载或更新后本地身份、会话归属、笔记与收藏保留。仍须在真实 Desktop 内验收，源码测试通过不等于已加载。
 
 开发完成后按责任逐项确认。“宿主负责”是对当前 Desktop 能力的观察和问题反馈，插件作者不得为此复制宿主界面；标为“仅使用该能力时适用”的项，不使用时记“不适用”及原因。全部适用项有证据通过，才能称为本机自测通过。
 
