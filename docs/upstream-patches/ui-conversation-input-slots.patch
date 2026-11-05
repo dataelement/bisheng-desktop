@@ -40,7 +40,7 @@ index 473e15825e..6bf78bbcbf 100644
  
  会话标题右键使用共享[右键菜单](../ui-context-menu/README.zh.md)，目标是被点击面包屑所属会话。可复用图片库从其 Factory 注入的 `useContextMenu` hook 获取 `getTriggerProps`。
 diff --git a/packages/client/ui-conversation/src/client/apply.ts b/packages/client/ui-conversation/src/client/apply.ts
-index 3328e1e5da..452ba9656c 100644
+index 3328e1e5da..394f640093 100644
 --- a/packages/client/ui-conversation/src/client/apply.ts
 +++ b/packages/client/ui-conversation/src/client/apply.ts
 @@ -349,6 +349,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
@@ -59,11 +59,36 @@ index 3328e1e5da..452ba9656c 100644
        'conversation.input.permission': { kind: 'single', scope: 'session' },
        'conversation.input.left': { kind: 'list', scope: 'session' },
        'conversation.input.plan': { kind: 'single', scope: 'session' },
+@@ -578,7 +580,10 @@ export function apply(ctx: Context, config: Config = Config({})): void {
+     yield slots.register({
+       name: 'main',
+       key: 'conversation',
+-      children: { 'main.conversation': { kind: 'single', scope: 'session-maybe' } },
++      children: {
++        'main.conversation': { kind: 'single', scope: 'session-maybe' },
++        'desktop.workbench.frame': { kind: 'single', scope: 'root' },
++      },
+     }, ConversationPanel)
+     yield registerConversationRoot()
+     yield registerConversationContent()
 diff --git a/packages/client/ui-conversation/src/client/contract/slots.ts b/packages/client/ui-conversation/src/client/contract/slots.ts
-index 0c438e0f4c..95b1f16dbc 100644
+index 0c438e0f4c..e9ea65c988 100644
 --- a/packages/client/ui-conversation/src/client/contract/slots.ts
 +++ b/packages/client/ui-conversation/src/client/contract/slots.ts
-@@ -294,6 +294,10 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+@@ -220,6 +220,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+     }
+     /** Conversation shell beneath its root-scoped main-panel entry. */
+     'main.conversation': { kind: 'single'; scope: 'session-maybe' }
++    /** Desktop workbench frame wrapper around conversation. */
++    'desktop.workbench.frame': {
++      kind: 'single'
++      scope: 'root'
++      owner: { conversation: ReactNode }
++    }
+     /** Strict per-Session Conversation body. */
+     'conversation.session': {
+       kind: 'single'
+@@ -294,6 +300,10 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
       * because the docked composer contains them.
       */
      'conversation.input.dock': { kind: 'list'; scope: 'session'; owner: InputZone }
@@ -74,7 +99,7 @@ index 0c438e0f4c..95b1f16dbc 100644
      /**
       * Floating entries rendered inside the resident composer card; fixed overlays must portal to
       * the document body because the docked composer contains them.
-@@ -363,6 +367,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+@@ -363,6 +373,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
          'conversation.composer': { kind: 'chain'; scope: 'session' }
          'conversation.composer.bar': { kind: 'single'; scope: 'session-maybe' }
          'conversation.input.dock': { kind: 'list'; scope: 'session' }
@@ -82,7 +107,7 @@ index 0c438e0f4c..95b1f16dbc 100644
          'conversation.hero.brand.mark': { kind: 'single'; scope: 'root' }
          'conversation.hero.workspace': { kind: 'single'; scope: 'root' }
          'conversation.hero.agentPreset': { kind: 'single'; scope: 'session-maybe' }
-@@ -597,7 +602,7 @@ export interface InputActivityOwnerProps extends InputControlOwnerProps {
+@@ -597,7 +608,7 @@ export interface InputActivityOwnerProps extends InputControlOwnerProps {
  export type ComposerBarProps =
    PropsRuntime<'conversation.composer.bar'>
    & PropsRenderSlots<
@@ -103,6 +128,20 @@ index 218082ae31..a968162183 100644
      </div>
    )
  
+diff --git a/packages/client/ui-conversation/src/client/skeleton/ConversationPanel.tsx b/packages/client/ui-conversation/src/client/skeleton/ConversationPanel.tsx
+index 8bd11aac33..97c326ccc9 100644
+--- a/packages/client/ui-conversation/src/client/skeleton/ConversationPanel.tsx
++++ b/packages/client/ui-conversation/src/client/skeleton/ConversationPanel.tsx
+@@ -7,6 +7,7 @@ import type {} from '../contract/slots.ts'
+  * @param props - main-slot inputs and the declared Conversation renderer.
+  * @returns the Conversation subtree.
+  */
+-export function ConversationPanel({ renderSlot }: PropsRuntime<'main'> & PropsRenderSlots<'main.conversation'>) {
+-  return renderSlot('main.conversation', {})
++export function ConversationPanel({ renderSlot }: PropsRuntime<'main'> & PropsRenderSlots<'main.conversation' | 'desktop.workbench.frame'>) {
++  const conversation = renderSlot('main.conversation', {})
++  return renderSlot('desktop.workbench.frame', { conversation }, { fallback: conversation })
+ }
 diff --git a/packages/client/ui-conversation/src/client/skeleton/InputBar.module.css b/packages/client/ui-conversation/src/client/skeleton/InputBar.module.css
 index b3cd1dd271..e370100d00 100644
 --- a/packages/client/ui-conversation/src/client/skeleton/InputBar.module.css
