@@ -10,8 +10,11 @@ const fail = (message) => { throw new StateError(message) }
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
 const validId = (value) => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/.test(value)
   && !['__proto__', 'prototype', 'constructor'].includes(value)
-const validWorkbenchId = value => typeof value === 'string'
+const validRepositoryWorkbenchId = value => typeof value === 'string'
   && /^[a-z0-9][a-z0-9_.-]*\/[a-z0-9][a-z0-9_.-]*$/.test(value) && value.length <= 255
+const validLocalWorkbenchId = value => typeof value === 'string' && value.startsWith('local:') && value.length <= 220
+  && /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(value.slice(6))
+const validWorkbenchId = value => validRepositoryWorkbenchId(value) || validLocalWorkbenchId(value)
 const validLegacyWorkbenchId = value => typeof value === 'string' && /^[a-z][a-z0-9-]{0,79}$/.test(value)
 const validStoredWorkbenchId = value => validWorkbenchId(value) || validLegacyWorkbenchId(value)
 const legacyReferences = state => new Set([
@@ -60,7 +63,7 @@ export function validateState(value, previous, migrations = {}) {
     }
     const previousLegacy = legacyReferences(previous)
     for (const id of legacyReferences(value)) {
-      if (!previousLegacy.has(id)) fail('New workbench references require repository identities.')
+      if (!previousLegacy.has(id)) fail('New workbench references require repository identities or package-derived local identities.')
     }
   }
   if (Buffer.byteLength(JSON.stringify(value)) > MAX_STATE_BYTES - 100) fail('Workbench state is too large.')
@@ -101,7 +104,7 @@ export function createStateStore(root) {
     const allowed = migrations === undefined ? {} : structuredClone(migrations)
     return queue(async () => {
       if (!isObject(payload) || !Number.isSafeInteger(payload.revision) || payload.revision < 0) fail('A valid revision is required.')
-      if (migrations !== undefined && (!isObject(allowed) || !Object.entries(allowed).every(([from, to]) => validLegacyWorkbenchId(from) && validWorkbenchId(to) && from !== to))) fail('Invalid workbench ID migration.')
+      if (migrations !== undefined && (!isObject(allowed) || !Object.entries(allowed).every(([from, to]) => validLegacyWorkbenchId(from) && validRepositoryWorkbenchId(to) && from !== to))) fail('Invalid workbench ID migration.')
       const current = await read()
       if (payload.revision !== current.revision) throw new StateError('Workbench state changed. Reload before saving.', 409)
       if (current.revision === Number.MAX_SAFE_INTEGER) throw new StateError('Workbench state revision exhausted.', 500)
