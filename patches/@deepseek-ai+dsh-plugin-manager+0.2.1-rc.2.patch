@@ -73,6 +73,16 @@ index f010583..aba3195 100644
  /** Manage profile files and apply their declared reload lifecycle. */
  let PluginManager = (() => {
  	let _classSuper = TypertRemoteService;
+@@ -1418,5 +1424,9 @@ let PluginManager = (() => {
+ 	let _removeBundle_decorators;
+ 	return class PluginManager extends _classSuper {
++		// This contract covers identity checks and refusing unverified backend fallback.
++		get verifiedInstallContract() { return 1; }
++		// Managed source targets are routed before generic package operations.
++		get managedBundleSourceContract() { return 1; }
+ 		static {
+ 			const _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(_classSuper[Symbol.metadata] ?? null) : void 0;
+ 			_listVersionExemptions_decorators = [Remote];
 @@ -1684,6 +1697,7 @@ let PluginManager = (() => {
  			const selected = bundleSelection(manifest);
  			const recorded = manifest.dependencies ?? {};
@@ -444,6 +454,17 @@ index ba39109..6a0856a 100644
          /** Persistent management of the current profile's composition and packages. */
          pluginManager: PluginManager;
      }
+@@ -37,6 +59,10 @@ declare module '@deepseek-ai/cordis' {
+ }
+ /** Manage profile files and apply their declared reload lifecycle. */
+ export declare class PluginManager extends TypertRemoteService {
++    /** Verified identity installation with no unverified backend fallback. */
++    readonly verifiedInstallContract: 1;
++    /** Managed source targets are routed before generic package operations. */
++    readonly managedBundleSourceContract: 1;
+     static inject: string[];
+     static Config: z<Config>;
+     /** Management bundles remain protected if their files become unreadable. */
 diff --git a/node_modules/@deepseek-ai/dsh-plugin-manager/lib/types/types.d.ts b/node_modules/@deepseek-ai/dsh-plugin-manager/lib/types/types.d.ts
 index cb03e52..ec29aaa 100644
 --- a/node_modules/@deepseek-ai/dsh-plugin-manager/lib/types/types.d.ts
