@@ -181,14 +181,15 @@ async function hashTree(hash, root, prefix = '') {
 }
 
 /** Reuse a complete local payload only while all assembly inputs match. */
-export async function prepareOfficeRuntime({ target = officeTarget(), output = join(project, '.build/office-runtime'), cache = join(project, '.build/office-downloads') } = {}) {
+export async function prepareOfficeRuntime({ target = officeTarget(), output = join(project, '.build/office-runtime'), cache = join(project, '.build/office-downloads'), deployment = 'desktop' } = {}) {
+  if (!['desktop', 'web'].includes(deployment)) throw new Error('Unknown Office deployment')
   const artifact = lock.targets[target]
   if (!artifact) throw new Error(`Office runtime: unknown target ${target}`)
   let version, skillRoot, fingerprint
   try {
     ;({ version } = JSON.parse(await readFile(join(project, 'package.json'), 'utf8')))
     skillRoot = dirname(require.resolve('@deepseek-ai/dsh-skill-office/package.json'))
-    const inputHash = createHash('sha256').update(JSON.stringify({ target, version, lock }))
+    const inputHash = createHash('sha256').update(JSON.stringify({ target, version, lock, deployment }))
     inputHash.update(await readFile(fileURLToPath(import.meta.url)))
     await hashTree(inputHash, join(skillRoot, 'assets'))
     await hashTree(inputHash, join(project, 'packages/dsh-desktop-office/business-skills'))
@@ -251,6 +252,10 @@ export async function prepareOfficeRuntime({ target = officeTarget(), output = j
       const route = skill === 'office-pptx'
         ? '\n\n## Desktop PPT workflow\n\nUse this general presentation workflow in ordinary conversation. When the current Desktop PPT composer state enables PPT mode, follow the dsh-ppt skill and selected template, using pptd_* tools and pptd_render. Do not recreate a template deck with python-pptx or switch engines after validation/export failure. Follow an explicit user request to change workflows; otherwise retain the active route.\n'
         : skill === 'office-docx' ? '\n\n## Desktop Word template workflow\n\nWhen the current Desktop Word composer selects a template, call office_template and use its editable_paragraphs with office_template_write. Fill current issuing organizations and content using replacements, additions cloned from template paragraphs, and removals for unused paragraphs. The Host preserves native page geometry, embedded fonts, borders and page-number footers and checks the current DOCX again at present. Use office-docx for native chart/image updates, content review and rendering of that resulting DOCX. Ordinary Word tasks use the general creation workflow.\n' : ''
+      if (deployment === 'web') {
+        await writeFile(path, source + route + '\n\n## Web runtime\n\nUse load_workspace_dependencies for the bundled Python path. For rendering, conversion and recalculation load the corresponding Office skill and use its installed standalone Node and CLI paths.\n')
+        continue
+      }
       await writeFile(path, `${source}${route}\n\n## Desktop runtime\n\nCall load_workspace_dependencies and use its absolute Python path. For the general Office workflow, generate files with python-docx, python-pptx, openpyxl or XlsxWriter; active Desktop templates use pptd_* tools for PPT and office_template_write for Word. Do not hand-assemble OOXML with Windows PowerShell Compress-Archive: its ZIP entries can contain backslashes and fail Office preview. For deliberate low-level OOXML work, use Python zipfile with forward-slash entry names.\n\nThe supplied LibreOffice Kit node is the Desktop Electron runtime in Node mode. Set ELECTRON_RUN_AS_NODE=1 when invoking it (POSIX: prefix the command with ELECTRON_RUN_AS_NODE=1; PowerShell: set $env:ELECTRON_RUN_AS_NODE='1' before & <node> <cli>). Keep the supplied CLI path; it resolves the bundled engine outside ASAR.\n`)
     }
     await writeFile(join(staging, '.assembly-fingerprint'), `${fingerprint}\n`)

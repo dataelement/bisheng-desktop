@@ -6,6 +6,11 @@ export interface Config {
   cli: string
 }
 export function apply(ctx: Context, config: Config): Promise<void>
+export function composeOffice(ctx: Context, config: Config, modes?: OfficeModes, runtime?: OfficeRuntimeModules): Promise<void>
+export interface OfficeRuntimeModules {
+  officeSkills: Pick<typeof import('@deepseek-ai/dsh-skill-office'), 'apply'> & { name?: string; inject?: string[] }
+  workspaceDependencies: Pick<typeof import('@deepseek-ai/dsh-tool-workspace-dependencies'), 'apply' | 'resolvePrimaryRuntime'> & { name?: string; inject?: string[] }
+}
 
 export interface OfficeTemplateSelection {
   id: string

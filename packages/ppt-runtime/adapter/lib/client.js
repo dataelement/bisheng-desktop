@@ -6,7 +6,7 @@ window.__ModuleLoader__.load({
 		Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 		let react = require("react");
 		let _deepseek_ai_dsh_client_ui_primitives = require("@deepseek-ai/dsh-client-ui-primitives");
-		let react_jsx_runtime = require("react/jsx-runtime");
+		let jsx = require("react/jsx-runtime");
 		//#region ../office-ppt/src/protocol.ts
 		/**
 		* Resolve workflow availability while preserving compatibility with older extracted templates.
@@ -43,7 +43,7 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 `;
 			document.head.appendChild(tag);
 		}
-		var OfficePptHero_module_css_default = {
+		var pptStyles = {
 			"categoryTabs": "_2S_x-q_categoryTabs",
 			"modeChip": "_2S_x-q_modeChip",
 			"modeRoot": "_2S_x-q_modeRoot",
@@ -383,62 +383,62 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 		}
 		function TemplatePreview({ template, page = 0 }) {
 			const previewImage = (template.previewImages ?? CURATED_TEMPLATE_PREVIEWS[template.id])?.[page];
-			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
-				className: OfficePptHero_module_css_default.preview,
+			return /* @__PURE__ */ (0, jsx.jsxs)("span", {
+				className: pptStyles.preview,
 				"data-page": page,
 				"data-source-preview": previewImage === void 0 ? void 0 : true,
 				"data-variant": templateVariant(template),
 				style: templateStyle(template),
-				children: [previewImage !== void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("img", {
-					className: OfficePptHero_module_css_default.previewImage,
+				children: [previewImage !== void 0 && /* @__PURE__ */ (0, jsx.jsx)("img", {
+					className: pptStyles.previewImage,
 					src: previewImage,
 					draggable: false,
 					loading: "lazy",
 					decoding: "async",
 					alt: "",
 					"aria-hidden": "true"
-				}), previewImage === void 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
-					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { className: OfficePptHero_module_css_default.previewAccent }),
-					page === 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("strong", { children: template.previewTitle }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("small", { children: template.previewSubtitle })] }),
-					page === 1 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("small", {
-							className: OfficePptHero_module_css_default.previewEyebrow,
+				}), previewImage === void 0 && /* @__PURE__ */ (0, jsx.jsxs)(jsx.Fragment, { children: [
+					/* @__PURE__ */ (0, jsx.jsx)("span", { className: pptStyles.previewAccent }),
+					page === 0 && /* @__PURE__ */ (0, jsx.jsxs)(jsx.Fragment, { children: [/* @__PURE__ */ (0, jsx.jsx)("strong", { children: template.previewTitle }), /* @__PURE__ */ (0, jsx.jsx)("small", { children: template.previewSubtitle })] }),
+					page === 1 && /* @__PURE__ */ (0, jsx.jsxs)(jsx.Fragment, { children: [
+						/* @__PURE__ */ (0, jsx.jsx)("small", {
+							className: pptStyles.previewEyebrow,
 							children: template.previewSubtitle
 						}),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("strong", { children: template.previewTitle }),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
-							className: OfficePptHero_module_css_default.previewKpis,
+						/* @__PURE__ */ (0, jsx.jsx)("strong", { children: template.previewTitle }),
+						/* @__PURE__ */ (0, jsx.jsxs)("span", {
+							className: pptStyles.previewKpis,
 							"aria-hidden": "true",
 							children: [
-								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("b", { children: "32%" }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("i", { children: "01" })] }),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("b", { children: "18.6" }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("i", { children: "02" })] }),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("b", { children: "04" }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("i", { children: "03" })] })
+								/* @__PURE__ */ (0, jsx.jsxs)("span", { children: [/* @__PURE__ */ (0, jsx.jsx)("b", { children: "32%" }), /* @__PURE__ */ (0, jsx.jsx)("i", { children: "01" })] }),
+								/* @__PURE__ */ (0, jsx.jsxs)("span", { children: [/* @__PURE__ */ (0, jsx.jsx)("b", { children: "18.6" }), /* @__PURE__ */ (0, jsx.jsx)("i", { children: "02" })] }),
+								/* @__PURE__ */ (0, jsx.jsxs)("span", { children: [/* @__PURE__ */ (0, jsx.jsx)("b", { children: "04" }), /* @__PURE__ */ (0, jsx.jsx)("i", { children: "03" })] })
 							]
 						}),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-							className: OfficePptHero_module_css_default.previewFooter,
+						/* @__PURE__ */ (0, jsx.jsx)("span", {
+							className: pptStyles.previewFooter,
 							children: template.description
 						})
 					] }),
-					page === 2 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("small", {
-							className: OfficePptHero_module_css_default.previewEyebrow,
+					page === 2 && /* @__PURE__ */ (0, jsx.jsxs)(jsx.Fragment, { children: [
+						/* @__PURE__ */ (0, jsx.jsx)("small", {
+							className: pptStyles.previewEyebrow,
 							children: template.previewSubtitle
 						}),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("strong", { children: template.previewTitle }),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
-							className: OfficePptHero_module_css_default.previewChart,
+						/* @__PURE__ */ (0, jsx.jsx)("strong", { children: template.previewTitle }),
+						/* @__PURE__ */ (0, jsx.jsxs)("span", {
+							className: pptStyles.previewChart,
 							"aria-hidden": "true",
 							children: [
-								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("i", {}),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("i", {}),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("i", {}),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("i", {}),
-								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("i", {})
+								/* @__PURE__ */ (0, jsx.jsx)("i", {}),
+								/* @__PURE__ */ (0, jsx.jsx)("i", {}),
+								/* @__PURE__ */ (0, jsx.jsx)("i", {}),
+								/* @__PURE__ */ (0, jsx.jsx)("i", {}),
+								/* @__PURE__ */ (0, jsx.jsx)("i", {})
 							]
 						}),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-							className: OfficePptHero_module_css_default.previewInsight,
+						/* @__PURE__ */ (0, jsx.jsx)("span", {
+							className: pptStyles.previewInsight,
 							children: template.description
 						})
 					] })
@@ -446,9 +446,9 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 			});
 		}
 		function TemplatePreviewDeck({ template, page }) {
-			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-				className: OfficePptHero_module_css_default.previewViewport,
-				children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(TemplatePreview, {
+			return /* @__PURE__ */ (0, jsx.jsx)("span", {
+				className: pptStyles.previewViewport,
+				children: /* @__PURE__ */ (0, jsx.jsx)(TemplatePreview, {
 					template,
 					page
 				}, page)
@@ -513,9 +513,9 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 					element.removeEventListener("wheel", pageWithWheel);
 				};
 			}, [pageCount]);
-			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("article", {
+			return /* @__PURE__ */ (0, jsx.jsx)("article", {
 				ref: card,
-				className: OfficePptHero_module_css_default.templateCard,
+				className: pptStyles.templateCard,
 				"data-selected": selected || void 0,
 				onMouseEnter: () => {
 					hoveredCard.current = true;
@@ -527,21 +527,21 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 					setPage(0);
 					lastWheelAt.current = Number.NEGATIVE_INFINITY;
 				},
-				children: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
+				children: /* @__PURE__ */ (0, jsx.jsxs)("button", {
 					type: "button",
-					className: OfficePptHero_module_css_default.templateSelect,
+					className: pptStyles.templateSelect,
 					"aria-label": template.name,
 					"aria-pressed": selected,
 					onClick: () => {
 						choose(template);
 					},
 					children: [
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)(TemplatePreviewDeck, {
+						/* @__PURE__ */ (0, jsx.jsx)(TemplatePreviewDeck, {
 							template,
 							page
 						}),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-							className: OfficePptHero_module_css_default.templateName,
+						/* @__PURE__ */ (0, jsx.jsx)("span", {
+							className: pptStyles.templateName,
 							title: template.name,
 							children: template.name
 						})
@@ -603,7 +603,7 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
             });
         }
 		/** Compact selected-template thumbnail inside the resident input card. */
-		function OfficePptInputAccessory({ client, mode, sessionId, t }) {
+		function OfficePptInputAccessory({ client, mode, sessionId, t, onPreview, previewButtonRef }) {
 			const state = useMode(mode, sessionId);
 			const selected = state.templates.find((template) => template.id === state.selectedId);
 			const selectedId = state.activeMode !== null && selected !== void 0 ? selected.id : null;
@@ -654,18 +654,19 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 			}, []);
 			if (state.activeMode === null || selected === void 0) return null;
 			const activeMode = state.activeMode;
-			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-				className: OfficePptHero_module_css_default.selection,
+			return /* @__PURE__ */ (0, jsx.jsx)("div", {
+				className: pptStyles.selection,
 				"aria-label": `${t("composer.selectedTemplate")}: ${selected.name}`,
-				children: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+				children: /* @__PURE__ */ (0, jsx.jsxs)("span", {
 					ref: preview,
-					className: OfficePptHero_module_css_default.selectionPreview,
-					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-						className: OfficePptHero_module_css_default.selectionFrame,
-						children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(TemplatePreview, { template: selected })
-					}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+					className: pptStyles.selectionPreview,
+					children: [/* @__PURE__ */ (0, jsx.jsx)(onPreview ? "button" : "span", {
+                        ...(onPreview ? { ref: previewButtonRef, type: "button", onClick: onPreview, "aria-haspopup": "dialog", "aria-label": t("opening.preview", { name: selected.name }), style: { border: 0, padding: 0, cursor: "pointer" } } : {}),
+						className: pptStyles.selectionFrame,
+						children: /* @__PURE__ */ (0, jsx.jsx)(TemplatePreview, { template: selected })
+					}), /* @__PURE__ */ (0, jsx.jsx)("button", {
 						type: "button",
-						className: OfficePptHero_module_css_default.selectionRemove,
+						className: pptStyles.selectionRemove,
 						"aria-label": t("composer.removeTemplate"),
 						onClick: () => {
 							deselectTemplate(client, mode, sessionId, activeMode);
@@ -686,7 +687,7 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 		}
 		/** Orange document mark matching the PPT file icon: folded page and a white P. */
 		function OpeningPptFileIcon() {
-			return (0, react_jsx_runtime.jsxs)("svg", {
+			return (0, jsx.jsxs)("svg", {
 				className: "dsh-ppt-opening-file",
 				width: 14,
 				height: 14,
@@ -695,14 +696,14 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 				"aria-hidden": true,
 				focusable: false,
 				children: [
-					(0, react_jsx_runtime.jsx)("path", { fill: "currentColor", d: "M8.48924 28H19.5108C21.6479 28 22.7165 28 23.5594 27.6509C24.6833 27.1853 25.5762 26.2924 26.0417 25.1685C26.3909 24.3256 26.3909 23.257 26.3909 21.1199V8.79443C26.3909 8.32877 26.3909 8.09593 26.3471 7.87507C26.2887 7.58058 26.173 7.30042 26.0067 7.05048C25.882 6.86303 25.7177 6.69799 25.3893 6.36792L20.0611 1.01354C19.7304 0.681235 19.5651 0.515081 19.3769 0.38885C19.126 0.220541 18.8443 0.103463 18.5481 0.0443412C18.3259 0 18.0915 0 17.6226 0H8.48924C6.35209 0 5.28351 0 4.4406 0.349145C3.31672 0.814671 2.4238 1.70759 1.95828 2.83147C1.60913 3.67438 1.60913 4.74296 1.60913 6.88011V21.1199C1.60913 23.257 1.60913 24.3256 1.95828 25.1685C2.4238 26.2924 3.31672 27.1853 4.4406 27.6509C5.28351 28 6.35209 28 8.48924 28Z" }),
-					(0, react_jsx_runtime.jsx)("path", { className: "dsh-ppt-opening-file-fold", d: "M26.3909 7.37445L19.0525 0V3.77445C19.0525 4.89271 19.0525 5.45184 19.2352 5.89289C19.4788 6.48096 19.946 6.94818 20.5341 7.19176C20.9751 7.37445 21.5342 7.37445 22.6525 7.37445H26.3909Z" }),
-					(0, react_jsx_runtime.jsx)("path", { className: "dsh-ppt-opening-file-mark", transform: "translate(14 16) scale(1.22) translate(-14 -16)", d: "M11.0132 20.5V13.5H14.2132C14.8532 13.5 15.4032 13.6033 15.8632 13.81C16.3299 14.0167 16.6899 14.3167 16.9432 14.71C17.1966 15.0967 17.3232 15.5567 17.3232 16.09C17.3232 16.6167 17.1966 17.0733 16.9432 17.46C16.6899 17.8467 16.3299 18.1467 15.8632 18.36C15.4032 18.5667 14.8532 18.67 14.2132 18.67H12.1132L12.9932 17.81V20.5H11.0132ZM12.9932 18.02L12.1132 17.11H14.0932C14.5066 17.11 14.8132 17.02 15.0132 16.84C15.2199 16.66 15.3232 16.41 15.3232 16.09C15.3232 15.7633 15.2199 15.51 15.0132 15.33C14.8132 15.15 14.5066 15.06 14.0932 15.06H12.1132L12.9932 14.15V18.02Z" })
+					(0, jsx.jsx)("path", { fill: "currentColor", d: "M8.48924 28H19.5108C21.6479 28 22.7165 28 23.5594 27.6509C24.6833 27.1853 25.5762 26.2924 26.0417 25.1685C26.3909 24.3256 26.3909 23.257 26.3909 21.1199V8.79443C26.3909 8.32877 26.3909 8.09593 26.3471 7.87507C26.2887 7.58058 26.173 7.30042 26.0067 7.05048C25.882 6.86303 25.7177 6.69799 25.3893 6.36792L20.0611 1.01354C19.7304 0.681235 19.5651 0.515081 19.3769 0.38885C19.126 0.220541 18.8443 0.103463 18.5481 0.0443412C18.3259 0 18.0915 0 17.6226 0H8.48924C6.35209 0 5.28351 0 4.4406 0.349145C3.31672 0.814671 2.4238 1.70759 1.95828 2.83147C1.60913 3.67438 1.60913 4.74296 1.60913 6.88011V21.1199C1.60913 23.257 1.60913 24.3256 1.95828 25.1685C2.4238 26.2924 3.31672 27.1853 4.4406 27.6509C5.28351 28 6.35209 28 8.48924 28Z" }),
+					(0, jsx.jsx)("path", { className: "dsh-ppt-opening-file-fold", d: "M26.3909 7.37445L19.0525 0V3.77445C19.0525 4.89271 19.0525 5.45184 19.2352 5.89289C19.4788 6.48096 19.946 6.94818 20.5341 7.19176C20.9751 7.37445 21.5342 7.37445 22.6525 7.37445H26.3909Z" }),
+					(0, jsx.jsx)("path", { className: "dsh-ppt-opening-file-mark", transform: "translate(14 16) scale(1.22) translate(-14 -16)", d: "M11.0132 20.5V13.5H14.2132C14.8532 13.5 15.4032 13.6033 15.8632 13.81C16.3299 14.0167 16.6899 14.3167 16.9432 14.71C17.1966 15.0967 17.3232 15.5567 17.3232 16.09C17.3232 16.6167 17.1966 17.0733 16.9432 17.46C16.6899 17.8467 16.3299 18.1467 15.8632 18.36C15.4032 18.5667 14.8532 18.67 14.2132 18.67H12.1132L12.9932 17.81V20.5H11.0132ZM12.9932 18.02L12.1132 17.11H14.0932C14.5066 17.11 14.8132 17.02 15.0132 16.84C15.2199 16.66 15.3232 16.41 15.3232 16.09C15.3232 15.7633 15.2199 15.51 15.0132 15.33C14.8132 15.15 14.5066 15.06 14.0932 15.06H12.1132L12.9932 14.15V18.02Z" })
 				]
 			});
 		}
 		/** Selected template pinned under the opening user message after PPT starts. */
-		function OfficePptOpeningTemplateCard({ client, mode, sessionId, leading, t }) {
+		function OfficePptTemplateReference({ client, mode, sessionId, t, accessory = false }) {
 			ensureOpeningTemplateStyles();
 			const state = useMode(mode, sessionId);
 			const bindingRef = (0, react.useRef)({ client, sessionId });
@@ -713,7 +714,7 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 			const dialogRef = (0, react.useRef)(null);
 			const openedRef = (0, react.useRef)(false);
 			(0, react.useEffect)(() => {
-				if (leading !== true || !client?.bound) return;
+				if (!client?.bound) return;
 				const request = { client, sessionId };
 				let active = true;
 				void mode.adopt(sessionId, client).then((result) => {
@@ -740,7 +741,6 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 				};
 			}, [
 				client,
-				leading,
 				mode,
 				sessionId,
 				t
@@ -762,14 +762,14 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 				}
 				if (openedRef.current) buttonRef.current?.focus();
 			}, [open]);
-			if (leading !== true || selected === void 0) return null;
+			if (selected === void 0) return null;
 			const closePreview = () => {
 				setOpen(false);
 			};
-			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+			return /* @__PURE__ */ (0, jsx.jsxs)(jsx.Fragment, { children: [accessory ? (0, jsx.jsx)(OfficePptInputAccessory, { client, mode, sessionId, t, previewButtonRef: buttonRef, onPreview: () => { setPage(0); setOpen(true); } }) : /* @__PURE__ */ (0, jsx.jsxs)("div", {
 				className: "dsh-ppt-opening-row",
 				"data-ppt-opening-template": selected.id,
-				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(OpeningPptFileIcon, {}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+				children: [/* @__PURE__ */ (0, jsx.jsx)(OpeningPptFileIcon, {}), /* @__PURE__ */ (0, jsx.jsx)("button", {
 					ref: buttonRef,
 					type: "button",
 					className: "dsh-ppt-opening-title",
@@ -781,7 +781,7 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 					},
 					children: selected.name
 				})]
-			}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("dialog", {
+			}), /* @__PURE__ */ (0, jsx.jsxs)("dialog", {
 				ref: dialogRef,
 				className: "dsh-ppt-opening-dialog",
 				"aria-modal": true,
@@ -808,24 +808,24 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 					const rect = event.currentTarget.getBoundingClientRect();
 					if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) closePreview();
 				},
-				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("header", { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("h2", {
+				children: [/* @__PURE__ */ (0, jsx.jsxs)("header", { children: [/* @__PURE__ */ (0, jsx.jsx)("h2", {
 					id: "dsh-ppt-opening-title",
 					children: selected.name
-				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+				}), /* @__PURE__ */ (0, jsx.jsx)("button", {
 					type: "button",
 					className: "dsh-ppt-opening-close",
 					"aria-label": t("opening.close"),
 					onClick: closePreview,
 					children: "×"
-				})] }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+				})] }), /* @__PURE__ */ (0, jsx.jsx)("div", {
 					className: "dsh-ppt-opening-stage",
-					children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(TemplatePreview, {
+					children: /* @__PURE__ */ (0, jsx.jsx)(TemplatePreview, {
 						template: selected,
 						page
 					}, page)
-				}), pageCount > 1 && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+				}), pageCount > 1 && /* @__PURE__ */ (0, jsx.jsxs)("div", {
 					className: "dsh-ppt-opening-pages",
-					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+					children: [/* @__PURE__ */ (0, jsx.jsx)("button", {
 						type: "button",
 						"aria-label": t("opening.previous"),
 						disabled: page === 0,
@@ -833,10 +833,10 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 							setPage((current) => Math.max(0, current - 1));
 						},
 						children: "‹"
-					}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+					}), /* @__PURE__ */ (0, jsx.jsx)("span", {
 						role: "status",
 						children: t("opening.page", { page: page + 1, total: pageCount })
-					}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+					}), /* @__PURE__ */ (0, jsx.jsx)("button", {
 						type: "button",
 						"aria-label": t("opening.next"),
 						disabled: page >= pageCount - 1,
@@ -849,22 +849,37 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 			})] });
 		}
 		/** Selected-template reference shown only while the standard Session is blank. */
+        function OfficePptOpeningTemplateCard({ leading, ...props }) {
+            return leading === true ? (0, jsx.jsx)(OfficePptTemplateReference, props) : null;
+        }
+        function firstHumanMessage(chat) {
+            for (const key of chat.order) {
+                const node = chat.nodes.get(key);
+                if (node?.kind === "user" && node.data.source?.kind === "user") return node.data.messageId;
+            }
+        }
+        function OfficePptModernOpeningTemplate({ messageId, source, kind, useChat, useSession, ...props }) {
+            const first = useChat(firstHumanMessage), hasMore = useSession(session => session.hasMore);
+            return kind === "user" && source?.kind === "user" && typeof messageId === "string" && hasMore === false && first === messageId ? (0, jsx.jsx)(OfficePptTemplateReference, props) : null;
+        }
 		function OfficePptStandardInputAccessory(props) {
 			if (props.session == null || !props.session.blank) return null;
-			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(OfficePptInputAccessory, { ...props });
+			return /* @__PURE__ */ (0, jsx.jsx)(OfficePptInputAccessory, { ...props });
 		}
 		/** Monochrome presentation screen used by both PPT mode controls. */
 		function DesktopPptIcon() {
-			return (0, react_jsx_runtime.jsxs)("svg", {
+			return (0, jsx.jsxs)("svg", {
 				className: "desktop-ppt-icon", width: 18, height: 18, viewBox: "0 0 24 24",
 				fill: "none", stroke: "currentColor", strokeWidth: 1.75,
 				strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true, focusable: false,
 				children: [
-					(0, react_jsx_runtime.jsx)("path", { d: "M2 3h20M21 3v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3M7 21l5-4 5 4M12 17v4" })
+					(0, jsx.jsx)("path", { d: "M2 3h20M21 3v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3M7 21l5-4 5 4M12 17v4" })
 				]
 			});
 		}
 		/** PPT option and template chooser shared by both Composer layouts. */
+		// Shared manager also serves the core client and retains its existing style binding.
+		const OfficePptHero_module_css_default = pptStyles;
 		/* PERSONAL_TEMPLATE_MANAGER */
 		function OfficePptChooser({ client, mode, sessionId, t, placement, loadTemplates = true }) {
 			const state = useMode(mode, sessionId);
@@ -960,7 +975,7 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 				if (!templateCategories.includes(category)) setCategory("all");
 			}, [category, templateCategories]);
 			(0, react.useLayoutEffect)(() => {
-				if (placement === "trigger") return;
+				if (placement === "trigger" || placement === "flow") return;
 				const root = modeRootRef.current;
 				const panel = templatePanelRef.current;
 				if (state.activeMode === null || root === null || panel === null) return;
@@ -988,9 +1003,9 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 					root.style.removeProperty("--office-ppt-template-panel-width");
 				};
 			}, [placement, state.activeMode]);
-			if (placement === "trigger") return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
+			if (placement === "trigger") return /* @__PURE__ */ (0, jsx.jsxs)("button", {
 				type: "button",
-				className: OfficePptHero_module_css_default.modeChip,
+				className: pptStyles.modeChip,
 				"data-selected": state.activeMode === "ppt" || void 0,
 				"aria-expanded": state.activeMode === "ppt",
 				"aria-pressed": state.activeMode === "ppt",
@@ -998,19 +1013,21 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
                 "aria-busy": state.loading,
                 disabled: state.loading,
 				onClick: togglePpt,
-				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(DesktopPptIcon, {}), t("mode.label")]
+				children: [/* @__PURE__ */ (0, jsx.jsx)(DesktopPptIcon, {}), t("mode.label")]
 			});
-			if (placement === "fixed" && state.activeMode === null) return null;
-			return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("section", {
+			if ((placement === "fixed" || placement === "flow") && state.activeMode === null) return null;
+			return /* @__PURE__ */ (0, jsx.jsxs)("section", {
 				ref: modeRootRef,
-				className: OfficePptHero_module_css_default.modeRoot,
+				className: pptStyles.modeRoot,
 				"data-placement": placement,
+				// Modern input.dock owns flow space; legacy geometry belongs only to the old seats.
+				style: placement === "flow" ? { position: "relative", height: "auto", padding: 0 } : void 0,
 				"aria-label": t("mode.region"),
-				children: [placement === "overlay" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-					className: OfficePptHero_module_css_default.modeRow,
-					children: /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("button", {
+				children: [placement === "overlay" && /* @__PURE__ */ (0, jsx.jsx)("div", {
+					className: pptStyles.modeRow,
+					children: /* @__PURE__ */ (0, jsx.jsxs)("button", {
 						type: "button",
-						className: OfficePptHero_module_css_default.modeChip,
+						className: pptStyles.modeChip,
 						"data-selected": state.activeMode === "ppt" || void 0,
 						"aria-expanded": state.activeMode === "ppt",
 						"aria-pressed": state.activeMode === "ppt",
@@ -1018,19 +1035,20 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
                         "aria-busy": state.loading,
                         disabled: state.loading,
 						onClick: togglePpt,
-						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(DesktopPptIcon, {}), t("mode.label")]
+						children: [/* @__PURE__ */ (0, jsx.jsx)(DesktopPptIcon, {}), t("mode.label")]
 					})
-				}), state.activeMode !== null && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+				}), state.activeMode !== null && /* @__PURE__ */ (0, jsx.jsxs)("div", {
 					ref: templatePanelRef,
-					className: OfficePptHero_module_css_default.templatePanel,
+					className: pptStyles.templatePanel,
 					"data-office-ppt-template-panel": "",
-					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-						className: OfficePptHero_module_css_default.templateToolbar,
-						children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-							className: OfficePptHero_module_css_default.categoryTabs,
+					style: placement === "flow" ? { position: "relative", top: "auto", left: "auto", transform: "none", width: "100%", maxWidth: "none", height: "auto", maxHeight: "50dvh" } : void 0,
+					children: [/* @__PURE__ */ (0, jsx.jsx)("div", {
+						className: pptStyles.templateToolbar,
+						children: /* @__PURE__ */ (0, jsx.jsx)("div", {
+							className: pptStyles.categoryTabs,
 							role: "tablist",
 							"aria-label": t("templates.categories"),
-							children: templateCategories.map((item) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+							children: templateCategories.map((item) => /* @__PURE__ */ (0, jsx.jsx)("button", {
 								type: "button",
 								role: "tab",
 								"aria-selected": category === item,
@@ -1041,35 +1059,35 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 								children: t(`templates.category.${item}`)
 							}, item))
 						})
-					}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+					}), /* @__PURE__ */ (0, jsx.jsxs)("div", {
 						ref: templateViewportRef,
-						className: OfficePptHero_module_css_default.templateViewport,
+						className: pptStyles.templateViewport,
 						"data-office-ppt-template-viewport": "",
 						"data-native-wheel-owner": "",
-						children: [(category === "all" || category === "personal") && react.createElement(PersonalTemplateManager, { key: sessionId, client, mode, sessionId, state, choose, t, mutable: client.bound === true, builtInCards: category === "all" ? visibleTemplates.map(template => react.createElement(TemplatePreviewCard, { key: template.id, template, selected: template.id === state.selectedId, choose, client, t })) : [] }), state.error !== "" && state.templates.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-							className: OfficePptHero_module_css_default.templateError,
+						children: [(category === "all" || category === "personal") && react.createElement(PersonalTemplateManager, { key: sessionId, client, mode, sessionId, state, choose, t, mutable: client.bound === true, builtInCards: category === "all" ? visibleTemplates.map(template => react.createElement(TemplatePreviewCard, { key: template.id, template, selected: template.id === state.selectedId, choose, client, t })) : [] }), state.error !== "" && state.templates.length > 0 && /* @__PURE__ */ (0, jsx.jsx)("div", {
+							className: pptStyles.templateError,
 							role: "alert",
 							children: state.error
-						}), (category === "all" || category === "personal") ? null : state.loading && state.templates.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-							className: OfficePptHero_module_css_default.panelState,
+						}), (category === "all" || category === "personal") ? null : state.loading && state.templates.length === 0 ? /* @__PURE__ */ (0, jsx.jsx)("div", {
+							className: pptStyles.panelState,
 							children: t("status.loading")
-						}) : state.error !== "" && state.templates.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-							className: OfficePptHero_module_css_default.panelState,
+						}) : state.error !== "" && state.templates.length === 0 ? /* @__PURE__ */ (0, jsx.jsxs)("div", {
+							className: pptStyles.panelState,
 							role: "alert",
-							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: state.error }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+							children: [/* @__PURE__ */ (0, jsx.jsx)("span", { children: state.error }), /* @__PURE__ */ (0, jsx.jsx)("button", {
 								type: "button",
-								className: OfficePptHero_module_css_default.retryButton,
+								className: pptStyles.retryButton,
 								onClick: () => {
 									mode.setError(sessionId, "");
 								},
 								children: t("templates.retry")
 							})]
-						}) : visibleTemplates.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-							className: OfficePptHero_module_css_default.panelState,
+						}) : visibleTemplates.length === 0 ? /* @__PURE__ */ (0, jsx.jsx)("div", {
+							className: pptStyles.panelState,
 							children: t("templates.empty")
-						}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-							className: OfficePptHero_module_css_default.templateGrid,
-							children: visibleTemplates.map((template) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(TemplatePreviewCard, {
+						}) : /* @__PURE__ */ (0, jsx.jsx)("div", {
+							className: pptStyles.templateGrid,
+							children: visibleTemplates.map((template) => /* @__PURE__ */ (0, jsx.jsx)(TemplatePreviewCard, {
                                 client, t,
 								template,
 								selected: template.id === state.selectedId,
@@ -1080,14 +1098,13 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 				})]
 			});
 		}
-		/** Standard Composer chooser rendered in normal flow below the resident input card. */
+		/** Composer chooser: modern flow placement or legacy fixed-seat geometry. */
 		function OfficePptStandardComposerDock(props) {
 			if (props.session != null && props.session.blank !== true) return null;
-			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(OfficePptChooser, {
-				...props,
-				placement: "fixed",
-				loadTemplates: false
-			});
+			return (0, jsx.jsxs)(react.Fragment, { children: [
+                props.placement === "flow" ? (0, jsx.jsx)(OfficePptTemplateReference, { ...props, accessory: true }) : null,
+                (0, jsx.jsx)(OfficePptChooser, { ...props, placement: props.placement ?? "fixed", loadTemplates: false })
+            ] });
 		}
 		/** PPT mode control beside the blank-session agent preset. */
 		function OfficePptStandardModeAction(props) {
@@ -1102,10 +1119,10 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
                 });
                 return () => { active = false; };
             }, [props.client, props.mode, props.sessionId]);
-            return (0, react_jsx_runtime.jsxs)(react.Fragment, { children: [
-                (0, react_jsx_runtime.jsx)(OfficePptChooser, { ...props, placement: "trigger" }),
-                state.error && state.activeMode === null ? (0, react_jsx_runtime.jsx)("span", { role: "alert", children: state.error }) : null,
-                state.notice && state.activeMode !== null ? (0, react_jsx_runtime.jsx)("span", {
+            return (0, jsx.jsxs)(react.Fragment, { children: [
+                (0, jsx.jsx)(OfficePptChooser, { ...props, placement: "trigger" }),
+                state.error && state.activeMode === null ? (0, jsx.jsx)("span", { role: "alert", children: state.error }) : null,
+                state.notice && state.activeMode !== null ? (0, jsx.jsx)("span", {
                     role: "status", "data-ppt-template-migration": "",
                     style: { fontSize: 11, color: "var(--dsw-alias-label-secondary)", maxWidth: 300 },
                     children: props.t(state.notice === "personal-template-deleted" ? "personal.deletedSelection" : "templates.migrated")
@@ -1389,47 +1406,27 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 				mode
 			});
 		}
-		/**
-		* Register the PPT chooser on the cross-version standard Composer seats.
-		* @param ctx - Browser context that owns the standard Composer slots.
-		*/
+		/** Register the chooser on the declared Composer slots. */
 		function applyStandard(ctx) {
 			const injectHero = officePptHeroInjection(ctx);
-			ctx.slots.inject("conversation.hero.modeActions", () => ctx.slots.register({
-				name: "conversation.hero.modeActions",
-				id: "dsh-ppt",
-				order: 20,
-				locale: NS,
-				inject: injectHero
-			}, OfficePptStandardModeAction));
-			ctx.slots.inject("conversation.input.accessory", () => ctx.slots.register({
-				name: "conversation.input.accessory",
-				id: "dsh-ppt",
-				order: 20,
-				locale: NS,
-				inject: injectHero
-			}, OfficePptStandardInputAccessory));
-			ctx.slots.inject("conversation.chat.userMessageFooter", () => ctx.slots.register({
-				name: "conversation.chat.userMessageFooter",
-				id: "dsh-ppt",
-				order: 20,
-				locale: NS,
-				inject: injectHero
-			}, OfficePptOpeningTemplateCard));
-			ctx.slots.inject("conversation.hero.dock", () => ctx.slots.register({
-				name: "conversation.hero.dock",
-				id: "dsh-ppt",
-				order: 20,
-				locale: NS,
-				inject: injectHero
-			}, OfficePptStandardComposerDock));
-			ctx.slots.inject("conversation.composer.dock", () => ctx.slots.register({
-				name: "conversation.composer.dock",
-				id: "dsh-ppt",
-				order: 20,
-				locale: NS,
-				inject: injectHero
-			}, OfficePptStandardComposerDock));
+			const register = (name, Component) => ctx.slots.register({ name, id: "dsh-ppt", order: 20, locale: NS, inject: injectHero }, Component);
+			const mount = (name, Component) => ctx.slots.inject(name, () => register(name, Component));
+			// Query at injection time: late declarations distinguish old/new layouts.
+			const legacyComposer = () => typeof ctx.slots.spec !== "function" || ctx.slots.spec("conversation.hero.modeActions") !== void 0;
+			ctx.slots.inject("conversation.input.dock", () => {
+				if (legacyComposer()) return () => {};
+				return [
+					register("conversation.input.dock", props => (0, jsx.jsx)(OfficePptStandardComposerDock, { ...props, placement: "flow" })),
+					mount("conversation.hero.options", OfficePptStandardModeAction)
+				];
+			});
+			mount("conversation.hero.modeActions", OfficePptStandardModeAction);
+			mount("conversation.input.accessory", OfficePptStandardInputAccessory);
+			mount("conversation.chat.userMessageFooter", OfficePptOpeningTemplateCard);
+            ctx.slots.inject("conversation.chat.user.references", () => ctx.slots.register({ name: "conversation.chat.user.references", id: "dsh-ppt", order: 20, locale: NS, inject: injectHero }, OfficePptModernOpeningTemplate));
+			mount("conversation.hero.dock", OfficePptStandardComposerDock);
+			// Avoid a second panel in modern composer.dock.
+			ctx.slots.inject("conversation.composer.dock", () => legacyComposer() ? register("conversation.composer.dock", OfficePptStandardComposerDock) : () => {});
 		}
 		//#endregion
 		//#region src/client/index.ts

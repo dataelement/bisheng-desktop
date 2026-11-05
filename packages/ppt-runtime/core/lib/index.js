@@ -15,7 +15,7 @@ import { definitions as DSH_PPT_TEMPLATE_DEFINITIONS, semantics as DSH_PPT_TEMPL
 import { i as renderPptdProject, n as loadPptdProject, o as recommendedTextCapacity, r as parsePptdProject, t as checkPptdProject } from "./pptd-2VqVzr_T.js";
 import z from "@deepseek-ai/schemastery";
 import { fileURLToPath } from "node:url";
-import { access, appendFile, link, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { access, appendFile, cp, link, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { BUNDLED_SKILL_RANK, renderSkillContent } from "@deepseek-ai/dsh-skill";
 import { createHash, randomUUID } from "node:crypto";
@@ -1822,24 +1822,40 @@ function registerPptdProjectTools(ctx, service) {
 			const workspace = await workspaceDirectory(ctx, exec);
 			const state = await service.state(sessionId(exec));
 			if (state.selectedTemplateId !== args.template_id) throw new Error("请先选择要使用的模板");
-			const template = await service.store.personalTemplates.readRecord(args.template_id);
+			const template = state.templates.find(item => item.id === args.template_id);
+			if (template === void 0 || !templateSupportsMode(template, "ppt")) throw new Error(`template ${args.template_id} is not available to the DSH PPT workflow`);
+			const definition = template.origin === "built-in" ? DEFINITIONS_BY_ID.get(template.id) : void 0;
+			if (template.origin !== "personal" && definition === void 0) throw new Error("内置模板来源无效");
+			let slideCount;
 			const output = await outputWorkspacePath(workspace, args.output_directory, "output_directory");
 			exec.signal.throwIfAborted();
-			await service.mutate(sessionId(exec), "copy-personal-template", { kind: "agent" }, async current => {
+			await service.mutate(sessionId(exec), template.origin === "personal" ? "copy-personal-template" : "copy-built-in-template", { kind: "agent" }, async current => {
 				await publishPptdDirectory(output, false, async stage => {
-					await service.store.personalTemplates.copyProject(template.id, stage);
+					if (template.origin === "personal") await service.store.personalTemplates.copyProject(template.id, stage);
+					else {
+						// Only the shipped catalog selects a built-in source; caller IDs never become paths.
+						const source = fileURLToPath(new URL(`../skills/dsh-ppt/references/${definition.referenceDirectory}/source`, import.meta.url));
+						if (!(await lstat(source)).isDirectory()) throw new Error("模板工程目录无效");
+						for (const item of await readdir(source)) await cp(path.join(source, item), path.join(stage, item), { recursive: true, force: false, errorOnExist: true, filter: async file => {
+							const metadata = await lstat(file);
+							if (metadata.isSymbolicLink() || !metadata.isFile() && !metadata.isDirectory()) throw new Error("模板工程应使用本地文件");
+							return true;
+						} });
+					}
 					const entry = path.join(stage, "deck.pptd");
 					const manifest = yaml.load(await readFile(entry, "utf8"), { schema: yaml.JSON_SCHEMA });
 					manifest.template = { id: template.id, name: template.name };
 					const source={manifest:yamlText(manifest)};
 					await writeFile(entry,template.templateProfile ? personalTemplateSourceTheme(source,template.templateProfile).manifest : source.manifest,{mode:384});
-					if (checkPptdProject(await loadPptdProject(stage)).status === "fail") throw new Error("模板副本需要修复后才能发布");
+					const project = await loadPptdProject(stage);
+					if (checkPptdProject(project).status === "fail") throw new Error("模板副本需要修复后才能发布");
+					slideCount = project.pages.length;
 					exec.signal.throwIfAborted();
 				});
 				return { state: current, value: true, summary: "已从模板创建独立工程", facts: { templateId: template.id, templateOrigin: template.origin, projectPath: relativeToWorkspace(workspace, output) } };
 			});
 			const projectPath = relativeToWorkspace(workspace, output);
-			return { templateId: template.id, projectPath, manifestPath: `${projectPath}/deck.pptd`, slideCount: template.slideCount };
+			return { templateId: template.id, projectPath, manifestPath: `${projectPath}/deck.pptd`, slideCount };
 		},
 		presentCall: () => ({ card: "generic", title: "从模板创建 PPT", kind: "execute" })
 	}));

@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import PptxGenJS from 'pptxgenjs';
 import sharp from 'sharp';
 import { unzipSync, zipSync, strFromU8, strToU8 } from 'fflate';
+import yaml from 'js-yaml';
 import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools';
 
 let apply, packageRoot, MAX_PERSONAL_TEMPLATE_HTTP_BODY_BYTES, PERSONAL_TEMPLATE_CONVERSION_VERSION, PERSONAL_TEMPLATE_PREVIEW_VERSION;
@@ -358,6 +359,45 @@ describe('personal PPT templates in the shipped runtime', () => {
     expect(duplicate.duplicate).toBe(true);
     expect(duplicate.template.id).toBe(template.id);
   }, 30000);
+
+  it('copies a selected built-in project with provenance and workspace confinement', async () => {
+    const f = await fixture();
+    const templateId = 'dsh-blue-professional';
+    const args = { template_id: templateId, output_directory: 'built-in-project' };
+    await expect(f.tool('ppt_template_create_project', args)).rejects.toThrow('请先选择');
+    await f.request('template/select', { templateId, mode: 'ppt' }, 'session-b');
+    const source = path.join(packageRoot, 'skills/dsh-ppt/references/business/dsh-blue-professional/source');
+    const original = await readFile(path.join(source, 'deck.pptd'), 'utf8');
+    const result = await f.tool('ppt_template_create_project', args);
+    expect(result).toEqual({ templateId, projectPath: 'built-in-project', manifestPath: 'built-in-project/deck.pptd', slideCount: 12 });
+    const manifest = yaml.load(await readFile(path.join(f.workspace, result.manifestPath), 'utf8'));
+    expect(manifest.template).toEqual({ id: templateId, name: 'Blue Professional' });
+    expect(manifest.pages).toHaveLength(12);
+    for (const file of manifest.pages) {
+      expect(await readFile(path.join(f.workspace, result.projectPath, file), 'utf8')).toBe(await readFile(path.join(source, file), 'utf8'));
+    }
+    expect((await f.tool('pptd_check', { project_path: result.projectPath })).status).not.toBe('needs_revision');
+    await writeFile(path.join(f.workspace, result.projectPath, manifest.pages[0]), '# independent edit');
+    expect(await readFile(path.join(source, 'deck.pptd'), 'utf8')).toBe(original);
+    expect(await readFile(path.join(source, manifest.pages[0]), 'utf8')).not.toBe('# independent edit');
+    const audit = (await readFile(path.join(f.storage, 'audit.ndjson'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    expect(audit).toContainEqual(expect.objectContaining({ operation: 'copy-built-in-template', templateId, templateOrigin: 'built-in', projectPath: result.projectPath }));
+    await expect(f.tool('ppt_template_create_project', args)).rejects.toThrow('already exists');
+    await expect(f.tool('ppt_template_create_project', { ...args, output_directory: '../escape' })).rejects.toThrow();
+    await symlink(f.root, path.join(f.workspace, 'outside'), 'dir');
+    await expect(f.tool('ppt_template_create_project', { ...args, output_directory: 'outside/escape' })).rejects.toThrow('outside');
+    await expect(f.tool('ppt_template_create_project', { ...args, template_id: '../private' })).rejects.toThrow('请先选择');
+    expect(await readdir(f.root)).not.toContain('escape');
+    const linkedAsset = path.join(source, 'linked-asset');
+    await symlink(f.root, linkedAsset, 'dir');
+    try {
+      await expect(f.tool('ppt_template_create_project', { ...args, output_directory: 'unsafe-source' })).rejects.toThrow('本地文件');
+      expect(await readdir(f.workspace)).not.toContain('unsafe-source');
+      expect((await readdir(f.workspace)).some(name => name.endsWith('.stage'))).toBe(false);
+    } finally {
+      await rm(linkedAsset);
+    }
+  });
 
   it('copies the selected source into independent projects, exports editable PPTX, and preserves saved source', async () => {
     const f = await fixture(); const { bytes, template } = await save(f);

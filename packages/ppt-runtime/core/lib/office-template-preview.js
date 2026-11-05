@@ -53,9 +53,7 @@ export async function renderOfficeTemplatePreview(project, directory, longEdge, 
       const outputDir = path.join(batch.directory, 'pages'), rasterStarted = Date.now();
       let expected = 1;
       const pages = Array.from({ length: batch.count }, (_, index) => index + 1);
-      const rendered = await raster.renderImages({ inputPath: batch.pdf, outputDir, pages,
-        dpi: Math.max(24, Math.min(600, longEdge / Math.max(project.width, project.height) * 72)), maxPages },
-      signal, async (image, pageCount) => {
+      const publish = async (image, pageCount) => {
         signal?.throwIfAborted();
         if (pageCount !== batch.count || image.page !== expected)
           throw new Error('Office template preview page count mismatch');
@@ -64,11 +62,18 @@ export async function renderOfficeTemplatePreview(project, directory, longEdge, 
         if (slideNumber === 1) timings.firstPageMs = Date.now() - started;
         await onPage?.({ page: slideNumber, total: project.pages.length, path: target });
         expected++;
-      });
+      };
+      const rendered = await raster.renderImages({ inputPath: batch.pdf, outputDir, pages,
+        dpi: Math.max(24, Math.min(600, longEdge / Math.max(project.width, project.height) * 72)), maxPages },
+      signal, publish);
       timings.rasterMs += Date.now() - rasterStarted;
-      if (rendered.pageCount !== batch.count || rendered.images.length !== batch.count || expected !== batch.count + 1
+      if (rendered.pageCount !== batch.count || rendered.images.length !== batch.count
         || rendered.images.some((image, index) => image.page !== index + 1))
         throw new Error('Office template preview page count mismatch');
+      // Published Kit 0.1.5 returns a complete manifest without per-page callbacks.
+      // Keep progressive callbacks when available, but do not mistake their absence for lost pages.
+      if (expected === 1) for (const image of rendered.images) await publish(image, rendered.pageCount);
+      if (expected !== batch.count + 1) throw new Error('Office template preview page count mismatch');
       await rm(batch.directory, { recursive: true, force: true });
     };
     // Finish and publish the cover before starting another Office job.
