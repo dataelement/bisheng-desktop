@@ -96,13 +96,13 @@ DeepSeek Harness и его зависимости подчиняются соо�
 
 BISHENG используют ведущие компании разных отраслей. Ниже представлены некоторые из наших клиентов.
 
-![HSBC, Bosch, Watsons, China Mobile, COFCO и Shougang Group](docs/images/bisheng-customer-logos-row-1.png)
+![Метеорологическое управление Китая, HSBC, Bosch, Watsons, China Mobile и COFCO](docs/images/bisheng-customer-logos-row-1.png)
 
-![China Baowu, CICC, SINOSURE, PetroChina, ICBC и Bank of Chongqing](docs/images/bisheng-customer-logos-row-2.png)
+![Shougang Group, China Baowu, CICC, SINOSURE, PetroChina и ICBC](docs/images/bisheng-customer-logos-row-2.png)
 
-![PowerChina, Huatai Securities, Huaxia Bank, Liaoning Financial Holdings, China Minsheng Bank и Longhua Capital](docs/images/bisheng-customer-logos-row-3.png)
+![Bank of Chongqing, PowerChina, Huatai Securities, Huaxia Bank, Liaoning Financial Holdings и China Minsheng Bank](docs/images/bisheng-customer-logos-row-3.png)
 
-![JSTI, China CITIC Bank, AVIVA-COFCO, BAIC Group, China Bond Rating и Метеорологическое управление Китая](docs/images/bisheng-customer-logos-row-4.png)
+![Longhua Capital, JSTI, China CITIC Bank, AVIVA-COFCO, BAIC Group и China Bond Rating](docs/images/bisheng-customer-logos-row-4.png)
 
 ## Корпоративные запросы
 
