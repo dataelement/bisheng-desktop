@@ -308,6 +308,280 @@ window.__ModuleLoader__.load({
       zh: { menu: '删除', actions: '会话操作', title: '删除会话', close: '关闭', cancel: '取消', confirm: '删除会话', description: '确定删除“{name}”？会话及其聊天记录将被永久删除。', pending: '正在删除会话…', failed: '删除失败，请重试。' },
       en: { menu: 'Delete', actions: 'Conversation actions', title: 'Delete conversation', close: 'Close', cancel: 'Cancel', confirm: 'Delete conversation', description: 'Permanently delete “{name}” and its chat history?', pending: 'Deleting conversation…', failed: 'Deletion failed. Please try again.' }
     }
+    const PROJECTS_NS = 'desktop.chatProjects'
+    const PROJECTS_COPY = {
+      zh: { title: '项目', create: '新建项目', rename: '重命名项目', remove: '删除项目', actions: '项目操作', startChat: '在此项目新建对话', empty: '暂无对话', name: '项目名称', nameHelp: '请输入 1–30 个字符', cancel: '取消', save: '保存', close: '关闭', move: '移入项目', moveOut: '移出项目', target: '选择项目', deleteHelp: '删除“{name}”后，其中的对话将移回对话列表，聊天记录会保留。', failed: '项目保存失败，请重试。', unavailable: '项目数据无法读取，点击重试。', retry: '重试' },
+      en: { title: 'Projects', create: 'New project', rename: 'Rename project', remove: 'Delete project', actions: 'Project actions', startChat: 'New chat in this project', empty: 'No conversations yet', name: 'Project name', nameHelp: 'Enter 1–30 characters', cancel: 'Cancel', save: 'Save', close: 'Close', move: 'Move to project', moveOut: 'Move out of project', target: 'Choose project', deleteHelp: 'Delete “{name}”? Its conversations will return to the conversation list. Chat history will be kept.', failed: 'Could not save projects. Please try again.', unavailable: 'Could not read projects. Retry.', retry: 'Retry' }
+    }
+    Object.assign(PROJECTS_COPY.zh, { pending: '正在保存或加载…', connecting: '正在连接项目同步…', degraded: '已保存，同步暂有延迟', offline: '项目尚未同步，正在重连…', auth_required: '请重新登录以同步项目', unsupported: '当前服务不支持项目同步，请升级服务端。', import: '旧版项目迁移结果', migrationRunning: '正在自动迁移旧版项目…', migrationRetry: '旧版项目暂未迁移，正在自动重试。原记录已保留。', importDone: '迁移完成，{count} 项未迁移或保留了云端归属。' })
+    Object.assign(PROJECTS_COPY.en, { pending: 'Saving or loading…', connecting: 'Connecting project sync…', degraded: 'Saved. Sync is delayed.', offline: 'Projects are not synced. Reconnecting…', auth_required: 'Sign in again to sync projects.', unsupported: 'This server does not support project sync. Update the server.', import: 'Legacy migration results', migrationRunning: 'Migrating legacy projects automatically…', migrationRetry: 'Retrying legacy project migration automatically. Original records are kept.', importDone: 'Migration finished. {count} items were skipped or kept their cloud assignment.' })
+    Object.assign(PROJECTS_COPY.zh, { importReason_cloud_membership_kept: '已保留云端归属', importReason_project_unavailable: '项目已不可用', importReason_conversation_unavailable: '对话已删除或不属于当前账号', importReason_invalid_date: '创建日期无效', importReason_invalid_local_data: '本机记录损坏或格式无效', importReason_unknown: '此项未导入', moreResults: '查看更多' })
+    Object.assign(PROJECTS_COPY.en, { importReason_cloud_membership_kept: 'Cloud assignment kept', importReason_project_unavailable: 'Project unavailable', importReason_conversation_unavailable: 'Conversation deleted or owned by another account', importReason_invalid_date: 'Invalid creation date', importReason_invalid_local_data: 'Invalid local record', importReason_unknown: 'Item not imported', moreResults: 'Show more' })
+    /** Server projections own project data; local keys remain import-only. */
+    function createChatProjects() {
+      const empty = () => ({ projects: [], assignments: {} })
+      let state = { scope: undefined, epoch: undefined, ...empty(), expanded: {}, rows: {}, editor: null, phase: 'idle', error: null, busy: false, revision: '0', connection: 'connecting', migrationAvailable: false, migrationPhase: 'idle', migrationResult: null, migrationDetails: [], search: { query: '', items: [], phase: 'idle', nextCursor: null } }
+      const listeners = new Set()
+      let readPending, reading = false, disposed = false
+      let generation = 0, searchRequest = 0
+      let migrationRun, migrationTimer, migrationAttempt = 0
+      const rowRequests = new Map()
+      const validId = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,255}$/u.test(value)
+      const publish = patch => { state = { ...state, ...patch }; listeners.forEach(fn => fn()) }
+      const legacyKey = () => 'desktop.chatProjects.v1:' + state.scope
+      const same = (scope, epoch) => !disposed && state.scope === scope && state.epoch === epoch
+      const apply = snapshot => {
+        if (!snapshot || snapshot.epoch !== state.epoch || !state.scope || disposed) return
+        if (!Array.isArray(snapshot.projects) || !snapshot.assignments || !/^(0|[1-9]\d*)$/u.test(snapshot.revision || '')) { publish({ phase: 'error', error: 'unsupported' }); return }
+        if (BigInt(snapshot.revision) < BigInt(state.revision)) return
+        const changed = snapshot.revision !== state.revision
+        const recovered = (snapshot.connection === 'live' && state.connection !== 'live') || (snapshot.phase === 'ready' && state.phase === 'error')
+        publish({ projects: snapshot.projects, assignments: snapshot.assignments, phase: snapshot.phase, connection: snapshot.connection, revision: snapshot.revision, identity: snapshot.identity, identityLabel: snapshot.identityLabel, error: snapshot.error || null })
+        if (snapshot.phase === 'ready') void migrate()
+        if (changed || recovered) {
+          for (const id of Object.keys(state.expanded)) if (state.expanded[id]) void load(id)
+          if (state.search.query) void search(state.search.query)
+        }
+      }
+      const read = async () => {
+        if (!state.scope || !Number.isSafeInteger(state.epoch) || disposed) return
+        if (reading) return readPending
+        if (typeof window.dshEnterpriseChat?.projectsState !== 'function') { publish({ phase: 'error', error: 'unsupported' }); return }
+        const scope = state.scope, epoch = state.epoch, request = generation
+        reading = true
+        readPending = (async () => {
+          try {
+            const snapshot = await window.dshEnterpriseChat.projectsState()
+            if (same(scope, epoch) && request === generation) apply(snapshot)
+          } catch { if (same(scope, epoch) && request === generation) publish({ phase: 'error', error: 'unavailable' }) }
+          finally { if (request === generation) { reading = false; readPending = undefined } }
+        })()
+        return readPending
+      }
+      const load = async (id, more = false) => {
+        if (!state.scope || !state.projects.some(project => project.id === id)) return
+        const scope = state.scope, epoch = state.epoch
+        const previous = state.rows[id] || { items: [], nextCursor: null, phase: 'idle' }
+        if (more && !previous.nextCursor) return
+        const request = (rowRequests.get(id) || 0) + 1
+        rowRequests.set(id, request)
+        publish({ rows: { ...state.rows, [id]: { ...previous, phase: 'loading' } } })
+        try {
+          const page = await window.dshEnterpriseChat.projectConversations({ project_id: id, ...(more ? { cursor: previous.nextCursor } : {}) }, epoch)
+          if (!same(scope, epoch) || rowRequests.get(id) !== request) return
+          if (page.epoch !== epoch || BigInt(page.revision) < BigInt(state.revision)) { void load(id); return }
+          const items = [...new Map([...(more ? previous.items : []), ...page.items].map(item => [item.id, item])).values()]
+          publish({ rows: { ...state.rows, [id]: { items, nextCursor: page.nextCursor, phase: 'ready', revision: page.revision } } })
+        } catch {
+          if (same(scope, epoch) && rowRequests.get(id) === request) publish({ rows: { ...state.rows, [id]: { ...previous, phase: 'error' } } })
+        }
+      }
+      const search = async (query, more = false) => {
+        query = String(query || '').trim()
+        const request = ++searchRequest, scope = state.scope, epoch = state.epoch
+        const previous = state.search
+        if (!query || !scope) { publish({ search: { query, items: [], phase: 'idle', nextCursor: null } }); return }
+        if (more && !previous.nextCursor) return
+        publish({ search: { ...previous, query, phase: 'loading' } })
+        try {
+          const page = await window.dshEnterpriseChat.projectConversations({ query, ...(more ? { cursor: previous.nextCursor } : {}) }, epoch)
+          if (!same(scope, epoch) || request !== searchRequest || page.epoch !== epoch) return
+          const items = [...new Map([...(more ? previous.items : []), ...page.items].map(item => [item.id, item])).values()]
+          publish({ search: { query, items, phase: 'ready', nextCursor: page.nextCursor } })
+        } catch { if (same(scope, epoch) && request === searchRequest) publish({ search: { ...previous, query, phase: 'error' } }) }
+      }
+      const action = async (operation, requestId) => {
+        const scope = state.scope, epoch = state.epoch
+        if (!scope || !Number.isSafeInteger(epoch)) throw new Error('Project identity unavailable.')
+        const result = await window.dshEnterpriseChat.projectAction({ ...operation, request_id: requestId || crypto.randomUUID() }, epoch)
+        if (!same(scope, epoch) || result.epoch !== epoch) throw new Error('Project identity changed.')
+        await read()
+        return result
+      }
+      const importLegacy = async () => {
+        const scope = state.scope, epoch = state.epoch
+        const raw = window.localStorage.getItem(legacyKey())
+        if (!raw || raw.length > 4 * 1024 * 1024) throw new Error('Invalid legacy project data.')
+        const data = JSON.parse(raw)
+        if (!data || !Array.isArray(data.projects) || !data.assignments || typeof data.assignments !== 'object' || Array.isArray(data.assignments)) throw new Error('Invalid legacy project data.')
+        const sourceKey = 'desktop.chatProjects.importSource.v1:' + scope
+        let source = window.localStorage.getItem(sourceKey)
+        if (!source) { source = crypto.randomUUID(); window.localStorage.setItem(sourceKey, source) }
+        let skipped = 0
+        const details = []
+        const projects = data.projects.flatMap((project, index) => {
+          if (!project || !validId(project.id) || typeof project.name !== 'string' || !project.name.trim() || project.name.trim().length > 30) { skipped++; details.push({ id: '#' + (index + 1), status: 'invalid_local_data' }); return [] }
+          return [{ legacy_id: project.id, name: project.name.trim() }]
+        })
+        const memberships = Object.entries(data.assignments).flatMap(([chat_id, legacy_project_id]) => {
+          if (!validId(chat_id) || chat_id === 'new' || typeof legacy_project_id !== 'string') { skipped++; details.push({ id: chat_id, status: 'invalid_local_data' }); return [] }
+          return [{ chat_id, legacy_project_id }]
+        })
+        const submit = async (projects, memberships) => {
+          if (!same(scope, epoch)) throw new Error('Project identity changed.')
+          const result = await action({ operation: 'import', source_client_id: source, projects, memberships }, crypto.randomUUID())
+          skipped += result.outcome.items?.filter(item => item.status !== 'imported').length || 0
+          details.push(...(result.outcome.items || []).filter(item => item.status !== 'imported').map(item => ({ id: item.chat_id || item.legacy_id || '', status: item.status })))
+          if (same(scope, epoch)) publish({ migrationDetails: [...details] })
+        }
+        for (let offset = 0; offset < projects.length; offset += 100) await submit(projects.slice(offset, offset + 100), [])
+        for (let offset = 0; offset < memberships.length; offset += 500) await submit([], memberships.slice(offset, offset + 500))
+        if (!same(scope, epoch)) return
+        window.localStorage.setItem('desktop.chatProjects.importDone.v1:' + scope, source)
+        publish({ migrationAvailable: false, migrationPhase: 'done', migrationResult: skipped, migrationDetails: details })
+      }
+      const migrate = async () => {
+        if (!state.migrationAvailable || state.phase !== 'ready' || migrationRun || migrationTimer || disposed) return
+        const scope = state.scope, epoch = state.epoch, token = {}
+        migrationRun = token
+        publish({ migrationPhase: 'busy' })
+        try { await importLegacy(); if (same(scope, epoch)) migrationAttempt = 0 }
+        catch {
+          if (same(scope, epoch)) {
+            publish({ migrationPhase: 'error' })
+            migrationTimer = setTimeout(() => { migrationTimer = undefined; void migrate() }, [2000, 5000, 10000, 30000][Math.min(migrationAttempt++, 3)])
+          }
+        } finally { if (migrationRun === token) migrationRun = undefined }
+      }
+      return {
+        snapshot: () => state,
+        subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn) },
+        apply, reload: read, load, search,
+        setScope(scope, epoch) {
+          scope = validId(scope) ? scope : undefined
+          if (scope === state.scope && epoch === state.epoch) { if (scope && state.phase === 'idle') void read(); return }
+          generation++; searchRequest++; rowRequests.clear(); reading = false; readPending = undefined
+          clearTimeout(migrationTimer); migrationTimer = undefined; migrationRun = undefined; migrationAttempt = 0
+          let migrationAvailable = false
+          try { migrationAvailable = !!scope && window.localStorage.getItem('desktop.chatProjects.v1:' + scope) !== null && !window.localStorage.getItem('desktop.chatProjects.importDone.v1:' + scope) }
+          catch { /* Import availability cannot block server projects. Original keys remain intact. */ }
+          publish({ scope, epoch, ...empty(), expanded: {}, rows: {}, editor: null, busy: false, phase: scope ? 'loading' : 'idle', error: null, revision: '0', connection: 'connecting', migrationAvailable, migrationPhase: 'idle', migrationResult: null, migrationDetails: [], search: { query: '', items: [], phase: 'idle', nextCursor: null } })
+          if (scope) void read()
+        },
+        async assign(id, projectId) {
+          if (!validId(id) || id === 'new') return false
+          const scope = state.scope, epoch = state.epoch
+          try { await action({ operation: 'assign', chat_id: id, project_id: projectId || null }); return true }
+          catch { if (same(scope, epoch)) publish({ error: 'failed' }); return false }
+        },
+        toggle(id) {
+          const expanded = { ...state.expanded, [id]: !state.expanded[id] }
+          publish({ expanded })
+          if (expanded[id]) void load(id)
+        },
+        reveal(id) {
+          if (!state.projects.some(project => project.id === id)) return
+          publish({ expanded: { ...state.expanded, [id]: true } })
+          void load(id)
+        },
+        edit(mode, id, title) {
+          if (mode !== 'import' && state.phase === 'ready') publish({ editor: { mode, id, title, requestId: crypto.randomUUID() }, error: null })
+        },
+        close() { if (!state.busy) publish({ editor: null, error: null }) },
+        showImportResults() { publish({ editor: { mode: 'import', done: true, limit: 50 }, error: null }) },
+        moreImportResults() { if (state.editor) publish({ editor: { ...state.editor, limit: (state.editor.limit || 50) + 50 } }) },
+        async confirm(name = '', target) {
+          const editor = state.editor, scope = state.scope, epoch = state.epoch
+          if (!editor || editor.done || state.busy) return
+          const trimmed = name.trim()
+          if ((['create', 'rename'].includes(editor.mode) || (editor.mode === 'move' && target === 'new')) && (!trimmed || trimmed.length > 30)) return
+          publish({ busy: true, error: null })
+          try {
+            let operation
+            {
+              if (editor.mode === 'create' || (editor.mode === 'move' && target === 'new')) operation = { operation: 'create', name: trimmed, ...(editor.mode === 'move' ? { chat_id: editor.id } : {}) }
+              else if (editor.mode === 'rename') operation = { operation: 'rename', project_id: editor.id, name: trimmed }
+              else if (editor.mode === 'remove') operation = { operation: 'delete', project_id: editor.id }
+              else if (editor.mode === 'move') operation = { operation: 'assign', chat_id: editor.id, project_id: target }
+              if (!operation) return
+              const result = await action(operation, editor.requestId)
+              if (result.outcome.project_id && operation.operation === 'create') { publish({ expanded: { ...state.expanded, [result.outcome.project_id]: true } }); void load(result.outcome.project_id) }
+            }
+            if (same(scope, epoch)) publish({ editor: null, error: null })
+          } catch { if (same(scope, epoch)) publish({ error: 'failed' }) }
+          finally { if (same(scope, epoch)) publish({ busy: false }) }
+        },
+        dispose() { disposed = true; clearTimeout(migrationTimer); generation++; searchRequest++; rowRequests.clear(); listeners.clear() }
+      }
+    }
+    function ChatProjectDialog({ store, state, t }) {
+      const request = state.editor
+      const [name, setName] = React.useState(request.mode === 'rename' ? request.title : '')
+      const [target, setTarget] = React.useState(state.projects[0]?.id || 'new')
+      const naming = request.mode === 'create' || request.mode === 'rename' || (request.mode === 'move' && target === 'new')
+      const valid = !naming || (name.trim().length > 0 && name.trim().length <= 30)
+      const formId = React.useId()
+      return React.createElement(Modal, {
+        open: true, onClose: store.close, title: t(request.mode), closeLabel: t('close'),
+        description: request.mode === 'remove' ? t('deleteHelp', { name: request.title }) : undefined,
+        footer: React.createElement(React.Fragment, null,
+          React.createElement(Button, { variant: 'outline', disabled: state.busy, onClick: store.close, 'data-modal-autofocus': request.mode === 'remove' || undefined }, t('cancel')),
+          !request.done && React.createElement(Button, { variant: 'primary', type: 'submit', form: formId, disabled: !valid || state.busy }, t(state.busy ? 'pending' : request.mode === 'remove' ? 'remove' : request.mode === 'import' ? 'import' : 'save')))
+      }, React.createElement('form', { id: formId, className: 'dshChatProjectForm', onSubmit: event => { event.preventDefault(); if (valid) store.confirm(name, target) } },
+        request.mode === 'move' && React.createElement('label', null, t('target'),
+          React.createElement('select', { value: target, disabled: state.busy, onChange: event => setTarget(event.target.value), 'aria-label': t('target'), 'data-modal-autofocus': true },
+            ...state.projects.map(project => React.createElement('option', { key: project.id, value: project.id }, project.name)),
+            React.createElement('option', { value: 'new' }, t('create')))),
+        naming && React.createElement('label', null, t('name'), React.createElement('input', { value: name, disabled: state.busy, maxLength: 30, required: true,
+          placeholder: t('nameHelp'), 'aria-label': t('name'), 'data-modal-autofocus': request.mode !== 'move' || undefined, onChange: event => setName(event.target.value) })),
+        state.busy && React.createElement('p', { role: 'status' }, t('pending')),
+        request.mode === 'import' && request.done && React.createElement('p', { role: 'status' }, t('importDone', { count: state.migrationResult })),
+        request.mode === 'import' && state.migrationDetails.length > 0 && React.createElement('ul', null, ...state.migrationDetails.slice(0, request.limit || 50).map((item, index) => React.createElement('li', { key: index }, item.id + ': ' + t('importReason_' + (['cloud_membership_kept', 'project_unavailable', 'conversation_unavailable', 'invalid_date', 'invalid_local_data'].includes(item.status) ? item.status : 'unknown'))))),
+        request.mode === 'import' && state.migrationDetails.length > (request.limit || 50) && React.createElement(Button, { type: 'button', variant: 'outline', onClick: store.moreImportResults }, t('moreResults')),
+        state.error && React.createElement('p', { role: 'alert' }, t(state.error))))
+    }
+    function ChatProjectRow({ project, chats, state, navigation, t, projectText, deleteText }) {
+      const [menuOpen, setMenuOpen] = React.useState(false)
+      const store = navigation.projects
+      const open = !!state.expanded[project.id]
+      const panelId = React.useId()
+      return React.createElement('div', { className: 'dshChatProject', 'data-chat-project': project.id },
+        React.createElement('div', { className: 'dshChatProjectHeading' },
+          React.createElement('button', { type: 'button', className: 'dshChatProjectToggle', 'aria-expanded': open, 'aria-controls': panelId, onClick: () => store.toggle(project.id), title: project.name },
+            React.createElement('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, 'aria-hidden': true },
+              React.createElement('path', { d: open ? 'M3 8V5a2 2 0 0 1 2-2h4l3 3h7a2 2 0 0 1 2 2v2M3 8h18l-3 12H3z' : 'M3 7V5a2 2 0 0 1 2-2h4l3 3h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z' })),
+            React.createElement('span', null, project.name)),
+          React.createElement('button', { type: 'button', className: 'dshChatProjectAction', 'aria-label': `${projectText('startChat')} · ${project.name}`, onClick: () => navigation.startProjectChat(project.id) }, '+'),
+          React.createElement(Menu, { open: menuOpen, onClose: () => setMenuOpen(false), portal: true, align: 'end', autoFocus: true, dense: true,
+            anchor: React.createElement('button', { type: 'button', className: 'dshChatProjectAction', 'aria-label': `${projectText('actions')} · ${project.name}`, 'aria-haspopup': 'menu', 'aria-expanded': menuOpen, onClick: () => setMenuOpen(value => !value) }, '⋯')
+          }, ...['rename', 'remove'].map(mode => React.createElement(MenuItemButton, { key: mode, danger: mode === 'remove', onSelect: () => {
+            setMenuOpen(false)
+            setTimeout(() => { if (store.snapshot().scope === state.scope) store.edit(mode, project.id, project.name) }, 0)
+          } }, projectText(mode))))),
+        open && React.createElement('div', { id: panelId },
+          ...chats.map(item => React.createElement(CloudHistoryRow, { key: item.id, item, selected: navigation.snapshot().mode === 'chat' && navigation.snapshot().conversationId === item.id, navigation, t, projectText, deleteText })),
+          state.rows[project.id]?.phase === 'loading' && React.createElement('div', { role: 'status', className: 'dshChatProjectEmpty' }, projectText('pending')),
+          state.rows[project.id]?.phase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => { void store.load(project.id) } }, projectText('unavailable')),
+          state.rows[project.id]?.nextCursor && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: state.rows[project.id]?.phase === 'loading', onClick: () => { void store.load(project.id, true) } }, t('more')),
+          chats.length === 0 && state.rows[project.id]?.phase === 'ready' && React.createElement('div', { className: 'dshChatProjectEmpty' }, projectText('empty'))))
+    }
+    function ChatProjects({ navigation, t, projectText, deleteText }) {
+      const state = React.useSyncExternalStore(navigation.projects.subscribe, navigation.projects.snapshot)
+      const host = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
+      const grouped = React.useMemo(() => {
+        const groups = new Map()
+        const items = [...new Map([...host.items, ...Object.values(state.rows).flatMap(page => page.items)].map(item => [item.id, item])).values()]
+        for (const item of items) {
+          const id = state.assignments[item.id]
+          if (typeof id !== 'string') continue
+          if (!groups.has(id)) groups.set(id, [])
+          groups.get(id).push(item)
+        }
+        return groups
+      }, [host.items, state.assignments, state.rows])
+      if (!host.connected || !state.scope) return null
+      return React.createElement('section', { className: 'dshChatProjects', 'aria-label': projectText('title') },
+        React.createElement('div', { className: 'dshHistoryHeading' }, React.createElement('span', null, projectText('title')),
+          React.createElement('button', { type: 'button', className: 'dshChatProjectAction', disabled: state.phase !== 'ready', 'aria-label': projectText('create'), onClick: () => navigation.projects.edit('create') }, '+')),
+        state.phase !== 'error' && state.connection !== 'live' && React.createElement('div', { role: 'status', className: 'dshHistoryNotice' }, projectText(state.connection)),
+        ['busy', 'error'].includes(state.migrationPhase) && React.createElement('p', { role: 'status', className: 'dshHistoryNotice' }, projectText(state.migrationPhase === 'busy' ? 'migrationRunning' : 'migrationRetry')),
+        state.migrationResult > 0 && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: navigation.projects.showImportResults }, projectText('importDone', { count: state.migrationResult })),
+        state.projects.length === 0 && state.phase === 'ready' && React.createElement('button', { type: 'button', className: 'dshChatProjectCreate', onClick: () => navigation.projects.edit('create') }, `+ ${projectText('create')}`),
+        ...state.projects.map(project => React.createElement(ChatProjectRow, { key: `${state.scope}:${project.id}`, project, chats: grouped.get(project.id) || [], state, navigation, t, projectText, deleteText })),
+        state.error && !state.editor && React.createElement('div', { role: 'alert', className: 'dshHistoryNotice' }, projectText(state.error),
+          React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: navigation.projects.reload }, projectText('retry'))),
+        state.editor && React.createElement(ChatProjectDialog, { key: `${state.scope}:${state.editor.mode}:${state.editor.id || ''}`, store: navigation.projects, state, t: projectText }))
+    }
     const MODES_NS = 'desktop.chatWork'
     const MODES_COPY = {
       zh: { welcomeMessage: '来一起创造', welcome: '欢迎来到', newConversation: '新建对话', navigation: '导航', moreNavigation: '更多', recent: '对话', projects: '工作区', all: '所有会话', results: '搜索结果', cloud: '云端聊天', local: '本地工作', recentEmpty: '暂无最近会话', recentSearchEmpty: '当前列表没有匹配的会话', chat: '聊天', work: '工作', label: '聊天与工作', loading: '正在连接企业聊天…', error: '企业聊天连接失败，请重试', retry: '重新连接', refresh: '刷新聊天记录', historyLoading: '正在加载聊天记录…', historyError: '加载失败，点击重试', empty: '暂无聊天记录', more: '加载更多', newChat: '新聊天', signIn: '登录企业账号', signInTitle: '登录后使用聊天', signInDescription: '聊天由企业平台提供。登录后，即可使用平台中的模型和对话记录。', continueWork: '继续使用工作', close: '关闭', justNow: '刚刚' },
@@ -374,6 +648,8 @@ window.__ModuleLoader__.load({
     function createChatNavigation(ctx) {
       let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, signInPromptOpen: false, approvalsOpen: false, accountDialogOpen: false, settingsSurface: undefined, pageId: undefined, navigation: undefined, workLanding: false, nativeWork: true, panelOpen: false, activePanelId: null }
       const listeners = new Set()
+      const projects = createChatProjects()
+      let openRequest = 0
       let active = false, revision = 0, historyRequest = 0, historyDirty = false
       const publish = (patch) => { value = { ...value, ...patch }; listeners.forEach(fn => fn()) }
       const select = (mode) => {
@@ -416,10 +692,15 @@ publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page
         publish({ items: value.items.filter(item => item.id !== id), historyPhase: 'idle' })
         void refreshHistory()
       })
-      const open = async (id) => {
+      const open = async (id, projectId) => {
         if (!select('chat')) return
         const epoch = value.epoch
-        try { await window.dshEnterpriseChat.open(id); if (active && epoch === value.epoch) { publish({ conversationId: id }); void refreshHistory() } }
+        const request = ++openRequest
+        try {
+          if (projectId) await window.dshEnterpriseChat.open(id, projectId)
+          else await window.dshEnterpriseChat.open(id)
+          if (active && request === openRequest && epoch === value.epoch) { publish({ conversationId: id, draftProjectId: projectId }); void refreshHistory() }
+        }
         catch { if (active && epoch === value.epoch) void readHostState() }
       }
       // Account notifications also follow ordinary enterprise reads. The host epoch,
@@ -430,7 +711,8 @@ publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page
         const conversationChanged = next.conversationId !== value.conversationId
         const becameReady = next.phase === 'ready' && value.phase !== 'ready'
         const clearHistory = identityChanged || !next.connected
-if (clearHistory) { historyRequest++; historyDirty = false; deletion.reset() }
+if (clearHistory) { historyRequest++; openRequest++; historyDirty = false; deletion.reset() }
+        projects.setScope(next.connected ? next.projectScope : undefined, next.epoch)
         publish({
           ...next,
           ...(clearHistory ? { items: [], page: 0, hasMore: false, historyPhase: 'idle' } : {}),
@@ -461,9 +743,18 @@ if (clearHistory) { historyRequest++; historyDirty = false; deletion.reset() }
       return {
         snapshot: () => value,
         subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn) },
-        select, open, refreshHistory, deletion,
+        select, open, refreshHistory, deletion, projects,
+        startProjectChat(id) {
+          if (!value.connected || !projects.snapshot().projects.some(project => project.id === id)) return
+          projects.reveal(id)
+          ctx.layout.selectPanel(null)
+          void open('new', id)
+        },
+        requestProjectMove(id, title, epoch) {
+          if (epoch === value.epoch && value.connected && (value.items.some(item => item.id === id) || Object.hasOwn(projects.snapshot().assignments, id))) projects.edit('move', id, title)
+        },
         requestDelete(id, title, epoch) {
-          if (value.connected && epoch === value.epoch && value.items.some(item => item.id === id)) deletion.request(id, title, epoch)
+          if (value.connected && epoch === value.epoch && (value.items.some(item => item.id === id) || Object.hasOwn(projects.snapshot().assignments, id))) deletion.request(id, title, epoch)
         },
         bindWorkbench(service) {
           const sync = () => {
@@ -481,6 +772,7 @@ if (clearHistory) { historyRequest++; historyDirty = false; deletion.reset() }
         },
         async openPage(id) {
           if (!value.connected || !value.navigation?.entries.some(entry => entry.id === id)) return
+          openRequest++
           ctx.layout.selectPanel(null)
           publish({ mode: 'chat', pageId: id })
           const epoch = value.epoch
@@ -551,6 +843,11 @@ if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
             revision++
             applyState(next)
           })
+          const unsubscribeProjects = window.dshEnterpriseChat?.onProjectsChanged?.(next => {
+            const previous = projects.snapshot().revision
+            projects.apply(next)
+            if (next.epoch === value.epoch && next.revision !== previous) void refreshHistory()
+          })
           workState(); panel()
           window.addEventListener('dsh-desktop:enterprise-account-changed', account)
           window.addEventListener('dsh-desktop:settings-visibility', settings)
@@ -561,7 +858,7 @@ if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
           document.addEventListener('visibilitychange', visibility)
           void sync()
           return () => {
-active = false; deletion.reset(); revision++; historyRequest++; unsubscribe(); unsubscribeSessions(); unsubscribeWork(); unsubscribeChat?.()
+active = false; deletion.reset(); projects.setScope(undefined); revision++; historyRequest++; unsubscribe(); unsubscribeSessions(); unsubscribeWork(); unsubscribeChat?.(); unsubscribeProjects?.()
             window.removeEventListener('dsh-desktop:enterprise-account-changed', account)
             disposeNavigation()
             if (revealWorkSession && ctx.uiWorkspace.openSession === revealWorkSession) ctx.uiWorkspace.openSession = originalOpenSession
@@ -576,7 +873,7 @@ active = false; deletion.reset(); revision++; historyRequest++; unsubscribe(); u
       }
     }
     /** Cloud rows use the same title reveal speed and geometry as Harness sessions. */
-    function CloudHistoryRow({ item, selected, navigation, t, deleteText }) {
+    function CloudHistoryRow({ item, selected, navigation, t, projectText, deleteText }) {
       const [menuOpen, setMenuOpen] = React.useState(false)
       const title = React.useRef(null)
       const frame = React.useRef(0)
@@ -607,7 +904,17 @@ active = false; deletion.reset(); revision++; historyRequest++; unsubscribe(); u
         React.createElement(Menu, {
           open: menuOpen, onClose: () => setMenuOpen(false), portal: true, align: 'end', autoFocus: true, dense: true,
           anchor: React.createElement('button', { type: 'button', className: 'dshCloudHistoryActions', 'aria-label': deleteText('actions'), 'aria-haspopup': 'menu', 'aria-expanded': menuOpen, onClick: () => setMenuOpen(open => !open) }, '⋯')
-        }, React.createElement(MenuItemButton, {
+        }, projectText && React.createElement(MenuItemButton, {
+          disabled: navigation.projects.snapshot().phase !== 'ready', onSelect: () => {
+            const epoch = navigation.snapshot().epoch
+            setMenuOpen(false)
+            setTimeout(() => navigation.requestProjectMove(item.id, item.title || t('newChat'), epoch), 0)
+          }
+        }, projectText('move')),
+        projectText && Object.hasOwn(navigation.projects.snapshot().assignments, item.id) && React.createElement(MenuItemButton, {
+          onSelect: () => { setMenuOpen(false); navigation.projects.assign(item.id, undefined) }
+        }, projectText('moveOut')),
+        React.createElement(MenuItemButton, {
           danger: true, onSelect: () => {
             const epoch = navigation.snapshot().epoch
             setMenuOpen(false)
@@ -616,27 +923,39 @@ active = false; deletion.reset(); revision++; historyRequest++; unsubscribe(); u
         }, deleteText('menu'))))
     }
     /** Cloud identities stay namespaced; project ownership is projected by Harness. */
-    function SharedCollection({ projects, items, mode, query, archivedOnly, searchPending = false, navigation, t, deleteText }) {
+    function SharedCollection({ projects, items, mode, query, archivedOnly, searchPending = false, navigation, t, projectText, deleteText }) {
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
+      const projectState = React.useSyncExternalStore(navigation.projects.subscribe, navigation.projects.snapshot)
       const initialHistoryLoading = state.historyPhase === 'loading' && state.page === 0
-      const resultsPending = initialHistoryLoading || (mode === 'search' && searchPending)
+      const resultsPending = initialHistoryLoading || (mode === 'search' && searchPending) || projectState.search.phase === 'loading'
       const search = query.trim().toLocaleLowerCase()
+      React.useEffect(() => {
+        const timer = setTimeout(() => { void navigation.projects.search(archivedOnly || !state.connected ? '' : search) }, search ? 200 : 0)
+        return () => clearTimeout(timer)
+      }, [navigation, search, archivedOnly, state.connected, state.epoch])
+      const showProjects = mode === 'projects' && !archivedOnly && !search
       const local = items.map(item => ({ ...item, key: `work:${item.id}`, kind: 'work' }))
-      const cloud = archivedOnly ? [] : state.items.filter(item => (item.title || t('newChat')).toLocaleLowerCase().includes(search))
+      const cloudItems = [...new Map([...state.items, ...(search && projectState.search.query === search ? projectState.search.items : [])].map(item => [item.id, item])).values()]
+      const cloud = archivedOnly ? [] : cloudItems.filter(item => (!showProjects || !Object.hasOwn(projectState.assignments, item.id)) && (item.title || t('newChat')).toLocaleLowerCase().includes(search))
         .map(item => ({ ...item, key: `chat:${item.id}`, kind: 'chat', updatedAt: Date.parse(item.updatedAt) || 0 }))
       const rows = [...local, ...cloud].sort((a, b) => Number(!!b.blank) - Number(!!a.blank) || Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt || a.key.localeCompare(b.key))
       return React.createElement('div', { className: 'dshSharedCollection', 'data-mode': state.mode },
         projects(state.mode === 'work'),
+        showProjects && React.createElement(ChatProjects, { navigation, t, projectText, deleteText }),
         React.createElement('section', { className: 'dshRecentHistory', 'aria-label': t(mode === 'projects' ? 'recent' : mode === 'search' ? 'results' : 'all') },
           React.createElement('div', { className: 'dshHistoryHeading' },
             React.createElement('span', null, t(mode === 'projects' ? 'recent' : mode === 'search' ? 'results' : 'all'))),
           ...rows.map(item => item.kind === 'work'
             ? React.createElement('div', { key: item.key, 'data-history-kind': 'work' }, item.render(state.mode === 'work'))
-            : React.createElement(CloudHistoryRow, { key: item.key, item, selected: state.mode === 'chat' && !state.pageId && state.conversationId === item.id, navigation, t, deleteText })),
+            : React.createElement(CloudHistoryRow, { key: item.key, item, selected: state.mode === 'chat' && !state.pageId && state.conversationId === item.id, navigation, t, projectText, deleteText })),
           state.historyPhase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => navigation.refreshHistory() }, t('historyError')),
           initialHistoryLoading && React.createElement('div', { className: 'dshHistoryNotice', role: 'status' }, t('historyLoading')),
           rows.length === 0 && !resultsPending && React.createElement('div', { className: 'dshHistoryNotice' }, t(search ? 'recentSearchEmpty' : 'recentEmpty')),
-          state.hasMore && !archivedOnly && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: state.historyPhase === 'loading', onClick: () => navigation.refreshHistory(true) }, t('more'))))
+          search && projectState.search.phase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => { void navigation.projects.search(search) } }, projectText('unavailable')),
+          (state.hasMore || (search && projectState.search.nextCursor)) && !archivedOnly && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: state.historyPhase === 'loading' || projectState.search.phase === 'loading', onClick: () => {
+            if (state.hasMore) void navigation.refreshHistory(true)
+            if (search && projectState.search.nextCursor) void navigation.projects.search(search, true)
+          } }, t('more'))))
     }
     function historyTime(date, t) {
       const time = new Date(date).getTime()
@@ -645,62 +964,305 @@ active = false; deletion.reset(); revision++; historyRequest++; unsubscribe(); u
       if (elapsed >= 0 && elapsed < 60000) return t('justNow')
       return new Date(time).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })
     }
-    /** Host body portals own modal input; native content yields until the last one closes. */
-    function observeHostDialogs(report) {
-      const selector = '[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"], dialog[open]'
-      const portals = new Map()
-      let previous = false
-      let initialized = false
-      let disposed = false
+    /** Track semantic overlays, including inline menus and nested menus, without rescanning streamed content. */
+    function observeHostOverlays(report) {
+      const selector = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [role="tooltip"], dialog, [popover], [data-dsh-host-overlay]'
+      const elements = new Set()
+      const identities = new WeakMap()
+      const pending = new Set()
+      let style = document.querySelector('style[data-plugin-css="dsh-native-overlay-handoff"]')
+      if (!style) {
+        style = document.createElement('style')
+        style.dataset.pluginCss = 'dsh-native-overlay-handoff'
+        style.textContent = '[data-dsh-native-overlay-pending]{opacity:0!important;pointer-events:none!important}html[data-dsh-native-overlay-handoff] [data-menu-backing]{opacity:0!important}'
+        document.head.append(style)
+      }
+      style.dataset.observers = String(Number(style.dataset.observers || 0) + 1)
+      const release = () => {
+        if (!pending.size) return
+        for (const element of pending) element.removeAttribute('data-dsh-native-overlay-pending')
+        pending.clear()
+        document.documentElement.removeAttribute('data-dsh-native-overlay-handoff')
+      }
+      const intersects = (rect, bounds, surface) => (!surface || !rect.element.contains(surface)) && rect.x < bounds.x + bounds.width && rect.x + rect.width > bounds.x && rect.y < bounds.y + bounds.height && rect.y + rect.height > bounds.y
+      let nextId = 0, modals = [], rectangles = [], previous = '', initialized = false, disposed = false
+      const collect = node => {
+        if (!(node instanceof Element)) return false
+        let added = false
+        for (const element of [...(node.matches(selector) ? [node] : []), ...node.querySelectorAll(selector)]) {
+          if (elements.has(element)) continue
+          elements.add(element); identities.set(element, ++nextId); resize.observe(element); added = true
+        }
+        return added
+      }
       const refresh = () => {
         if (disposed || document.hidden) return
-        const children = new Set([...document.body.children].filter(element => element.id !== 'root' && !element.matches('script, style, link')))
-        for (const [element, observer] of portals) {
-          if (children.has(element)) continue
-          observer.disconnect()
-          portals.delete(element)
+        modals = []; rectangles = []
+        for (const element of elements) {
+          if (!element.isConnected || !element.matches(selector)) {
+            resize.unobserve(element); elements.delete(element); continue
+          }
+          // Our paint gate must not look like a dismissed menu to this observer.
+          if (!element.checkVisibility({ checkVisibilityCSS: true, opacityProperty: !pending.has(element) })) continue
+          const nativeModal = element instanceof HTMLDialogElement && element.matches(':modal')
+          if (element.getAttribute('aria-modal') === 'true' || nativeModal) { modals.push(element); continue }
+          if (element.matches('dialog:not([open])') || element.hasAttribute('popover') && !element.matches(':popover-open')) continue
+          // A persistent inline dialog region is content, not a floating surface.
+          if (element.matches('[role="dialog"], [role="alertdialog"]') && document.getElementById('root')?.contains(element) &&
+            !['absolute', 'fixed'].includes(getComputedStyle(element).position)) continue
+          const rect = element.getBoundingClientRect()
+          if (rect.width > 0 && rect.height > 0) rectangles.push({ element, x: rect.x, y: rect.y, width: rect.width, height: rect.height })
         }
-        for (const element of children) {
-          if (portals.has(element)) continue
-          const observer = new MutationObserver(refresh)
-          observer.observe(element, { childList: true, subtree: true, attributes: true, attributeFilter: ['role', 'aria-modal', 'open', 'hidden', 'style', 'class'] })
-          portals.set(element, observer)
-        }
-        const open = [...children].some(element => {
-          const dialogs = [...(element.matches(selector) ? [element] : []), ...element.querySelectorAll(selector)]
-          return dialogs.some(dialog => dialog.checkVisibility({ checkVisibilityCSS: true }) &&
-            (dialog.getAttribute('aria-modal') === 'true' || dialog.matches(':modal')))
-        })
-        if (open === previous) return
-        previous = open
-        if (initialized) report(open)
+        const signature = JSON.stringify([modals.map(element => identities.get(element)), rectangles.map(({ element, ...rect }) => [identities.get(element), rect])])
+        if (previous === signature) return
+        previous = signature
+        if (initialized) report()
       }
-      const body = new MutationObserver(refresh)
-      body.observe(document.body, { childList: true })
-      document.addEventListener('visibilitychange', refresh)
-      refresh()
-      initialized = true
-      return { isOpen: () => previous, dispose: () => {
-        disposed = true
-        body.disconnect()
-        for (const observer of portals.values()) observer.disconnect()
-        portals.clear()
-        document.removeEventListener('visibilitychange', refresh)
-      } }
+      const resize = new ResizeObserver(refresh)
+      const body = new MutationObserver(records => {
+        if (disposed || document.hidden) return
+        let changed = false
+        for (const record of records) {
+          if (record.type === 'childList') {
+            for (const node of record.addedNodes) changed = collect(node) || changed
+            if (elements.size && (record.removedNodes.length || record.target instanceof Element && record.target.closest(selector))) changed = true
+          } else if (record.target instanceof Element) {
+            if (record.target.matches(selector) && !elements.has(record.target)) changed = collect(record.target) || changed
+            if ([...elements].some(element => element === record.target || record.target.contains(element) || element.contains(record.target))) changed = true
+          }
+        }
+        if (changed) refresh()
+      })
+      // Only added subtrees are searched. Attribute changes outside an active overlay's
+      // ancestry are ignored; there is no per-token full-document query or polling loop.
+      body.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['role', 'aria-modal', 'open', 'popover', 'hidden', 'style', 'class', 'data-dsh-host-overlay'] })
+      const resume = () => { if (!document.hidden) { collect(document.body); refresh() } }
+      document.addEventListener('visibilitychange', resume)
+      window.addEventListener('scroll', refresh, true)
+      window.addEventListener('resize', refresh)
+      collect(document.body); refresh(); initialized = true
+      return {
+        // Settings/approvals may own this very native surface. Only a different
+        // foreground layer should cover their content, including nested confirmations.
+        isModal: surface => modals.some(element => !surface || !element.contains(surface)),
+        intersects: (bounds, surface) => rectangles.some(rect => intersects(rect, bounds, surface)),
+        defer: (bounds, surface) => {
+          // MutationObserver runs before paint. Keep both the surface and its native
+          // menu material out of that first paint until Main confirms the view yielded.
+          for (const rect of rectangles) if (intersects(rect, bounds, surface)) {
+            pending.add(rect.element)
+            rect.element.setAttribute('data-dsh-native-overlay-pending', '')
+          }
+          if (pending.size) document.documentElement.setAttribute('data-dsh-native-overlay-handoff', '')
+          return release
+        },
+        dispose() {
+          if (disposed) return
+          disposed = true; body.disconnect(); resize.disconnect(); elements.clear(); release()
+          const users = Number(style.dataset.observers) - 1
+          if (users) style.dataset.observers = String(users)
+          else style.remove()
+          document.removeEventListener('visibilitychange', resume)
+          window.removeEventListener('scroll', refresh, true); window.removeEventListener('resize', refresh)
+        }
+      }
+    }
+
+    /** Freeze only the backing while host overlays own input; keep the remote document alive. */
+    function createNativeSurfacePresenter(bridge, target) {
+      let latest, revision = 0, cycle = 0, preparing = false, held = false, yielded = false, image, cancelPaint, disposed = false
+      let warmReady, warmPending, warmImage, warmTimer, warmGeneration = 0
+      const releases = new Set()
+      const releaseOverlays = () => { for (const release of releases) release(); releases.clear() }
+      const frameKey = value => JSON.stringify([value.bounds, value.settings, value.theme, value.locale])
+      const clearWarm = retained => {
+        warmGeneration++; warmReady = undefined; warmPending = undefined; clearTimeout(warmTimer)
+        if (warmImage && warmImage !== retained) { cancelPaint?.(); warmImage.remove() }
+        warmImage = undefined
+      }
+      const clear = () => { image?.remove(); image = undefined; held = false; yielded = false; clearWarm() }
+      const backingFor = frame => {
+        const backing = document.createElement('img')
+        backing.dataset.dshNativeFrame = ''
+        backing.alt = ''; backing.setAttribute('aria-hidden', 'true')
+        Object.assign(backing.style, { position: 'absolute', zIndex: '0', pointerEvents: 'none', maxWidth: 'none', userSelect: 'none' })
+        backing.src = frame.dataURL
+        return backing
+      }
+      const decode = async backing => {
+        let timeout
+        try {
+          await Promise.race([backing.decode(), new Promise((_resolve, reject) => { timeout = setTimeout(() => reject(new Error('Backing decode timed out')), 1500) })])
+        } finally { clearTimeout(timeout) }
+      }
+      const warm = () => {
+        if (disposed || document.hidden || !bridge.capture || !latest?.value.visible || latest.occluded || held) return
+        const key = frameKey(latest.value)
+        if (warmReady?.key === key && Date.now() - warmReady.at < 250) return
+        if (warmPending?.key === key) return warmPending.promise
+        clearWarm()
+        const generation = warmGeneration
+        const promise = (async () => {
+          try {
+            const frame = await bridge.capture()
+            if (!frame || disposed || generation !== warmGeneration || key !== frameKey(latest.value)) return
+            const backing = backingFor(frame)
+            await decode(backing)
+            if (disposed || generation !== warmGeneration || key !== frameKey(latest.value)) return
+            warmImage = backing; placeBacking(backing, frame.bounds)
+            await paint()
+            if (disposed || generation !== warmGeneration || key !== frameKey(latest.value)) return
+            warmReady = { frame, backing, key, at: Date.now() }
+            // Only an interaction prepares a frame; no polling or long-lived page cache.
+            warmTimer = setTimeout(() => { if (generation === warmGeneration) clearWarm() }, 500)
+          } catch {
+            // Speculative preparation is optional; opening still has the normal capture path.
+            if (generation === warmGeneration) clearWarm()
+          } finally {
+            if (generation === warmGeneration) warmPending = undefined
+          }
+        })()
+        warmPending = { key, promise }
+        return promise
+      }
+      const paint = () => new Promise(resolve => {
+        let first, second, settled = false
+        const finish = () => {
+          if (settled) return
+          settled = true
+          cancelAnimationFrame(first); cancelAnimationFrame(second); clearTimeout(timeout)
+          cancelPaint = undefined; resolve()
+        }
+        // decode() makes pixels available, but the host must also composite them before
+        // the native sibling disappears. Bound the wait when the window becomes hidden.
+        const timeout = setTimeout(finish, 1500)
+        cancelPaint = finish
+        first = requestAnimationFrame(() => { second = requestAnimationFrame(finish) })
+      })
+      const send = async value => {
+        try { await bridge.present(value); return true }
+        catch { console.warn('[desktop-native-surface] presentation_failed'); return false }
+      }
+      const placeBacking = (backing, bounds) => {
+        const parent = target(latest.value)
+        if (!backing || !parent) return
+        if (backing.parentElement !== parent) parent.append(backing)
+        const rect = parent.getBoundingClientRect()
+        Object.assign(backing.style, { left: `${bounds.x - rect.x}px`, top: `${bounds.y - rect.y}px`, width: `${bounds.width}px`, height: `${bounds.height}px` })
+      }
+      const place = bounds => placeBacking(image, bounds)
+      const present = (value, occluded = false, defer) => {
+        if (disposed) return
+        const restoring = held || latest?.occluded
+        if (latest && frameKey(latest.value) !== frameKey(value)) clearWarm()
+        if (!latest || latest.value.visible !== value.visible || latest.occluded !== occluded || latest.value.settings !== value.settings) cycle++
+        latest = { value, occluded }
+        const request = ++revision
+        if (!value.visible || !occluded) {
+          // Restore the real surface before releasing its backing. A late response must
+          // not remove a newer overlay's frame or revive a view after mode/account changes.
+          if (!value.visible) clear()
+          yielded = false
+          releaseOverlays()
+          if (!value.visible || restoring) cancelPaint?.()
+          if (restoring) clearWarm()
+          void send(value).then(restored => { if (restored && restoring && !disposed && request === revision) clear() })
+          return
+        }
+        if (!yielded && defer) releases.add(defer())
+        if (held) {
+          place(value.bounds)
+          const current = cycle
+          void send({ ...value, visible: false }).then(applied => {
+            if (!disposed && current === cycle) { yielded = applied; releaseOverlays() }
+          })
+          return
+        }
+        if (preparing) return
+        preparing = true
+        const captureCycle = cycle
+        void (async () => {
+          let frame
+          try {
+            const key = frameKey(value)
+            if (warmPending?.key === key) await warmPending.promise
+            if (disposed || captureCycle !== cycle || !latest.value.visible || !latest.occluded) return
+            const prepared = warmReady?.key === key && Date.now() - warmReady.at < 250 ? warmReady : undefined
+            frame = prepared?.frame ?? await bridge.capture?.()
+            clearWarm(prepared?.backing)
+            if (disposed || captureCycle !== cycle || !latest.value.visible || !latest.occluded) return
+            if (frame) {
+              const backing = prepared?.backing ?? backingFor(frame)
+              if (!prepared) await decode(backing)
+              if (disposed || captureCycle !== cycle || !latest.value.visible || !latest.occluded) return
+              image = backing; place(frame.bounds)
+              if (!prepared) await paint()
+            }
+          } catch {
+            // Menus remain usable if capture/decoding fails; never retain a stale frame.
+            if (captureCycle === cycle) clear()
+            console.warn('[desktop-native-surface] overlay_backing_failed')
+          } finally {
+            preparing = false
+            if (!disposed && captureCycle !== cycle && latest.value.visible && latest.occluded && !held) present(latest.value, true)
+          }
+          if (disposed || captureCycle !== cycle || !latest.value.visible || !latest.occluded) return
+          held = true
+          const applied = await send({ ...latest.value, visible: false })
+          if (!disposed && captureCycle === cycle) { yielded = applied; releaseOverlays() }
+        })()
+      }
+      return { present, warm, invalidate: clearWarm, dispose() { disposed = true; revision++; cancelPaint?.(); clear(); releaseOverlays() } }
+    }
+    /** Start optional capture before a host control mounts its menu, for pointer and keyboard input. */
+    function observeNativeSurfaceIntent(warm) {
+      const types = ['pointerover', 'pointerout', 'pointerdown', 'focusin', 'keydown', 'contextmenu']
+      let hoverTimer, hovered
+      const prepare = event => {
+        const element = event.target
+        if (!(element instanceof Element) || element.closest('[data-dsh-native-surface]')) return
+        const control = element.closest('button, a[href], input, [role="button"], [role="combobox"], [aria-haspopup]')
+        if (event.type === 'pointerout') {
+          if (control && event.relatedTarget instanceof Element && control.contains(event.relatedTarget)) return
+          clearTimeout(hoverTimer); hovered = undefined
+          return
+        }
+        if (event.type === 'pointerover') {
+          if (!control || control === hovered) return
+          clearTimeout(hoverTimer); hovered = control
+          // Crossing a toolbar must not encode a full page for every icon passed.
+          hoverTimer = setTimeout(warm, 60)
+          return
+        }
+        if (event.type === 'keydown' && !['Enter', ' ', 'ArrowDown', 'ContextMenu', 'F10'].includes(event.key)) return
+        clearTimeout(hoverTimer)
+        if (event.type === 'contextmenu' || control) warm()
+      }
+      for (const type of types) document.addEventListener(type, prepare, true)
+      return () => { clearTimeout(hoverTimer); for (const type of types) document.removeEventListener(type, prepare, true) }
     }
     function DesktopModes({ work, columns, resizeHandle, navigation, t, locale }) {
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
+      const projectState = React.useSyncExternalStore(navigation.projects.subscribe, navigation.projects.snapshot)
+      const projectDialogOpen = projectState.editor !== null
+      const deletionRequest = React.useSyncExternalStore(navigation.deletion.subscribe, navigation.deletion.getSnapshot)
+      const cloudDeleteOpen = deletionRequest !== null
       const { mode, settingsOpen, settingsSurface } = state
       React.useEffect(() => navigation.start(), [navigation])
       const panel = React.useRef(null)
+      const surfacePresenter = React.useRef(null)
       const [animateWork, setAnimateWork] = React.useState(false)
       const tabs = React.useRef({})
+      // Geometry and mode subscriptions can remount without releasing an active backing.
+      // Identity changes and final unmount always destroy it, including in-flight captures.
+      React.useEffect(() => () => { surfacePresenter.current?.dispose(); surfacePresenter.current = null }, [state.epoch])
       React.useEffect(() => {
         const bridge = window.dshEnterpriseChat
         if (!bridge) return
         const appRoot = document.getElementById('root')
         let observedLeading
-        let dialogOpen = false
+        const presenter = surfacePresenter.current || (surfacePresenter.current = createNativeSurfacePresenter(bridge, value => value.settings
+          ? document.querySelector(`[data-dsh-native-surface="${value.settings}"]`) : panel.current))
         const present = () => {
           const rect = panel.current?.getBoundingClientRect()
           if (!rect) return
@@ -722,9 +1284,12 @@ active = false; deletion.reset(); revision++; historyRequest++; unsubscribe(); u
           const surfaceOpen = settingsOpen || state.approvalsOpen || state.accountDialogOpen
           const remote = surfaceOpen && state.settingsProtocolVersion === 1 && settingsSurface
 const safeModePageOpen = document.documentElement.hasAttribute('data-dsh-safe-mode-page')
-const hostModalOpen = dialogOpen || appRoot?.inert || document.documentElement.hasAttribute('data-dsh-about-open')
+const surface = remote ? document.querySelector(`[data-dsh-native-surface="${remote.section}"]`) : panel.current
+// Project dialogs have an explicit lifecycle; yield the native sibling as they open.
+const hostModalOpen = projectDialogOpen || cloudDeleteOpen || overlays.isModal(surface) || appRoot?.inert || document.documentElement.hasAttribute('data-dsh-about-open')
 const palette = hostPalette()
-void bridge.present({ visible: hostModalOpen ? false : (remote ? state.connected && remote.bounds.width > 0 && remote.bounds.height > 0 : mode === 'chat' && !surfaceOpen && !safeModePageOpen), ...(remote ? { settings: remote.section } : {}), ...(palette ? { palette } : {}), bounds: remote ? remote.bounds : { x, y, width: Math.max(0, rect.right - x), height: Math.max(0, rect.y + rect.height - y) }, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light', locale: locale.getSnapshot().active === 'zh' ? 'zh' : 'en' }).catch(() => {})
+const bounds = remote ? remote.bounds : { x, y, width: Math.max(0, rect.right - x), height: Math.max(0, rect.y + rect.height - y) }
+presenter.present({ visible: hostModalOpen ? false : (remote ? state.connected && remote.bounds.width > 0 && remote.bounds.height > 0 : mode === 'chat' && !surfaceOpen && !safeModePageOpen), ...(remote ? { settings: remote.section } : {}), ...(palette ? { palette } : {}), bounds, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light', locale: locale.getSnapshot().active === 'zh' ? 'zh' : 'en' }, overlays.intersects(bounds, surface), () => overlays.defer(bounds, surface))
         }
         // The native view follows the host's modal interaction boundary.
         // Onboarding makes #root inert while its dialog lives in a body portal.
@@ -743,15 +1308,16 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         if (frame) chromeLayout.observe(frame, { childList: true, attributes: true, attributeFilter: ['data-sidebar-collapsed'] })
         const theme = new MutationObserver(present)
         theme.observe(document.body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] })
-        const dialogs = observeHostDialogs(open => { dialogOpen = open; present() })
-        dialogOpen = dialogs.isOpen()
+        const overlays = observeHostOverlays(present)
+        const stopWarmup = observeNativeSurfaceIntent(() => { void presenter.warm() })
         const unsubscribeLocale = locale.subscribe(present)
         window.addEventListener('resize', present)
         present()
         return () => {
-          dialogs.dispose(); interaction.disconnect(); resize.disconnect(); chromeLayout.disconnect(); theme.disconnect(); unsubscribeLocale(); window.removeEventListener('resize', present)
+          stopWarmup(); overlays.dispose(); interaction.disconnect(); resize.disconnect(); chromeLayout.disconnect(); theme.disconnect(); unsubscribeLocale(); window.removeEventListener('resize', present)
         }
-      }, [mode, settingsOpen, state.approvalsOpen, state.accountDialogOpen, settingsSurface, state.connected, state.settingsProtocolVersion, locale])
+      }, [mode, settingsOpen, state.approvalsOpen, state.accountDialogOpen, settingsSurface, state.connected, state.epoch, state.settingsProtocolVersion, projectDialogOpen, cloudDeleteOpen, locale])
+      React.useEffect(() => { surfacePresenter.current?.invalidate() }, [state.path, state.pageId, state.phase])
       React.useEffect(() => () => {
         void window.dshEnterpriseChat?.present({ visible: false, bounds: { x: 0, y: 48, width: 0, height: 0 }, theme: 'light' }).catch(() => {})
       }, [])
@@ -777,7 +1343,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           React.createElement('div', { role: 'tablist', 'aria-label': t('label'), className: 'dshModesTabs', onKeyDown: keyDown },
             ...['chat', 'work'].map((key) => React.createElement('button', { key, id: `dsh-mode-${key}`, type: 'button', role: 'tab', 'aria-selected': mode === key, 'aria-controls': `dsh-panel-${key}`, tabIndex: mode === key ? 0 : -1, ref: (node) => { tabs.current[key] = node }, onClick: (event) => { setAnimateWork(event.detail > 0 && key === 'work'); select(key) } }, t(key))))),
         React.createElement('section', { id: 'dsh-panel-work', role: 'tabpanel', 'aria-label': t('work'), hidden: mode !== 'work', className: 'dshModeBody dshWorkContent', 'data-reveal-controls': animateWork, onTransitionEnd: event => { if (event.propertyName === 'clip-path') setAnimateWork(false) }, style: { gridTemplateColumns: columns } }, work, resizeHandle),
-        React.createElement('section', { ref: panel, id: 'dsh-panel-chat', role: 'tabpanel', 'aria-label': t('chat'), hidden: mode !== 'chat', className: 'dshModeBody' },
+        React.createElement('section', { ref: panel, id: 'dsh-panel-chat', 'data-dsh-native-surface': '', role: 'tabpanel', 'aria-label': t('chat'), hidden: mode !== 'chat', className: 'dshModeBody' },
           React.createElement('div', { className: 'dshChatStatus', role: 'status' },
             React.createElement('p', null, state.phase === 'error' ? t('error') : state.phase === 'ready' ? '' : t('loading')),
             state.connected && state.phase === 'error' && React.createElement('button', { type: 'button', onClick: () => { void window.dshEnterpriseChat.retry().catch(() => {}) } }, t('retry')))))
@@ -837,6 +1403,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
       ctx.effect(() => () => navigation.deletion.dispose())
       ctx.effect(() => ctx.locale.register(MODES_NS, MODES_COPY), 'desktop: Chat and Work locale')
       ctx.effect(() => ctx.locale.register(CLOUD_DELETE_NS, CLOUD_DELETE_COPY))
+      ctx.effect(() => ctx.locale.register(PROJECTS_NS, PROJECTS_COPY))
       ctx.slots.inject('shell.overlay', () => ctx.slots.register({
         name: 'shell.overlay', id: 'desktop-cloud-chat-delete-dialog', locale: CLOUD_DELETE_NS,
         inject: () => ({ deletion: navigation.deletion, t: ctx.locale.bind(CLOUD_DELETE_NS) })
@@ -863,6 +1430,18 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           .dshSharedCollection{min-width:0}
           .dshRecentHistory{margin-top:12px;min-width:0}
           .dshHistoryHeading{display:flex;align-items:center;justify-content:space-between;padding:4px 8px 12px;color:var(--dsw-alias-label-secondary);font-size:13px}
+          .dshChatProjects{margin-top:12px;min-width:0}.dshChatProjects>.dshHistoryHeading{padding-bottom:4px}
+          .dshChatProjectHeading{display:flex;align-items:center;min-width:0;border-radius:8px;min-height:32px;padding:0 4px 0 8px}
+          .dshChatProjectHeading:hover,.dshChatProjectHeading:focus-within{background:var(--dsw-alias-interactive-bg-hover)}
+          .dshChatProjectToggle,.dshChatProjectCreate{display:flex;align-items:center;gap:8px;min-width:0;border:0;background:transparent;font:inherit;color:var(--dsw-alias-label-primary);text-align:left;cursor:pointer}
+          .dshChatProjectToggle{flex:1;padding:6px 0}.dshChatProjectToggle svg{flex:none}.dshChatProjectToggle span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+          .dshChatProjectAction{flex:none;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;font:inherit;color:var(--dsw-alias-label-secondary);cursor:pointer}
+          .dshChatProjectAction:hover{background:var(--dsw-alias-interactive-bg-hover)}.dshChatProjectAction:disabled{opacity:.5;cursor:default}
+          .dshChatProjectCreate{width:100%;padding:6px 8px;border-radius:8px;color:var(--dsw-alias-label-secondary)}.dshChatProjectCreate:hover{background:var(--dsw-alias-interactive-bg-hover)}
+          .dshChatProjectEmpty{padding:6px 8px 6px 32px;font-size:12px;color:var(--dsw-alias-label-tertiary)}.dshChatProject .dshHistoryRow{padding-left:32px}
+          .dshChatProjectForm{display:grid;gap:12px}.dshChatProjectForm label{display:grid;gap:6px;color:var(--dsw-alias-label-primary)}
+          .dshChatProjectForm input,.dshChatProjectForm select{box-sizing:border-box;min-width:0;width:100%;padding:8px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font:inherit}
+          .dshChatProjectForm :is(input,select):focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
           .dshCloudHistoryRow{display:flex;align-items:center;min-width:0}
           .dshCloudHistoryRow>.dshHistoryRow{flex:1;min-width:0}
           .dshCloudHistoryActions{border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);width:28px;height:28px;cursor:pointer;font:inherit}
@@ -884,7 +1463,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
       ctx.slots.inject('sidebar.primaryNavigation', () => ctx.slots.register({ name: 'sidebar.primaryNavigation', id: 'desktop-primary-navigation', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS) }) }, PrimaryNavigation))
       ctx.slots.inject('sidebar.workspaces.title', () => ctx.slots.register({ name: 'sidebar.workspaces.title', inject: () => ({ t: ctx.locale.bind(MODES_NS) }) }, ({ flat, t }) => t(flat ? 'all' : 'projects')))
       ctx.slots.inject('desktop.mode.content', () => ctx.slots.register({ name: 'desktop.mode.content', id: 'desktop-chat-work', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS), locale: ctx.locale }) }, DesktopModes))
-      ctx.slots.inject('sidebar.workspaces.collection', () => ctx.slots.register({ name: 'sidebar.workspaces.collection', id: 'desktop-shared-collection', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS), deleteText: ctx.locale.bind(CLOUD_DELETE_NS) }) }, SharedCollection))
+      ctx.slots.inject('sidebar.workspaces.collection', () => ctx.slots.register({ name: 'sidebar.workspaces.collection', id: 'desktop-shared-collection', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS), projectText: ctx.locale.bind(PROJECTS_NS), deleteText: ctx.locale.bind(CLOUD_DELETE_NS) }) }, SharedCollection))
       return navigation
     }
 

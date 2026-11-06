@@ -8,6 +8,12 @@ export interface EnterpriseChatPresentation {
   palette?: EnterprisePalette
 }
 
+/** Ephemeral compositor backing for host overlays; never persisted or sent to the remote page. */
+export interface EnterpriseChatFrame {
+  dataURL: string
+  bounds: EnterpriseChatPresentation['bounds']
+}
+
 /** Roles the host samples from its own tokens; the embedded document never reads host CSS. */
 export const ENTERPRISE_PALETTE_ROLES = ['surface', 'raised', 'strong', 'labelPrimary', 'labelSecondary', 'labelTertiary', 'borderBase', 'borderDeep'] as const
 export type EnterprisePaletteRole = (typeof ENTERPRISE_PALETTE_ROLES)[number]
@@ -64,6 +70,10 @@ export interface EnterpriseChatViewState {
   epoch?: number
   landing?: boolean
   conversationId?: string
+  /** Stable, opaque enterprise identity for account-scoped desktop project storage. */
+  projectScope?: string
+  /** Project intent belongs to this particular blank cloud draft. */
+  draftProjectId?: string
   connected?: boolean
   phase: 'idle' | 'loading' | 'ready' | 'error'
   error?: string

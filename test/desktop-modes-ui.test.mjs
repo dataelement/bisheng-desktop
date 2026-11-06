@@ -9,6 +9,9 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 let root, container
 const disposers = []
 beforeEach(() => {
+  window.localStorage.clear()
+  vi.stubGlobal('requestAnimationFrame', callback => { queueMicrotask(() => callback(0)); return 0 })
+  vi.stubGlobal('cancelAnimationFrame', () => {})
   // jsdom supplies DOM state; the Electron fixture verifies native visibility/layout.
   const original = Element.prototype.checkVisibility
   Element.prototype.checkVisibility = function () {
@@ -43,9 +46,37 @@ async function mount(connected = false, collection = {}, inert = false, workbenc
     effect(fn) { disposeWorkbench = fn() }
   })
   disposers.push(() => disposeWorkbench?.())
-  let snapshot = { connected, phase: 'ready', epoch: 1, conversationId: 'new', settingsProtocolVersion: 1 }
+  let snapshot = { connected, phase: 'ready', epoch: 1, conversationId: 'new', settingsProtocolVersion: 1, projectScope: 'account-a' }
   let chatListener
+  let projectListener
+  const projectAccounts = new Map()
+  const projectData = () => {
+    const key = snapshot.projectScope
+    if (!projectAccounts.has(key)) projectAccounts.set(key, { projects: [], assignments: {}, revision: 0 })
+    return projectAccounts.get(key)
+  }
+  const projectSnapshot = () => ({ ...structuredClone(projectData()), epoch: snapshot.epoch, revision: String(projectData().revision), phase: 'ready', connection: 'live' })
   window.dshEnterpriseChat = {
+    projectsState: vi.fn(async () => projectSnapshot()),
+    onProjectsChanged: fn => { projectListener = fn; return () => { projectListener = undefined } },
+    projectConversations: vi.fn(async input => ({ epoch: snapshot.epoch, revision: String(projectData().revision), nextCursor: null, items: input.query ? [] : Object.entries(projectData().assignments).filter(([, id]) => id === input.project_id).map(([id]) => ({ id, title: 'Cloud chat', updatedAt: '2026-10-16' })) })),
+    projectAction: vi.fn(async action => {
+      const data = projectData(), outcome = {}
+      if (action.operation === 'create') {
+        const id = crypto.randomUUID(); data.projects.unshift({ id, name: action.name }); outcome.project_id = id
+        if (action.chat_id) data.assignments[action.chat_id] = id
+      } else if (action.operation === 'assign') {
+        if (action.project_id) data.assignments[action.chat_id] = action.project_id
+        else delete data.assignments[action.chat_id]
+      } else if (action.operation === 'rename') data.projects = data.projects.map(project => project.id === action.project_id ? { ...project, name: action.name } : project)
+      else if (action.operation === 'delete') {
+        data.projects = data.projects.filter(project => project.id !== action.project_id)
+        data.assignments = Object.fromEntries(Object.entries(data.assignments).filter(([, id]) => id !== action.project_id))
+      }
+      data.revision++
+      projectListener?.(projectSnapshot())
+      return { epoch: snapshot.epoch, outcome }
+    }),
     subscribe: fn => { chatListener = fn; return () => { chatListener = undefined } },
     state: vi.fn(async () => ({ ...snapshot })),
     present: vi.fn(async () => ({ ...snapshot })),
@@ -67,10 +98,11 @@ async function mount(connected = false, collection = {}, inert = false, workbenc
   const setSessions = value => { sessionList = value; sessionListeners.forEach(fn => fn()) }
   const setPanel = id => { panelState = { activePanelId: id }; panelListeners.forEach(fn => fn()) }
   const registrations = new Map()
+  const dictionaries = new Map()
   window.__ModuleLoader__ = { load({ factory }) {
     plugin = factory(name => {
       if (name === 'react') return React
-      if (name === '@deepseek-ai/dsh-client-ui-primitives') return { Button: ({ variant, size, ...props }) => React.createElement('button', props), Modal: ({ children, title, footer, onClose, closeLabel }) => createPortal(React.createElement('div', { role: 'dialog', 'aria-modal': true, 'aria-label': title }, React.createElement('button', { onClick: onClose, 'aria-label': closeLabel }, closeLabel), children, footer), document.body), Menu: ({ anchor, open, items, onSelect }) => React.createElement('div', null, anchor, open && items.map(item => React.createElement('button', { key: item.id, role: 'menuitem', onClick: () => onSelect(item.id) }, item.label))) }
+      if (name === '@deepseek-ai/dsh-client-ui-primitives') return { Button: ({ variant, size, ...props }) => React.createElement('button', props), Modal: ({ children, title, description, footer, onClose, closeLabel }) => createPortal(React.createElement('div', { role: 'dialog', 'aria-modal': true, 'aria-label': title }, React.createElement('button', { onClick: onClose, 'aria-label': closeLabel }, closeLabel), description, children, footer), document.body), Menu: ({ anchor, open, items = [], children, onSelect }) => React.createElement('div', null, anchor, open && (children || items.map(item => React.createElement('button', { key: item.id, role: 'menuitem', onClick: () => onSelect(item.id) }, item.label)))), MenuItemButton: ({ children, onSelect, disabled }) => React.createElement('button', { role: 'menuitem', onClick: onSelect, disabled }, children) }
       throw new Error(name)
     })
   } }
@@ -85,7 +117,7 @@ async function mount(connected = false, collection = {}, inert = false, workbenc
     uiWorkspace: { registerNavigationHandler: (fn) => { navigate = fn; return () => {} }, startSession: () => { navigate('new'); setSessions({ phase: 'ready', byId: { draft: { id: 'draft', blank: true, retainedBy: { mainView: 1 } } } }); setPanel(null) } },
     sessions: { binding: id => id === 'draft' ? { session: liveSession } : undefined, list: { getSnapshot: () => sessionList, subscribe: fn => { sessionListeners.add(fn); return () => sessionListeners.delete(fn) } } },
     layout: { selectPanel: setPanel, panelInfo: { getSnapshot: () => panelState, subscribe: fn => { panelListeners.add(fn); return () => panelListeners.delete(fn) } } },
-    remote: {}, locale: { register() {}, bind: () => key => key, getSnapshot: () => ({ active: activeLocale }), subscribe: fn => { localeListeners.add(fn); return () => localeListeners.delete(fn) } },
+    remote: {}, locale: { register(ns, copy) { dictionaries.set(ns, copy) }, bind: ns => (key, args = {}) => ns === 'desktop.chatProjects' ? dictionaries.get(ns)[activeLocale][key].replace(/\{(\w+)\}/g, (_, name) => args[name]) : key, getSnapshot: () => ({ active: activeLocale }), subscribe: fn => { localeListeners.add(fn); return () => localeListeners.delete(fn) } },
     effect(fn) { const dispose = fn(); if (typeof dispose === 'function') disposers.push(dispose) },
     slots: {
       inject(name, fn) { if (['desktop.mode.content', 'sidebar.workspaces.collection', 'sidebar.primaryNavigation'].includes(name)) fn() },
@@ -105,6 +137,8 @@ async function mount(connected = false, collection = {}, inert = false, workbenc
     React.createElement(content.component, { ...content.props, columns: '1fr 0px', work: React.createElement('textarea', { 'aria-label': 'work draft', defaultValue: 'retained draft' }) })
   )))
   return {
+    projectStore: history.props.navigation.projects,
+    controller: history.props.navigation,
     async workbench(active, enabled = true) {
       await act(async () => {
         workbenchSnapshot = { state: { active }, enabled }
@@ -120,7 +154,7 @@ async function mount(connected = false, collection = {}, inert = false, workbenc
     navigate: (...args) => navigate(...args),
     async click(mode) { await act(async () => container.querySelector(`#dsh-mode-${mode}`).click()) },
     async account(next, epoch = 1) {
-      snapshot = { connected: next, phase: 'ready', epoch, conversationId: 'new', settingsProtocolVersion: 1 }
+      snapshot = { connected: next, phase: 'ready', epoch, conversationId: 'new', settingsProtocolVersion: 1, projectScope: 'account-a' }
       await act(async () => window.dispatchEvent(new CustomEvent('dsh-desktop:enterprise-account-changed')))
     },
     async pushState(patch) { snapshot = { ...snapshot, ...patch }; await act(async () => chatListener(snapshot)) },
@@ -133,6 +167,7 @@ async function mount(connected = false, collection = {}, inert = false, workbenc
     liveListenerCount: () => liveListeners.size,
     async cloudLanding(landing) { snapshot = { ...snapshot, landing }; await act(async () => chatListener(snapshot)) },
     async chatState(patch) { snapshot = { ...snapshot, ...patch }; await act(async () => chatListener(snapshot)) },
+    async projectState(patch) { Object.assign(projectData(), patch); projectData().revision++; await act(async () => projectListener?.(projectSnapshot())) },
     draft: () => container.querySelector('textarea')
   }
 }
@@ -290,6 +325,108 @@ it('interleaves recent cloud and unassigned local rows while projects appear onc
   await act(async () => container.querySelector('[data-local-row]').click())
   expect(container.querySelector('[data-local-row]').getAttribute('aria-current')).toBe('page')
   expect(ui.selected()).toBe('work')
+})
+
+it('places cloud projects between workspaces and conversations and files each chat once', async () => {
+  const ui = await mount(true)
+  await act(async () => {
+    ui.projectStore.edit('create')
+    await ui.projectStore.confirm('Research')
+  })
+  const id = ui.projectStore.snapshot().projects[0].id
+  expect([...container.querySelector('.dshSharedCollection').children].map(node => node.className || node.dataset.project)).toEqual(['true', 'dshChatProjects', 'dshRecentHistory'])
+  await act(async () => container.querySelector('.dshCloudHistoryActions').click())
+  await act(async () => [...container.querySelectorAll('[role=menuitem]')].find(node => node.textContent === 'Move to project').click())
+  await act(async () => new Promise(resolve => setTimeout(resolve, 1)))
+  expect(document.querySelector('[role=dialog]').getAttribute('aria-label')).toBe('Move to project')
+  expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
+  await act(async () => document.querySelector('.dshChatProjectForm').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+  expect(ui.projectStore.snapshot().assignments).toEqual({ 'cloud-a': id })
+  expect(container.querySelectorAll('[data-history-kind=chat]')).toHaveLength(1)
+  expect(container.querySelector('[data-chat-project]').textContent).toContain('Cloud chat')
+  expect(container.querySelector('.dshRecentHistory').textContent).not.toContain('Cloud chat')
+  await act(async () => container.querySelector('[data-chat-project] [data-history-kind=chat]').click())
+  expect(window.dshEnterpriseChat.open).toHaveBeenLastCalledWith('cloud-a')
+  await act(async () => {
+    ui.projectStore.edit('remove', id, 'Research')
+    await ui.projectStore.confirm('')
+  })
+  expect(container.querySelector('.dshRecentHistory').textContent).toContain('Cloud chat')
+  expect(container.querySelectorAll('[data-history-kind=chat]')).toHaveLength(1)
+})
+
+it('uses server membership instead of assigning from a delayed project route', async () => {
+  const ui = await mount(true)
+  let id
+  await act(async () => {
+    ui.projectStore.edit('create')
+    await ui.projectStore.confirm('Drafts')
+    id = ui.projectStore.snapshot().projects[0].id
+    ui.controller.startProjectChat(id)
+  })
+  expect(window.dshEnterpriseChat.open).toHaveBeenLastCalledWith('new', id)
+  await ui.chatState({ conversationId: 'new', path: '/c/new', draftProjectId: id })
+  await ui.chatState({ conversationId: 'created-in-project', path: '/c/created-in-project', draftProjectId: undefined })
+  expect(ui.projectStore.snapshot().assignments).toEqual({})
+  await ui.projectState({ assignments: { 'created-in-project': id } })
+  expect(ui.projectStore.snapshot().assignments).toEqual({ 'created-in-project': id })
+  await ui.chatState({ conversationId: 'unrelated', path: '/c/unrelated' })
+  expect(ui.projectStore.snapshot().assignments.unrelated).toBeUndefined()
+  await act(async () => ui.controller.startProjectChat(id))
+  await ui.chatState({ conversationId: 'new', path: '/c/new', draftProjectId: id })
+  await act(async () => ui.controller.open('cloud-a'))
+  await ui.chatState({ conversationId: 'cloud-a', path: '/c/cloud-a', draftProjectId: undefined })
+  expect(ui.projectStore.snapshot().assignments['cloud-a']).toBeUndefined()
+  await act(async () => ui.controller.startProjectChat(id))
+  await ui.chatState({ conversationId: 'new', path: '/c/new', draftProjectId: id })
+  await ui.chatState({ conversationId: 'new', path: '/c/new', draftProjectId: undefined })
+  await ui.chatState({ conversationId: 'ordinary-new', path: '/c/ordinary-new' })
+  expect(ui.projectStore.snapshot().assignments['ordinary-new']).toBeUndefined()
+  await act(async () => ui.controller.startProjectChat(id))
+  await ui.chatState({ conversationId: 'new', path: '/c/new', draftProjectId: id })
+  await ui.chatState({ epoch: 2, projectScope: 'account-b', conversationId: 'other-account', path: '/c/other-account', draftProjectId: undefined })
+  expect(ui.projectStore.snapshot()).toMatchObject({ projects: [], assignments: {}, editor: null })
+  await ui.chatState({ epoch: 3, projectScope: 'account-a', conversationId: 'new', path: '/c/new' })
+  expect(ui.projectStore.snapshot().assignments).toEqual({ 'created-in-project': id })
+})
+
+it('keeps assigned cloud conversations searchable and hides them on logout', async () => {
+  const ui = await mount(true, { mode: 'search', query: 'CLOUD', projects: () => null, items: [] })
+  await act(async () => {
+    ui.projectStore.edit('create')
+    await ui.projectStore.confirm('Research')
+    await ui.projectStore.assign('cloud-a', ui.projectStore.snapshot().projects[0].id)
+  })
+  expect(container.querySelector('.dshChatProjects')).toBeNull()
+  expect(container.querySelectorAll('[data-history-kind=chat]')).toHaveLength(1)
+  await ui.account(false)
+  expect(container.querySelectorAll('[data-history-kind=chat]')).toHaveLength(0)
+  expect(ui.projectStore.snapshot().projects).toEqual([])
+})
+
+it('keeps the latest project intent while an earlier blank navigation is still arriving', async () => {
+  const ui = await mount(true)
+  let first, second
+  await act(async () => {
+    ui.projectStore.edit('create')
+    await ui.projectStore.confirm('First')
+    first = ui.projectStore.snapshot().projects[0].id
+    ui.projectStore.edit('create')
+    await ui.projectStore.confirm('Second')
+    second = ui.projectStore.snapshot().projects[0].id
+    ui.controller.startProjectChat(first)
+    ui.controller.startProjectChat(second)
+  })
+  await ui.chatState({ conversationId: 'new', path: '/c/new', draftProjectId: first })
+  await ui.chatState({ conversationId: 'new', path: '/c/new', draftProjectId: second })
+  await ui.chatState({ conversationId: 'second-created', path: '/c/second-created', draftProjectId: undefined })
+  expect(ui.projectStore.snapshot().assignments).toEqual({})
+  await ui.projectState({ assignments: { 'second-created': second } })
+  expect(ui.projectStore.snapshot().assignments).toEqual({ 'second-created': second })
+  await act(async () => ui.projectStore.edit('rename', second, 'Second'))
+  expect(document.querySelector('[role=dialog]')).not.toBeNull()
+  await ui.account(false)
+  expect(document.querySelector('[role=dialog]')).toBeNull()
 })
 
 it('searches cloud titles with local results and keeps archived-only views local', async () => {
@@ -739,6 +876,32 @@ it('keeps native presentation stable while conversation content streams inside t
     for (let i = 0; i < 100; i++) stream.append(document.createTextNode('token '))
   })
   expect(window.dshEnterpriseChat.present).toHaveBeenCalledTimes(0)
+})
+
+it('retains the native backing across geometry subscription changes and clears it on account change', async () => {
+  const originalRect = HTMLElement.prototype.getBoundingClientRect, originalDecode = HTMLImageElement.prototype.decode
+  HTMLElement.prototype.getBoundingClientRect = () => ({ x: 280, y: 48, right: 1000, width: 720, height: 700 })
+  HTMLImageElement.prototype.decode = async () => {}
+  try {
+    const ui = await mount(true)
+    window.dshEnterpriseChat.capture = vi.fn(async () => ({ dataURL: 'data:image/png;base64,fixture', bounds: { x: 280, y: 48, width: 720, height: 700 } }))
+    let menu
+    await act(async () => { menu = hostDialog('<div role="menu">Session menu</div>') })
+    const backing = document.querySelector('[data-dsh-native-frame]')
+    expect(backing).not.toBeNull()
+    expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
+    await act(async () => window.dispatchEvent(new CustomEvent('dsh-desktop:settings-surface', { detail: { section: 'desktop-usage', bounds: { x: 300, y: 80, width: 500, height: 400 } } })))
+    expect(document.querySelector('[data-dsh-native-frame]')).toBe(backing)
+    expect(window.dshEnterpriseChat.capture).toHaveBeenCalledTimes(1)
+    await ui.account(false, 2)
+    expect(document.querySelector('[data-dsh-native-frame]')).toBeNull()
+    await act(async () => menu.remove())
+    expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
+  } finally {
+    HTMLElement.prototype.getBoundingClientRect = originalRect
+    if (originalDecode) HTMLImageElement.prototype.decode = originalDecode
+    else delete HTMLImageElement.prototype.decode
+  }
 })
 
 function deferredHistory() {

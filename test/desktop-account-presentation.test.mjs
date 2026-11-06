@@ -8,6 +8,14 @@ import { afterEach, expect, it, vi } from 'vitest'
 let cleanup
 afterEach(async () => { await cleanup?.(); cleanup = undefined; vi.unstubAllGlobals() })
 
+// The presenter observes these controllers before a project/delete modal mounts.
+const noDialog = () => null
+const projectSnapshot = { editor: null }
+const modalControllers = () => ({
+  projects: { subscribe: () => () => {}, snapshot: () => projectSnapshot },
+  deletion: { subscribe: () => () => {}, getSnapshot: noDialog }
+})
+
 const HOST_COLORS = {
   '--dsw-alias-bg-layer-2': 'rgb(44, 44, 46)',
   '--dsw-specific-input-major': 'rgb(40, 41, 45)',
@@ -38,11 +46,11 @@ async function presenter({ computedStyle } = {}) {
   let definition, Component
   const value = { mode: 'chat', connected: true, phase: 'ready', settingsProtocolVersion: 1, settingsOpen: false, approvalsOpen: false }
   const effects = []
-  const navigation = { start: vi.fn(() => vi.fn()), snapshot: () => value, subscribe: () => () => {} }
+  const navigation = { ...modalControllers(), start: vi.fn(() => vi.fn()), snapshot: () => value, subscribe: () => () => {} }
   dom.window.dshEnterpriseChat = { present: vi.fn(async () => {}) }
   dom.window.__ModuleLoader__ = { load: next => { definition = next } }
   const source = await readFile(new URL('../packages/dsh-desktop-client-ui/client.js', import.meta.url), 'utf8')
-  vm.runInNewContext(source, { window: dom.window, document: dom.window.document, ResizeObserver: class { observe() {} disconnect() {} }, MutationObserver: dom.window.MutationObserver, ...(computedStyle ? { getComputedStyle: computedStyle } : {}) })
+  vm.runInNewContext(source, { window: dom.window, document: dom.window.document, setTimeout, clearTimeout, Element: dom.window.Element, HTMLDialogElement: dom.window.HTMLDialogElement, ResizeObserver: class { observe() {} unobserve() {} disconnect() {} }, MutationObserver: dom.window.MutationObserver, ...(computedStyle ? { getComputedStyle: computedStyle } : {}) })
   const plugin = definition.factory(id => { if (id === 'react') return React; if (id === '@deepseek-ai/dsh-client-ui-primitives') return {}; throw new Error(id) })
   const locale = { register() {}, bind: () => key => key, getSnapshot: () => ({ active: 'en' }), subscribe: () => () => {} }
   plugin.apply({
@@ -90,12 +98,12 @@ it('presents approvals independently while preserving native Settings presentati
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   let definition, Component, value = { mode: 'chat', connected: true, phase: 'ready', settingsProtocolVersion: 1, settingsOpen: false, approvalsOpen: false }
   const listeners = new Set(), effects = []
-  const navigation = { start: vi.fn(() => vi.fn()), snapshot: () => value, subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener) } }
+  const navigation = { ...modalControllers(), start: vi.fn(() => vi.fn()), snapshot: () => value, subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener) } }
   const update = async patch => { await act(async () => { value = { ...value, ...patch }; listeners.forEach(listener => listener()) }) }
   dom.window.dshEnterpriseChat = { present: vi.fn(async () => {}) }
   dom.window.__ModuleLoader__ = { load: next => { definition = next } }
   const source = await readFile(new URL('../packages/dsh-desktop-client-ui/client.js', import.meta.url), 'utf8')
-  vm.runInNewContext(source, { window: dom.window, document: dom.window.document, ResizeObserver: class { observe() {} disconnect() {} }, MutationObserver: dom.window.MutationObserver })
+  vm.runInNewContext(source, { window: dom.window, document: dom.window.document, setTimeout, clearTimeout, Element: dom.window.Element, HTMLDialogElement: dom.window.HTMLDialogElement, ResizeObserver: class { observe() {} unobserve() {} disconnect() {} }, MutationObserver: dom.window.MutationObserver })
   const plugin = definition.factory(id => { if (id === 'react') return React; if (id === '@deepseek-ai/dsh-client-ui-primitives') return {}; throw new Error(id) })
   const locale = { register() {}, bind: () => key => key, getSnapshot: () => ({ active: 'en' }), subscribe: () => () => {} }
   plugin.apply({
