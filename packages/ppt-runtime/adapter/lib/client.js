@@ -230,6 +230,37 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 				this.states.delete(STAGED_MODE_KEY);
 				this.notify(STAGED_MODE_KEY);
 			}
+			/** Read a selection made outside this composer, such as from the phone. */
+			readRemote(sessionId, client, force = false) {
+				this.inflight ??= /* @__PURE__ */ new Map();
+				this.adopted ??= /* @__PURE__ */ new Set();
+				this.remoteEpoch ??= /* @__PURE__ */ new Map();
+				this.remoteReady ??= /* @__PURE__ */ new Set();
+				if (!client?.bound || typeof sessionId !== "string" || sessionId.trim().length === 0) return Promise.resolve("idle");
+				if (!force && this.remoteReady.has(sessionId)) return Promise.resolve("ready");
+				const epoch = force ? (this.remoteEpoch.get(sessionId) ?? 0) + 1 : this.remoteEpoch.get(sessionId) ?? 0;
+				if (force) {
+					this.remoteReady.delete(sessionId);
+					this.remoteEpoch.set(sessionId, epoch);
+				}
+				const pending = this.inflight.get(sessionId);
+				if (pending && (this.remoteEpoch.get(sessionId) ?? 0) === epoch) return pending;
+				const work = client.call("state").then((next) => {
+					if ((this.remoteEpoch.get(sessionId) ?? 0) !== epoch) return "stale";
+					this.setTemplateState(sessionId, next);
+					this.remoteReady.add(sessionId);
+					this.adopted.add(sessionId);
+					return "applied";
+				}).catch((reason) => {
+					if ((this.remoteEpoch.get(sessionId) ?? 0) !== epoch) return "stale";
+					this.setError(sessionId, reason instanceof Error ? reason.message : String(reason));
+					return "failed";
+				}).finally(() => {
+					if (this.inflight.get(sessionId) === work) this.inflight.delete(sessionId);
+				});
+				this.inflight.set(sessionId, work);
+				return work;
+			}
 			adopt(sessionId, client) {
 				this.inflight ??= /* @__PURE__ */ new Map();
 				this.adopted ??= /* @__PURE__ */ new Set();
@@ -238,10 +269,7 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 				if (pending) return pending;
 				if (this.adopted.has(sessionId)) return Promise.resolve("done");
 				const staged = this.states.get(STAGED_MODE_KEY);
-				if (!staged?.engaged) {
-					this.adopted.add(sessionId);
-					return Promise.resolve("idle");
-				}
+				if (!staged?.engaged) return this.readRemote(sessionId, client);
 				const work = this.applyStaged(sessionId, client, staged).finally(() => {
 					if (this.inflight.get(sessionId) === work) this.inflight.delete(sessionId);
 				});
@@ -720,7 +748,7 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 					if (!active) return;
 					if ((result === "applied" || result === "partial") && mode.snapshot(sessionId).activeMode === "ppt") announcePptMode(sessionId);
 					const current = mode.snapshot(sessionId);
-					if (current.templates.length > 0 || current.error !== "") return;
+					if (current.selectedId != null || current.error !== "") return;
 					const seenRevision = mode.revision(sessionId);
 					mode.setLoading(sessionId, true);
 					loadTemplateState(client, t("templates.loadTimeout")).then((next) => {
@@ -848,9 +876,9 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 				})]
 			})] });
 		}
-		/** Selected-template reference shown only while the standard Session is blank. */
+		/** Selected-template thumbnail. After the first message the template is pinned under that bubble. */
 		function OfficePptStandardInputAccessory(props) {
-			if (props.session == null || !props.session.blank) return null;
+			if (props.session == null || props.session.blank !== true) return null;
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(OfficePptInputAccessory, { ...props });
 		}
 		/** Monochrome presentation screen used by both PPT mode controls. */

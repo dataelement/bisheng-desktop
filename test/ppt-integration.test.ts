@@ -306,13 +306,18 @@ describe('opening PPT template card', () => {
       kindAt: (key: string) => string | undefined,
       pendingInputs: readonly { requestId?: string; placement?: string }[]
     ) => { leadingUserKey: string | null; leadingPendingId: string | null }
-    const kindAt = (key: string) => ({ a: 'context', b: 'user', c: 'user' })[key]
+    const kindAt = (key: string) => ({ a: 'context', b: 'user', c: 'user', d: 'steering' })[key]
 
     expect(openingUserMessageTarget(true, ['b'], kindAt, [])).toEqual({ leadingUserKey: null, leadingPendingId: null })
     expect(openingUserMessageTarget(false, ['a', 'b', 'c'], kindAt, [{ requestId: 'echo', placement: 'transcript' }])).toEqual({
       leadingUserKey: 'b',
       leadingPendingId: null
     })
+    expect(openingUserMessageTarget(false, ['a', 'd', 'b'], kindAt, [])).toEqual({
+      leadingUserKey: 'd',
+      leadingPendingId: null
+    })
+    expect(chat).toContain('kindAt(key) === "user" || kindAt(key) === "steering"')
     expect(openingUserMessageTarget(false, ['a'], kindAt, [
       { id: 'steer' } as { requestId?: string },
       { requestId: 'echo', placement: 'transcript' }
@@ -352,6 +357,8 @@ describe('opening PPT template card', () => {
     expect(card).not.toContain('template/select')
     expect(card).not.toContain('template/deselect')
     expect(card).not.toContain('session.blank')
+    const accessory = sourceSlice(adapter, 'function OfficePptStandardInputAccessory', 'function DesktopPptIcon')
+    expect(accessory).toContain('props.session.blank !== true')
     expect(adapter).toContain('"opening.preview": "预览模板 {name}"')
     expect(adapter).toContain('"opening.preview": "Preview template {name}"')
     expect(adapter).toContain('"opening.close": "关闭预览"')

@@ -30,6 +30,14 @@ import {
   REMOTE_USER_HEADER,
   accountsMatch
 } from './mobile-access-protocol'
+import {
+  isWorkRpcMethod,
+  MobileWorkUploads,
+  parseWorkDispatch,
+  readUploadResult,
+  readWorkEnvelope,
+  readWorkJson
+} from './mobile-work-rpc'
 
 const MAX_BODY_BYTES = 64 * 1024
 const PAIRING_TTL_MS = 5 * 60 * 1000
@@ -195,6 +203,7 @@ export class LanMobileBridge {
   /** Sessions moved here only by a desktop disconnect. Reconnect will not honor anything else. */
   private readonly resumableSessions = new Map<string, MobileSession>()
   private readonly pendingQuestions = new Map<string, PendingMobileQuestion>()
+  private readonly workUploads = new MobileWorkUploads()
   private ephemeralPin?: string
   private ephemeralPinExpiresAt?: number
   private readonly pinFailuresByIp = new Map<string, number[]>()
@@ -279,6 +288,7 @@ export class LanMobileBridge {
     this.suspendedSessions.clear()
     this.resumableSessions.clear()
     this.pendingQuestions.clear()
+    this.workUploads.clear()
     this.ephemeralPin = undefined
     this.ephemeralPinExpiresAt = undefined
     this.clearPinFailures()
@@ -1123,6 +1133,10 @@ export class LanMobileBridge {
         })
         return { status: result.ok ? 200 : 400, body: result }
       }
+      if (typeof input.method === 'string' && isWorkRpcMethod(input.method)) {
+        const result = await this.forwardWork(input.method, input.payload ?? {})
+        return { status: result.ok ? 200 : 400, body: result }
+      }
       if (typeof input.method !== 'string' || !RPC_ALLOWLIST.has(input.method)) {
         return { status: 403, body: { ok: false, error: 'RPC method is not available on mobile.' } }
       }
@@ -1422,6 +1436,95 @@ export class LanMobileBridge {
     const route = HARNESS_ENDPOINTS[method]
     if (route === undefined) return { ok: false, error: 'RPC method is not available on mobile.' }
     return this.invokeHarness(route.endpoint, route.args(fields))
+  }
+
+  /**
+   * Work-tab calls stay on the routes the desktop composer already uses.
+   * Upload chunks are reassembled here because a phone RPC body is capped.
+   */
+  private async forwardWork(
+    method: string,
+    payload: unknown
+  ): Promise<{ ok: boolean; value?: unknown; error?: string }> {
+    const dispatch = parseWorkDispatch(method, payload)
+    if ('error' in dispatch) return { ok: false, error: dispatch.error }
+    if (dispatch.kind === 'upload-start') return this.workUploads.start(payload, this.now())
+    if (dispatch.kind === 'upload-chunk') return this.workUploads.chunk(payload, this.now())
+    if (dispatch.kind === 'upload-finish') {
+      const ready = this.workUploads.finish(payload, this.now())
+      if (!ready.ok) return ready
+      return this.postWorkUpload(ready.value)
+    }
+    const base = this.options.harnessUrl()
+    if (!base) return { ok: false, error: 'Harness is not ready.' }
+    const rpcId = randomUUID()
+    if (dispatch.kind === 'json') {
+      const response = await this.harnessFetch(
+        new URL(dispatch.path, base),
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(dispatch.body),
+          signal: AbortSignal.timeout(30_000)
+        },
+        base
+      )
+      return readWorkJson(response.status, await response.text())
+    }
+    if (dispatch.kind === 'office') {
+      const response = await this.harnessFetch(
+        new URL('/api/office-templates', base),
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            type: 'client-request',
+            rpcId,
+            method: 'office-templates',
+            payload: dispatch.payload
+          }),
+          signal: AbortSignal.timeout(30_000)
+        },
+        base
+      )
+      if (!response.ok) return { ok: false, error: `Harness transport returned HTTP ${response.status}.` }
+      return readWorkEnvelope(await response.text(), rpcId)
+    }
+    const response = await this.harnessFetch(
+      new URL(`/dsh-ppt/${dispatch.endpoint}`, base),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ rpcId, payload: dispatch.payload }),
+        signal: AbortSignal.timeout(30_000)
+      },
+      base
+    )
+    if (!response.ok) return { ok: false, error: `Harness transport returned HTTP ${response.status}.` }
+    return readWorkEnvelope(await response.text(), rpcId)
+  }
+
+  private async postWorkUpload(upload: {
+    sessionId: string
+    name: string
+    body: Buffer
+  }): Promise<{ ok: boolean; value?: unknown; error?: string }> {
+    const base = this.options.harnessUrl()
+    if (!base) return { ok: false, error: 'Harness is not ready.' }
+    const url = new URL('/api/session/uploadFileBinary', base)
+    url.searchParams.set('sessionId', upload.sessionId)
+    url.searchParams.set('name', upload.name)
+    const response = await this.harnessFetch(
+      url,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/octet-stream' },
+        body: new Uint8Array(upload.body),
+        signal: AbortSignal.timeout(60_000)
+      },
+      base
+    )
+    return readUploadResult(response.status, await response.text())
   }
 
   private async invokeHarness(

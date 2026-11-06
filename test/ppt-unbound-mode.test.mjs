@@ -75,6 +75,38 @@ describe('unbound PPT mode', () => {
     expect(rpc.calls).toHaveLength(again)
   })
 
+  it('reads a phone-selected template when nothing was staged locally', async () => {
+    const mode = new Store()
+    const rpc = client(() => ({
+      templates: [{ id: 'dsh-blue-professional', name: 'Blue Professional', supportedModes: ['ppt'] }],
+      presentationMode: 'ppt',
+      selectedTemplateId: 'dsh-blue-professional'
+    }))
+    await mode.adopt('session-a', rpc)
+    expect(rpc.calls.map(call => call.endpoint)).toEqual(['state'])
+    expect(mode.snapshot('session-a').selectedId).toBe('dsh-blue-professional')
+    expect(mode.snapshot('session-a').activeMode).toBe('ppt')
+    const again = rpc.calls.length
+    await mode.adopt('session-a', rpc)
+    expect(rpc.calls).toHaveLength(again)
+  })
+
+  it('refreshes a remote selection after an empty read', async () => {
+    const mode = new Store()
+    let selected = null
+    const rpc = client(() => ({
+      templates: [{ id: 'dsh-blue-professional', supportedModes: ['ppt'] }],
+      presentationMode: selected === null ? null : 'ppt',
+      selectedTemplateId: selected
+    }))
+    await mode.readRemote('session-a', rpc)
+    expect(mode.snapshot('session-a').selectedId).toBeNull()
+    selected = 'dsh-blue-professional'
+    await mode.readRemote('session-a', rpc, true)
+    expect(mode.snapshot('session-a').selectedId).toBe('dsh-blue-professional')
+    expect(mode.snapshot('session-a').activeMode).toBe('ppt')
+  })
+
   it('does not write when the staged choice was cancelled', async () => {
     const mode = new Store()
     const rpc = client(() => ({ templates: [], presentationMode: null }))
