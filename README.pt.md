@@ -96,13 +96,13 @@ O DeepSeek Harness e suas dependências continuam sujeitos às respectivas licen
 
 O BISHENG atende empresas líderes de vários setores. Estes são alguns dos nossos clientes.
 
-![HSBC, Bosch, Watsons, China Mobile, COFCO e Shougang Group](docs/images/bisheng-customer-logos-row-1.png)
+![Administração Meteorológica da China, HSBC, Bosch, Watsons, China Mobile e COFCO](docs/images/bisheng-customer-logos-row-1.png)
 
-![China Baowu, CICC, SINOSURE, PetroChina, ICBC e Bank of Chongqing](docs/images/bisheng-customer-logos-row-2.png)
+![Shougang Group, China Baowu, CICC, SINOSURE, PetroChina e ICBC](docs/images/bisheng-customer-logos-row-2.png)
 
-![PowerChina, Huatai Securities, Huaxia Bank, Liaoning Financial Holdings, China Minsheng Bank e Longhua Capital](docs/images/bisheng-customer-logos-row-3.png)
+![Bank of Chongqing, PowerChina, Huatai Securities, Huaxia Bank, Liaoning Financial Holdings e China Minsheng Bank](docs/images/bisheng-customer-logos-row-3.png)
 
-![JSTI, China CITIC Bank, AVIVA-COFCO, BAIC Group, China Bond Rating e Administração Meteorológica da China](docs/images/bisheng-customer-logos-row-4.png)
+![Longhua Capital, JSTI, China CITIC Bank, AVIVA-COFCO, BAIC Group e China Bond Rating](docs/images/bisheng-customer-logos-row-4.png)
 
 ## Consultas empresariais
 
