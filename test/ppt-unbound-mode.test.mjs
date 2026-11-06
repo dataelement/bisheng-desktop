@@ -100,6 +100,69 @@ describe('unbound PPT mode', () => {
     expect(mode.snapshot(undefined).activeMode).toBeNull()
   })
 
+  it('does not copy a Word or Excel id into the PPT field', async () => {
+    const mode = new Store()
+    const rpc = client(endpoint => {
+      if (endpoint === 'state') return {
+        templates: [{ id: 'built-in-a', supportedModes: ['ppt'] }, { id: 'coffee-market', supportedModes: ['word'] }],
+        documentMode: 'word',
+        selectedTemplateId: 'coffee-market',
+        selectedDocumentTemplate: { id: 'coffee-market', mode: 'word', revision: 'b'.repeat(24) }
+      }
+      throw new Error(endpoint)
+    })
+    mode.setMode(undefined, 'ppt')
+    mode.select(undefined, { id: 'built-in-a', supportedModes: ['ppt'] }, 'ppt')
+    await mode.adopt('session-a', rpc)
+    expect(rpc.calls.map(call => call.endpoint)).toEqual(['state'])
+    expect(mode.snapshot('session-a').selectedId).toBeNull()
+    expect(mode.snapshot('session-a').activeMode).toBeNull()
+  })
+
+  it('does not write an Office catalog id when adopting a staged PPT choice', async () => {
+    const mode = new Store()
+    const rpc = client(endpoint => {
+      if (endpoint === 'state') return { templates: [], presentationMode: null, selectedTemplateId: null }
+      if (endpoint === 'presentation/mode') return { presentationMode: 'ppt', selectedTemplateId: null }
+      throw new Error(endpoint)
+    })
+    mode.update(undefined, current => ({
+      ...current,
+      activeMode: 'ppt',
+      engaged: true,
+      selectedId: 'coffee-market',
+      templates: [{ id: 'coffee-market', supportedModes: ['word'] }]
+    }))
+    await mode.adopt('session-a', rpc)
+    expect(rpc.calls.map(call => call.endpoint)).toEqual(['state', 'presentation/mode'])
+    expect(rpc.calls.some(call => call.endpoint === 'template/select')).toBe(false)
+    expect(mode.snapshot('session-a').selectedId).toBeNull()
+    expect(mode.snapshot('session-a').activeMode).toBe('ppt')
+  })
+
+  it('keeps a verified PPT id when a later response names another catalog', () => {
+    const mode = new Store()
+    const client = { bound: true }
+    const request = { client, sessionId: 'session-a' }
+    mode.select('session-a', { id: 'built-in-a', supportedModes: ['ppt'] }, 'ppt')
+    const seenRevision = mode.revision('session-a')
+    const applied = mode.applyLoadedTemplates('session-a', client, seenRevision, {
+      templates: [{ id: 'built-in-a', supportedModes: ['ppt'] }, { id: 'coffee-market', supportedModes: ['word'] }],
+      presentationMode: 'ppt',
+      selectedTemplateId: 'coffee-market'
+    }, request)
+    expect(applied).toBe(true)
+    expect(mode.snapshot('session-a').selectedId).toBe('built-in-a')
+    expect(mode.snapshot('session-a').activeMode).toBe('ppt')
+    mode.applyLoadedTemplates('session-a', client, mode.revision('session-a'), {
+      templates: [{ id: 'built-in-a', supportedModes: ['ppt'] }],
+      documentMode: 'word',
+      selectedTemplateId: 'coffee-market'
+    }, request)
+    expect(mode.snapshot('session-a').selectedId).toBeNull()
+    expect(mode.snapshot('session-a').activeMode).toBeNull()
+  })
+
   it('keeps PPT mode and surfaces an error when the staged template cannot be selected', async () => {
     const mode = new Store()
     const rpc = client(endpoint => {

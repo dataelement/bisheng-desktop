@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
+import { mountRootInclude } from '@deepseek-ai/dsh-app-boot'
 import { Loader } from '@deepseek-ai/cordis-plugin-loader'
 import '@deepseek-ai/dsh-web'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -17,12 +18,19 @@ const target = process.platform + '-' + process.arch
 const pluginId = 'a'.repeat(32), versionId = 'b'.repeat(32)
 // Provider selection is business-plugin code, not market/host behavior.
 const source = `export const inject = ['enterpriseAuth', 'loader']
+function readConfig(config) {
+  const plain = {}
+  for (const [key, item] of Object.entries(config)) {
+    plain[key] = item && typeof item.get === 'function' ? item.get() : item
+  }
+  return plain
+}
 export async function apply(ctx, config) {
   const web = ctx.get('web')
   const entries = [...ctx.loader.entries()].filter(entry => entry.options.name === '@deepseek-ai/dsh-web' && entry.fiber?.state === 2 && entry.fiber.context.get('web')?.searchProviders === web?.searchProviders)
   if (!web || entries.length !== 1) throw new Error('Search plugin requires one active web service')
   const fiber = entries[0].fiber
-  const previous = fiber.config.searchProvider
+  const previous = readConfig(fiber.config).searchProvider
   const provider = ctx.inject(['web', 'enterpriseAuth'], scoped => {
     scoped.web.registerSearchProvider({ id: 'bs-web-search', available: () => scoped.enterpriseAuth.getState().connected, search: async (request, signal) => {
       const response = await scoped.enterpriseAuth.request('/business/search', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(request), signal })
@@ -31,12 +39,12 @@ export async function apply(ctx, config) {
     } })
   })
   ctx.effect(() => async () => {
-    if (fiber.state === 2 && fiber.config.searchProvider === 'bs-web-search') {
-      fiber.update({ ...fiber.config, searchProvider: previous }, true)
+    if (fiber.state === 2 && readConfig(fiber.config).searchProvider === 'bs-web-search') {
+      fiber.update({ ...readConfig(fiber.config), searchProvider: previous }, true)
       await fiber.await()
     }
   })
-  fiber.update({ ...fiber.config, searchProvider: 'bs-web-search' }, true)
+  fiber.update({ ...readConfig(fiber.config), searchProvider: 'bs-web-search' }, true)
   await fiber.await()
   await provider.await()
   if (config.fail) throw new Error('search activation failed')
@@ -48,14 +56,15 @@ async function fixture(options: { bridge?: boolean; disabledWeb?: boolean } = {}
   cleanups.push(() => rm(home, { recursive: true, force: true }))
   const profile = join(home, 'profiles', 'web')
   await mkdir(profile, { recursive: true })
-  await writeFile(join(profile, 'cordis.yml'), '- name: @deepseek-ai/dsh-web\n  config:\n    searchProvider: previous\n')
+  await writeFile(join(profile, 'cordis.yml'), JSON.stringify([{ id: 'web', name: '@deepseek-ai/dsh-web', config: { searchProvider: 'previous', fetchProvider: 'http' } }]))
   await mkdir(join(home, 'profiles', 'node_modules'), { recursive: true })
   await symlink(await realpath('node_modules/@deepseek-ai'), join(home, 'profiles', 'node_modules', '@deepseek-ai'), process.platform === 'win32' ? 'junction' : 'dir')
   const ctx = new Context()
   await ctx.plugin(Loader, { baseUrl: pathToFileURL(profile + '/').href })
   cleanups.push(() => ctx.fiber.dispose())
-  const webId = await ctx.loader.create({ name: '@deepseek-ai/dsh-web', config: { searchProvider: 'previous', fetchProvider: 'http' } })
-  const webEntry = ctx.loader.store[webId]
+  await mountRootInclude(ctx, join(profile, 'cordis.yml'))
+  await ctx.loader.await()
+  const webEntry = [...ctx.loader.entries()].find(entry => entry.options.id === 'web')
   const webFiber = webEntry?.fiber
   if (!webEntry || !webFiber) throw new Error('Web fixture did not create a runtime')
   await webFiber.await()
@@ -100,6 +109,16 @@ async function fixture(options: { bridge?: boolean; disabledWeb?: boolean } = {}
 }
 const install = (market: MarketController, config?: Record<string, unknown>) => market.act({ action: 'install', plugin_id: pluginId, config })
 
+function readConfig(config: object): Record<string, unknown> {
+  const plain: Record<string, unknown> = {}
+  for (const [key, item] of Object.entries(config)) {
+    plain[key] = item !== null && typeof item === 'object' && 'get' in item && typeof item.get === 'function'
+      ? item.get()
+      : item
+  }
+  return plain
+}
+
 describe('enterprise search market installation', () => {
   it('downloads, validates, activates and selects search; disabling restores the previous provider without persisting transient config', async () => {
     const { ctx, market, search, webEntry, profile, request } = await fixture({ disabledWeb: true })
@@ -125,9 +144,9 @@ describe('enterprise search market installation', () => {
 
   it('rolls back selection and installation when required host services are missing', async () => {
     const { ctx, market, webFiber } = await fixture({ bridge: false })
-    await expect(install(market)).rejects.toThrow(/dependencies or configuration/)
+    await expect(install(market)).rejects.toThrow(/enterpriseAuth|dependencies or configuration/)
     expect(market.state().installed).toEqual([])
-    expect(webFiber.config).toMatchObject({ searchProvider: 'previous' })
+    expect(readConfig(webFiber.config)).toMatchObject({ searchProvider: 'previous' })
     await expect(ctx.web.search({ query: 'test' })).resolves.toMatchObject({ content: 'previous result' })
   })
 
@@ -145,7 +164,7 @@ describe('enterprise search market installation', () => {
     expect(stopped).toBe(false)
     release?.()
     await stopping
-    expect(webFiber.config).toMatchObject({ searchProvider: 'previous', fetchProvider: 'changed' })
+    expect(readConfig(webFiber.config)).toMatchObject({ searchProvider: 'previous', fetchProvider: 'changed' })
     await expect(ctx.web.search({ query: 'test' })).resolves.toMatchObject({ content: 'previous result' })
   })
 

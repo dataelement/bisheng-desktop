@@ -67,6 +67,31 @@ async function brokerFetch(
 }
 
 describe('restricted enterprise credential broker', () => {
+  it('serializes a coded chat rejection as status and errorCode', async () => {
+    const { service, broker } = await createRuntime()
+    vi.spyOn(service, 'proxyChat').mockRejectedValue(Object.assign(
+      new Error('Enterprise model response timed out.'),
+      { status: 504, code: 'upstream_timeout' }
+    ))
+    const response = await brokerFetch(broker, '/v1/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        request: {
+          model: 'bisheng:42',
+          messages: [{ role: 'user', content: 'hello' }],
+          stream: true,
+          stream_options: { include_usage: true },
+          n: 1
+        }
+      })
+    })
+    expect(response.status).toBe(504)
+    expect(await response.json()).toEqual({
+      error: 'Enterprise model response timed out.',
+      errorCode: 'upstream_timeout'
+    })
+  })
+
   it('AC-T07/AC-T09: title route retains loopback security, cancellation and its own body limit', async () => {
     const { service, broker } = await createRuntime()
     const title = vi.spyOn(service, 'reportAuditTitle').mockResolvedValue({ status: 'UPDATED', title_event_seq: 12 })
@@ -136,6 +161,20 @@ describe('restricted enterprise credential broker', () => {
     })
     expect(JSON.stringify(payload)).not.toMatch(/access_token|refresh_token|session_id/u)
     expect(state.headers.get('access-control-allow-origin')).toBeNull()
+  })
+
+  it('authorizes metadata refresh through the narrow broker route', async () => {
+    const { broker, service } = await createRuntime()
+    const refresh = vi.spyOn(service, 'refreshModels')
+    const path = '/v1/models/refresh'
+    expect((await fetch(new URL(path, broker.url), { method: 'POST', body: '{}' })).status).toBe(401)
+    expect((await brokerFetch(broker, path, { method: 'POST', body: '{}', headers: { origin: 'https://example.com' } })).status).toBe(403)
+    expect((await brokerFetch(broker, path, { method: 'POST', body: JSON.stringify({ base: 'https://example.com' }) })).status).toBe(400)
+    expect(refresh).toHaveBeenCalledTimes(0)
+    const response = await brokerFetch(broker, path, { method: 'POST', body: '{}' })
+    expect(response.status).toBe(200)
+    assertPublicBrokerPayload(await response.json())
+    expect(refresh).toHaveBeenCalledTimes(1)
   })
 
   it('logs in through the fixed routes without exporting credentials', async () => {

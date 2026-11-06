@@ -63,6 +63,42 @@ describe('native enterprise Responses', () => {
     expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
   })
 
+  it('carries negotiated session metadata in the Responses body and sanitizes it at the broker boundary', async () => {
+    const sent = []
+    const fields = ['conversation_id', 'request_kind', 'session_origin', 'parent_conversation_id']
+    const adapter = new EnterpriseLlmAdapter({
+      models: () => [model], connectionKey: () => key, auditFields: () => fields,
+      resolveAuditSession: () => ({ session_origin: 'subagent', parent_conversation_id: 'parent-session' }),
+      requestResponses: async (request, _signal, attribution, connectionKey) => {
+        sent.push(parseEnterpriseResponsesPayload({ request, attribution, connectionKey }, fields))
+        return response()
+      }
+    })
+    await collect(adapter, { ...options(), purpose: 'compaction' })
+    expect(sent[0].request.audit_context).toEqual({
+      conversation_id: 'conv-1', request_kind: 'compaction', session_origin: 'subagent', parent_conversation_id: 'parent-session'
+    })
+    expect(JSON.stringify(sent[0].request.input)).not.toContain('audit_context')
+    const raw = { ...sent[0], request: { ...sent[0].request, audit_context: { ...sent[0].request.audit_context, user_id: 99, title: 'untrusted' } } }
+    delete raw.protocol
+    delete raw.model
+    expect(parseEnterpriseResponsesPayload(raw, ['conversation_id']).request.audit_context).toEqual({ conversation_id: 'conv-1' })
+    expect(parseEnterpriseResponsesPayload(raw).request).not.toHaveProperty('audit_context')
+  })
+
+  it('omits body metadata for an older platform and ignores an unsupported request purpose', async () => {
+    const { adapter, sent } = fixture()
+    await collect(adapter, options())
+    expect(sent[0].request).not.toHaveProperty('audit_context')
+    const requests = []
+    const supported = new EnterpriseLlmAdapter({
+      models: () => [model], connectionKey: () => key, auditFields: () => ['conversation_id', 'request_kind'],
+      requestResponses: async request => { requests.push(request); return response() }
+    })
+    await collect(supported, { ...options(), purpose: 'future-purpose' })
+    expect(requests[0].audit_context).toEqual({ conversation_id: 'conv-1' })
+  })
+
   it('persists full terminal-only encrypted reasoning and replays after JSON roundtrip', async () => {
     const { adapter, sent } = fixture(() => response([reasoning, message]))
     const first = await collect(adapter, options())

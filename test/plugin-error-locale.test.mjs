@@ -34,5 +34,5 @@ it('follows the interface language for a closed plugin market and a missing sche
   expect(localizeHostDiagnostic(schedule, translate('zh'))).toBe('deepseek-harness-daily 未启动，需要先启用官方插件「自动化任务」')
   expect(localizeHostDiagnostic(schedule, translate('en'))).toBe('deepseek-harness-daily did not start. Enable the official Automation plugin first')
   expect(localizeHostDiagnostic('disk full', translate('zh'))).toBeUndefined()
-  expect(source).toContain('localizeHostDiagnostic(inputProblem.reason, t)')
+  expect(source).toContain('localizeHostDiagnostic(problem.reason, t)')
 })

@@ -1,3 +1,8 @@
+import { createHash } from 'node:crypto'
+import { parseWorkSkillRequest, readSkillBytes } from './work-skills'
+import { parseWorkResourceRequest, readResourceJson } from './work-resources'
+import { parseWorkMcpRequest, sendWorkMcp } from './work-mcp'
+import { parseWebSession, type EnterpriseWebSession } from './web-session'
 import { parseMarketRequest } from './enterprise-market'
 import { parseEnterpriseResponsesPayload } from './enterprise-responses'
 import { discardWorkbenchArtifact, rememberWorkbenchArtifact, releaseWorkbenchArtifact as releaseRetainedWorkbenchArtifact, verifyWorkbenchArtifactResponse, WORKBENCH_ARTIFACT_LIMIT } from './workbench-artifact'
@@ -9,9 +14,13 @@ import type { ServerResponse } from 'node:http'
 import type { AuditContextField } from 'dsh-desktop-enterprise/contract'
 import {
   CHAT_HEADER_TIMEOUT_MS,
+  CHAT_FIRST_CHUNK_TIMEOUT_MS,
   CHAT_IDLE_TIMEOUT_MS,
   CHAT_MAX_CONCURRENT,
   CHAT_TOTAL_TIMEOUT_MS,
+  desktopChatAbortError,
+  enterpriseHeaderTimeoutAbortReason,
+  enterpriseSessionChangedAbortReason,
   isSseContentType,
   parseEnterpriseChatPayload
 } from './enterprise-chat'
@@ -127,6 +136,7 @@ export interface EnterpriseServiceOptions {
   fetchImpl: EnterpriseFetch
   allowInsecureLoopback: boolean
   note?: (entry: EnterpriseServiceNote) => void
+  onStateChange?: (state: EnterprisePublicState) => void
   now?: () => number
   startCallback?: typeof startLoginCallbackServer
 }
@@ -141,11 +151,6 @@ interface PendingLogin {
   expiresAt: number
   callback: EnterpriseLoginCallbackServer
 }
-
-const MODELS_INTERVAL_MS = 5 * 60 * 1000
-const MODELS_JITTER_MS = 15_000
-const DEGRADED_BACKOFF_MS = 30_000
-const MAX_DEGRADED_BACKOFF_MS = 5 * 60 * 1000
 
 export class EnterpriseService {
   private mutation: Promise<unknown> = Promise.resolve()
@@ -163,12 +168,12 @@ export class EnterpriseService {
   private errorCode: string | undefined
   private requestId: string | undefined
   private pendingLogin: PendingLogin | undefined
-  private modelsTimer: NodeJS.Timeout | undefined
+  private modelsRefresh: { epoch: number; promise: Promise<void> } | undefined
   private loginExpiryTimer: NodeJS.Timeout | undefined
-  private modelsAttempt = 0
   private lastPublicSignature = ''
   private chatInFlight = 0
   private readonly chatControllers = new Set<AbortController>()
+  private readonly authenticatedControllers = new Set<AbortController>()
   private allowPrivateHttpForSession = false
   private readonly authTransport = new EnterpriseAuthTransport()
   private readonly authVersionPrefix = randomUUID()
@@ -208,7 +213,7 @@ export class EnterpriseService {
   }
 
   snapshot(): EnterprisePublicState {
-    const connected = this.phase === 'connected' || this.phase === 'degraded' || this.phase === 'refreshing'
+    const connected = Boolean(this.session?.access_token) && (this.phase === 'connected' || this.phase === 'degraded' || this.phase === 'refreshing')
     return {
       connected,
       ...(connected && this.auditFields.length ? { audit_context: { fields: [...this.auditFields] } } : {}),
@@ -254,7 +259,7 @@ export class EnterpriseService {
       await this.refreshAuditCapability()
       this.clearError()
       this.publish()
-      this.scheduleModels(0)
+      void this.refreshModels(true)
     } catch (error) {
       this.session = null
       this.allowPrivateHttpForSession = false
@@ -313,6 +318,10 @@ export class EnterpriseService {
       const contract = await loadEnterpriseContract()
       await this.cancelPendingLogin()
       this.epoch += 1
+      for (const controller of this.chatControllers) controller.abort(enterpriseSessionChangedAbortReason())
+      this.chatControllers.clear()
+      for (const controller of this.authenticatedControllers) controller.abort(enterpriseSessionChangedAbortReason())
+      this.authenticatedControllers.clear()
       const loginEpoch = this.epoch
       this.pauseSessionForRelogin()
       const config = contract.parseConfig((await requestEnterpriseJson(
@@ -415,6 +424,25 @@ export class EnterpriseService {
     return this.refreshInFlight
   }
 
+  /** Synchronize catalog metadata using the current account's host-held credentials. */
+  async refreshModels(includeUsage = false): Promise<EnterprisePublicState> {
+    const epoch = this.epoch
+    let refresh = this.modelsRefresh
+    if (refresh?.epoch !== epoch) {
+      refresh = { epoch, promise: this.tickModels() }
+      this.modelsRefresh = refresh
+    }
+    try {
+      await refresh.promise
+    } finally {
+      if (this.modelsRefresh === refresh) this.modelsRefresh = undefined
+    }
+    if (includeUsage && this.epoch === epoch && this.phase === 'connected') {
+      await this.refreshUsageCatalog(epoch)
+    }
+    return this.snapshot()
+  }
+
   async logout(): Promise<EnterprisePublicState> {
     this.invalidateAuthSession()
     return this.enqueueMutation(async () => {
@@ -447,7 +475,7 @@ export class EnterpriseService {
   }
 
   async proxyResponses(payload: unknown, response: ServerResponse, signal: AbortSignal): Promise<void> {
-    const parsed = parseEnterpriseResponsesPayload(payload)
+    const parsed = parseEnterpriseResponsesPayload(payload, this.auditFields)
     if (parsed.connectionKey !== this.connectionKey()) {
       throw Object.assign(new Error('Enterprise session changed.'), { status: 409 })
     }
@@ -468,14 +496,13 @@ export class EnterpriseService {
       throw Object.assign(new Error('Too many enterprise chats.'), { status: 429 })
     }
     const epoch = this.epoch
-    const controller = new AbortController()
-    const combined = AbortSignal.any([signal, controller.signal])
-    this.chatControllers.add(controller)
+    const sessionController = new AbortController()
+    this.chatControllers.add(sessionController)
     this.chatInFlight += 1
     try {
-      await this.runChat(parsed, response, combined, epoch, false)
+      await this.runChat(parsed, response, signal, sessionController.signal, epoch, false)
     } finally {
-      this.chatControllers.delete(controller)
+      this.chatControllers.delete(sessionController)
       this.chatInFlight -= 1
     }
   }
@@ -484,10 +511,11 @@ export class EnterpriseService {
     this.invalidateAuthSession()
     this.auditFields = []
     await this.cancelPendingLogin()
-    this.clearModelsTimer()
     this.epoch += 1
-    for (const controller of this.chatControllers) controller.abort()
+    for (const controller of this.chatControllers) controller.abort(enterpriseSessionChangedAbortReason())
     this.chatControllers.clear()
+    for (const controller of this.authenticatedControllers) controller.abort(enterpriseSessionChangedAbortReason())
+    this.authenticatedControllers.clear()
   }
 
   private async completeLogin(expectedEpoch: number, result: LoginCallbackAccepted): Promise<void> {
@@ -604,7 +632,6 @@ export class EnterpriseService {
         this.phase = this.session ? 'degraded' : 'idle'
         this.modelsAvailable = false
         this.publish()
-        this.scheduleModels(this.degradedDelay())
         this.note('refresh_degraded', noteFromError(error))
         return this.snapshot()
       }
@@ -627,7 +654,6 @@ export class EnterpriseService {
       this.vaultGeneration = stored.generation
       this.session = stored.session
       this.clearError()
-      this.modelsAttempt = 0
       // Leave phase as refreshing; syncCatalog flips to connected after usage.
     } catch {
       this.invalidateAuthSession()
@@ -641,7 +667,6 @@ export class EnterpriseService {
       this.phase = 'reauthRequired'
       this.error = 'Enterprise credentials could not be saved. Sign in again.'
       this.errorCode = undefined
-      this.clearModelsTimer()
       this.publish()
       try {
         await this.options.vault.clear()
@@ -694,7 +719,6 @@ export class EnterpriseService {
     if (options.includeUsage) await this.refreshUsageCatalog(expectedEpoch)
     if (this.epoch !== expectedEpoch) return
     if (this.phase === 'refreshing') this.phase = 'connected'
-    if (this.phase === 'connected' || this.phase === 'degraded') this.scheduleModels(this.modelsDelay())
     this.publish()
   }
 
@@ -719,7 +743,8 @@ export class EnterpriseService {
         }
       )
       if (this.epoch !== epoch) return
-      this.models = contract.parseModelsLenient(modelsResult.body).map((model) => ({
+      const parsedModels = contract.parseModelsLenient(modelsResult.body)
+      this.models = parsedModels.map((model) => ({
         id: model.id,
         display_name: model.display_name,
         ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
@@ -727,10 +752,8 @@ export class EnterpriseService {
       }))
       this.modelsAvailable = this.models.length > 0
       if (this.phase === 'degraded') this.phase = 'connected'
-      this.modelsAttempt = 0
       this.clearError()
       this.publish()
-      this.scheduleModels(this.modelsDelay())
     } catch (error) {
       if (this.epoch !== epoch) return
       if (!accessRetried && error instanceof EnterprisePlatformError && error.code === 'invalid_access_token') {
@@ -751,26 +774,25 @@ export class EnterpriseService {
       this.phase = this.session ? 'degraded' : this.phase
       this.rememberRequest(error)
       this.publish()
-      this.modelsAttempt += 1
-      this.scheduleModels(this.degradedDelay())
     }
   }
 
   private async runChat(
     parsed: ReturnType<typeof parseEnterpriseChatPayload> | ReturnType<typeof parseEnterpriseResponsesPayload>,
     response: ServerResponse,
-    signal: AbortSignal,
+    callerSignal: AbortSignal,
+    sessionSignal: AbortSignal,
     epoch: number,
     retried: boolean
   ): Promise<void> {
-    if (this.epoch !== epoch) {
-      throw Object.assign(new Error('Enterprise session changed.'), { status: 409 })
-    }
+    if (this.epoch !== epoch) throw enterpriseSessionChangedAbortReason()
     const accessToken = await this.ensureAccess(epoch)
     const contract = await loadEnterpriseContract()
     const totalTimeout = AbortSignal.timeout(CHAT_TOTAL_TIMEOUT_MS)
     const headerController = new AbortController()
-    const headerTimer = setTimeout(() => headerController.abort(), CHAT_HEADER_TIMEOUT_MS)
+    const headerTimer = setTimeout(() => headerController.abort(enterpriseHeaderTimeoutAbortReason()), CHAT_HEADER_TIMEOUT_MS)
+    const lifetime = AbortSignal.any([callerSignal, sessionSignal])
+    const upstreamSignal = AbortSignal.any([lifetime, headerController.signal, totalTimeout])
     let upstream: Response
     try {
       upstream = await requestEnterpriseStream(
@@ -780,13 +802,14 @@ export class EnterpriseService {
         {
           body: parsed.request,
           accessToken,
-          signal: AbortSignal.any([signal, totalTimeout, headerController.signal]),
+          signal: upstreamSignal,
           ...this.platformRequestOptions(),
           attribution: parsed.attribution
         }
       )
     } catch (error) {
-      if (signal.aborted) throw error
+      const classified = desktopChatAbortError(upstreamSignal.reason)
+      if (classified !== undefined) throw classified
       throw error
     } finally {
       clearTimeout(headerTimer)
@@ -794,10 +817,8 @@ export class EnterpriseService {
     if (upstream.status === 401 && !retried && !response.headersSent) {
       await upstream.body?.cancel().catch(() => undefined)
       await this.refresh()
-      if (this.epoch !== epoch) {
-        throw Object.assign(new Error('Enterprise session changed.'), { status: 409 })
-      }
-      await this.runChat(parsed, response, signal, epoch, true)
+      if (this.epoch !== epoch) throw enterpriseSessionChangedAbortReason()
+      await this.runChat(parsed, response, callerSignal, sessionSignal, epoch, true)
       return
     }
     const contentType = upstream.headers.get('content-type')
@@ -807,7 +828,7 @@ export class EnterpriseService {
       this.writeForwarded(response, upstream, text)
       return
     }
-    await this.pipeSse(upstream, response, signal, 'protocol' in parsed)
+    await this.pipeSse(upstream, response, lifetime, 'protocol' in parsed)
     if (this.epoch === epoch) void this.syncUsage(epoch, parsed.model)
   }
 
@@ -965,6 +986,160 @@ export class EnterpriseService {
       return { bytes: Buffer.concat(chunks), binary: request.binary }
     }
     throw Object.assign(new Error('Enterprise login required.'), { status: 401 })
+  }
+
+  async workSkills(input: unknown, signal?: AbortSignal): Promise<{ bytes: Buffer; binary: boolean }> {
+    const request = parseWorkSkillRequest(input)
+    const epoch = this.epoch
+    const assertCurrent = () => {
+      signal?.throwIfAborted()
+      if (!this.snapshot().connected || this.connectionKey() !== request.connectionKey || this.epoch !== epoch) {
+        throw Object.assign(new Error('Enterprise account changed. Select skills again.'), { status: 409 })
+      }
+    }
+    assertCurrent()
+    const credential = await this.webSession(request.connectionKey)
+    assertCurrent()
+    const binary = request.operation === 'bundle'
+    const path = binary ? `/api/v1/linsight/skill/runtime/${request.id}/bundle?version=${request.version}`
+      : request.operation === 'dependencies' ? `/api/v1/dsh/work/skills/${request.id}/dependencies?version=${request.version}`
+      : '/api/v1/linsight/skill/runtime/catalog'
+    const { endpoint } = await resolveEnterpriseEndpoint(credential.base, path,
+      this.options.allowInsecureLoopback, this.platformRequestOptions().allowInsecurePrivateHttp)
+    assertCurrent()
+    const timeout = AbortSignal.timeout(120_000)
+    const response = await createEnterpriseFetch(this.options.fetchImpl)(endpoint.toString(), {
+      method: 'GET', signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+      headers: { cookie: `${credential.cookieName}=${credential.cookie}` }
+    })
+    const bytes = await readSkillBytes(response, binary ? 256 * 1024 * 1024 : 4 * 1024 * 1024)
+    assertCurrent()
+    if (binary) {
+      if (!response.headers.get('content-type')?.includes('application/zip') ||
+          createHash('sha256').update(bytes).digest('hex') !== response.headers.get('x-skill-archive-sha256')) throw new Error('Skill bundle verification failed.')
+    } else {
+      const result = JSON.parse(bytes.toString('utf8'))
+      if (result?.status_code !== 200 || !Array.isArray(result.data)) throw new Error('Skill catalog unavailable.')
+      return { bytes: Buffer.from(JSON.stringify(result.data)), binary }
+    }
+    this.options.note?.({ event: 'work_skill_bundle_read', status: 200 })
+    return { bytes, binary }
+  }
+
+  async workMcp(input: unknown, signal?: AbortSignal): Promise<unknown> {
+    const request = parseWorkMcpRequest(input)
+    const epoch = this.epoch
+    const controller = new AbortController()
+    const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
+    const assertCurrent = () => {
+      combined.throwIfAborted()
+      if (!this.snapshot().connected || this.connectionKey() !== request.connectionKey || this.epoch !== epoch) {
+        throw Object.assign(new Error('Enterprise account changed. Refresh Work capabilities.'), { status: 409 })
+      }
+    }
+    assertCurrent()
+    this.authenticatedControllers.add(controller)
+    try {
+      // webSession performs the verified Desktop exchange and access refresh.
+      const credential = await this.webSession(request.connectionKey)
+      assertCurrent()
+      const result = await sendWorkMcp({ request, credential, assertCurrent,
+        fetchImpl: this.options.fetchImpl, allowInsecureLoopback: this.options.allowInsecureLoopback,
+        allowInsecurePrivateHttp: this.platformRequestOptions().allowInsecurePrivateHttp, signal: combined })
+      this.options.note?.({ event: 'work_mcp_request', status: 200 })
+      return result
+    } finally { this.authenticatedControllers.delete(controller) }
+  }
+
+  async workResources(input: unknown, signal?: AbortSignal): Promise<unknown> {
+    const request = parseWorkResourceRequest(input)
+    const epoch = this.epoch
+    const assertCurrent = () => {
+      signal?.throwIfAborted()
+      if (!this.snapshot().connected || this.connectionKey() !== request.connectionKey || this.epoch !== epoch) {
+        throw Object.assign(new Error('Enterprise account changed. Select knowledge spaces again.'), { status: 409 })
+      }
+    }
+    assertCurrent()
+    const credential = await this.webSession(request.connectionKey)
+    assertCurrent()
+    const call = async (path: string, body?: unknown) => {
+      const { endpoint } = await resolveEnterpriseEndpoint(credential.base, path,
+        this.options.allowInsecureLoopback, this.platformRequestOptions().allowInsecurePrivateHttp)
+      assertCurrent()
+      const timeout = AbortSignal.timeout(60_000)
+      const response = await createEnterpriseFetch(this.options.fetchImpl)(endpoint.toString(), {
+        method: body === undefined ? 'GET' : 'POST',
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+        headers: { cookie: `${credential.cookieName}=${credential.cookie}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) })
+      })
+      const data = await readResourceJson(response)
+      assertCurrent()
+      return data
+    }
+    if (request.operation === 'retrieve') {
+      const data = await call('/api/v1/knowledge/space/retrieve', { query: request.query, space_ids: request.spaceIds })
+      this.options.note?.({ event: 'work_knowledge_retrieved', status: 200 })
+      return data
+    }
+    const spaces: { id: number, name: string, description: string, group: string, updatedAt: string }[] = []
+    const seen = new Set<number>()
+    for (const group of ['department', 'mine', 'joined']) {
+      const data = await call(`/api/v1/knowledge/space/${group}`)
+      if (!Array.isArray(data)) throw new Error('Knowledge space list is invalid.')
+      for (const row of data) {
+        if (!Number.isSafeInteger(row.id) || row.id <= 0 || typeof row.name !== 'string') continue
+        if (seen.has(row.id)) continue
+        seen.add(row.id)
+        spaces.push({ id: row.id, name: row.name, description: typeof row.description === 'string' ? row.description : '', group, updatedAt: typeof row.update_time === 'string' ? row.update_time : '' })
+      }
+    }
+    const available = []
+    for (let offset = 0; offset < spaces.length; offset += 10) {
+      const batch = spaces.slice(offset, offset + 10)
+      const allowed = await Promise.all(batch.map(async space => {
+        const result = await call('/api/v1/permissions/check', {
+          resource_type: 'knowledge_space', resource_id: String(space.id), action: 'visible'
+        })
+        if (typeof result !== 'object' || result === null || !('allowed' in result) || typeof result.allowed !== 'boolean') {
+          throw new Error('Knowledge space permission response is invalid.')
+        }
+        return result.allowed
+      }))
+      available.push(...batch.filter((_space, index) => allowed[index]))
+    }
+    return { spaces: available }
+  }
+
+  /** Host-only exchange. Credentials never cross the renderer or Harness Broker. */
+  async webSession(connectionKey: string): Promise<EnterpriseWebSession> {
+    const epoch = this.epoch
+    const assertCurrent = () => {
+      if (!this.snapshot().connected || this.connectionKey() !== connectionKey || this.epoch !== epoch) {
+        throw new Error('Enterprise account changed.')
+      }
+    }
+    assertCurrent()
+    let accessToken = await this.ensureAccess(epoch)
+    assertCurrent()
+    const base = this.session?.base
+    if (!base) throw new Error('Enterprise login required.')
+    const exchange = () => requestEnterpriseJson(this.options.fetchImpl, base, '/api/v1/dsh/web-session', {
+      ...this.platformRequestOptions(), method: 'POST', body: {}, accessToken
+    })
+    let result
+    try { result = await exchange() }
+    catch (error) {
+      if (!(error instanceof EnterprisePlatformError) || error.status !== 401) throw error
+      await this.refresh()
+      assertCurrent()
+      accessToken = await this.ensureAccess(epoch)
+      result = await exchange()
+    }
+    assertCurrent()
+    this.options.note?.({ event: 'web_session_created', status: result.status })
+    return parseWebSession(result.body, base, connectionKey, this.now())
   }
 
   async verifyWorkbenchArtifact(input: unknown): Promise<{ ok: boolean, stage?: string, error?: string }> {
@@ -1192,7 +1367,7 @@ export class EnterpriseService {
     }
     const reader = upstream.body.getReader()
     let totalBytes = 0
-    let idle = setTimeout(() => response.destroy(), CHAT_IDLE_TIMEOUT_MS)
+    let idle = setTimeout(() => response.destroy(), CHAT_FIRST_CHUNK_TIMEOUT_MS)
     const resetIdle = () => {
       clearTimeout(idle)
       idle = setTimeout(() => response.destroy(), CHAT_IDLE_TIMEOUT_MS)
@@ -1241,8 +1416,10 @@ export class EnterpriseService {
     this.invalidateAuthSession()
     this.auditFields = []
     this.epoch += 1
-    this.clearModelsTimer()
-    for (const controller of this.chatControllers) controller.abort()
+    for (const controller of this.chatControllers) controller.abort(enterpriseSessionChangedAbortReason())
+    this.chatControllers.clear()
+    for (const controller of this.authenticatedControllers) controller.abort(enterpriseSessionChangedAbortReason())
+    this.authenticatedControllers.clear()
     await this.cancelPendingLogin()
     this.session = null
     this.allowPrivateHttpForSession = false
@@ -1341,28 +1518,6 @@ export class EnterpriseService {
     })
   }
 
-  private scheduleModels(delayMs: number): void {
-    this.clearModelsTimer()
-    if (!this.session?.access_token) return
-    this.modelsTimer = setTimeout(() => {
-      void this.tickModels()
-    }, delayMs)
-    this.modelsTimer.unref?.()
-  }
-
-  private clearModelsTimer(): void {
-    if (this.modelsTimer) clearTimeout(this.modelsTimer)
-    this.modelsTimer = undefined
-  }
-
-  private modelsDelay(): number {
-    return MODELS_INTERVAL_MS + Math.floor(Math.random() * MODELS_JITTER_MS)
-  }
-
-  private degradedDelay(): number {
-    return Math.min(MAX_DEGRADED_BACKOFF_MS, DEGRADED_BACKOFF_MS * 2 ** Math.min(this.modelsAttempt, 4))
-  }
-
   private enqueueMutation<T>(work: () => Promise<T>): Promise<T> {
     const run = this.mutation.then(work, work)
     this.mutation = run.then(() => undefined, () => undefined)
@@ -1375,6 +1530,7 @@ export class EnterpriseService {
     if (signature === this.lastPublicSignature) return
     this.revision += 1
     this.lastPublicSignature = publicStateSignature({ ...snapshot, revision: this.revision })
+    this.options.onStateChange?.(this.snapshot())
   }
 
   private clearError(): void {

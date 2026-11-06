@@ -5,13 +5,14 @@ import { describe, expect, it } from 'vitest'
 
 const projectRoot = path.resolve(import.meta.dirname, '..')
 
-it('prepares the Office and PPT runtimes before focused Windows regressions', async () => {
+it('prepares only the PPT runtime before focused Windows regressions', async () => {
   const packageJson = JSON.parse(
     await readFile(path.join(projectRoot, 'package.json'), 'utf8')
   ) as { scripts: Record<string, string> }
 
-  expect(packageJson.scripts['pretest:windows']).toBe('npm run office:prepare && npm run ppt:build')
-  expect(packageJson.scripts['pretest:windows']).toBe(packageJson.scripts.pretest)
+  expect(packageJson.scripts['pretest:windows']).toBe('npm run ppt:build')
+  expect(packageJson.scripts.pretest).toBe('npm run reference-icons:prepare && npm run office:prepare && npm run ppt:build')
+  expect(packageJson.scripts.build).toContain('npm run office:prepare')
 })
 
 it('defaults Windows to focused regressions and makes recovery UI an explicit dispatch check', async () => {
@@ -26,9 +27,12 @@ it('defaults Windows to focused regressions and makes recovery UI an explicit di
   const focused = steps.find(step => step.name === 'Run focused Windows regressions')
   const complete = steps.find(step => step.name === 'Run complete Windows test suite')
   const recovery = steps.find(step => step.name === 'Check recovery UI on native Windows at three display scales')
-  expect(focused?.run).toBe('npm run test:windows')
-  expect(complete?.run).toBe('npm test')
-  expect(steps.some(step => step.run === 'npm run build')).toBe(false)
+  expect(focused?.run).toBe('npx --no-install vitest run --config vitest.windows.config.ts')
+  expect(complete?.run).toBe('npx --no-install vitest run')
+  const buildIndex = steps.findIndex(step => step.name === 'Build Windows application once')
+  expect(buildIndex).toBeGreaterThan(-1)
+  expect(buildIndex).toBeLessThan(steps.findIndex(step => step === focused))
+  expect(buildIndex).toBeLessThan(steps.findIndex(step => step === complete))
   expect(workflow.on.workflow_dispatch.inputs.windows_full_tests?.default).toBe(false)
   expect(workflow.on.workflow_dispatch.inputs.windows_recovery_ui?.default).toBe(false)
   const evaluate = (expression: string | undefined, event: string, inputs: Record<string, boolean>) =>
@@ -76,7 +80,7 @@ const releaseAssets = [
 ]
 
 /** The exact Harness build every `@deepseek-ai/dsh-*` production dep is pinned to. */
-const HARNESS_VERSION = '0.2.0-rc.2'
+const HARNESS_VERSION = '0.2.1-rc.2'
 
 describe('GitHub release contract', () => {
   it('keeps the package and lockfile versions aligned', async () => {
@@ -164,13 +168,20 @@ describe('GitHub release contract', () => {
     expect(packageLockRaw).not.toMatch(/file:packages\/harness-/)
   })
 
-  it('does not promote optional Harness providers and test support into the desktop runtime', async () => {
+  it('keeps the official Harness closure at one version without promoting optional providers or test support', async () => {
     const packageJson = JSON.parse(
       await readFile(path.join(projectRoot, 'package.json'), 'utf8')
     ) as { dependencies: Record<string, string> }
     const packageLock = JSON.parse(
       await readFile(path.join(projectRoot, 'package-lock.json'), 'utf8')
-    ) as { packages: Record<string, unknown> }
+    ) as { packages: Record<string, { version?: string }> }
+
+    for (const [location, metadata] of Object.entries(packageLock.packages)) {
+      const name = location.slice(location.lastIndexOf('node_modules/') + 'node_modules/'.length)
+      if (/^@deepseek-ai\/dsh(?:-|$)/.test(name)) {
+        expect(metadata.version, location).toBe(HARNESS_VERSION)
+      }
+    }
 
     const excludedHarnessPackages = [
       '@deepseek-ai/cordis-plugin-logger-console',
@@ -192,7 +203,6 @@ describe('GitHub release contract', () => {
       // 0.1.2-alpha.3, so its exclusion assertion is gone. dsh-storage-sqlite is
       // likewise no longer in the closure but its guard is kept defensively.
       '@deepseek-ai/dsh-session-snapshot',
-      '@deepseek-ai/dsh-session-title-all-prompts-llm',
       '@deepseek-ai/dsh-storage-sqlite',
       '@deepseek-ai/dsh-subagent-acp',
       '@deepseek-ai/dsh-subagent-claude-code',
@@ -200,8 +210,6 @@ describe('GitHub release contract', () => {
       '@deepseek-ai/dsh-subagent-dsh-sdk',
       '@deepseek-ai/dsh-subprocess-e2b',
       '@deepseek-ai/dsh-tool-lsp',
-      '@deepseek-ai/dsh-tool-session-query',
-      '@deepseek-ai/dsh-tool-terminal',
       '@deepseek-ai/dsh-web-search-exa',
       '@deepseek-ai/dsh-web-search-perplexity'
     ]
@@ -209,6 +217,17 @@ describe('GitHub release contract', () => {
     for (const packageName of excludedHarnessPackages) {
       expect(packageJson.dependencies[packageName]).toBeUndefined()
       expect(packageLock.packages[`node_modules/${packageName}`]).toBeUndefined()
+    }
+    // Official bundles own these, including the rc.2 retrieval API and model badge.
+    for (const packageName of [
+      '@deepseek-ai/dsh-tool-terminal',
+      '@deepseek-ai/dsh-tool-session-query',
+      '@deepseek-ai/dsh-session-title-all-prompts-llm',
+      '@deepseek-ai/dsh-web-deepseek-api',
+      '@deepseek-ai/dsh-client-ui-deepseek-model-label-1017'
+    ]) {
+      expect(packageJson.dependencies[packageName]).toBeUndefined()
+      expect(packageLock.packages[`node_modules/${packageName}`]).toBeDefined()
     }
     expect(packageLock.packages['node_modules/@anthropic-ai/claude-agent-sdk']).toBeUndefined()
     expect(packageLock.packages['node_modules/@openai/codex']).toBeUndefined()
@@ -234,6 +253,10 @@ describe('GitHub release contract', () => {
       path.join(projectRoot, 'build', 'windows-hidden-console.mjs'),
       'utf8'
     )
+    const windowsHideConsoleImport = await readFile(
+      path.join(projectRoot, 'build', 'windows-hide-console-import.mjs'),
+      'utf8'
+    )
 
     expect(packageJson.build.artifactName).toBe('bisheng-${os}-${arch}.${ext}')
     expect(packageJson.build.extraResources).toContainEqual({
@@ -252,10 +275,26 @@ describe('GitHub release contract', () => {
       to: 'host-module-fallback.mjs'
     })
     expect(harnessNodeEntry).toContain("from './host-module-fallback.mjs'")
+    expect(packageJson.build.extraResources).toContainEqual({
+      from: 'build/packaged-pnpm-invocation.mjs',
+      to: 'packaged-pnpm-invocation.mjs'
+    })
+    expect(harnessNodeEntry).toContain("from './packaged-pnpm-invocation.mjs'")
+    expect(packageJson.build.extraResources).toContainEqual({
+      from: 'build/office-engine-resolution.mjs',
+      to: 'office-engine-resolution.mjs'
+    })
+    expect(harnessNodeEntry).toContain("from './office-engine-resolution.mjs'")
     expect(windowsHiddenConsole).toContain('export function createHiddenConsole')
     expect(packageJson.build.extraResources).toContainEqual({
       from: 'build/windows-child-process-hide.mjs',
       to: 'windows-child-process-hide.mjs'
+    })
+    expect(windowsHideConsoleImport).toContain("await import('./windows-hidden-console.mjs')")
+    expect(windowsHideConsoleImport).toContain('enforceWindowsChildProcessHide')
+    expect(packageJson.build.extraResources).toContainEqual({
+      from: 'build/windows-hide-console-import.mjs',
+      to: 'windows-hide-console-import.mjs'
     })
     expect(packageJson.build.extraResources).toContainEqual({
       from: 'build/splash.html',
@@ -342,8 +381,16 @@ describe('GitHub release contract', () => {
     expect(workflow).toContain('merge-mac-update-metadata.mjs')
     expect(workflow).toContain('Verify release assets before publication')
     expect(workflow).toContain('verify-release-assets.mjs release-assets')
-    expect(workflow).toContain('dist/mac-arm64/BISHENG.app')
-    expect(workflow).toContain('dist/mac/BISHENG.app')
+    expect(workflow).toContain('Configure isolated macOS output')
+    expect(workflow).toContain(
+      'MACOS_OUTPUT_DIR=$RUNNER_TEMP/bisheng-macos-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${{ matrix.arch }}'
+    )
+    expect(workflow).toContain('--config.directories.output="$MACOS_OUTPUT_DIR"')
+    expect(workflow).toContain('$MACOS_OUTPUT_DIR/${{ matrix.app-directory }}/BISHENG.app')
+    expect(workflow).toContain(
+      'stage-development-assets.mjs ${{ matrix.arch }} "$MACOS_OUTPUT_DIR"'
+    )
+    expect(workflow).not.toContain('dist/${{ matrix.app-directory }}/BISHENG.app')
     expect(workflow).toContain('dist\\win-unpacked\\BISHENG.exe')
     expect(workflow).toContain("--name 'BISHENG'")
     expect(workflow).toContain('--title "BISHENG $release_tag"')
@@ -359,7 +406,6 @@ describe('GitHub release contract', () => {
       'package:mac:arm64',
       'package:mac:x64',
       'package:win',
-      'package:win:unpacked',
       'package:dev:mac:arm64',
       'package:dev:mac:x64',
       'package:dev:win'
@@ -408,18 +454,12 @@ describe('GitHub release contract', () => {
       'utf8'
     )
 
-    expect(workflow.match(/runs-on: \[self-hosted, macOS, ARM64\]/g)).toHaveLength(7)
-    expect(workflow).not.toContain('runs-on: macos-15-intel')
-    expect(workflow).toContain('runs-on: [self-hosted, macOS, bisheng-intel]')
-    expect(workflow).toContain('architecture: arm64')
-    expect(workflow).toContain('architecture: x64')
-    expect(workflow).toContain('shell: arch -x86_64 /bin/bash --noprofile --norc -e -o pipefail {0}')
-    expect(workflow).toContain('Require Rosetta for Intel packaging')
-    expect(workflow).toContain('arch -x86_64 /usr/bin/true')
-    expect(workflow).toContain('test "$(node -p \'process.arch\')" = x64')
-    expect(workflow).toContain('npm_config_arch: x64')
+    expect(workflow).toContain('runner: [self-hosted, macOS, ARM64]')
+    expect(workflow).toContain('runner: [self-hosted, macOS, bisheng-intel]')
+    expect(workflow).toContain('runs-on: ${' + '{ matrix.runner }}')
+    expect(workflow).toContain('runs-on: [self-hosted, macOS, bisheng-windows]')
     expect(workflow).toContain('runs-on: windows-2022')
-    expect(workflow).toContain('npm run package:dev:win')
+    expect(workflow).toContain('node scripts/electron-builder-windows.mjs --win --x64 --publish never --config electron-builder.dev.cjs')
     expect(workflow).toContain('Smoke test packaged Windows Harness')
     expect(workflow).toContain('$sourceExecutable = Get-Item $env:SMOKE_EXE')
     expect(workflow).toContain("$isolatedApp = Join-Path $env:RUNNER_TEMP")
@@ -436,6 +476,9 @@ describe('GitHub release contract', () => {
     expect(workflow).toContain("Invoke-HarnessRpc 'workspace/create'")
     expect(workflow).toContain("Invoke-HarnessRpc 'session/create'")
     expect(workflow).toContain('Harness process exited after workspace and session creation.')
+    expect(workflow).toContain('& taskkill.exe /PID $desktop.Id /T /F')
+    expect(workflow).toContain('Remove-Item -Recurse -Force $isolatedApp')
+    expect(workflow).toContain('Failed to remove packaged Windows smoke copy')
     expect(workflow).toContain('prerelease_tag:')
     expect(workflow).toContain('signed_version:')
     expect(workflow).toContain('mode:')
@@ -447,7 +490,7 @@ describe('GitHub release contract', () => {
       workflow.match(
         /npm version --no-git-tag-version --allow-same-version "\$\{\{ github\.ref_name \}\}"/g
       )
-    ).toHaveLength(4)
+    ).toHaveLength(3)
   })
 
   it('signs and notarizes both macOS architectures on tag releases', async () => {
@@ -466,17 +509,19 @@ describe('GitHub release contract', () => {
     ]) {
       expect(workflow).toContain(`secrets.${secret}`)
     }
-    expect(workflow.match(/Prepare macOS signing keychain/g)).toHaveLength(2)
-    expect(workflow.match(/xcrun stapler validate/g)).toHaveLength(4)
-    expect(workflow.match(/xcrun notarytool submit/g)).toHaveLength(2)
-    expect(workflow.match(/CSC_IDENTITY_AUTO_DISCOVERY: 'false'/g)).toHaveLength(2)
+    expect(workflow).toContain('bisheng-arm64-xcrun')
+    expect(workflow).toContain('if [ "${{ matrix.arch }}" = "x64" ]; then')
+    expect(workflow).toContain('exec /usr/bin/arch -arm64 /usr/bin/xcrun "$@"')
+    expect(workflow).toContain('"$xcrun_bridge/xcrun" --find notarytool')
+    expect(workflow).toContain('/usr/bin/xcrun --find notarytool')
+    expect(workflow.match(/Prepare macOS signing keychain/g)).toHaveLength(1)
+    expect(workflow.match(/xcrun stapler validate/g)).toHaveLength(2)
+    expect(workflow.match(/xcrun notarytool submit/g)).toHaveLength(1)
+    expect(workflow.match(/CSC_IDENTITY_AUTO_DISCOVERY: 'false'/g)).toHaveLength(1)
     expect(workflow).not.toContain("CSC_LINK: ''")
-    expect(workflow).toMatch(
-      /macos-apple-silicon:\r?\n\s+name: macOS Apple Silicon\r?\n(?:[\s\S]*?)runs-on: \[self-hosted, macOS, ARM64\]\r?\n\s+steps:/
-    )
-    expect(workflow).toMatch(
-      /macos-intel:\r?\n\s+name: macOS Intel\r?\n(?:[\s\S]*?)runs-on: \[self-hosted, macOS, bisheng-intel\]\r?\n\s+defaults:/
-    )
+    expect(workflow).toContain("runs-on: ${{ matrix.runner }}")
+    expect(workflow).toContain("runner: [self-hosted, macOS, ARM64]")
+    expect(workflow).toContain("runner: [self-hosted, macOS, bisheng-intel]")
     expect(workflow).toMatch(
       /windows-x64:\r?\n\s+name: Windows x64\r?\n(?:[\s\S]*?)runs-on: windows-2022\r?\n\s+steps:/
     )
@@ -490,7 +535,7 @@ describe('GitHub release contract', () => {
 
     expect(workflow).toContain('Stage unsigned Windows assets in draft release')
     expect(workflow).toContain('Sign Windows package locally with UKey')
-    expect(workflow).toContain('runs-on: [self-hosted, macOS, ARM64]')
+    expect(workflow).toContain('runs-on: [self-hosted, macOS, bisheng-windows]')
     expect(workflow).toContain('--storetype ETOKEN')
     expect(workflow).toContain('--storepass "file:$pin_file"')
     expect(workflow).toContain('--tsmode RFC3161')
@@ -507,6 +552,10 @@ describe('GitHub release contract', () => {
     expect(workflow).not.toContain('Restoring original Windows installer from backup')
     expect(workflow).toContain('win-unpacked.tar.gz')
     expect(workflow).toContain('--prepackaged')
+    expect(workflow).toContain('set -euo pipefail')
+    expect(workflow).not.toContain('Falling back to original installer')
+    expect(workflow).not.toContain('Restoring original Windows installer')
+    expect(workflow).toContain("if (Test-Path $packagedNode) { throw 'Standalone Windows node.exe must not be packaged.' }")
     expect(workflow).toContain('version="${PRERELEASE_TAG#v}"')
     expect(workflow).toContain('version="${SIGNED_VERSION#v}"')
     expect(workflow).not.toContain('version="${PRERELEASE_TAG:-${GITHUB_REF_NAME#v}}"')
@@ -515,6 +564,59 @@ describe('GitHub release contract', () => {
     expect(workflow).toMatch(
       /publish:[\s\S]*?needs\.sign-windows\.result == 'success'[\s\S]*?- sign-windows/
     )
+  })
+
+  it('keeps Windows signing independent of macOS packaging and notarization', async () => {
+    const { jobs } = createRequire(import.meta.url)('js-yaml').load(await readFile(path.join(projectRoot, '.github/workflows/release.yml'), 'utf8')) as {
+      jobs: Record<string, { needs?: string | string[]; if?: string }>
+    }
+    expect(jobs['sign-windows']?.needs).toEqual(['validate-dispatch', 'windows-x64'])
+    const ancestors = new Set<string>()
+    const pending = ['sign-windows']
+    while (pending.length > 0) {
+      const name = pending.pop()
+      if (!name || ancestors.has(name)) continue
+      ancestors.add(name)
+      expect(jobs[name]).toBeDefined()
+      const needs = jobs[name]?.needs ?? []
+      pending.push(...(Array.isArray(needs) ? needs : [needs]))
+    }
+    expect(ancestors.has('macos')).toBe(false)
+    for (const name of ancestors) {
+      expect(jobs[name]?.if ?? '').not.toContain('needs.macos')
+    }
+    for (const name of ['publish', 'publish-prerelease', 'publish-signed']) {
+      expect(jobs[name]?.needs).toContain('macos')
+      expect(jobs[name]?.needs).toContain('sign-windows')
+    }
+  })
+
+  it('uses local npm downloads and bounds Node setup on the persistent UKey signer', async () => {
+    const { jobs } = createRequire(import.meta.url)('js-yaml').load(await readFile(path.join(projectRoot, '.github/workflows/release.yml'), 'utf8')) as {
+      jobs: Record<string, {
+        'runs-on'?: string | string[]
+        steps: Array<{ uses?: string; with?: { cache?: string }; 'timeout-minutes'?: number }>
+      }>
+    }
+    const persistentJobs = Object.values(jobs).filter(job =>
+      Array.isArray(job['runs-on']) && job['runs-on'].includes('self-hosted')
+    )
+    expect(persistentJobs).toHaveLength(3)
+    for (const job of persistentJobs) {
+      const setup = job.steps.find(step => step.uses?.startsWith('actions/setup-node@'))
+      expect(setup).toBeDefined()
+      expect(setup?.with?.cache).toBeUndefined()
+      expect(setup?.['timeout-minutes']).toBe(5)
+    }
+    expect(jobs['windows-x64']?.steps.find(step => step.uses?.startsWith('actions/setup-node@'))?.with?.cache).toBe('npm')
+    const macosSetup = jobs.macos?.steps.filter(step => step.uses?.startsWith('actions/setup-node@')) ?? []
+    expect(macosSetup.length).toBeGreaterThan(0)
+    expect(macosSetup.every(step => step.with?.cache === undefined)).toBe(true)
+  })
+
+  it('does not change Windows security settings during installation', async () => {
+    const installer = await readFile(path.join(projectRoot, 'build', 'installer.nsh'), 'utf8')
+    expect(installer).not.toMatch(/Add-MpPreference|HKLM|ExecShell\s+"runas"/)
   })
 
   it('routes stable downloads through the website and previews through GitHub', async () => {
@@ -588,7 +690,7 @@ describe('prerelease parity workflow', () => {
       yml.match(
         /npm version --no-git-tag-version --allow-same-version "\$\{\{ inputs\.signed_version \}\}"/g
       )
-    ).toHaveLength(4)
+    ).toHaveLength(3)
   })
 
   it('publishes prereleases to their separate ModelScope path', async () => {

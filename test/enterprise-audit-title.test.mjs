@@ -71,6 +71,65 @@ describe('bounded audit title synchronization', () => {
     expect(send).toHaveBeenCalledTimes(8)
   })
 
+  it('logs retry status, correlation metadata and final exhaustion without private payloads', async () => {
+    const x = setup(vi.fn().mockRejectedValue(Object.assign(new Error('secret-token private-title upstream-body'), { status: 503 })))
+    x.sync.track(update.conversation_id)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(x.note).toHaveBeenLastCalledWith('retry', {
+      conversation_id: update.conversation_id, title_event_seq: 10, attempt: 1,
+      failure_kind: 'request_failed', http_status: 503, retry_in_ms: 1000
+    })
+    await vi.advanceTimersByTimeAsync(300000)
+    expect(x.send).toHaveBeenCalledTimes(7)
+    expect(x.note).toHaveBeenLastCalledWith('exhausted', {
+      conversation_id: update.conversation_id, title_event_seq: 10, attempt: 7,
+      failure_kind: 'request_failed', http_status: 503
+    })
+    const logs = JSON.stringify(x.note.mock.calls)
+    for (const value of [update.title, active.connectionKey, 'secret-token', 'private-title', 'upstream-body']) {
+      expect(logs).not.toContain(value)
+    }
+  })
+
+  it('logs non-retryable rejection with HTTP status and stops retrying', async () => {
+    const x = setup(vi.fn().mockRejectedValue(Object.assign(new Error('private upstream body'), { status: 400 })))
+    x.sync.track(update.conversation_id)
+    await vi.advanceTimersByTimeAsync(300000)
+    expect(x.send).toHaveBeenCalledOnce()
+    expect(x.note).toHaveBeenCalledExactlyOnceWith('rejected', {
+      conversation_id: update.conversation_id, title_event_seq: 10, attempt: 1,
+      failure_kind: 'request_failed', http_status: 400
+    })
+  })
+
+  it('distinguishes an upload timeout from an HTTP error', async () => {
+    const x = setup(vi.fn((_body, signal) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new Error('aborted')))
+    })))
+    x.sync.track(update.conversation_id)
+    await vi.advanceTimersByTimeAsync(5500)
+    expect(x.note).toHaveBeenCalledExactlyOnceWith('retry', {
+      conversation_id: update.conversation_id, title_event_seq: 10, attempt: 1,
+      failure_kind: 'timeout', retry_in_ms: 1000
+    })
+  })
+
+  it('records NOT_READY backoff and a terminal conflict', async () => {
+    const send = vi.fn().mockResolvedValueOnce({ status: 'NOT_READY' }).mockResolvedValue({ status: 'CONFLICT' })
+    const x = setup(send)
+    x.sync.track(update.conversation_id)
+    await vi.advanceTimersByTimeAsync(500)
+    expect(x.note).toHaveBeenLastCalledWith('retry', {
+      conversation_id: update.conversation_id, title_event_seq: 10, attempt: 1,
+      result: 'NOT_READY', retry_in_ms: 1000
+    })
+    await vi.advanceTimersByTimeAsync(300000)
+    expect(send).toHaveBeenCalledTimes(2)
+    expect(x.note).toHaveBeenLastCalledWith('not_applied', {
+      conversation_id: update.conversation_id, title_event_seq: 10, attempt: 2, result: 'CONFLICT'
+    })
+  })
+
   it('AC-T04: disabled is not remembered as a successful acknowledgement', async () => {
     const x = setup(vi.fn().mockResolvedValue({ status: 'DISABLED' }))
     x.sync.track(update.conversation_id)
@@ -107,7 +166,7 @@ describe('bounded audit title synchronization', () => {
       x.sync.track(id)
       x.emit('title', 1, id)
     }
-    expect(x.note).toHaveBeenCalledWith('capacity')
+    expect(x.note).toHaveBeenCalledWith('capacity', { conversation_id: 'e2e-title-128', title_event_seq: 1 })
     await vi.advanceTimersByTimeAsync(500)
     expect(send).toHaveBeenCalledTimes(1)
     const signal = send.mock.calls[0][1]

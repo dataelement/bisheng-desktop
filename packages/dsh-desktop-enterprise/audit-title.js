@@ -25,6 +25,12 @@ export function createAuditTitleSync({ ctx, send, note = () => {} }) {
   let running
   let disposed = false
 
+  // Only bounded routing metadata is diagnostic; never log titles, credentials or error bodies.
+  const diagnose = (reason, update, details = {}) => note(reason, {
+    conversation_id: update.conversation_id,
+    ...(update.title_event_seq === undefined ? {} : { title_event_seq: update.title_event_seq }),
+    ...details
+  })
   const touch = (map, key, value) => {
     map.delete(key)
     map.set(key, value)
@@ -58,7 +64,7 @@ export function createAuditTitleSync({ ctx, send, note = () => {} }) {
         (old && old.update.title_event_seq >= update.title_event_seq)) return
     const cost = Buffer.byteLength(JSON.stringify(update), 'utf8')
     const bytes = [...pending.values()].reduce((sum, item) => sum + item.cost, 0) - (old?.cost ?? 0)
-    if ((!old && pending.size >= 128) || bytes + cost > 512 * 1024) { note('capacity'); return }
+    if ((!old && pending.size >= 128) || bytes + cost > 512 * 1024) { diagnose('capacity', update); return }
     pending.set(id, { update, cost, attempts: 0, created: Date.now(), due: Date.now() + 500 })
     schedule()
   }
@@ -68,7 +74,7 @@ export function createAuditTitleSync({ ctx, send, note = () => {} }) {
     if (!item || !identity || disposed) { schedule(); return }
     if (Date.now() - item.created >= 300000) {
       pending.delete(item.update.conversation_id)
-      note('expired')
+      diagnose('expired', item.update, { attempts: item.attempts })
       schedule()
       return
     }
@@ -76,27 +82,41 @@ export function createAuditTitleSync({ ctx, send, note = () => {} }) {
     running = controller
     const timeout = setTimeout(() => controller.abort(), 5000)
     let retry = false
+    let failure
+    const attempt = item.attempts + 1
     try {
       const result = await send({ connectionKey: state.connectionKey, auditTitleEpoch: state.auditTitleEpoch, update: item.update }, controller.signal)
       if (current !== generation) return
       retry = result?.status === 'NOT_READY'
+      if (retry) failure = { result: 'NOT_READY' }
       if (['UPDATED', 'UNCHANGED'].includes(result?.status) && result.title_event_seq === item.update.title_event_seq) {
         touch(acknowledged, item.update.conversation_id, item.update)
-      } else if (!['STALE', 'CONFLICT', 'DISABLED', 'NOT_READY'].includes(result?.status)) {
-        note('invalid_response')
+      } else if (['STALE', 'CONFLICT', 'DISABLED'].includes(result?.status)) {
+        diagnose('not_applied', item.update, { attempt, result: result.status })
+      } else if (!retry) {
+        diagnose('invalid_response', item.update, { attempt })
       }
     } catch (error) {
       if (current !== generation) return
       const status = error?.status
       retry = !status || status === 429 || status >= 500
-      note(retry ? 'retry' : 'rejected')
+      failure = {
+        failure_kind: controller.signal.aborted ? 'timeout' : 'request_failed',
+        ...(Number.isInteger(status) && status >= 100 && status <= 599 ? { http_status: status } : {})
+      }
+      if (!retry) diagnose('rejected', item.update, { attempt, ...failure })
     } finally {
       clearTimeout(timeout)
       if (running === controller) running = undefined
       if (current === generation && pending.get(item.update.conversation_id) === item) {
         if (retry && item.attempts < delays.length && Date.now() - item.created < 300000) {
-          item.due = Date.now() + delays[item.attempts++]
-        } else pending.delete(item.update.conversation_id)
+          const delay = delays[item.attempts++]
+          item.due = Date.now() + delay
+          diagnose('retry', item.update, { attempt, ...failure, retry_in_ms: delay })
+        } else {
+          pending.delete(item.update.conversation_id)
+          if (retry) diagnose('exhausted', item.update, { attempt, ...failure })
+        }
       }
       schedule()
     }
@@ -122,7 +142,7 @@ export function createAuditTitleSync({ ctx, send, note = () => {} }) {
       const current = generation
       touch(registered, id, true)
       if (reads.has(id)) return
-      if (reads.size >= 512) { note('snapshot_capacity'); return }
+      if (reads.size >= 512) { diagnose('snapshot_capacity', { conversation_id: id }); return }
       const readTimer = setTimeout(() => {
         reads.delete(id)
         if (current !== generation || disposed || !registered.has(id)) return
@@ -130,7 +150,7 @@ export function createAuditTitleSync({ ctx, send, note = () => {} }) {
           const session = ctx.get?.('sessions')?.get(id)
           const title = session?.header?.id === id && ctx.get?.('sessionTitle')?.get(session)
           if (title) enqueue({ conversation_id: id, title: title.title, title_event_seq: title.eventSeq })
-        } catch { note('snapshot_unavailable') }
+        } catch { diagnose('snapshot_unavailable', { conversation_id: id }) }
       }, 0)
       reads.set(id, readTimer)
       readTimer.unref?.()

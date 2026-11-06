@@ -2,8 +2,9 @@ import { EventEmitter } from 'node:events'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createEnterpriseFetch, type EnterpriseFetch } from '../src/main/enterprise/platform-fetch'
+import { CHAT_HEADER_TIMEOUT_MS } from '../src/main/enterprise/enterprise-chat'
 import { EnterpriseService } from '../src/main/enterprise/enterprise-service'
 import {
   ENTERPRISE_VAULT_FILENAME,
@@ -306,5 +307,70 @@ describe('enterprise chat SSE proxy', () => {
     await pending
     expect(response.writableEnded).toBe(true)
     expect(response.text()).toContain('data: [DONE]')
+  })
+
+  it('reports session cleanup separately from an aborted operation', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    let entered: () => void = () => undefined
+    const enteredChat = new Promise<void>((resolve) => { entered = resolve })
+    const fetchImpl: EnterpriseFetch = async (input, init) => {
+      if (String(input).includes('/chat/completions')) {
+        entered()
+        return new Promise((_resolve, reject) => {
+          const fail = () => reject(new DOMException('This operation was aborted', 'AbortError'))
+          if (init?.signal?.aborted) fail()
+          else init?.signal?.addEventListener('abort', fail, { once: true })
+        })
+      }
+      return globalThis.fetch(input, init)
+    }
+    const service = await createService(createEnterpriseFetch(fetchImpl))
+    const started = await service.startLogin(origin)
+    await completeBrowserLogin(origin, started.authorizationUrl)
+    await waitFor(() => service.snapshot().phase === 'connected' && service.snapshot().modelsAvailable === true)
+    const pending = service.proxyChat(chatPayload(), new FakeResponse() as never, new AbortController().signal)
+    const failure = pending.then(() => { throw new Error('expected chat rejection') }, (error: unknown) => error)
+    await enteredChat
+    await service.logout()
+    await expect(failure).resolves.toMatchObject({
+      status: 409,
+      code: 'enterprise_session_changed',
+      message: 'Enterprise session changed.'
+    })
+  })
+
+  it('reports a header timeout separately from an aborted operation', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    const fetchImpl: EnterpriseFetch = async (input, init) => {
+      if (String(input).includes('/chat/completions')) {
+        return new Promise((_resolve, reject) => {
+          const fail = () => reject(new DOMException('This operation was aborted', 'AbortError'))
+          if (init?.signal?.aborted) fail()
+          else init?.signal?.addEventListener('abort', fail, { once: true })
+        })
+      }
+      return globalThis.fetch(input, init)
+    }
+    const service = await createService(createEnterpriseFetch(fetchImpl))
+    const started = await service.startLogin(origin)
+    await completeBrowserLogin(origin, started.authorizationUrl)
+    await waitFor(() => service.snapshot().phase === 'connected' && service.snapshot().modelsAvailable === true)
+    vi.useFakeTimers()
+    try {
+      const pending = service.proxyChat(chatPayload(), new FakeResponse() as never, new AbortController().signal)
+      const failure = pending.then(() => { throw new Error('expected chat rejection') }, (error: unknown) => error)
+      await vi.advanceTimersByTimeAsync(CHAT_HEADER_TIMEOUT_MS)
+      await expect(failure).resolves.toMatchObject({
+        status: 504,
+        code: 'upstream_timeout',
+        message: 'Enterprise model response timed out.'
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

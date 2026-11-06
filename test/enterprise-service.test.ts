@@ -77,6 +77,99 @@ async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<voi
 }
 
 describe('enterprise service login loop', () => {
+  it('does not poll after login or retry in the background after failure, but recovers on demand', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    const requests: string[] = []
+    let failModels = false
+    const fetchImpl: EnterpriseFetch = async (input, init) => {
+      const url = String(input)
+      requests.push(url)
+      if (failModels && url.includes('/api/v1/dsh/models')) throw new TypeError('fetch failed')
+      return globalThis.fetch(input, init)
+    }
+    const { service } = await createService(createEnterpriseFetch(fetchImpl))
+    await completeBrowserLogin(origin, (await service.startLogin(origin)).authorizationUrl)
+    await waitFor(() => service.snapshot().phase === 'connected' && service.snapshot().modelsAvailable)
+    requests.length = 0
+    vi.useFakeTimers()
+    try {
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
+      expect(requests).toEqual([])
+    } finally { vi.useRealTimers() }
+    failModels = true
+    expect((await service.refreshModels()).phase).toBe('degraded')
+    requests.length = 0
+    vi.useFakeTimers()
+    try {
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
+      expect(requests).toEqual([])
+    } finally { vi.useRealTimers() }
+    failModels = false
+    expect((await service.refreshModels(true)).phase).toBe('connected')
+    expect(requests.some(url => url.includes('/api/v1/dsh/models'))).toBe(true)
+    expect(requests.some(url => url.includes('/api/v1/dsh/usage'))).toBe(true)
+  })
+
+  it('publishes a new catalog revision when only an administrator display name changes', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    let label = 'Provider A / Original label'
+    const requests: string[] = []
+    const fetchImpl: EnterpriseFetch = async (input, init) => {
+      requests.push(String(input))
+      const response = await globalThis.fetch(input, init)
+      if (String(input).includes('/api/v1/dsh/models') && response.ok) {
+        const body = await response.json() as { data: Array<{ display_name: string }> }
+        body.data.forEach(model => { model.display_name = label })
+        return Response.json(body)
+      }
+      return response
+    }
+    const { service } = await createService(createEnterpriseFetch(fetchImpl))
+    const started = await service.startLogin(origin)
+    await completeBrowserLogin(origin, started.authorizationUrl)
+    await waitFor(() => service.snapshot().phase === 'connected' && service.snapshot().modelsAvailable)
+    const before = service.snapshot()
+    label = 'Provider A / Renamed label'
+    requests.length = 0
+    await Promise.all([service.refreshModels(), service.refreshModels(), service.refreshModels()])
+    expect(requests.filter(url => url.includes('/api/v1/dsh/models'))).toHaveLength(1)
+    expect(requests.filter(url => url.includes('/token') || url.includes('/usage'))).toHaveLength(0)
+    const after = service.snapshot()
+    expect(after.models.map(model => model.id)).toEqual(before.models.map(model => model.id))
+    expect(after.models[0]?.display_name).toBe(label)
+    expect(after.revision).toBeGreaterThan(before.revision)
+  })
+
+  it('keeps the signed-out catalog empty when an earlier metadata refresh finishes', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    let hold = false
+    let release: (() => void) | undefined
+    const fetchImpl: EnterpriseFetch = async (input, init) => {
+      const response = await globalThis.fetch(input, init)
+      if (hold && String(input).includes('/api/v1/dsh/models')) {
+        await new Promise<void>(resolve => { release = resolve })
+      }
+      return response
+    }
+    const { service } = await createService(createEnterpriseFetch(fetchImpl))
+    const started = await service.startLogin(origin)
+    await completeBrowserLogin(origin, started.authorizationUrl)
+    await waitFor(() => service.snapshot().phase === 'connected')
+    hold = true
+    const refreshing = service.refreshModels()
+    await waitFor(() => release !== undefined)
+    await service.logout()
+    release?.()
+    await refreshing
+    expect(service.snapshot()).toMatchObject({ connected: false, modelsAvailable: false, models: [] })
+  })
+
   it('retains reasoning metadata through login, refresh and detached public snapshots', async () => {
     const platform = createMockEnterpriseServer({ port: 0 })
     const origin = await platform.listen()
@@ -220,7 +313,7 @@ describe('enterprise service login loop', () => {
     cleanups.push(async () => platform.close())
     const requests: Record<string, unknown>[] = []
     const fetchImpl: EnterpriseFetch = async (input, init) => {
-      if (String(input).endsWith('/api/dsh/authorizations')) requests.push(JSON.parse(String(init?.body)))
+      if (String(input).endsWith('/api/v1/dsh/authorizations')) requests.push(JSON.parse(String(init?.body)))
       return globalThis.fetch(input, init)
     }
     const activateDesktop = vi.fn(() => {
@@ -252,8 +345,8 @@ describe('enterprise service login loop', () => {
     cleanups.push(async () => platform.close())
     const requests: Record<string, unknown>[] = []
     const fetchImpl: EnterpriseFetch = async (input, init) => {
-      if (String(input).endsWith('/api/dsh/authorizations')) requests.push(JSON.parse(String(init?.body)))
-      if (String(input).endsWith('/api/dsh/token')) {
+      if (String(input).endsWith('/api/v1/dsh/authorizations')) requests.push(JSON.parse(String(init?.body)))
+      if (String(input).endsWith('/api/v1/dsh/token')) {
         return Response.json({ error: { message: 'Invalid ticket', code: 'invalid_ticket' } }, { status: 401 })
       }
       return globalThis.fetch(input, init)
@@ -313,7 +406,7 @@ describe('enterprise service login loop', () => {
     cleanups.push(async () => platform.close())
     let failRefresh = false
     const fetchImpl: EnterpriseFetch = async (input, init) => {
-      if (failRefresh && String(input).includes('/api/dsh/token') && String(init?.body).includes('refresh_token')) {
+      if (failRefresh && String(input).includes('/api/v1/dsh/token') && String(init?.body).includes('refresh_token')) {
         throw new TypeError('fetch failed')
       }
       return globalThis.fetch(input, init)
@@ -338,7 +431,7 @@ describe('enterprise service login loop', () => {
     cleanups.push(async () => platform.close())
     let rejectRefresh = false
     const fetchImpl: EnterpriseFetch = async (input, init) => {
-      if (rejectRefresh && String(input).includes('/api/dsh/token') && String(init?.body).includes('refresh_token')) {
+      if (rejectRefresh && String(input).includes('/api/v1/dsh/token') && String(init?.body).includes('refresh_token')) {
         return new Response(JSON.stringify({
           error: { message: 'Refresh token is invalid.', type: 'authentication_error', code: 'invalid_refresh_token' }
         }), {
@@ -370,7 +463,7 @@ describe('enterprise service login loop', () => {
     cleanups.push(async () => platform.close())
     let rejectRefresh = false
     const fetchImpl: EnterpriseFetch = async (input, init) => {
-      if (rejectRefresh && String(input).includes('/api/dsh/token') && String(init?.body).includes('refresh_token')) {
+      if (rejectRefresh && String(input).includes('/api/v1/dsh/token') && String(init?.body).includes('refresh_token')) {
         return new Response(JSON.stringify({
           error: { message: 'session expired', type: 'authentication_error', code: 'session_expired' }
         }), {
@@ -429,7 +522,7 @@ describe('enterprise service login loop', () => {
     const origin = await platform.listen()
     cleanups.push(async () => platform.close())
     const fetchImpl: EnterpriseFetch = async (input, init) => {
-      if (String(input).includes('/api/dsh/token') && String(init?.body).includes('identity_ticket')) {
+      if (String(input).includes('/api/v1/dsh/token') && String(init?.body).includes('identity_ticket')) {
         return new Response(JSON.stringify({
           error: { message, code },
           request_id: 'req-seat-1'
@@ -459,7 +552,7 @@ describe('enterprise service login loop', () => {
     const origin = await platform.listen()
     cleanups.push(async () => platform.close())
     const fetchImpl: EnterpriseFetch = async (input, init) => {
-      if (String(input).includes('/api/dsh/logout')) {
+      if (String(input).includes('/api/v1/dsh/logout')) {
         return new Response(JSON.stringify({
           error: { message: 'upstream unavailable', code: 'server_error' }
         }), { status: 503, headers: { 'content-type': 'application/json' } })
@@ -543,6 +636,37 @@ describe('enterprise service login loop', () => {
     expect(connected.phase).toBe('connected')
     expect(connected.modelUsage?.['bisheng:42']?.used).toEqual(expect.any(Number))
     expect(connected.modelUsage?.['bisheng:42']?.limit).toBeGreaterThan(0)
+  })
+
+  it('loads per-model usage when a saved session is restored', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    const directory = await mkdtemp(join(tmpdir(), 'enterprise-service-'))
+    const vault = new SecureEnterpriseCredentialVault(join(directory, ENTERPRISE_VAULT_FILENAME), memorySafeStorage())
+    const fetchImpl = createEnterpriseFetch(globalThis.fetch)
+    const service = new EnterpriseService({ vault, fetchImpl, allowInsecureLoopback: true })
+    cleanups.push(async () => service.stop())
+    await service.restore()
+    await completeBrowserLogin(origin, (await service.startLogin(origin)).authorizationUrl)
+    await waitFor(() => {
+      const usage = service.snapshot().modelUsage?.['bisheng:42']
+      return service.snapshot().phase === 'connected' && typeof usage?.used === 'number'
+    })
+    await service.stop()
+
+    const restarted = new EnterpriseService({ vault, fetchImpl, allowInsecureLoopback: true })
+    cleanups.push(async () => restarted.stop())
+    expect(restarted.snapshot().modelUsage).toBeUndefined()
+    await restarted.restore()
+    await waitFor(() => {
+      const snapshot = restarted.snapshot()
+      const usage = snapshot.modelUsage?.['bisheng:42']
+      return snapshot.modelsAvailable === true
+        && usage?.quota_state === 'available'
+        && typeof usage.used === 'number'
+        && typeof usage.limit === 'number'
+    })
   })
 
   it('completes login from a pasted one-time code without the loopback callback', async () => {
@@ -721,7 +845,7 @@ describe('enterprise market credential boundary', () => {
     let alignedTimeout = 0
     const fetchImpl: EnterpriseFetch = async (input, init) => {
       const response = await globalThis.fetch(input, init)
-      if (!String(input).endsWith('/api/dsh/authorizations')) return response
+      if (!String(input).endsWith('/api/v1/dsh/authorizations')) return response
       const body = await response.json() as { expires_in?: number }
       body.expires_in = 45
       return Response.json(body)
@@ -750,5 +874,111 @@ describe('enterprise market credential boundary', () => {
     expect(restarted.phase).toBe('authorizing')
     expect(restarted.errorCode).toBeUndefined()
     expect(Date.parse(restarted.loginExpiresAt ?? '') - now).toBe(45_000)
+  })
+})
+
+describe('enterprise browser session handoff', () => {
+  it('checks effective space visibility across picker groups and rejects incomplete permission results', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    const checks: unknown[] = []
+    let malformed = false
+    const fetchImpl: EnterpriseFetch = async (input, init) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/api/v1/dsh/web-session') return Response.json({ cookie: 'signed-browser-cookie-for-host-only', expires_in: 300 })
+      if (path.startsWith('/api/v1/knowledge/space/')) {
+        const rows = path.endsWith('/department') ? [{ id: 7, name: 'Revoked department' }] :
+          path.endsWith('/mine') ? [{ id: 9, name: 'Owned space' }] :
+          [{ id: 7, name: 'Duplicate revoked' }, { id: 11, name: 'Authorized group space', user_role: null }]
+        return Response.json({ status_code: 200, data: rows })
+      }
+      if (path === '/api/v1/permissions/check') {
+        expect(new Headers(init?.headers).get('cookie')).toContain('signed-browser-cookie-for-host-only')
+        const body = JSON.parse(String(init?.body))
+        checks.push(body)
+        return Response.json({ status_code: 200, data: malformed ? {} : { allowed: body.resource_id !== '7' } })
+      }
+      return globalThis.fetch(input, init)
+    }
+    const { service } = await createService(createEnterpriseFetch(fetchImpl))
+    const login = await service.startLogin(origin)
+    await completeBrowserLogin(origin, login.authorizationUrl)
+    await waitFor(() => service.snapshot().connected)
+    const request = { operation: 'list', connectionKey: service.snapshot().connectionKey }
+    expect(await service.workResources(request)).toMatchObject({ spaces: [{ id: 9 }, { id: 11 }] })
+    expect(checks).toEqual([7, 9, 11].map(id => ({ resource_type: 'knowledge_space', resource_id: String(id), action: 'visible' })))
+    malformed = true
+    await expect(service.workResources(request)).rejects.toThrow('permission response is invalid')
+  })
+  it('exchanges only host credentials, refreshes rejected access once, and rejects requests after logout', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    let exchanges = 0
+    const cookie = 'signed-browser-cookie-for-host-only'
+    let releaseToken!: () => void
+    const tokenGate = new Promise<void>((resolve) => { releaseToken = resolve })
+    const fetchImpl: EnterpriseFetch = async (input, init) => {
+      if (String(input).endsWith('/token') && String(init?.body).includes('identity_ticket')) await tokenGate
+      if (String(input).endsWith('/api/v1/dsh/web-session')) {
+        exchanges += 1
+        expect(new Headers(init?.headers).get('authorization')).toMatch(/^Bearer /u)
+        if (exchanges === 1) return Response.json({ error: { code: 'invalid_access_token', message: 'Expired access' } }, { status: 401 })
+        return Response.json({ cookie, expires_in: 300 })
+      }
+      return globalThis.fetch(input, init)
+    }
+    const { service } = await createService(createEnterpriseFetch(fetchImpl))
+    const login = await service.startLogin(origin)
+    await completeBrowserLogin(origin, login.authorizationUrl)
+    await waitFor(() => service.snapshot().phase === 'refreshing')
+    expect(service.snapshot().connected).toBe(false)
+    releaseToken()
+    await waitFor(() => service.snapshot().connected)
+    const key = service.snapshot().connectionKey!
+    expect(await service.webSession(key)).toMatchObject({ cookie, connectionKey: key, base: origin })
+    expect(exchanges).toBe(2)
+    expect(JSON.stringify(service.snapshot())).not.toContain(cookie)
+    await service.logout()
+    await expect(service.webSession(key)).rejects.toThrow('Enterprise account changed')
+    expect(exchanges).toBe(2)
+  })
+})
+
+
+describe('enterprise Work MCP single sign-on', () => {
+  it('uses the logged-in account, refreshes access automatically, and rejects stale identity', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    let exchanges = 0, calls = 0
+    const cookie = 'work-browser-cookie-host-owned'
+    const fetchImpl: EnterpriseFetch = async (input, init) => {
+      if (input.endsWith('/api/v1/dsh/web-session')) {
+        exchanges++
+        if (exchanges === 1) return Response.json({ error: { code: 'invalid_access_token', message: 'Expired' } }, { status: 401 })
+        expect(new Headers(init?.headers).get('authorization')).toMatch(/^Bearer /u)
+        return Response.json({ cookie, expires_in: 300 })
+      }
+      if (input.endsWith('/api/v1/dsh/work/mcp')) {
+        calls++
+        expect(new Headers(init?.headers).get('cookie')).toBe(`access_token_cookie=${cookie}`)
+        expect(new Headers(init?.headers).has('authorization')).toBe(false)
+        return Response.json({ jsonrpc: '2.0', id: 1, result: { tools: [] } })
+      }
+      return globalThis.fetch(input, init)
+    }
+    const { service } = await createService(createEnterpriseFetch(fetchImpl))
+    const login = await service.startLogin(origin)
+    await completeBrowserLogin(origin, login.authorizationUrl)
+    await waitFor(() => service.snapshot().connected)
+    const request = { connectionKey: service.snapshot().connectionKey, message: { jsonrpc: '2.0', id: 1, method: 'tools/list' } }
+    expect(await service.workMcp(request)).toMatchObject({ result: { tools: [] } })
+    expect(exchanges).toBe(2)
+    expect(JSON.stringify(service.snapshot())).not.toContain(cookie)
+    await service.logout()
+    await expect(service.workMcp(request)).rejects.toThrow('account changed')
+    expect(calls).toBe(1)
   })
 })

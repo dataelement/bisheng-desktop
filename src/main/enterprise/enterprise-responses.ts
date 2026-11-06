@@ -1,6 +1,7 @@
+import { normalizeAuditContext } from 'dsh-desktop-enterprise/contract'
 import { pickAttributionHeaders, validateChatImages } from './enterprise-chat'
 
-const KEYS = new Set(['model', 'input', 'stream', 'store', 'include', 'tools', 'tool_choice', 'parallel_tool_calls', 'max_output_tokens', 'temperature', 'top_p', 'reasoning', 'text'])
+const KEYS = new Set(['model', 'input', 'stream', 'store', 'include', 'tools', 'tool_choice', 'parallel_tool_calls', 'max_output_tokens', 'temperature', 'top_p', 'reasoning', 'text', 'audit_context'])
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -10,7 +11,7 @@ function invalid(): never {
   throw Object.assign(new Error('Invalid enterprise Responses request.'), { status: 400 })
 }
 
-export function parseEnterpriseResponsesPayload(value: unknown) {
+export function parseEnterpriseResponsesPayload(value: unknown, trustedAuditFields: readonly string[] = []) {
   if (!record(value) || Object.keys(value).some((key) => !['request', 'attribution', 'connectionKey'].includes(key)) || !record(value.request)) invalid()
   const request = value.request
   if (Object.keys(request).some((key) => !KEYS.has(key)) ||
@@ -31,8 +32,10 @@ export function parseEnterpriseResponsesPayload(value: unknown) {
     }
   }
   validateChatImages(images)
+  const { audit_context: rawContext, ...businessRequest } = request
+  const auditContext = normalizeAuditContext(rawContext, trustedAuditFields, request.input.length)
   return {
-    request,
+    request: { ...businessRequest, ...(auditContext ? { audit_context: auditContext } : {}) },
     model: request.model,
     attribution: pickAttributionHeaders(value.attribution),
     connectionKey: value.connectionKey,

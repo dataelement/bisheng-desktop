@@ -12,6 +12,7 @@ import {
 import {
   initialUpdateStatus,
   reduceUpdateStatus,
+  normalizeReleaseNotes,
   type UpdateStateEvent
 } from './update-state'
 import {
@@ -29,22 +30,24 @@ let status = initialUpdateStatus(app.getVersion())
 let prepareToInstall: (() => Promise<void>) | undefined
 let startupTimer: NodeJS.Timeout | undefined
 let intervalTimer: NodeJS.Timeout | undefined
-let resetTimer: NodeJS.Timeout | undefined
 let checkPromise: Promise<unknown> | undefined
 let lastCheckedAt = 0
 let installing = false
 let downloading = false
 let started = false
 let handlersRegistered = false
+let updateLocale: (() => 'en' | 'zh') | undefined
 let skippedVersion: string | undefined
 let skipLoaded = false
 let manualCheck = false
+let manualCheckRequested = false
 
 export function getUpdateStatus(): UpdateStatus {
-  return { ...status }
+  return { ...status, locale: updateLocale?.() }
 }
 
-export function registerUpdateHandlers(): void {
+export function registerUpdateHandlers(options: { locale?: () => 'en' | 'zh' } = {}): void {
+  updateLocale = options.locale ?? updateLocale
   if (handlersRegistered) return
   handlersRegistered = true
   ipcMain.handle('updates:status', () => getUpdateStatus())
@@ -96,14 +99,14 @@ export function startUpdateManager(options: { prepareToInstall: () => Promise<vo
 
   configureUpdater()
   startupTimer = setTimeout(
-    () => void checkForUpdates(),
+    () => void checkForUpdates(false, 'startup'),
     UPDATE_STARTUP_DELAY_MS + Math.random() * UPDATE_STARTUP_JITTER_MS
   )
   intervalTimer = setInterval(() => void checkForUpdates(), UPDATE_CHECK_INTERVAL_MS)
   powerMonitor.on('resume', checkAfterResume)
 }
 
-export async function checkForUpdates(manual = false): Promise<UpdateStatus> {
+export async function checkForUpdates(manual = false, source: UpdateStatus['source'] = manual ? 'manual' : 'runtime'): Promise<UpdateStatus> {
   // Development builds never start this manager. Their menu/IPC entry points
   // must not initialize an updater against the production feed.
   if (!started || !supportsUpdates()) {
@@ -114,26 +117,36 @@ export async function checkForUpdates(manual = false): Promise<UpdateStatus> {
       },
       manual
     )
-    if (manual) scheduleReset()
     return getUpdateStatus()
   }
 
-  if (checkPromise || ['available', 'downloading', 'downloaded'].includes(status.phase)) {
+  if (checkPromise) {
+    if (manual) {
+      manualCheckRequested = true
+      transition({ type: 'present-manual' })
+    }
+    await checkPromise
+    return getUpdateStatus()
+  }
+  if (['downloading', 'downloaded'].includes(status.phase) || (!manual && status.phase === 'available')) {
+    if (manual) {
+      manualCheck = true
+      transition({ type: 'present-manual' })
+    }
     return getUpdateStatus()
   }
 
-  transition({ type: 'check', manual })
+  transition({ type: 'check', manual, source })
   manualCheck = manual
+  manualCheckRequested = manual
   lastCheckedAt = Date.now()
   checkPromise = (async () => {
     await autoUpdater.checkForUpdates()
   })()
-
   try {
     await checkPromise
   } catch (error) {
     transition({ type: 'error', message: errorMessage(error) })
-    if (manual) scheduleReset()
   } finally {
     checkPromise = undefined
   }
@@ -147,13 +160,19 @@ export async function checkForUpdates(manual = false): Promise<UpdateStatus> {
  */
 export async function downloadAvailableUpdate(): Promise<UpdateStatus> {
   if (status.phase !== 'available' || downloading) return getUpdateStatus()
+  const expectedVersion = status.availableVersion
+  // A queued manual check can replace an automatic offer. Consent to A must
+  // not download B; history installs already own this lock and cannot await it.
+  if (checkPromise) await checkPromise
+  if (status.phase !== 'available' || status.availableVersion !== expectedVersion || downloading) {
+    return getUpdateStatus()
+  }
   downloading = true
 
   try {
     await autoUpdater.downloadUpdate()
   } catch (error) {
     transition({ type: 'error', message: errorMessage(error) })
-    if (status.manual) scheduleReset()
   } finally {
     downloading = false
   }
@@ -171,17 +190,14 @@ export async function installDownloadedUpdate(): Promise<void> {
   } catch (error) {
     installing = false
     transition({ type: 'error', message: errorMessage(error) }, true)
-    scheduleReset()
   }
 }
 
 export function stopUpdateManager(): void {
   if (startupTimer) clearTimeout(startupTimer)
   if (intervalTimer) clearInterval(intervalTimer)
-  if (resetTimer) clearTimeout(resetTimer)
   startupTimer = undefined
   intervalTimer = undefined
-  resetTimer = undefined
   if (started && app.isReady()) powerMonitor.removeListener('resume', checkAfterResume)
 }
 
@@ -200,7 +216,7 @@ function configureUpdater(): void {
   }
 
   autoUpdater.on('checking-for-update', () =>
-    transition({ type: 'check', manual: status.manual })
+    transition({ type: 'check', manual: status.manual, source: status.source })
   )
   autoUpdater.on('update-available', (info) => {
     if (!shouldOfferUpdate(info.version, currentSkippedVersion(), manualCheck)) {
@@ -210,30 +226,23 @@ function configureUpdater(): void {
     }
     // Offered, not fetched: nothing leaves the network until the user accepts
     // the update, which is the same click that starts the download.
-    transition({ type: 'available', version: info.version })
+    transition({ type: 'available', version: info.version, releaseNotes: normalizeReleaseNotes(info.releaseNotes) })
   })
   autoUpdater.on('download-progress', (progress) =>
     transition({ type: 'progress', percent: progress.percent })
   )
   autoUpdater.on('update-not-available', () => {
     transition({ type: 'not-available' })
-    scheduleReset()
   })
   autoUpdater.on('update-downloaded', (info) =>
     transition({ type: 'downloaded', version: info.version })
   )
   autoUpdater.on('error', (error) => {
     transition({ type: 'error', message: errorMessage(error) })
-    if (status.manual) scheduleReset()
   })
 }
 
 function transition(event: UpdateStateEvent, manualOverride?: boolean): void {
-  if (event.type !== 'reset' && resetTimer) {
-    clearTimeout(resetTimer)
-    resetTimer = undefined
-  }
-
   status = reduceUpdateStatus(status, event)
   if (manualOverride !== undefined) status.manual = manualOverride
 
@@ -241,12 +250,6 @@ function transition(event: UpdateStateEvent, manualOverride?: boolean): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (!window.isDestroyed()) window.webContents.send('updates:status-changed', getUpdateStatus())
   }
-}
-
-function scheduleReset(): void {
-  if (!status.manual) return
-  if (resetTimer) clearTimeout(resetTimer)
-  resetTimer = setTimeout(() => transition({ type: 'reset' }), TRANSIENT_STATUS_MS)
 }
 
 function checkAfterResume(): void {

@@ -87,6 +87,10 @@ window.__ModuleLoader__.load({
 		const TEMPLATE_DOCK_BOTTOM_PX = 12;
 		const TEMPLATE_PANEL_MIN_HEIGHT_PX = 200;
 		const STAGED_MODE_KEY = "\0dsh-ppt-unbound";
+		function pptTemplateId(templates, templateId) {
+			const template = (Array.isArray(templates) ? templates : []).find((item) => item.id === templateId && (item.supportedModes?.includes("ppt") ?? true));
+			return template?.id ?? null;
+		}
 		function modeKey(sessionId) {
 			return typeof sessionId === "string" && sessionId.trim().length > 0 ? sessionId : STAGED_MODE_KEY;
 		}
@@ -151,26 +155,34 @@ window.__ModuleLoader__.load({
 				}));
 			}
 			setTemplateState(sessionId, next) {
-                this.update(sessionId, current => ({
-                    ...current,
-                    templates: next.templates,
-                    selectedId: next.templates.some(template => template.id === next.selectedTemplateId) ? next.selectedTemplateId : null,
-                    activeMode: next.presentationMode ?? current.activeMode,
-                    notice: next.templateMigration?.reason ?? null,
-                    loading: false,
-                    error: ""
-                }));
-            }
+				this.update(sessionId, (current) => {
+					const templates = Array.isArray(next.templates) ? next.templates : current.templates;
+					const away = next.documentMode === "word" || next.documentMode === "excel";
+					const remoteId = pptTemplateId(templates, next.selectedTemplateId);
+					const keptId = pptTemplateId(templates, current.selectedId);
+					const selectedId = away ? null : remoteId !== null ? remoteId : typeof next.selectedTemplateId === "string" ? keptId : next.presentationMode === "ppt" ? null : keptId;
+					return {
+						...current,
+						templates,
+						selectedId,
+						activeMode: away ? null : next.presentationMode ?? current.activeMode,
+						notice: next.templateMigration?.reason ?? null,
+						loading: false,
+						error: ""
+					};
+				});
+			}
 			setTemplates(sessionId, templates) {
 				this.update(sessionId, (current) => ({
 					...current,
 					loading: false,
 					templates,
-					selectedId: templates.some((template) => template.id === current.selectedId) ? current.selectedId : null,
+					selectedId: pptTemplateId(templates, current.selectedId),
 					error: ""
 				}));
 			}
 			select(sessionId, template, activeMode) {
+				if (activeMode !== "ppt" || pptTemplateId([template], template?.id) === null) return;
 				this.bump(sessionId);
 				this.update(sessionId, (current) => ({
 					...current,
@@ -234,14 +246,17 @@ window.__ModuleLoader__.load({
 				this.update(sessionId, () => ({ ...staged, loading: true, error: "" }));
 				try {
 					const remote = await client.call("state");
-					const occupied = remote?.presentationMode === "ppt" || typeof remote?.selectedTemplateId === "string";
+					const templates = Array.isArray(remote?.templates) ? remote.templates : [];
+					const away = remote?.documentMode === "word" || remote?.documentMode === "excel";
+					const matchId = pptTemplateId(templates, remote?.selectedTemplateId);
+					const occupied = away || remote?.presentationMode === "ppt" || matchId !== null;
 					if (occupied) {
 						this.clearStaged();
 						this.update(sessionId, (current) => ({
 							...current,
-							templates: Array.isArray(remote?.templates) ? remote.templates : current.templates,
-							selectedId: typeof remote?.selectedTemplateId === "string" ? remote.selectedTemplateId : null,
-							activeMode: remote?.presentationMode === "ppt" ? "ppt" : null,
+							templates: templates.length > 0 ? templates : current.templates,
+							selectedId: away ? null : matchId,
+							activeMode: away ? null : remote?.presentationMode === "ppt" ? "ppt" : null,
 							loading: false,
 							engaged: false,
 							error: ""
@@ -250,6 +265,22 @@ window.__ModuleLoader__.load({
 						return "kept";
 					}
 					if (staged.selectedId) {
+						const catalog = Array.isArray(staged.templates) ? staged.templates : [];
+						const stagedMatch = pptTemplateId(catalog, staged.selectedId);
+						if (catalog.length > 0 && stagedMatch === null) {
+							await client.call("presentation/mode", { mode: "ppt" });
+							this.update(sessionId, (current) => ({
+								...current,
+								activeMode: "ppt",
+								selectedId: null,
+								loading: false,
+								engaged: true,
+								error: ""
+							}));
+							this.clearStaged();
+							this.adopted.add(sessionId);
+							return "partial";
+						}
 						try {
 							await client.call("template/select", { templateId: staged.selectedId, mode: "ppt" });
 						} catch (reason) {
@@ -289,17 +320,28 @@ window.__ModuleLoader__.load({
 			applyLoadedTemplates(sessionId, client, seenRevision, next, request) {
 				if (request != null && (request.client !== client || modeKey(request.sessionId) !== modeKey(sessionId))) return false;
 				if (this.revision(sessionId) !== seenRevision) return false;
-				const activeMode = this.snapshot(sessionId).activeMode ?? (next?.presentationMode === "ppt" ? "ppt" : null);
+				const away = next?.documentMode === "word" || next?.documentMode === "excel";
+				const activeMode = away ? null : this.snapshot(sessionId).activeMode ?? (next?.presentationMode === "ppt" ? "ppt" : null);
 				this.setTemplates(sessionId, next?.templates ?? []);
+				if (away) {
+					this.update(sessionId, (current) => ({ ...current, activeMode: null, selectedId: null, loading: false, error: "" }));
+					return true;
+				}
 				if (!client?.bound || activeMode === null) return true;
 				this.setMode(sessionId, activeMode);
 				this.setNotice(sessionId, next?.templateMigration?.reason ?? null);
-				const selected = (next?.templates ?? []).find((template) => template.id === next.selectedTemplateId && (template.supportedModes?.includes("ppt") ?? true));
-				if (selected === void 0) {
-					this.deselect(sessionId, activeMode);
+				const templates = next?.templates ?? [];
+				const selectedId = pptTemplateId(templates, next.selectedTemplateId);
+				if (selectedId !== null) {
+					this.select(sessionId, templates.find((template) => template.id === selectedId), activeMode);
 					return true;
 				}
-				this.select(sessionId, selected, activeMode);
+				const keptId = pptTemplateId(templates, this.snapshot(sessionId).selectedId);
+				if (typeof next?.selectedTemplateId === "string" && keptId !== null) {
+					this.select(sessionId, templates.find((template) => template.id === keptId), activeMode);
+					return true;
+				}
+				this.deselect(sessionId, activeMode);
 				return true;
 			}
 		};
@@ -515,26 +557,42 @@ window.__ModuleLoader__.load({
 			});
 		}
 		function deselectTemplate(client, mode, sessionId, activeMode) {
+            mode.bump(sessionId);
+            const revision = mode.revision(sessionId);
 			mode.setLoading(sessionId, true);
 			if (!client.bound) {
 				mode.deselect(sessionId, activeMode);
+                announcePptMode(sessionId);
 				return;
 			}
 			client.call("template/deselect").then(() => {
+                if (mode.revision(sessionId) !== revision) return;
 				return client.call("presentation/mode", { mode: activeMode });
 			}).then(() => {
+                if (mode.revision(sessionId) !== revision) return;
+                announcePptMode(sessionId);
 				mode.deselect(sessionId, activeMode);
 			}).catch((reason) => {
-				mode.setError(sessionId, reason instanceof Error ? reason.message : String(reason));
+                if (mode.revision(sessionId) === revision) mode.setError(sessionId, reason instanceof Error ? reason.message : String(reason));
 			});
 		}
+        function announcePptMode(sessionId) {
+            window.dispatchEvent(new CustomEvent('dsh-office-mode-change', { detail: { sessionId, origin: 'ppt' } }));
+        }
 		function selectPresentationMode(client, mode, sessionId, activeMode) {
-			mode.setMode(sessionId, activeMode);
-			if (!client.bound) return;
-			client.call("presentation/mode", { mode: activeMode }).catch((reason) => {
-				mode.setError(sessionId, reason instanceof Error ? reason.message : String(reason));
-			});
-		}
+            if (!client.bound) { mode.setMode(sessionId, activeMode); announcePptMode(sessionId); return; }
+            mode.bump(sessionId);
+            const revision = mode.revision(sessionId);
+            mode.setLoading(sessionId, true);
+            client.call("presentation/mode", { mode: activeMode }).then(() => {
+                if (mode.revision(sessionId) !== revision) return;
+                announcePptMode(sessionId);
+                mode.setMode(sessionId, activeMode);
+                mode.setLoading(sessionId, false);
+            }).catch((reason) => {
+                if (mode.revision(sessionId) === revision) mode.setError(sessionId, reason instanceof Error ? reason.message : String(reason));
+            });
+        }
 		/** Compact selected-template thumbnail inside the resident input card. */
 		function OfficePptInputAccessory({ client, mode, sessionId, t }) {
 			const state = useMode(mode, sessionId);
@@ -662,16 +720,21 @@ window.__ModuleLoader__.load({
 			const select = (template, activeMode = state.activeMode ?? "ppt") => {
 				if (!client.bound) {
 					mode.select(sessionId, template, activeMode);
+                    announcePptMode(sessionId);
 					return;
 				}
+                mode.bump(sessionId);
+                const revision = mode.revision(sessionId);
 				mode.setLoading(sessionId, true);
 				client.call("template/select", {
 					templateId: template.id,
 					mode: activeMode
 				}).then(() => {
+                    if (mode.revision(sessionId) !== revision) return;
+                    announcePptMode(sessionId);
 					mode.select(sessionId, template, activeMode);
 				}).catch((reason) => {
-					mode.setError(sessionId, reason instanceof Error ? reason.message : String(reason));
+					if (mode.revision(sessionId) === revision) mode.setError(sessionId, reason instanceof Error ? reason.message : String(reason));
 				});
 			};
 			const choose = (template) => {
@@ -698,7 +761,7 @@ window.__ModuleLoader__.load({
 				select(selected, "ppt");
 			};
 			const modeTemplates = state.templates.filter((template) => templateSupportsMode(template, "ppt"));
-			const templateCategories = ["all", "personal", ...new Set(modeTemplates.filter(item => item.origin !== "personal").map(templateCategory))];
+			const templateCategories = ["all", ...new Set(modeTemplates.filter(item => item.origin !== "personal").map(templateCategory)), "personal"];
 			const visibleTemplates = modeTemplates.filter((template) => category === "all" ? template.origin !== "personal" : templateCategory(template) === category);
 			(0, react.useEffect)(() => {
 				if (!templateCategories.includes(category)) setCategory("all");
@@ -779,11 +842,11 @@ window.__ModuleLoader__.load({
 						className: OfficePptHero_module_css_default.templateViewport,
 						"data-office-ppt-template-viewport": "",
 						"data-native-wheel-owner": "",
-						children: [category === "personal" && react.createElement(PersonalTemplateManager, { key: sessionId, client, mode, sessionId, state, choose, t, mutable: client.bound === true }), state.error !== "" && state.templates.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						children: [(category === "all" || category === "personal") && react.createElement(PersonalTemplateManager, { key: sessionId, client, mode, sessionId, state, choose, t, mutable: client.bound === true, builtInCards: category === "all" ? visibleTemplates.map(template => react.createElement(TemplatePreviewCard, { key: template.id, template, selected: template.id === state.selectedId, choose, client, t })) : [] }), state.error !== "" && state.templates.length > 0 && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 							className: OfficePptHero_module_css_default.templateError,
 							role: "alert",
 							children: state.error
-						}), category === "personal" ? null : state.loading && state.templates.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+						}), (category === "all" || category === "personal") ? null : state.loading && state.templates.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 							className: OfficePptHero_module_css_default.panelState,
 							children: t("status.loading")
 						}) : state.error !== "" && state.templates.length === 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
@@ -802,7 +865,8 @@ window.__ModuleLoader__.load({
 							children: t("templates.empty")
 						}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 							className: OfficePptHero_module_css_default.templateGrid,
-							children: visibleTemplates.map((template) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(TemplateCard, {
+							children: visibleTemplates.map((template) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)(TemplatePreviewCard, {
+                                client, t,
 								template,
 								selected: template.id === state.selectedId,
 								choose
@@ -854,24 +918,33 @@ window.__ModuleLoader__.load({
 			"templates.empty": "该分类下还没有模板",
 			"templates.loadTimeout": "模板加载超时，请重试",
 			"templates.retry": "重新加载模板",
-			"templates.category.all": "内置模板",
-"templates.category.personal": "我的模板",
+			"templates.category.all": "全部",
+"templates.category.personal": "自定义",
 "personal.deletedSelection": "已选个人模板已被删除，请重新选择。",
 "personal.upload": "上传 PPT 模板",
 "personal.create": "新建自定义模板",
 "personal.selected": "已选中",
 "personal.local": "保存在当前 Desktop · PPTX",
 "personal.fileType": "请选择 PPTX 文件",
-"personal.fileTooLarge": "个人模板 PPTX 不能超过 64 MB",
 "personal.readFailed": "文件读取失败，请重新选择",
 "personal.duplicate": "这份文件已在我的模板中，可直接选择使用",
+"personal.useSame": "做同款",
+"personal.view": "预览",
+"personal.zoomIn": "放大",
+"personal.zoomOut": "缩小",
+"personal.fit": "适应窗口",
+"personal.previewFailed": "预览加载失败，请重试",
 "personal.processing": "正在处理模板…",
+"personal.completedPages": "已完成",
+"personal.placeholderNotice": "部分对象已使用占位图，可在 PPT 中替换。",
+"personal.layouts": "版式",
 "personal.chooseFile": "重新选择 PPT",
 "personal.preview": "模板预览",
 "personal.name": "模板名称",
 "personal.previous": "上一页",
 "personal.next": "下一页",
 "personal.save": "保存模板",
+"personal.saved": "模板已保存",
 "personal.cancel": "取消",
 "personal.edit": "编辑模板",
 "personal.editTitle": "编辑自定义模板",
@@ -947,24 +1020,33 @@ window.__ModuleLoader__.load({
 			"templates.empty": "No templates in this category",
 			"templates.loadTimeout": "Template loading timed out. Try again.",
 			"templates.retry": "Reload templates",
-			"templates.category.all": "Built-in templates",
-"templates.category.personal": "My templates",
+			"templates.category.all": "All",
+"templates.category.personal": "Custom",
 "personal.deletedSelection": "The selected personal template was deleted. Choose another template.",
 "personal.upload": "Upload PPT template",
 "personal.create": "Create custom template",
 "personal.selected": "Selected",
 "personal.local": "Saved in this Desktop profile · PPTX",
 "personal.fileType": "Choose a PPTX file",
-"personal.fileTooLarge": "Personal PPTX templates cannot exceed 64 MB",
 "personal.readFailed": "Could not read the file. Choose it again.",
 "personal.duplicate": "This file is already in My templates. Select it to reuse it.",
+"personal.useSame": "Use this template",
+"personal.view": "Preview",
+"personal.zoomIn": "Zoom in",
+"personal.zoomOut": "Zoom out",
+"personal.fit": "Fit to window",
+"personal.previewFailed": "Could not load preview. Please retry.",
 "personal.processing": "Processing template…",
+"personal.completedPages": "Completed",
+"personal.placeholderNotice": "Some objects use placeholders. You can replace them in the PPT.",
+"personal.layouts": "Layouts",
 "personal.chooseFile": "Choose another PPT",
 "personal.preview": "Template preview",
 "personal.name": "Template name",
 "personal.previous": "Previous page",
 "personal.next": "Next page",
 "personal.save": "Save template",
+"personal.saved": "Template saved",
 "personal.cancel": "Cancel",
 "personal.edit": "Edit template",
 "personal.editTitle": "Edit custom template",

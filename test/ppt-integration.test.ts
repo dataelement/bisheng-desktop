@@ -59,8 +59,8 @@ describe('DSH PPT built-in plugin', () => {
     }
   })
 
-  it('ships Harness 0.2.0-compatible peer ranges in both generated packages', async () => {
-    const expected = '^0.1.5-rc.1 || ^0.1.6-alpha.2 || ^0.1.7-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.1'
+  it('ships Harness 0.2.1-compatible peer ranges in both generated packages', async () => {
+    const expected = '^0.1.5-rc.1 || ^0.1.6-alpha.2 || ^0.1.7-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.1 || ^0.2.1-rc.1'
     const core = JSON.parse((await artifact('core')).get('package/package.json')!.toString('utf8'))
     const adapter = JSON.parse((await artifact('adapter')).get('package/package.json')!.toString('utf8'))
     expect(core.peerDependencies['@deepseek-ai/cordis']).toBe('~4.0.4')
@@ -69,7 +69,8 @@ describe('DSH PPT built-in plugin', () => {
     for (const [name, range] of Object.entries(core.peerDependencies as Record<string, string>)) {
       if (name.startsWith('@deepseek-ai/dsh-')) expect(range).toBe(expected)
     }
-    expect(adapter.peerDependencies['@deepseek-ai/dsh-invariants']).toBe(expected)
+    expect(adapter.peerDependencies['@deepseek-ai/dsh-invariants']).toBeUndefined()
+    expect(core.peerDependencies['@deepseek-ai/dsh-invariants']).toBeUndefined()
   })
 
   it('ships one PPT composer surface and excludes the Tencent route', async () => {
@@ -320,10 +321,12 @@ describe('opening PPT template card', () => {
       leadingUserKey: null,
       leadingPendingId: null
     })
+    expect(chat).toContain('const hasMore = useSession((snapshot) => snapshot.hasMore);')
+    expect(chat).not.toContain('useChat((snapshot) => snapshot.hasMore)')
     expect(chat).toContain('renderSlot("conversation.chat.userMessageFooter", { leading: true })')
     expect(chat).toContain('footer: item.requestId === leadingPendingId ? messageFooter : null')
-    expect(chat).toContain('const showBubble = hasBody || footer != null')
-    expect(chat).toContain('i)), footer]')
+    expect(chat).toContain('const showBubble = text !== "" || extraBlocks.length > 0 || footer != null')
+    expect(chat).toContain('index)), footer]')
     expect(chat).toMatch(/"conversation\.chat\.userMessageFooter": \{\s*kind: "list",\s*scope: "session"/)
   })
 
@@ -336,6 +339,8 @@ describe('opening PPT template card', () => {
     expect(adapter).toContain('name: "conversation.chat.userMessageFooter"')
     expect(card).toContain('loadTemplateState')
     expect(card).toContain('applyLoadedTemplates')
+    expect(card).toContain('mode.adopt')
+    expect(adapter).toContain("if (detail.mode !== 'word' && detail.mode !== 'excel') return;")
     expect(card).toContain('showModal()')
     expect(card).toContain('data-ppt-opening-template')
     expect(card).toContain('className: "dsh-ppt-opening-title"')

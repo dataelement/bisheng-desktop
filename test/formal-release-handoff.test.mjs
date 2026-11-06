@@ -13,8 +13,7 @@ it('uses draft releases for formal and complete pre-release handoff before Model
   expect(step('validate-dispatch', 'Prepare draft release for verified publication').if).toContain(formal)
   expect(step('validate-dispatch', 'Prepare draft release for verified publication').if).toContain("github.event_name == 'workflow_dispatch'")
   for (const [job, name] of [
-    ['macos-apple-silicon', 'Stage signed Apple Silicon assets in draft release'],
-    ['macos-intel', 'Stage signed Intel assets in draft release'],
+    ['macos', 'Stage signed ${{ matrix.label }} assets in draft release'],
     ['windows-x64', 'Stage unsigned Windows assets in draft release'],
     ['sign-windows', 'Stage signed Windows assets in draft release']
   ]) {

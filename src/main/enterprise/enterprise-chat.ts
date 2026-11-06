@@ -26,10 +26,42 @@ export const CHAT_REQUEST_KEYS = Object.freeze([
 ])
 export const MAX_CHAT_IMAGE_BYTES = 5 * 1024 * 1024
 export const MAX_CHAT_IMAGE_TOTAL_BYTES = 20 * 1024 * 1024
-export const CHAT_HEADER_TIMEOUT_MS = 30_000
+export const CHAT_HEADER_TIMEOUT_MS = 300_000
+export const CHAT_FIRST_CHUNK_TIMEOUT_MS = 300_000
 export const CHAT_IDLE_TIMEOUT_MS = 60_000
 export const CHAT_TOTAL_TIMEOUT_MS = 30 * 60 * 1000
 export const CHAT_MAX_CONCURRENT = 8
+export const ENTERPRISE_SESSION_CHANGED_CODE = 'enterprise_session_changed'
+export const ENTERPRISE_HEADER_TIMEOUT_CODE = 'upstream_timeout'
+
+export type DesktopChatAbortKind = 'session' | 'header'
+
+export function enterpriseSessionChangedAbortReason(): Error {
+  return Object.assign(new Error('Enterprise session changed.'), {
+    status: 409,
+    code: ENTERPRISE_SESSION_CHANGED_CODE
+  })
+}
+
+export function enterpriseHeaderTimeoutAbortReason(): Error {
+  return Object.assign(new Error('Enterprise model response timed out.'), {
+    status: 504,
+    code: ENTERPRISE_HEADER_TIMEOUT_CODE
+  })
+}
+
+/** Fetch reports a generic AbortError. The combined signal keeps the first source reason. */
+export function desktopChatAbortKind(reason: unknown): DesktopChatAbortKind | undefined {
+  if (typeof reason !== 'object' || reason === null) return undefined
+  const code = (reason as { code?: unknown }).code
+  if (code === ENTERPRISE_SESSION_CHANGED_CODE) return 'session'
+  if (code === ENTERPRISE_HEADER_TIMEOUT_CODE) return 'header'
+  return undefined
+}
+
+export function desktopChatAbortError(reason: unknown): Error | undefined {
+  return desktopChatAbortKind(reason) === undefined ? undefined : reason as Error
+}
 
 export interface ParsedEnterpriseChat {
   request: Record<string, unknown>

@@ -22,6 +22,8 @@ export interface PluginUpgradeOptions {
   pnpmEntryPath: string
   /** The packaged lock-recovery runner the `.desktop-bin` pnpm shim routes through. */
   pnpmRunnerPath?: string
+  /** Windows console-hide bootstrap restored by the pnpm shim and passed to pnpm. */
+  hideConsoleBootstrapPath?: string
   note?: (line: string) => void
   /** Live tenant decision. Omitted or false keeps network upgrades closed. */
   communityUpgradeAllowed?: boolean
@@ -40,7 +42,7 @@ export interface PluginUpgradeResult {
 export async function upgradePluginToGeneration(
   options: PluginUpgradeOptions
 ): Promise<PluginUpgradeResult> {
-  const { dshHome, pluginName, targetVersion, nodeExecutablePath, pnpmEntryPath, pnpmRunnerPath, note } = options
+  const { dshHome, pluginName, targetVersion, nodeExecutablePath, pnpmEntryPath, pnpmRunnerPath, hideConsoleBootstrapPath, note } = options
   if (options.communityUpgradeAllowed !== true) {
     note?.(`[plugin-upgrade] rejected community upgrade of ${pluginName}`)
     return { ok: false, detail: 'POLICY_DISABLED' }
@@ -56,7 +58,7 @@ export async function upgradePluginToGeneration(
       expectedVersion: targetVersion,
       nodeExecutablePath,
       pnpmEntryPath,
-      environment: await packageCommandEnvironment({ dshHome, nodeExecutablePath, pnpmEntryPath, pnpmRunnerPath }),
+      environment: await packageCommandEnvironment({ dshHome, nodeExecutablePath, pnpmEntryPath, pnpmRunnerPath, hideConsoleBootstrapPath }),
       // targetVersion came from the market's registry; fetch it from there
       // too rather than from whatever ~/.npmrc happens to name (#337).
       registry: await resolveMarketRegistry({ profileDir: join(dshHome, 'profiles', 'web') }),
@@ -128,6 +130,8 @@ export interface MarketSharedTreeUpgradeOptions {
    * clobber their links.
    */
   pnpmRunnerPath: string
+  /** Windows console-hide bootstrap restored by the pnpm shim. */
+  hideConsoleBootstrapPath?: string
   note?: (line: string) => void
   /** Live tenant decision. Omitted or false keeps the market upgrade closed. */
   communityUpgradeAllowed?: boolean
@@ -153,7 +157,7 @@ export interface MarketSharedTreeUpgradeOptions {
 export async function upgradeMarketInSharedTree(
   options: MarketSharedTreeUpgradeOptions
 ): Promise<PluginUpgradeResult> {
-  const { dshHome, dshEntryPath, targetVersion, nodeExecutablePath, pnpmEntryPath, pnpmRunnerPath, note } = options
+  const { dshHome, dshEntryPath, targetVersion, nodeExecutablePath, pnpmEntryPath, pnpmRunnerPath, hideConsoleBootstrapPath, note } = options
   if (options.communityUpgradeAllowed !== true) {
     note?.('[plugin-upgrade] rejected community market upgrade')
     return { ok: false, detail: 'POLICY_DISABLED' }
@@ -224,6 +228,7 @@ export async function upgradeMarketInSharedTree(
         nodeExecutablePath,
         pnpmEntryPath,
         pnpmRunnerPath,
+        hideConsoleBootstrapPath,
         environment: registry !== null ? { ...process.env, npm_config_registry: registry } : undefined
       })
       if (!result.ok) throw new Error(result.detail ?? 'shared-tree install failed')

@@ -1,5 +1,6 @@
 const fs = require('node:fs/promises')
 const path = require('node:path')
+const os = require('node:os')
 const { createRequire } = require('node:module')
 const { execFile } = require('node:child_process')
 const { pathToFileURL } = require('node:url')
@@ -40,6 +41,11 @@ async function verifyRuntime(appRoot) {
   }
 
   const coreRequire = createRequire(path.join(core, 'package.json'))
+  if (path.basename(appRoot) === 'app.asar') {
+    // Match the Harness entry's native-engine resolution before rendering.
+    const { registerOfficeEngineResolution } = await import(pathToFileURL(path.join(path.dirname(appRoot), 'office-engine-resolution.mjs')).href)
+    registerOfficeEngineResolution(path.join(appRoot, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'))
+  }
   const sharp = coreRequire('sharp')
   if (!sharp?.versions?.vips) throw new Error('Packaged dsh-ppt cannot load the sharp native runtime')
   await import(pathToFileURL(path.join(core, 'lib', 'index.js')).href)
@@ -58,6 +64,29 @@ async function verifyRuntime(appRoot) {
   for (const relative of Object.values(previewFiles)) await fs.access(path.join(references, relative))
   const previewCount = await countFiles(references, '.jpg')
   if (previewCount !== 192) throw new Error('Packaged dsh-ppt contains ' + previewCount + ' previews; expected 192')
+
+  const { loadPptdProject } = await import(pathToFileURL(path.join(core, 'lib', 'pptd.js')).href)
+  const { renderOfficeTemplatePreview } = await import(pathToFileURL(path.join(core, 'lib', 'office-template-preview.js')).href)
+  const project = await loadPptdProject(path.join(references, definitions[0].referenceDirectory, 'source'))
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-packaged-office-preview-'))
+  try {
+    const result = await renderOfficeTemplatePreview({ ...project, pages: project.pages.slice(0, 1) }, temporary, 960, 1)
+    if (result.engine !== 'libreoffice-pdfium') throw new Error('Packaged Office preview engine mismatch')
+    const png = await sharp(path.join(temporary, 'preview', 'pages', 'page-1.png')).metadata()
+    if (png.width < 800 || png.height < 400) throw new Error('Packaged Office preview dimensions are incomplete')
+    const { PersonalTemplateLibrary } = await import(pathToFileURL(path.join(core, 'lib', 'personal-templates.js')).href)
+    const library = new PersonalTemplateLibrary({ root: path.join(temporary, 'import-host'), appendAudit: async () => {} })
+    const source = await fs.readFile(path.join(temporary, 'preview-deck.pptx'))
+    const upload = await library.uploadStart('packaged-regression', { fileName: 'Packaged.pptx', size: source.length })
+    for (let offset = 0; offset < source.length; offset += upload.chunkBytes) {
+      await library.uploadChunk('packaged-regression', { uploadId: upload.uploadId, offset, base64: source.subarray(offset, offset + upload.chunkBytes).toString('base64') })
+    }
+    const draft = await library.prepare('packaged-regression', { uploadId: upload.uploadId })
+    if (draft.template.slideCount !== 1 || draft.template.previewMetadata.engine !== 'libreoffice-pdfium') throw new Error('Packaged isolated template import failed')
+    await library.cancel('packaged-regression', draft.draftId)
+    console.log('Packaged isolated template import and Office preview passed')
+  } finally { await fs.rm(temporary, { recursive: true, force: true }) }
+
 }
 
 module.exports = async function verifyPackagedPptRuntime(context) {
@@ -79,15 +108,28 @@ module.exports = async function verifyPackagedPptRuntime(context) {
     ? path.join(context.appOutDir, product + '.exe')
     : path.join(macContents, 'Frameworks', product + ' Helper.app', 'Contents', 'MacOS', product + ' Helper')
   if (!require('node:fs').existsSync(executable)) throw new Error('Cannot locate the packaged Electron executable')
+  // Stay outside the .app. Node 24 calls process.cwd() when the Helper starts
+  // a worker, and a working directory inside the bundle is already gone by
+  // then (uv_cwd ENOENT on the Intel packager). Harness verification uses
+  // appOutDir for the same reason.
   await execFileAsync(executable, [__filename, '--verify-runtime', appRoot], {
-    cwd: path.dirname(appRoot),
+    cwd: context.appOutDir,
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
     timeout: 120_000,
     maxBuffer: 1024 * 1024
   })
 }
 
+// Worker threads snapshot cwd at startup. Move off the bundle first, even if
+// the Helper later inherits a directory inside the .app.
+function useStableHelperCwd() {
+  process.chdir(os.tmpdir())
+}
+
+module.exports.useStableHelperCwd = useStableHelperCwd
+
 if (require.main === module && process.argv[2] === '--verify-runtime') {
+  useStableHelperCwd()
   verifyRuntime(path.resolve(process.argv[3])).catch(error => {
     console.error(error)
     process.exitCode = 1

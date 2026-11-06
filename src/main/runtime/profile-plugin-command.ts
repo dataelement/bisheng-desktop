@@ -4,6 +4,11 @@ import { chmod, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promis
 import { delimiter, dirname, join } from 'node:path'
 import { stripEnterpriseEnvironment } from '../enterprise/enterprise-env'
 import { resolveEnvironmentPath } from './harness-runtime'
+import {
+  HIDE_CONSOLE_BOOTSTRAP_ENV,
+  hideConsoleCmdAssignment,
+  hideConsoleImportArguments
+} from 'dsh-desktop-market-installer/windows-hide-console'
 
 const PROFILE = 'web'
 const OPERATION_TIMEOUT_MS = 15 * 60 * 1000
@@ -45,6 +50,12 @@ export interface ProfilePluginCommandOptions {
    * recovery until Harness next rewrote them.
    */
   pnpmRunnerPath?: string
+  /**
+   * Windows console-hide bootstrap. The `.cmd` shim restores it after package
+   * commands scrub `DSH_*`, and the dsh CLI is started with `--import` so its
+   * own `pnpm.cmd` child does not open a console.
+   */
+  hideConsoleBootstrapPath?: string
   environment?: NodeJS.ProcessEnv
 }
 
@@ -114,9 +125,10 @@ export async function ensureProfilePnpmShim(options: PackageCommandRuntime): Pro
   }
 
   if (process.platform === 'win32') {
+    const hideConsoleAssignment = hideConsoleCmdAssignment(options.hideConsoleBootstrapPath)
     await writeFile(
       join(directory, 'pnpm.cmd'),
-      `@chcp 65001 >nul\r\n@echo off\r\n@set ELECTRON_RUN_AS_NODE=1\r\n"${options.nodeExecutablePath}" ${command
+      `@chcp 65001 >nul\r\n@echo off\r\n@set ELECTRON_RUN_AS_NODE=1\r\n${hideConsoleAssignment}"${options.nodeExecutablePath}" ${command
         .map((part) => `"${part}"`)
         .join(' ')} %*\r\n`,
       'utf8'
@@ -208,6 +220,11 @@ export async function packageCommandEnvironment(options: PackageCommandRuntime):
     options.nodeExecutablePath
   )
   environment.DSH_HOME = options.dshHome
+  if (options.hideConsoleBootstrapPath !== undefined) {
+    environment[HIDE_CONSOLE_BOOTSTRAP_ENV] = options.hideConsoleBootstrapPath
+  } else {
+    delete environment[HIDE_CONSOLE_BOOTSTRAP_ENV]
+  }
   return environment
 }
 
@@ -361,7 +378,7 @@ async function runProfileCommand(
 
     const child = spawn(
       options.nodeExecutablePath,
-      commandArguments,
+      [...hideConsoleImportArguments(environment), ...commandArguments],
       {
         cwd: profileDirectory,
         env: environment,

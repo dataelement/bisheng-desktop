@@ -1,0 +1,303 @@
+diff --git a/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js b/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js
+index 39401ea..612b330 100644
+--- a/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js
++++ b/node_modules/@deepseek-ai/dsh-app-boot/lib/index.js
+@@ -331,8 +331,17 @@ function evaluatePluginCompatibility(manifest, exemptions = {}, runtimeVersion =
+ * @returns an English diagnostic for logs and stderr.
+ */
+ function pluginCompatibilityWarning(issue) {
+-	const key = `${issue.name}@${issue.version}`;
+-	return `Plugin ${key} is incompatible with dsh ${issue.runtimeVersion}: requirements ${JSON.stringify(issue.requirements)}. Running it may cause crashes or data loss. Update the plugin or install a plugin version compatible with this dsh runtime. To accept this risk explicitly, grant the exact-version exemption for ${key} on dsh ${issue.runtimeVersion} with \`dsh plugin allow-version\` or the plugin manager, then retry the installation or restart dsh. Exact-version exemption: ${issue.exempted ? "active" : "not active"}.`;
++	return `Plugin ${issue.name}@${issue.version} declares Harness peerDependencies ${JSON.stringify(issue.requirements)} that do not include dsh ${issue.runtimeVersion}. Compatibility is unverified; Desktop will attempt loading it and report actual import or activation failures.`;
++}
++// Desktop treats declared version ranges as advisory. Keep evaluation pure for
++// diagnostics; report once per declaration/runtime per process, without writing
++// exemptions or changing the installed plugin manifest.
++const reportedPluginCompatibility = new Set();
++function reportPluginCompatibility(issue) {
++	const message = pluginCompatibilityWarning(issue);
++	if (reportedPluginCompatibility.has(message)) return;
++	reportedPluginCompatibility.add(message);
++	process.stderr.write(`[desktop] compatibility warning: ${message}\n`);
+ }
+ //#endregion
+ //#region lib/types/profile-compatibility.js
+@@ -914,6 +923,17 @@ function readProfileManifest(binName, dir) {
+ 	if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`${binName}: profile manifest ${path} must hold a JSON object`);
+ 	return parsed;
+ }
++// The market package switch must be read before preparing bundle manifests.
++// An unreadable state cannot authorize skipping any bundle.
++function readDisabledProfileBundles(dir) {
++	try {
++		const state = JSON.parse(readFileSync(join(dir, ".dsh-market", "state.json"), "utf8"));
++		const list = state.disabled !== void 0 ? state.disabled : state.disabledSkins;
++		return new Set(Array.isArray(list) ? list.filter((name) => typeof name === "string") : []);
++	} catch {
++		return new Set();
++	}
++}
+ /**
+ * Write a profile's manifest back (2-space JSON, trailing newline).
+ * @param dir - the profile directory.
+@@ -1012,31 +1032,50 @@ function resolveBundleDir(binName, packageName, installAnchor, profileDir) {
+ * @param options - `userLayer: false` skips reading `cordis.patch.yml`.
+ * @returns the successfully loaded bundle layers and optional user patch layer.
+ */
++// Bundle ownership survives patch composition and nested Loader groups.
++function annotatePluginPatches(patches, owner) {
++	const annotate = (row) => {
++		row.__dshPluginOwner = owner;
++		if (row.group && Array.isArray(row.config)) row.config.forEach(annotate);
++	};
++	for (const patch of patches) {
++		if (Array.isArray(patch.insert)) patch.insert.forEach(annotate);
++		else annotate(patch);
++	}
++	return patches;
++}
+ function loadProfileDirectory(binName, dir, installAnchor, options = {}) {
+ 	const bundles = dropRetiredBundles(dir, readProfileManifest(binName, dir)).dsh?.profile?.bundles ?? [];
++	const disabled = readDisabledProfileBundles(dir);
+ 	const layers = [];
+ 	const skippedBundles = [];
+ 	const exemptions = bundles.length === 0 ? {} : readProfileVersionExemptions(dir);
+-	for (const packageName of bundles) try {
++	for (const packageName of bundles) {
++		if (disabled.has(packageName)) continue;
++		const owner = { packageName };
++		try {
+ 		const packageDir = resolveBundleDir(binName, packageName, installAnchor, dir);
++		owner.packageDir = packageDir;
+ 		const bundleManifest = readProfileManifest(binName, packageDir);
++		owner.version = bundleManifest.version;
++		owner.workbench = Array.isArray(bundleManifest.dsh?.client?.inject) && bundleManifest.dsh.client.inject.includes("dsh-desktop-workbenches");
+ 		const bundle = bundleManifest.dsh?.bundle;
+ 		if (bundle === void 0) throw new Error(`${binName}: profile bundle ${JSON.stringify(packageName)} declares no dsh.bundle in its package.json`);
+ 		const issue = evaluatePluginCompatibility(bundleManifest, exemptions);
+-		if (issue !== void 0 && !issue.exempted) throw new Error(pluginCompatibilityWarning(issue));
++		if (issue !== void 0 && !issue.exempted) reportPluginCompatibility(issue);
+ 		const patchPaths = bundlePatchPaths(packageDir, bundle);
+-		const patches = patchPaths.flatMap((patchPath) => loadOverlayPatches(binName, patchPath));
++		const patches = annotatePluginPatches(patchPaths.flatMap((patchPath) => loadOverlayPatches(binName, patchPath)), owner);
+ 		layers.push({
+ 			packageName,
+ 			packageDir,
+ 			patchPaths,
+ 			patches
+ 		});
+-	} catch (error) {
+-		skippedBundles.push({
+-			packageName,
+-			reason: String(error)
+-		});
++	} catch (cause) {
++		const error = new Error(`${binName}: failed to prepare profile bundle ${packageName}`, { cause });
++		error.dshPluginFailure = { stage: "prepare", packageName, owner, chain: [], message: cause instanceof Error ? cause.message : String(cause) };
++		throw error;
++	}
+ 	}
+ 	const patchPath = join(dir, PROFILE_PATCH_FILENAME);
+ 	const patches = options.userLayer !== false && existsSync(patchPath) ? loadOverlayPatches(binName, patchPath) : [];
+@@ -2325,7 +2364,8 @@ function preflight(ctx, entries, parentURL, report) {
+ 			const manifest = manifestOf(ctx, row.name, base);
+ 			if (manifest === void 0) return void 0;
+ 			const issue = evaluatePluginCompatibility(manifest, exemptions);
+-			return issue === void 0 || issue.exempted ? void 0 : pluginCompatibilityWarning(issue);
++			if (issue !== void 0 && !issue.exempted) reportPluginCompatibility(issue);
++			return void 0;
+ 		} catch (error) {
+ 			return `its declared dsh requirements cannot be validated: ${error instanceof Error ? error.message : String(error)}`;
+ 		}
+@@ -3794,7 +3834,60 @@ function recomposeProfile(ctx, patches, binName, options = {}) {
+ async function reconcileProfilePatches(ctx, patches, binName, requiredIds = []) {
+ 	return (await recompose(ctx, patches, binName, { requiredIds }, false)).warnings;
+ }
+-async function recompose(ctx, patches, binName, options, withResolution) {
++// A host may contribute revocable, memory-only layers without writing the Profile.
++const runtimeCompositions = new WeakMap();
++function recompose(ctx, patches, binName, options, withResolution) {
++	const state = runtimeCompositions.get(ctx);
++	if (!state) return recomposeCore(ctx, patches, binName, options, withResolution);
++	return state.enqueue(async () => {
++		const result = await recomposeCore(ctx, state.compose(patches), binName, options, withResolution);
++		if (!result.restartReason) state.base = structuredClone(patches);
++		return result;
++	});
++}
++function installRuntimeLayers(ctx, patches, binName) {
++	const state = {
++		base: structuredClone(patches), layers: new Map(), tail: Promise.resolve(),
++		compose(base = this.base) { return [...structuredClone(base), ...[...this.layers.values()].flatMap(layer => structuredClone(layer.patches))]; },
++		enqueue(action) {
++			const result = this.tail.then(action);
++			this.tail = result.catch(() => {}); // Keep the queue usable; the caller receives the rejection.
++			return result;
++		}
++	};
++	runtimeCompositions.set(ctx, state);
++	ctx.provide("profileRuntimeLayers", {
++		set(key, patches, requiredIds = []) {
++			return state.enqueue(async () => {
++				await ctx.loader.await();
++				if (state.layers.has(key)) throw new Error("Runtime layer already exists: " + key);
++				state.layers.set(key, { patches: structuredClone(patches) });
++				try {
++					await recomposeCore(ctx, state.compose(), binName, { requiredIds }, false);
++				} catch (error) {
++					state.layers.delete(key);
++					try { await recomposeCore(ctx, state.compose(), binName, {}, false); }
++					catch (rollback) { throw new AggregateError([error, rollback], "Runtime layer activation and rollback failed", { cause: error }); }
++					throw error;
++				}
++			});
++		},
++		remove(key, ownerDisposing = false) {
++			// An owner disposer may be awaited by an in-flight root recomposition.
++			// Withdraw now, but restore the root after that transaction to avoid a cycle.
++			if (ownerDisposing) state.layers.delete(key);
++			const result = state.enqueue(async () => {
++				// Never restore a revoked layer, even if restoring a host plugin fails.
++				state.layers.delete(key);
++				if (ctx.get("loader")) await recomposeCore(ctx, state.compose(), binName, {}, false);
++			});
++			if (!ownerDisposing) return result;
++			result.catch(error => ctx.logger.error(error));
++			return Promise.resolve();
++		}
++	});
++}
++async function recomposeCore(ctx, patches, binName, options, withResolution) {
+ 	const { requiredIds = [], running = [] } = options;
+ 	let applying = false;
+ 	let stopped = [];
+@@ -4149,6 +4242,7 @@ async function mountRootInclude(ctx, absoluteConfigPath, patches = [], bareModul
+ 	if (loader === void 0) return void 0;
+ 	const entry = loader.resolve(includeId);
+ 	bootstrapIncludes.set(ctx, entry);
++	if (bareModuleBaseUrl === void 0) installRuntimeLayers(ctx, patches, binName);
+ 	return entry;
+ }
+ const assembledActivationRejections = /* @__PURE__ */ new Map();
+@@ -4305,7 +4399,10 @@ var StartupError = class extends Error {
+ 	* @param entries - inactive plugin metadata and original failure values.
+ 	*/
+ 	constructor(message, entries) {
+-		const failures = entries.flatMap(({ outcome }) => outcome.kind === "failed" ? [outcome.error] : []);
++		const failures = entries.flatMap(({ outcome, failure }) => {
++			const original = outcome.kind === "failed" ? [outcome.error] : [];
++			return failure === void 0 ? original : [...original, failure];
++		});
+ 		super(message, failures.length > 0 ? { cause: new AggregateError(failures, "Plugin activation failures") } : void 0);
+ 		this.entries = entries;
+ 		Object.defineProperties(this, {
+@@ -4354,7 +4451,7 @@ async function inactiveEntries(ctx, importNow = true) {
+ 				entry,
+ 				outcome: error === void 0 ? {
+ 					kind: "failed",
+-					error: fiber === void 0 ? "failed to import" : `fiber state ${String(fiber.state)}`
++					error: fiber === void 0 ? entry.lastImportError ?? "failed to import" : `fiber state ${String(fiber.state)}`
+ 				} : {
+ 					kind: "failed",
+ 					error,
+@@ -4463,13 +4560,22 @@ function startupDiagnostic(binName, failures, required) {
+ */
+ async function auditStartupEntries(ctx, binName, warn = (line) => void process.stderr.write(line)) {
+ 	const failures = await inactiveEntries(ctx);
+-	const required = new Set(failures.filter(({ entry }) => entry === bootstrapIncludes.get(ctx) || requiredStartupEntryIds.has(entry.options.id)).map(({ entry }) => entry));
++	const required = new Set(failures.filter(({ entry }) => {
++		if (entry === bootstrapIncludes.get(ctx) || requiredStartupEntryIds.has(entry.options.id)) return true;
++		const seen = /* @__PURE__ */ new Set();
++		for (let current = entry; current && !seen.has(current); current = current.parent?.ctx.fiber.entry) {
++			seen.add(current);
++			if (current.options.__dshPluginOwner?.workbench === true) return false;
++		}
++		return true;
++	}).map(({ entry }) => entry));
+ 	if (required.size > 0) throw new StartupError(startupDiagnostic(binName, failures, required), failures.map(({ entry, outcome }) => ({
+ 		id: entry.options.id,
+ 		module: entry.options.name,
+ 		required: required.has(entry),
+ 		fiberState: entry.fiber?.state,
+-		outcome
++		outcome,
++		failure: entry._failure(outcome.kind === "pending" ? "activate" : entry.fiber === void 0 ? "import" : "apply", outcome.kind === "failed" ? outcome.error : new Error(`pending (waiting for ${outcome.missing.length === 1 ? "service" : "services"}: ${outcome.missing.join(", ") || "unknown"})`))
+ 	})));
+ 	if (failures.length > 0) warn(activationDiagnostic(binName, failures));
+ }
+@@ -4541,7 +4647,11 @@ async function boot(binName, absoluteConfigPath, patches, prepare, bareModuleBas
+ 		await auditStartupEntries(ctx, binName);
+ 		return ctx;
+ 	} catch (cause) {
+-		await ctx.fiber.dispose();
++		try {
++			await ctx.fiber.dispose();
++		} catch (cleanupError) {
++			cause = new AggregateError([cause, cleanupError], "plugin boot and cleanup failed");
++		}
+ 		if (cause instanceof StartupError) {
+ 			cause.startup = {
+ 				configurationPath: absoluteConfigPath,
+@@ -4563,4 +4673,4 @@ async function boot(binName, absoluteConfigPath, patches, prepare, bareModuleBas
+ 	}
+ }
+ //#endregion
+-export { DEFAULT_PROFILE_BUNDLES, FAIL_LOUD_RELEASE_TIMEOUT_MS, LOADER_EXPRESSION_SCHEMA, OFFICIAL_ON_DEMAND_CATALOG, ON_DEMAND_BUNDLES, OPTIONAL_BUNDLES, PROFILES_DIR, PROFILE_COMPATIBILITY_FILENAME, PROFILE_PATCH_FILENAME, PROFILE_TEMPLATES, PluginPackages, ProfileRuntimeResolution, ResolutionRestartRequired, StartupError, auditStartupEntries, boot, bundlePatchFiles, bundlePatchPaths, composeEntries, createConfigProjector, createRuntimeResolution, evaluatePluginCompatibility, generateConfigSchema, getDshRuntimeVersion, initProfile, installFailLoud, isNativeConfigSchema, loadEnv, loadLayeredEnv, loadOptionalPatches, loadOverlayPatches, loadProfile, loadProfileDirectory, mountRootInclude, pluginCompatibilityWarning, prepareProfileEntries, prepareProfilePatches, readBundlePatches, readPluginMeta, readProfileCompatibility, readProfileManifest, readProfilePatches, readProfilePlugins, readProfileVersionExemptions, recomposeProfile, reconcileProfilePatches, reconcileProfilePlugins, removeLinkProjections, renderConfigDump, reportSkippedBundles, resolveBundleDir, resolveConfigPath, resolvePluginResource, resolveProfileDir, resolveTelemetryPatch, sanitizeProfile, setProfileVersionExemption, writeProfileBundles, writeProfileManifest };
++export { reportPluginCompatibility, readDisabledProfileBundles, DEFAULT_PROFILE_BUNDLES, FAIL_LOUD_RELEASE_TIMEOUT_MS, LOADER_EXPRESSION_SCHEMA, OFFICIAL_ON_DEMAND_CATALOG, ON_DEMAND_BUNDLES, OPTIONAL_BUNDLES, PROFILES_DIR, PROFILE_COMPATIBILITY_FILENAME, PROFILE_PATCH_FILENAME, PROFILE_TEMPLATES, PluginPackages, ProfileRuntimeResolution, ResolutionRestartRequired, StartupError, auditStartupEntries, boot, bundlePatchFiles, bundlePatchPaths, composeEntries, createConfigProjector, createRuntimeResolution, evaluatePluginCompatibility, generateConfigSchema, getDshRuntimeVersion, initProfile, installFailLoud, isNativeConfigSchema, loadEnv, loadLayeredEnv, loadOptionalPatches, loadOverlayPatches, loadProfile, loadProfileDirectory, mountRootInclude, pluginCompatibilityWarning, prepareProfileEntries, prepareProfilePatches, readBundlePatches, readPluginMeta, readProfileCompatibility, readProfileManifest, readProfilePatches, readProfilePlugins, readProfileVersionExemptions, recomposeProfile, reconcileProfilePatches, reconcileProfilePlugins, removeLinkProjections, renderConfigDump, reportSkippedBundles, resolveBundleDir, resolveConfigPath, resolvePluginResource, resolveProfileDir, resolveTelemetryPatch, sanitizeProfile, setProfileVersionExemption, writeProfileBundles, writeProfileManifest };
+diff --git a/node_modules/@deepseek-ai/dsh-app-boot/lib/types/index.d.ts b/node_modules/@deepseek-ai/dsh-app-boot/lib/types/index.d.ts
+index 81323a0..09e09e1 100644
+--- a/node_modules/@deepseek-ai/dsh-app-boot/lib/types/index.d.ts
++++ b/node_modules/@deepseek-ai/dsh-app-boot/lib/types/index.d.ts
+@@ -12,7 +12,7 @@ import { dshHomePath } from '@deepseek-ai/dsh-home-paths';
+ import { type LaunchEnvironmentSnapshot } from '@deepseek-ai/dsh-launch-environment';
+ export { readBundlePatches, readProfilePatches, resolveTelemetryPatch, type ProfileContext, type ProfilePnpmInvocation } from './profile-context.ts';
+ export { sanitizeProfile } from './profile-sanitize.ts';
+-export { getDshRuntimeVersion, evaluatePluginCompatibility, pluginCompatibilityWarning, type PluginCompatibility } from './plugin-compatibility.ts';
++export { getDshRuntimeVersion, evaluatePluginCompatibility, pluginCompatibilityWarning, reportPluginCompatibility, type PluginCompatibility } from './plugin-compatibility.ts';
+ export { PROFILE_COMPATIBILITY_FILENAME, readProfileCompatibility, readProfileVersionExemptions, setProfileVersionExemption, type ProfileCompatibility, } from './profile-compatibility.ts';
+ export { prepareProfileEntries, prepareProfilePatches } from './compatibility-preflight.ts';
+ export { readPluginMeta, resolvePluginResource } from './package-meta.ts';
+@@ -23,6 +23,11 @@ export { isNativeConfigSchema } from './config-schema/native.ts';
+ export { readProfilePlugins, reconcileProfilePlugins, writeProfileBundles, type ProfilePluginLocation, type ProfilePluginDependency, type ProfilePluginInventory, type ProfilePluginReconciliation, } from './profile-plugins.ts';
+ declare module '@deepseek-ai/cordis' {
+     interface Context {
++        /** Memory-only root layers, applied after persistent Profile patches; absent in Safe Mode. */
++        profileRuntimeLayers?: {
++            set(key: string, patches: PatchOptions[], requiredIds?: string[]): Promise<void>;
++            remove(key: string, ownerDisposing?: boolean): Promise<void>;
++        };
+         /** Harness-home path resolver available to Loader `!!js` config expressions. */
+         dshHomePath?: typeof dshHomePath;
+     }
+@@ -35,7 +40,7 @@ declare module '@deepseek-ai/cordis' {
+         'app-boot/config-reload'(): void;
+     }
+ }
+-export { composeEntries, createRuntimeResolution, ProfileRuntimeResolution, DEFAULT_PROFILE_BUNDLES, OPTIONAL_BUNDLES, bundlePatchFiles, bundlePatchPaths, initProfile, removeLinkProjections, loadProfile, loadProfileDirectory, PROFILE_PATCH_FILENAME, PROFILE_TEMPLATES, PROFILES_DIR, readProfileManifest, reportSkippedBundles, resolveBundleDir, resolveProfileDir, writeProfileManifest, type Profile, type ProfileLayer, type SkippedBundle, type ProfileManifest, type LinkedRoot, type RuntimeResolutionOptions, type RuntimeResolutionEntry, type RuntimeResolution, type ProfileTemplate, } from './profile.ts';
++export { composeEntries, createRuntimeResolution, ProfileRuntimeResolution, DEFAULT_PROFILE_BUNDLES, OPTIONAL_BUNDLES, bundlePatchFiles, bundlePatchPaths, initProfile, removeLinkProjections, loadProfile, loadProfileDirectory, PROFILE_PATCH_FILENAME, PROFILE_TEMPLATES, PROFILES_DIR, readDisabledProfileBundles, readProfileManifest, reportSkippedBundles, resolveBundleDir, resolveProfileDir, writeProfileManifest, type Profile, type ProfileLayer, type SkippedBundle, type ProfileManifest, type LinkedRoot, type RuntimeResolutionOptions, type RuntimeResolutionEntry, type RuntimeResolution, type ProfileTemplate, } from './profile.ts';
+ export { PluginPackages, type PluginPackage, type PluginPackagesConfig, } from './profile-resolution/service.ts';
+ export { ResolutionRestartRequired } from './profile-resolution/resolver.ts';
+ /**
+diff --git a/node_modules/@deepseek-ai/dsh-app-boot/lib/types/plugin-compatibility.d.ts b/node_modules/@deepseek-ai/dsh-app-boot/lib/types/plugin-compatibility.d.ts
+index 9594009..caa9718 100644
+--- a/node_modules/@deepseek-ai/dsh-app-boot/lib/types/plugin-compatibility.d.ts
++++ b/node_modules/@deepseek-ai/dsh-app-boot/lib/types/plugin-compatibility.d.ts
+@@ -34,3 +34,5 @@ export declare function evaluatePluginCompatibility(manifest: object, exemptions
+  */
+ export declare function pluginCompatibilityWarning(issue: PluginCompatibility): string;
+ //# sourceMappingURL=plugin-compatibility.d.ts.map
++/** Report an unverified version declaration without blocking installation or loading. */
++export declare function reportPluginCompatibility(issue: PluginCompatibility): void;
+diff --git a/node_modules/@deepseek-ai/dsh-app-boot/lib/types/profile.d.ts b/node_modules/@deepseek-ai/dsh-app-boot/lib/types/profile.d.ts
+index 0b8d889..8c3fca3 100644
+--- a/node_modules/@deepseek-ai/dsh-app-boot/lib/types/profile.d.ts
++++ b/node_modules/@deepseek-ai/dsh-app-boot/lib/types/profile.d.ts
+@@ -213,6 +213,8 @@ export declare class ProfileRuntimeResolution implements RuntimeResolution {
+  * @returns the parsed manifest.
+  */
+ export declare function readProfileManifest(binName: string, dir: string): ProfileManifest;
++/** Packages Desktop's market switch keeps out of composition (`.dsh-market/state.json#disabled`). */
++export declare function readDisabledProfileBundles(dir: string): Set<string>;
+ /**
+  * Write a profile's manifest back (2-space JSON, trailing newline).
+  * @param dir - the profile directory.

@@ -26,7 +26,7 @@ function fixture(blocks, readImage) {
     sent.push(parseEnterpriseChatPayload({ request }).request)
     return new Response('data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } })
   } })
-  return { session, adapter, sent, recover: (failure) => listeners.get('agent/request-error')({ agent: { session }, failure }, () => undefined) }
+  return { session, adapter, sent, recover: (failure) => listeners.get('agent/request-error')({ agent: { session }, failure, signal: new AbortController().signal }, () => undefined) }
 }
 
 describe('enterprise real Session image recovery', () => {
