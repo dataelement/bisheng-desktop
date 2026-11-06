@@ -355,7 +355,7 @@ export class EnterpriseChatView {
     if (epoch !== this.generation || !this.view || !this.origin) throw new Error('Chat unavailable.')
     const route = id === 'new' ? `/workspace/c/new${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}` : this.routes.get(id)
     if (!route) throw new Error('Select a conversation from current Chat history.')
-    await this.navigate(route)
+    await this.navigate(route, id === 'new')
   }
 
   /** Only current, account-published module identities can be opened by the host. */
@@ -408,17 +408,19 @@ export class EnterpriseChatView {
     }
   }
 
-  private async navigate(route: string): Promise<void> {
+  private async navigate(route: string, resetDraft = false): Promise<void> {
     const view = this.view, origin = this.origin, epoch = this.generation
     if (!view || !origin) throw new Error('Enterprise page unavailable.')
     const current = new URL(view.webContents.getURL())
     current.searchParams.delete('embed')
     current.searchParams.delete('dshTheme')
     current.searchParams.delete('dshLocale')
-    if (current.pathname + current.search === route) return
+    // A new-conversation action must reset the web draft even at the same URL.
+    // Existing conversations and module pages retain their idempotent navigation.
+    if (!resetDraft && current.pathname + current.search === route) return
     const request = ++this.navigationRequest
     const accepted = await view.webContents.executeJavaScript(`(() => {
-      const event = new CustomEvent('dsh:navigate', { detail: { path: ${JSON.stringify(route.slice('/workspace'.length))} }, cancelable: true });
+      const event = new CustomEvent('dsh:navigate', { detail: { path: ${JSON.stringify(route.slice('/workspace'.length))}, resetDraft: ${resetDraft} }, cancelable: true });
       window.dispatchEvent(event);
       return event.defaultPrevented;
     })()`)

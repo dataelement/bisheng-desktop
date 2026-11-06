@@ -560,8 +560,14 @@ window.__ModuleLoader__.load({
       const host = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
       const grouped = React.useMemo(() => {
         const groups = new Map()
-        const items = [...new Map([...host.items, ...Object.values(state.rows).flatMap(page => page.items)].map(item => [item.id, item])).values()]
-        for (const item of items) {
+        const items = new Map()
+        // Project pages outlive ordinary-history refreshes. A cached or late
+        // page must not restore an older title; equal timestamps prefer the page.
+        for (const item of [...host.items, ...Object.values(state.rows).flatMap(page => page.items)]) {
+          const previous = items.get(item.id)
+          if (!previous || (Date.parse(item.updatedAt) || 0) >= (Date.parse(previous.updatedAt) || 0)) items.set(item.id, item)
+        }
+        for (const item of items.values()) {
           const id = state.assignments[item.id]
           if (typeof id !== 'string') continue
           if (!groups.has(id)) groups.set(id, [])

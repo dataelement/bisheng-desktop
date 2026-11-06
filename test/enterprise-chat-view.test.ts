@@ -200,7 +200,8 @@ it('carries host language on first load and updates a hidden document without re
     expect(view.webContents.loadURL).toHaveBeenLastCalledWith('https://enterprise.example/workspace/c/new?embed=dsh&dshTheme=dark&dshLocale=en')
     const loads = view.webContents.loadURL.mock.calls.length
     await f.host.open('new')
-    expect(view.webContents.loadURL).toHaveBeenCalledTimes(loads)
+    // New conversation is a reset action even if the document URL is unchanged.
+    expect(view.webContents.loadURL).toHaveBeenCalledTimes(loads + 1)
     view.webContents.executeJavaScript.mockClear()
     view.webContents.emit('did-navigate-in-page', {}, 'https://enterprise.example/workspace/c/new', true)
     expect(view.webContents.executeJavaScript).toHaveBeenLastCalledWith(expect.stringContaining('dshHostLocale = "en"'))
@@ -253,6 +254,24 @@ it('scopes desktop projects to the enterprise identity and routes only validated
   } finally { f.host.dispose() }
 })
 
+it('requests a fresh project conversation even when the same draft URL is already open', async () => {
+  const f = fixture()
+  const projectId = '11111111-1111-4111-8111-111111111111'
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    await f.host.open('new', projectId)
+    const view = fake.views[0]
+    const loads = view.webContents.loadURL.mock.calls.length
+    view.webContents.executeJavaScript.mockClear()
+    view.webContents.executeJavaScript.mockResolvedValue(true)
+    await f.host.open('new', projectId)
+    expect(view.webContents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining(`path: "/c/new?projectId=${projectId}"`))
+    expect(view.webContents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('resetDraft: true'))
+    expect(view.webContents.loadURL).toHaveBeenCalledTimes(loads)
+  } finally { f.host.dispose() }
+})
+
 it('uses in-document conversation navigation and preserves view geometry while Work is visible', async () => {
   const f = fixture()
   try {
@@ -269,6 +288,7 @@ it('uses in-document conversation navigation and preserves view geometry while W
     f.host.present(f.owner, presentation)
     await f.host.open('cloud-a')
     expect(view.webContents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining("dsh:navigate"))
+    expect(view.webContents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('resetDraft: false'))
     expect(view.webContents.loadURL).toHaveBeenCalledTimes(1)
     expect(f.host.snapshot().phase).toBe('ready')
     expect(fake.views).toHaveLength(1)
@@ -491,6 +511,24 @@ it('opens content-only settings, waits for the current main frame and restores t
     expect(view.setVisible).toHaveBeenLastCalledWith(true)
     expect(fake.views).toHaveLength(1)
     expect(f.host.snapshot().settingsSection).toBeUndefined()
+  } finally { f.host.dispose() }
+})
+
+it('returns from settings to a project draft without requesting a fresh conversation', async () => {
+  const f = fixture()
+  const projectId = '11111111-1111-4111-8111-111111111111'
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    await f.host.open('new', projectId)
+    f.host.present(f.owner, { ...presentation, settings: 'desktop-usage' })
+    await flush()
+    const wc = fake.views[0].webContents
+    wc.executeJavaScript.mockClear()
+    wc.executeJavaScript.mockResolvedValue(true)
+    f.host.present(f.owner, presentation)
+    await flush()
+    expect(wc.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining(`path: "/c/new?projectId=${projectId}", resetDraft: false`))
   } finally { f.host.dispose() }
 })
 

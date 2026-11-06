@@ -1035,3 +1035,82 @@ it('refreshes cloud history on push transitions and focus without periodic state
     expect(bridge.history).toHaveBeenCalledTimes(4)
   } finally { vi.useRealTimers() }
 })
+
+
+async function projectTitleFixture(items) {
+  const ui = await mount(true)
+  let id
+  await act(async () => {
+    ui.projectStore.edit('create')
+    await ui.projectStore.confirm('Title sync')
+    id = ui.projectStore.snapshot().projects[0].id
+  })
+  window.dshEnterpriseChat.projectConversations.mockImplementation(async () => ({
+    epoch: 1, revision: ui.projectStore.snapshot().revision, nextCursor: null, items
+  }))
+  await act(async () => {
+    for (const item of items) await ui.projectStore.assign(item.id, id)
+    await ui.projectStore.load(id)
+  })
+  return { ui, id, section: () => container.querySelector(`[data-chat-project="${id}"]`) }
+}
+const projectTitleRow = (id, title, updatedAt) => ({ id, title, updatedAt })
+
+it('project title freshness uses a newer ordinary-history row over a cached project page', async () => {
+  const { ui, section } = await projectTitleFixture([
+    projectTitleRow('cloud-a', 'New Chat', '2026-11-06T22:09:20')
+  ])
+  expect(section().textContent).toContain('New Chat')
+  window.dshEnterpriseChat.history.mockResolvedValueOnce(historyResult([
+    projectTitleRow('cloud-a', 'Desktop Sync Issue', '2026-11-06T22:09:43')
+  ]))
+  await act(async () => ui.controller.refreshHistory())
+  expect(section().textContent).toContain('Desktop Sync Issue')
+  expect(section().textContent).not.toContain('New Chat')
+})
+
+it('project title freshness keeps newer project pages and their equal-timestamp priority', async () => {
+  const { ui, section } = await projectTitleFixture([
+    projectTitleRow('cloud-a', 'Current project title', '2026-11-06T22:09:43')
+  ])
+  for (const updatedAt of ['2026-11-06T22:09:20', '2026-11-06T22:09:43']) {
+    window.dshEnterpriseChat.history.mockResolvedValueOnce(historyResult([
+      projectTitleRow('cloud-a', 'Older history title', updatedAt)
+    ]))
+    await act(async () => ui.controller.refreshHistory())
+    expect(section().textContent).toContain('Current project title')
+    expect(section().textContent).not.toContain('Older history title')
+  }
+})
+
+it('project title freshness rejects a late older page after ordinary history has updated', async () => {
+  const stale = projectTitleRow('cloud-a', 'New Chat', '2026-11-06T22:09:20')
+  const { ui, id, section } = await projectTitleFixture([stale])
+  const delayed = deferredHistory()
+  window.dshEnterpriseChat.projectConversations.mockReturnValueOnce(delayed.promise)
+  let loading
+  await act(async () => { loading = ui.projectStore.load(id) })
+  window.dshEnterpriseChat.history.mockResolvedValueOnce(historyResult([
+    projectTitleRow('cloud-a', 'Desktop Sync Issue', '2026-11-06T22:09:43')
+  ]))
+  await act(async () => ui.controller.refreshHistory())
+  await act(async () => {
+    delayed.resolve({ epoch: 1, revision: ui.projectStore.snapshot().revision, nextCursor: null, items: [stale] })
+    await loading
+  })
+  expect(section().textContent).toContain('Desktop Sync Issue')
+  expect(section().textContent).not.toContain('New Chat')
+})
+
+it('project title freshness retains members outside the loaded ordinary-history pages', async () => {
+  const { ui, section } = await projectTitleFixture([
+    projectTitleRow('older-member', 'Earlier project conversation', '2026-10-01T12:00:00')
+  ])
+  const current = Array.from({ length: 40 }, (_, i) =>
+    projectTitleRow(`recent-${i}`, `Recent conversation ${i}`, '2026-11-06T22:09:43'))
+  window.dshEnterpriseChat.history.mockResolvedValueOnce(historyResult(current))
+  await act(async () => ui.controller.refreshHistory())
+  expect(section().textContent).toContain('Earlier project conversation')
+  expect(section().querySelectorAll('[data-history-kind=chat]')).toHaveLength(1)
+  expect(container.querySelector('.dshRecentHistory').querySelectorAll('[data-history-kind=chat]')).toHaveLength(40)
+})
