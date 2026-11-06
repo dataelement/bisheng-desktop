@@ -69,12 +69,12 @@ it('submits and tracks a release from the Agent without a manual publishing page
   expect(request).toHaveBeenCalledWith(release)
 })
 
-it('makes the packaged protocol available without a loopback login token', async () => {
+it('resolves the protocol URL through the current enterprise instead of reading a local file', async () => {
   const { tool, request } = fixture('read-only')
+  request.mockResolvedValueOnce({ guideUrl: 'https://enterprise.test/prefix/api/v1/dev-toolkit/workbench-guide.md' })
   const result = await tool.execute({ operation: 'guide' }, { agent: { session: {} } })
-  expect(result.protocol).toContain('Agent-led publishing conversation')
-  expect(result.protocol).toContain('Requirements before implementation')
-  expect(request).not.toHaveBeenCalled()
+  expect(result).toEqual({ guideUrl: 'https://enterprise.test/prefix/api/v1/dev-toolkit/workbench-guide.md' })
+  expect(request).toHaveBeenCalledExactlyOnceWith({ operation: 'guide' })
 })
 
 it('reports the actual writable workspace boundary when preparing source', async () => {

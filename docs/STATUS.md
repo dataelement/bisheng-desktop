@@ -1,3 +1,170 @@
+## 2026-11-03 — 桌面云端会话删除
+
+- 云端会话行新增“更多 → 删除”，通过 Harness Menu / Modal 提供中英文确认、处理中状态、取消和失败重试。确认后调用毕昇现有 `DELETE /api/v1/chat/{chat_id}`，删除当前会话后返回新聊天。
+- 主进程以可信窗口、主 frame、当前身份代际和历史列表授权校验请求；凭据留在隔离浏览会话。成功删除后更新历史路由和列表，过期请求按身份与请求序列丢弃，分页按实际服务端页号推进。
+- 基线 `dataelement/bisheng-desktop:V1.2.0@703ad964bac2df42e7325f5db3ace667ed64c1b9`；Harness `0.2.1-rc.2` / Electron `43.0.0`。专项 4 文件 / 138 项、类型检查及生产构建通过。macOS 原生隔离环境的中英 × 深浅 4 组通过，浅色 100%、深色 125% 缩放。
+- 完整回归 326 文件 / 3,268 项通过，4 文件 / 5 项按环境条件跳过；Windows 安装版及真实企业账号验收待执行。详见 [验证记录](status/cloud-chat-delete-20261103.md)。
+## 2026-11-03 — Work 输入框按当前知识空间权限维护引用
+
+- 根因：空间目录来自列表接口，输入框将目录项直接写入编辑器引用；已选引用跟随草稿保留，权限更新后仍沿用旧状态。
+- 主进程通过 `permissions/check` 的 `knowledge_space/visible` 校验生成可用目录。确认添加重新读取有效目录，草稿恢复、引用变化、窗口恢复焦点及前台定时校验清理失效引用，保留正文、附件和有效空间。会话检索范围同步收敛到有效目录。
+- 请求取消贯穿输入框、资源服务和企业接口；组件卸载释放订阅、定时器及在途校验。权限服务异常保留错误与草稿，发送继续执行权限校验。
+- 基线：远端 `dataelement/bisheng-work:V1.2.0@703ad964bac2df42e7325f5db3ace667ed64c1b9`；Harness `0.2.1-rc.2`。本地分支 `fix/knowledge-composer-permission`。
+- 输入框与资源服务专项 32 项、企业权限接口专项 1 项通过；类型检查、JS 语法、生产构建和差异检查通过。完整回归 3,257 项通过、5 项按环境条件跳过；真实企业账号、Windows 安装版及发布验收待执行。
+
+## 2026-11-02 — Work 完成通知按独立投影投递
+
+- Windows 新包后台、最小化三轮任务完成仍无通知的反馈继续保持失败状态。本轮复现完成投影已到客户端、全局目录加载中/加载失败或缺少会话行时漏发通知的代码缺陷。
+- 自有插件改为消费公开 `projectionsBySession`；目录就绪和目录行归属交给导航，成功轮次、历史过滤、子任务过滤、去重与原生窗口策略沿用现有实现。通知相关回归加入 Windows 测试入口。
+- 基线 `dataelement/bisheng-desktop:V1.2.0@09c22fe`，Harness `0.2.1-rc.2`。通知相关 31 项、完整串行回归 325 文件 / 3220 项通过，4 文件 / 5 项按环境条件跳过；类型检查、生产构建和差异检查通过。实际 Harness 控制器接收与 macOS 原生隐藏/后台/最小化、点击恢复及焦点检查通过，系统 toast 采用替身。
+- 本轮代码缺陷与 Windows 现场故障的对应关系继续待新包验收，原机日志与构建版本待核对。[修复记录](status/work-notification-retest-20261102.md)。
+## 2026-11-02 — 安全模式重启 Loading 页跟随 Desktop 语言
+
+- Loading 页现在通过主进程接收当前 Desktop 语言，按同一语言呈现标题、说明和 HTML lang；首次启动沿用宿主系统语言回退规则。
+- 修复前新增 8 项回归中 6 项失败；修复后专项 73 项、类型检查、生产构建和 macOS Electron 页面 4 组通过。完整串行回归 326 个文件 / 3,223 项通过，4 个文件 / 5 项按条件跳过。
+- 基线 `V1.2.0@09c22fe34e5c89193c15387685810fbaa45e73fc`，Harness `0.2.1-rc.2`，Electron `43.0.0`。安全模式 Profile 内的语言继承由配套 PR #118 处理。
+- Windows 安装包及实机安全模式重启验收待执行，详见 [验证记录](status/splash-locale-20261102.md)。
+## 2026-11-02 — 会话搜索统一空态归属
+
+- 目标 `V1.2.0@09c22fe34e5c89193c15387685810fbaa45e73fc`，分支 `codex/v120-session-search-empty`，Harness `0.2.1-rc.2`。独立目录 `bisheng-session-search-empty-20261102`。
+- 搜索组件与桌面共享列表此前各自绘制空态。现在默认结果及其空态归入 collection fallback，共享列表按本地与云端合并结果统一判断；通过 `searchPending` 等待搜索完成，保留云端首屏加载提示、归档和搜索恢复。
+- 干净安装、安装重放、类型检查、生产构建、JS 语法及差异检查通过。新增回归在旧实现复现 5 项失败；搜索与 Desktop 模式 62 项通过。macOS / Electron 43 实际组件 16 组通过，深浅主题截图已检查，同一入口在旧代码复现两条空态。
+- 完整回归 3,220 项通过、5 项条件跳过；1 项受依赖目录 `.DS_Store` 干扰。移开并保留缓存后，运行时兼容、搜索和 Desktop 模式组合 66 项复测通过。真实企业账号与正式安装版验收待执行；详见 [验证记录](status/session-search-empty-20261102.md)。
+
+## 2026-10-31 — 删除会话确认弹窗与原生 Chat 联动
+
+- 根因：Harness Modal 使用 body portal，宿主此前只识别 root inert 和 About 标记，原生 Chat 继续覆盖确认弹窗。桌面内容组件现在订阅可见的宿主模态弹窗；所有弹窗关闭后按当前 Chat / Work / 设置状态恢复视图。
+- 当前 V1.2.0 已包含删除确认中文化；本机 `1.2.0-test.2` 安装包仍使用旧系统确认框。组合验证确认当前源码中文按钮为“取消／删除会话”，并覆盖关闭、重试与焦点。
+- 基线 `bisheng-desktop:V1.2.0@e928c8c`，Harness `0.2.1-rc.2`。修复前 3 项新增行为回归失败；修复后相关 63 项通过，干净依赖安装、类型检查、生产构建与 macOS Electron 原生子视图验证通过。完整串行回归 321 个文件 / 3,184 项通过，4 个文件 / 5 项按条件跳过。
+- 详情见 [验证记录](status/host-dialog-20261031.md)。Windows 安装包与真实账号验收待执行。
+## 2026-10-31 — 桌面左侧会话列表刷新缓存
+
+- 根因：普通企业信息请求也会发送账号刷新通知，侧栏将通知直接视为身份切换而清空历史及分页。现在按主进程 epoch 核对身份，同账号刷新保留列表，完整拉取成功后一次性替换。
+- 请求失败保留可用数据和重试入口；已确认空列表保持空态。轮询与宿主订阅统一处理账号切换、退出登录及旧响应隔离。
+- 专项 45 项通过；原实现对照前 8 项新增场景中 7 项失败。macOS Electron 6 组、共 180 帧验证行身份和滚动位置稳定；类型检查、生产构建与语法检查通过。完整回归 3,187 项通过、5 项条件跳过，1 项既有账号刷新用例等待超时；该项单独复测通过。依赖对齐后，相关搜索与侧栏组合 58 项通过。
+- 目标 `bisheng-desktop:V1.2.0`，基线 `e928c8c3b`；Windows 安装版和真实账号验收待执行。
+- [验证记录](status/history-cache-20261031.md)。
+## 2026-10-30 — 桌面弹窗保留背景原色
+
+- 用户确认取消视觉蒙版、保留弹窗。Client 共用弹窗壳负责透明背景；Desktop 窗口视图只管理弹窗范围与背景内容坐标，移除知识空间独立蒙版颜色及动画覆盖。
+- 基线 `bisheng-desktop:V1.2.0@e928c8c3bd5d2f188f17b7d93e0fbd7bc13eaf90`，Harness `0.2.1-rc.2`；独立目录 `.worktrees/bisheng-work-v120-dialog-transparent`，分支 `codex/v120-dialog-transparent`。
+- 相关 3 组 45 项回归、类型检查、生产构建通过；macOS Electron 原生隔离夹具 12 组通过，覆盖宽度、缩放、主题、嵌套弹窗、透明背景、外部点击、Esc 与关闭恢复。新增 viewport 行为用例覆盖透明背景及样式清理。
+- 干净依赖安装及 postinstall 通过；完整回归 3,179 项通过、5 项条件跳过，1 项企业服务用例等待超时；该测试与弹窗相关用例串行复测 4 组 73 项全部通过。新增 viewport 回归在原基线失败，恢复修复后通过。
+- [Client 配套 PR #2566](https://github.com/dataelement/bisheng/pull/2566)，基线 `feat/bisheng-work-120-main@1954f60c4`。两端部署、Windows 安装客户端及真实账号技能上传验收待执行。
+## 2026-10-30 — Windows Work 会话添加菜单可见边界
+
+- 根因：添加菜单按窗口固定上边距计算高度，实际会话滚动容器裁切顶部；字体放大、显示缩放和输入框增高会压缩可用空间。
+- 实现：菜单读取真实裁切边界和定位锚点，按行高调整高度；空间较小时在内容区内展开完整菜单行，窗口、字体及输入框尺寸变化同步重算。
+- 当前验证：9 项行为回归、类型检查、生产构建和依赖重放通过；真实 macOS Electron 48 组布局检查通过，同一检查在旧实现上 48 组失败。Windows 实机、安装包及真实账号验收待执行。
+- 基线 `bisheng-desktop:V1.2.0@e928c8c`，Harness `0.2.1-rc.2`；完整证据见 `docs/status/composer-menu-bounds-20261030.md`。全量回归 3,183 项通过、5 项条件跳过；1 项 Office 打包检查遇到构建资源刷新，资源稳定后独立复测通过。
+## 2026-10-31 — Work 知识空间确认按钮悬停颜色
+
+- 修复原有 hover 声明引用缺失主题变量导致背景透明的问题。悬停色由现有业务主色与主文字色生成，浅色主题加深蓝色，深色主题提亮蓝色。
+- 基线 `bisheng-desktop:V1.2.0@e928c8c`，Harness `0.2.1-rc.2`。干净安装、类型检查、生产构建及 16 组 macOS Electron 组件交互检查通过；同一检查在旧版源码复现背景透明。完整串行回归 321 个文件 / 3,179 项通过，4 个文件 / 5 项按环境条件跳过。
+- Windows 安装包及真实账号验收待执行。[详细记录](status/knowledge-confirm-hover-20261031.md)。
+## 2026-10-30 — 工作台企业页签跟随界面语言
+
+- 根因：工作台企业页签直接渲染中文常量。现改为读取 `workbench.enterprise` 注册词典，英文显示 `From enterprise`，中文显示 `来自企业`，随现有语言订阅即时更新。
+- 基线 `dataelement/bisheng-desktop:V1.2.0@e928c8c`，Harness `0.2.1-rc.2`；详细基线与验证见 [交付记录](status/workbench-enterprise-locale-20261030.md)。
+- 相关 220 项检查通过；新增 2 项真实 React/LocaleRuntime 回归在原基线上失败，修复后通过。类型检查和生产构建通过。完整回归首轮 3,175 项通过、5 项跳过；复用依赖缺少基线已有会话搜索修复导致 6 项失败，按当前分支恢复该依赖后，失败项与工作台组合复测 226 项全部通过；Windows 安装版及真实账号验收待执行。
+
+## 2026-10-29 — macOS 安全模式插件管理页完整展示
+
+- 根因：安全模式管理页位于宿主 iframe，Chat 位于独立原生子视图；管理页打开后原生 Chat 继续显示，覆盖正文并遮住部分标题。
+- 实现：桌面内容贡献项读取并订阅已有 `data-dsh-safe-mode-page`，管理页占用内容区时隐藏 Chat；关闭后按当前模式恢复。远程设置页继续作为前景展示，观察器沿用组件生命周期清理。
+- 基线、回归与验收范围见 [验证记录](status/safe-mode-panel-20261029.md)。相关 70 项行为回归、类型检查、JS 语法检查和 macOS Electron 24 组隔离夹具通过；新增 2 项回归在原基线均失败。生产构建与全量回归通过（316 个文件 / 3,134 项通过，4 个文件 / 5 项条件跳过）；安装包及真实账号验收待执行。
+## 2026-10-29 — About 版本信息与原生 Chat 的展示归属
+
+- 根因：实际运行的 About 位于宿主 closed Shadow DOM，Chat 使用原生子视图；打开 About 时原生视图持续覆盖弹窗区域。现由 About 声明前景状态，内容贡献项隐藏 Chat / 嵌入式设置页，关闭后按当前模式和宿主模态状态恢复；主进程把焦点交给宿主，弹窗管理 Tab、关闭与销毁清理。
+- 基线 `bisheng-desktop:V1.2.0@919cc8d`，Harness `0.2.1-rc.2`；详细记录见 [About 验证记录](status/about-chat-visibility-20261029.md)。相关 72 项回归、类型检查、生产构建与 macOS 原生隔离夹具 16 组通过；两项展示回归在旧基线失败。全量回归 3,163 项通过、5 项条件跳过；Windows 安装包和真实账号验收待执行。
+## 2026-10-29 — 删除会话确认按钮中文化
+
+- 基线 `bisheng-desktop:V1.2.0@919cc8d`，Harness `0.2.1-rc.2`。删除确认改用 Harness Modal 与根级弹窗出口，菜单、正文、按钮及状态统一跟随应用语言；删除接口沿用现有链路。
+- 相关 26 项回归、干净安装、类型检查、构建与 macOS Electron 实际前端共享组件验证通过；完整回归 3,167 项通过、5 项条件跳过。详情见[专项记录](status/session-delete-locale-20261029.md)。安装包、真实账号及 Windows 验收待执行。
+
+## 2026-10-28 — 页面弹窗覆盖桌面侧栏
+
+- PR #94 冲突处理：同步目标分支 `V1.2.0@3ec92416fc53610d0189b70729b683a2a98a03e5`，保留页面弹窗与工作台导航两组状态记录；干净依赖安装、类型检查、构建及差异检查通过；完整回归 3,127 项通过、5 项跳过，1 项 Office 端口占用失败，最终串行复测 55 项全部通过；macOS 原生弹窗 12 组及导航 48 组通过。详情见 [合并验证记录](status/window-modal-20261028.md#pr-94-target-branch-synchronization--2026-10-28)。
+- 技能上传等页面弹窗统一采用窗口级展示范围，内容页保留原坐标；多层弹窗全部关闭后恢复内容区。根因、基线及验证记录见 [窗口级弹窗](status/window-modal-20261028.md)。
+- 相关 37 项回归、类型检查、生产构建及 macOS Electron 12 组子视图验证通过。完整回归 3,107 项通过、5 项跳过，1 项 Office 重算超时；资源稳定后的串行复测 52 项通过。Windows 与真实账号验收待执行。
+
+## 2026-10-28 — 工作台顶部导航显示范围
+
+- 根因：模式选择栏依据空白会话状态展示，工作台首次进入和空白会话也满足该条件。现在 Work 首页同时要求处于普通会话界面；进入工作台时移除整行 Chat / Work 导航并释放顶部空间，返回普通会话时按原首页规则恢复。
+- 实现：桌面导航通过 Cordis 可选注入订阅既有 `desktopWorkbenches` 服务；工作台快照提供功能启用状态。功能关闭、服务卸载及重载使用同一订阅生命周期，Chat 首页保留原有入口，会话组件与草稿保持原实例。
+- 基线：已核对远端 `dataelement/bisheng-work:V1.2.0@ea1b79129b1b636d459de65642f17dfd3864d8d3`；工作目录 `.worktrees/bisheng-work-v120-workbench-mode-header`，分支 `codex/v120-workbench-mode-header`；干净安装的 Harness 为 `0.2.1-rc.2`。v0.9.0 参考集成目录检查时为干净状态。
+- 验证：干净依赖安装及兼容处理、相关 242 项回归、类型检查和两个插件 JS 语法检查通过。`test/desktop-modes-ui.test.mjs` 覆盖首次恢复工作台、进入/切换/退出、空白与已有会话、启停、可选服务卸载/重载、Chat 首页与草稿保留；`test/workbench-client.test.mjs` 覆盖服务实际启停快照。生产构建和完整回归通过：314 个测试文件、3,101 项通过，4 个文件 / 5 项条件跳过；差异检查通过。构建使用按锁定 SHA256 校验的本地下载缓存。
+- macOS Electron 隔离夹具运行真实桌面导航组件和样式，使用模拟服务状态，在 600/1200 宽度和深浅模式下共 4 组通过，确认顶部空间回收、返回恢复与订阅清理。真实同事工作台、真实账号及 Windows 安装包验收待发包执行。证据位于主工作区 `outputs/workbench-mode-header-20261028/`。
+
+## 2026-10-27 — PR #79 同步目标分支并处理冲突
+
+- 远端 PR #79 原 head `6e3b2f5`，目标 `dataelement/bisheng-work:V1.2.0` 已更新至 `802638a1a6c4a21c95e503f4c2cb803d83776e8c`；沿用 `codex/v120-chat-signin-guidance` 与 `.worktrees/bisheng-work-capabilities-v120-integration`，实际 Harness `0.2.1-rc.2`。v0.9.0 参考集成目录状态为空。
+- `docs/STATUS.md` 保留双方新增记录；`packages/dsh-desktop-client-ui/client.js` 同时保留目标分支“工作区 / Workspaces”名称及本 PR 的企业账号登录提示、说明与继续工作操作。
+- 验证：锁定依赖重新安装及兼容处理、类型检查、JS 语法检查、生产构建、完整回归和差异检查通过；完整回归 309 个文件 / 3,076 项通过，4 个文件 / 5 项条件跳过。验证期间目标分支新增 Windows 侧栏间距提交 `2171c5d`，改动位于独立的 sidebar 兼容文件与测试。
+- 本轮验证范围为合并后的源码与构建；真实企业授权与跨平台安装仍按原 PR 的验收范围执行。
+
+## 2026-10-27 — Work 消息展示工具名称
+
+- 基线：远端 `dataelement/bisheng-work:V1.2.0@f6b12ae267d857a93c8d53fe3baf0887812c0ce0`；独立分支 `codex/v120-tool-message-label`，工作目录 `.worktrees/bisheng-work-v120-tool-message-label`。已安装 Harness `0.2.1-rc.2`；v0.9.0 参考集成工作树检查时为干净状态。
+- 根因与实现：工具序列化原先仅保留 ID。现在同一消息正文携带准确工具身份与选择时的名称快照，通过 Harness `uiConversation.userText` 和 `conversation.user.text.node` 展示名称与工具图标。模型继续读取工具身份，发送前沿用当前账号的可用性验证。名称按 JSON 字符串编码，渲染按 React 文本处理。
+- 历史行为：新消息持久化后可独立还原名称，重新打开、退出登录或切换账号均使用原名称快照；编辑正文后重发保留已有身份与名称。旧消息仅含 ID，显示本地化“已选工具”。历史记录保持原文，真实执行仍沿用服务端权限和审批。
+- 验证：相关 5 个测试文件共 47 项通过；类型检查和生产构建通过。新增 `test/work-tool-message.test.mjs` 运行已安装 Harness 的提交、文本评估与渲染实现，覆盖名称快照、历史重载、正文编辑重发、多工具、重复引用、特殊字符、长名称、异常文本、权限失败、旧消息中英文展示和卸载重装；`test/work-tool-composer.test.mjs` 更新序列化合同，并保留身份与取消回归。完整回归 3,034 项通过、5 项条件跳过（306 个文件通过、4 个跳过）；首次受本机端口权限限制，使用允许本机测试服务的权限完整重跑后通过。macOS Electron 43.0.0 真实组件检查覆盖 390/900 宽度、深浅主题共 4 组及持久化刷新，截图已检查。组件目录校验采用模拟响应。依赖复用已安装的锁定版本，生产构建重新生成运行资源。
+- 证据位于主工作区 `outputs/tool-message-label-20261027/`。本轮交付源码与 PR；真实账号工具调用、安装后的完整会话流程及 Windows 验收待后续执行。
+
+## 2026-10-27 — Work 输入框资源图标统一与运行包修复
+
+- 2026-10-27 合并复核（PR #82）：同步目标 `V1.2.0@2171c5d64de8ffebeb6a3042878bc4a1d31da679`，保留双方新增文档章节，沿用现有功能实现。实际 Harness `0.2.1-rc.2`；干净依赖安装与兼容处理、类型检查、生产构建和差异检查通过，完整回归 3075 项通过、5 项条件跳过。 目标后续合入 #79 后，调整状态记录排列，并复核与 `a4c2928` 自动合并成功。
+
+- 产品行为：技能、工具、知识空间显示对应图标与资源名称，菜单和输入框引用共用 ReferenceIconRegular；整体编辑、资源身份、权限和发送序列化沿用原生协议。
+- 基线：已核对远端 `dataelement/bisheng-work:V1.2.0@c2d71dffab1328ab723b4dad44992b6293d2f485`，修复前远端 PR 分支 `17e74d3f8e7d8210a0ad9a594ab27f09e0d83608`；目录 `.worktrees/bisheng-work-composer-resource-icons`，分支 `codex/v120-composer-resource-icons`，安装 Harness `0.2.1-rc.2`。
+- 实现：插入元数据与草稿恢复支持 skill/tool/folder；技能与锤子使用 BISHENG 图形，文件夹沿用 Harness。首次交付仅修改 primitives 分发库，真实桌面消费 web-frontend 中预编译的共享模块，导致技能和工具图标为空。此前组件验证没有覆盖该路径。
+- 根因修复：构建步骤从同一权威图标定义生成真实共享前端中的分支，并接入安装、开发、构建、测试和打包路径。通过公开导出定位运行实现，版本和结构漂移触发构建失败；内容摘要更新入口缓存键。
+- 自动验证：定向 5 文件 / 29 项通过，涵盖完整前端入口与 vendor 依赖执行、实际 loader staticModules 的五种图标渲染、幂等构建与上游结构漂移；类型检查通过。完整回归 307 文件 / 3,020 项通过，4 文件 / 5 项条件跳过。首轮并行构建与测试发生 Office 准备文件竞争；随后发现本地旧 PPT 依赖副本与构建输出摘要不同，强制重新生成后全量复核通过。
+- macOS 交付：新 arm64 DMG/ZIP 已生成；系统签名校验、699 个依赖清单、Office 生成及 PDF 转换通过。包内宿主插件、primitives、conversation、真实 web 入口与 index HTML 五份文件逐字节一致。重启实际测试应用后，已在已登录 Work 页面确认菜单三类图标与原有三项引用同时可见，草稿恢复完整；未发送任务。截图 `runtime-fix-native.png`。
+- 兼容重放：此前两个修改依赖从原始文件重放后逐字节一致，全部兼容文件重放通过；本轮复用本地物化依赖，网络 npm ci 由 CI 继续检查。
+- PR：Chat https://github.com/dataelement/bisheng/pull/2521 ，Work https://github.com/dataelement/bisheng-work/pull/82 。Chat 前端需配套部署。Windows 和资源实际执行效果由独立验收确认。
+- 证据：主工作区 `outputs/composer-resource-icons-20261027/`；旧组件预览、旧安装包校验属于首轮证据，运行包修复使用 `runtime-fix-*` 日志。
+
+## 2026-10-27 — 侧栏恢复工作区名称
+
+- 侧栏工作区标题中文恢复为“工作区”，英文统一为“Workspaces”，直接维护宿主 locale 文案。
+- 基线：已核对远端 `dataelement/bisheng-work:V1.2.0@c2d71dffab1328ab723b4dad44992b6293d2f485`；工作目录 `.worktrees/bisheng-work-v120-workbench-settings-locale`，分支 `codex/v120-workspace-label`；实际安装 Harness `0.2.1-rc.2`。v0.9.0 集成参考目录状态为空。
+- 验证：JS 语法、类型检查、相关 30 项回归和生产构建通过；完整回归 3,012 项通过、5 项跳过，1 项 Office 转换超时后单独重跑所属文件 8 项全部通过。初次受限环境测试出现本机端口 EPERM，完整回归结果以正常本机权限批次为准。
+- macOS arm64 测试应用通过包内 Harness、原生模块、699 个依赖清单和 Office 转换检查；包内客户端文件与源码逐字节一致。Apple Development 签名测试包 DMG/ZIP 归档与深度签名校验通过，安装后的界面由用户手动验收。证据位于主工作区 `outputs/workspace-label-20261027/`。
+
+## 2026-10-26 — Chat 登录前说明与账号流程引导
+
+- 2026-10-28：会话列表统一呈现会话、空状态与加载状态；登录由账号入口和 Chat 切换引导承接。直接移除列表组件的登录按钮；相关 32 项测试、类型检查、构建及 macOS 4 组原生组件验证通过。完整回归 3,120 项通过、5 项跳过，2 个基线工作台测试文件存在 11 项模拟窗口事件接口缺失失败。基线和验证记录见 [会话列表登录入口整理](status/history-signin-entry-20261028.md)。
+
+- 点击未登录状态的“聊天”时，先展示 Harness 原生说明弹窗，解释聊天与企业平台的关系；用户选择“登录企业账号”后打开现有账号页，选择“继续使用工作”或关闭时保留当前 Work 与草稿。账号就绪后关闭提示，沿用现有登录成功切回 Chat 流程。
+- 账号页补齐登录用途、企业平台地址来源、浏览器授权与返回客户端提示，以及一次性登录码说明；中英文同步。切换平台确认使用业务描述，账号、授权和服务端协议继续复用现有实现。
+- 基线 `dataelement/bisheng-work:V1.2.0` 的 `91123a8d523611fb46066bcb4d0ab995431b91e1`，包含已合并的 #78；修复分支 `codex/v120-chat-signin-guidance`，目录 `.worktrees/bisheng-work-capabilities-v120-integration`，Harness `0.2.1-rc.2`。
+- 验证：定向 51 项通过；完整回归 305 文件 / 3,018 项通过，4 文件 / 5 项条件跳过；类型检查、JS 语法检查、生产构建和差异检查通过。调整原“点击立即跳设置”断言，新增 8 项取消、登录成功及中英文文案/状态组合回归。
+- macOS Electron 43.0.0 隔离夹具加载实际 Harness Modal / Button、官方主题和宿主插件，验证提示先于设置、Esc 关闭、继续工作、显式登录、等待授权、模拟账号就绪后返回 Chat；浅深色弹窗、账号页与等待页截图已检查。账号接口使用测试状态，真实企业登录及 Windows 安装包验收随发包执行。
+- 证据：主工作区 `outputs/chat-signin-guidance-20261026/`。
+- 本地网页由用户查看并认可登录引导；按验收意见，登录入口和账号页统一使用“企业账号 / 企业平台”，中英文同步。真实企业授权与 Windows 安装包验收仍随发包执行。
+
+- 文案调整后：本地网页确认弹窗与账号页使用“企业账号 / 企业平台”；完整回归 3,018 项通过、5 项条件跳过，类型检查、生产构建、JS 语法和差异检查通过。远端目标分支复核为 `c2d71dffab1328ab723b4dad44992b6293d2f485`，此次沿用原 PR 分支与 Harness `0.2.1-rc.2`。
+
+## 2026-10-26 — 首次引导与聊天输入区显示层级修复
+
+- 根因：引导将宿主 `#root` 设为 inert，原生 Chat WebContentsView 仍按聊天模式显示，覆盖 body portal 中的引导卡片与遮罩。
+- 修复：内容贡献项读取并订阅 root 的 inert 状态，统一控制原生视图可见性；引导在 layout effect 建立交互边界。关闭后恢复原视图与草稿，跳转模型设置期间保持 Chat 隐藏，保存失败保留引导与重试入口。
+- 基线：已核对并快进至 `dataelement/bisheng-work:V1.2.0` 的 `38ba2db29352d6cea8b2b61fedcce30bbdf1be1e`；工作目录 `.worktrees/bisheng-work-capabilities-v120-integration`，修复分支 `codex/v120-onboarding-view-order`，实际 Harness `0.2.1-rc.2`。本问题属于已合并的毕昇 Chat/Work 客户端；早期 `dataelement/dsh-desktop:v0.9.0` 远端分支查询返回 404。
+- 验证：干净 npm ci 和全部兼容补丁重放、类型检查、JS 语法检查、生产构建、差异检查通过；完整回归 305 文件 / 3,010 项通过，4 文件 / 5 项条件跳过。`test/desktop-modes-ui.test.mjs` 新增 5 项组合回归；修改前相同用例有 3 项失败，修复后全部通过。
+- 原生证据：隔离的 macOS Electron 43.0.0 夹具加载真实的两个宿主插件，使用简化 Modal 与测试账号状态，验证真实 WebContentsView 的隐藏、恢复、窗口尺寸变化和设置交接。旧代码在“引导出现后隐藏原生视图”断言失败，修复后 5 个场景通过。Windows 原生安装包与真实账号端到端验收待执行；本轮交付代码修复，安装包随后续发包验证。
+- 证据：主工作区 `outputs/onboarding-view-order-20261026/`。
+
+## 2026-10-26 — Work 模型显示名称前台同步
+
+- 2026-10-27 合并复核（PR #80）：同步目标 `V1.2.0@2171c5d64de8ffebeb6a3042878bc4a1d31da679`，保留双方新增文档章节，沿用现有功能实现。实际 Harness `0.2.1-rc.2`；干净依赖安装与兼容处理、类型检查、生产构建和差异检查通过，完整回归 3075 项通过、5 项条件跳过。 目标后续合入 #79 后，调整状态记录排列，并复核与 `a4c2928` 自动合并成功。
+
+- 目标：`dataelement/bisheng-work:V1.2.0`；远端基线 `c2d71dffab1328ab723b4dad44992b6293d2f485`，独立工作目录 `.worktrees/bisheng-work-v120-model-display-sync`，分支 `codex/v120-model-display-sync`，实际安装 Harness `0.2.1-rc.2`。
+- 根因：工作页读取本地企业状态快照，后台模型目录依赖约五分钟一次的定时拉取；窗口焦点/可见性恢复继续读取缓存。模型发布还等待两次重复用量查询。
+- 修复：通过现有认证和审计边界内的专用模型同步接口，在窗口恢复可见、获得焦点、账号变更及前台每 30 秒读取后台目录。宿主持有凭据，按账号合并并发请求，目录立即发布至现有模型选择器；用量按原后台周期单独更新一次。前端请求有超时和销毁清理，后台定时刷新继续作为兜底。
+- 自动验证：干净 npm ci 与兼容配置重放、类型检查、JS 语法检查、生产构建和差异检查通过。定向 82 项通过；真实隔离 Harness 子进程通过认证同步接口验证 `阿里云百炼 / qwen-max` → `阿里云百炼 / 1111`，调用 ID 保持 `bisheng:2`。新增回归覆盖前台同步、请求合并、失败重试、销毁、Broker 权限、退出后的过期响应和选择器名称更新。完整回归 3,018 项通过、5 项条件跳过；两项既有集成测试分别遇到 pnpm 元数据时序与并发端口争用，串行复跑 2 项通过（全部 3,020 项可执行用例已通过）。
+- 交付边界：本轮提交代码 PR；真实企业账号后台联动、macOS/Windows 安装包验收随发包进行。证据位于主工作区 `outputs/model-display-sync-20261026/`。
+
 ## 2026-10-24 — 技能标记与文字垂直居中
 
 - 基线 `V1.2.0@a36ba71de6e5db6f2f242187d2bafc4cbdb045f8`、Harness `0.2.1-rc.2`；v0.9.0 集成参考 worktree 状态为空。
@@ -567,3 +734,69 @@ Verification:
 - Release boundary: installer rebuild, real enterprise account authorization changes, and native Windows acceptance remain pending.
 
 - Display-name follow-up: conversation model captions, menu/search names, tooltips and `/model` choices use localized enterprise-model labels when the server supplies a blank name or internal identifier. Original IDs remain in selection requests. Six additional display cases passed (31 model-related tests total). Clean dependency replay, typecheck and production build passed. Full regression: 2,081 passed, 3 skipped, and the same baseline first-abort-reason case failed.
+
+
+## 2026-10-27 — Workbench settings English locale
+
+- Target: `dataelement/bisheng-work:V1.2.0@c2d71dffab1328ab723b4dad44992b6293d2f485`, verified against the remote branch before implementation and delivery. Worktree: `.worktrees/bisheng-work-v120-workbench-settings-locale`, branch `codex/v120-workbench-settings-locale`. Installed Harness `0.2.1-rc.2`, Electron `43.0.0`. The general v0.9.0 integration checkout was inspected and clean; this fix targets the BISHENG Work settings shown in the report. The remote DSH `v0.9.0` lookup returned no branch ref.
+- Root cause: the settings tab label, heading, switch label/accessibility name and disabled-state hint used literal Chinese strings. The settings panel also lacked a locale subscription.
+- Implementation: register paired Chinese/English settings copy through the host locale service, resolve the tab label through that service, and subscribe the settings panel to active-language changes. The existing enterprise descriptions refresh with the panel.
+- Automated verification: 222 targeted workbench/client/download tests, JavaScript syntax, TypeScript and diff checks passed. The four new settings cases exercise both switch states and enterprise market configurations, English → Chinese → English, accessible labels and locale invalidation.
+- Complete regression: 3,016 passed, 5 skipped, and one Office Safe Mode readiness failure during the concurrent run. The isolated rerun of all 8 Office runtime cases passed. Production build and packaged Harness/bootstrap/native-module checks (699 dependency manifests), Office authoring and DOCX/PPTX/XLSX PDF conversion passed. The packaged workbench client matches the source byte-for-byte (SHA-256 `35a585ccb3db8c9c23c8aa8f42032a2e2e101fff3a475d587969f192e34b4137`). macOS arm64 development DMG/ZIP packaging and DMG checksum verification passed. Artifacts and logs: `outputs/workbench-settings-locale-20261027/`. Native visual acceptance belongs to the user. Source fix: `b771749`, delivered on `codex/v120-workbench-settings-locale` for review against `V1.2.0`.
+
+## 2026-10-28 — Windows workspace navigation chrome
+
+- Baseline: remote `dataelement/bisheng-work:V1.2.0@ea1b79129b1b636d459de65642f17dfd3864d8d3`. Worktree `bisheng-work-windows-workspace-navigation`, branch `codex/windows-workspace-navigation`. Clean dependency installation and compatibility replay passed; installed Harness `0.2.1-rc.2`, Electron `43.0.0`. Local BISHENG app is `1.2.0-test.2` with Harness `0.2.1-rc.2`. The DSH `v0.9.0` remote lookup returned an empty ref; its existing integration worktree was clean. This report's screen maps to the embedded BISHENG knowledge-space header.
+- Implementation: Windows dragging belongs to its existing caption row. Both the host mode header and embedded Chat header enable content dragging on macOS. The existing knowledge-space navigation and directory-menu actions retain their ownership.
+- Defect evidence: the original host stylesheet and original embedded Chat stylesheet each fail the native Chromium Windows-layout drag-region check (`drag` versus expected client area). This establishes the platform-scoping defect. Exact reproduction of the reported click failure on Windows remains pending.
+- Verification: 69 focused tests, TypeScript, JavaScript syntax, production build and diff checks passed. Native Electron on macOS passed 48 local navigation fixtures (Windows/macOS styles, expanded/collapsed sidebar, 80%/100%/125% zoom, Chinese/English and light/dark themes) plus the existing macOS Chat drag-region and click check. Both original styles independently fail the new Windows region checks. The full suite passed 3,100 tests, skipped 5 and failed one unrelated PPT template timing assertion; the isolated 36-test PPT file then passed. Its test and production source match the baseline. Office download timed out initially; the successful build reused SHA-verified local download caches. Fixtures use temporary profiles and local content.
+- Integration update: merged live-verified `V1.2.0@a52a43cf768bae59d3834be9fff0d2ab6c7e7f5e`, preserving the account usage recovery implementation and both documentation sections. Dependencies and compatibility files match the prior installed baseline. TypeScript, production build and diff checks passed. Full regression: 3,112 passed, 5 skipped, one model-catalog startup failed with `EADDRINUSE`; its isolated rerun passed. All 48 native navigation fixtures and the native usage recovery fixture passed on macOS. The navigation fixture keeps animation frames active in the background after an initial throttling timeout.
+- Delivery boundary: source PR. Windows package rebuild, Windows real-account end-to-end navigation, and target deployment remain pending.
+
+## 2026-10-28 — Enterprise account usage recovery
+
+- Baseline: live-verified `origin/V1.2.0@ea1b79129b1b636d459de65642f17dfd3864d8d3`; branch `codex/usage-recovery`. Remote access recovered and the target SHA matches the tested baseline. The legacy `dsh-desktop:v0.9.0` remote check encountered the same transport failure; its local integration worktree was clean. This fix targets the BISHENG Work V1.2.0 usage panel. Installed BISHENG is `1.2.0-test.2`, with packaged and local Harness `0.2.1-rc.2`.
+- Implemented: usage retries call the host from an errored Chat session; readiness transitions refresh the same account; summary and storage return separate validated results and localized errors. Expired cookie sessions receive one shared renewal per usage operation. Identity changes invalidate pending reads; logs retain section and HTTP status.
+- Verification: 81 focused regressions and TypeScript checks passed. A temporary-profile macOS Electron 43.0.0 fixture passed native pointer retry, same-epoch ready recovery and both independent failure directions. The final production build passed. The full suite recorded 3,109 passed, 5 skipped and one model-catalog startup failure caused by EADDRINUSE; the isolated final rerun passed. An intermediate rerun overlapped Office resource assembly and was superseded by the sequential successful run.
+- Delivery target: the user explicitly authorized direct publication to `dataelement/bisheng-work:V1.2.0`. The remote version SHA matches the tested baseline, so the repair is eligible for a normal fast-forward update. The affected 13001 account's original response, remote deployment revision, rebuilt release installation, Windows native checks and real-account acceptance remain pending.
+
+## 2026-10-29 — 安全模式插件管理页语言同步
+
+- 目标：用户指定的 BISHENG Work `V1.2.0`。当前仓库名称为 `dataelement/bisheng-desktop`；远端分支两次核对均为 `804205500286b9cd8a44632acfd9154c9615c466`。独立工作树 `.worktrees/bisheng-work-v120-safe-mode-locale`，分支 `codex/v120-safe-mode-locale`。安装依赖 Harness `0.2.1-rc.2`、Electron `43.0.0`；沿用版本分支依赖与锁文件。旧 `dataelement/dsh-desktop` 的 `refs/heads/v0.9.0` 查询返回空，本次采用用户指定的 BISHENG 版本分支。
+- 根因：侧栏固定使用首次状态 IPC 的语言；管理页在语言上报前即可打开，后续仅接收市场检查的局部字段；启动恢复告警在渲染前已固定为某种语言。主界面语言后续生效时，这些展示继续保留初始语言。
+- 实现：侧栏采用活动 Harness 语言并原位更新；主进程语言变化刷新当前页完整模型，页面同步标题、按钮、提示、辅助说明和插件行。恢复告警按渲染时语言生成，原始诊断保留在详细信息中。操作处理中状态、插件勾选及详细信息展开状态保持。
+- 验证：53 项定向回归、类型检查、生产构建、脚本语法及差异检查通过。macOS 真实 Electron 夹具通过生产 preload、隔离 IPC、语言晚到、旧状态响应、中英切换、深浅主题、重复更新和勾选保持；已查看中文页面截图。构建使用脚本重新校验的本地 Office 下载缓存。完整回归 3,136 项通过、5 项跳过，企业服务文件 1 项等待超时；该文件独立复跑 28 项全部通过，其源码与测试保持版本基线。首轮受限环境运行因本机服务访问失败终止，以允许本机端口的重跑记录为交付证据。
+- 验收边界：Windows 安装包构建、Windows 实机复测与目标版本发布待执行。截图中的底层恢复路径异常保持原有恢复保护逻辑，本次处理其语言呈现。
+
+### macOS 安全模式侧栏补充验证
+
+- 用户补充 macOS 深色界面截图，范围为侧栏“安全模式”标题、说明、“管理插件”和“退出安全模式”。这些元素由 PR #100 的跨平台活动语言同步实现覆盖。
+- 2026-10-29 复核 PR #100 仍为 Open，远端 head `02c7a555415244dd6118136b0f213693630d6643`、目标 V1.2.0 基线 `804205500286b9cd8a44632acfd9154c9615c466`，本地工作树一致、Harness `0.2.1-rc.2`。
+- 扩展真实 macOS Electron 夹具：关闭管理页后设置深色主题，读取实际侧栏 closed Shadow DOM，逐项校验四处中文；触发两个实际按钮并检查既有 IPC 请求，验证恢复锁定阻止退出后按钮恢复可用，以及侧栏折叠重绘后的中文辅助说明。全部通过，脚本语法及差异检查通过。
+- 已查看截图 `artifacts/safe-mode-locale/zh-dark-sidebar.png`。生产实现继续使用已验证的跨平台修复；此轮提交补充场景验证。原安装包更新及真实用户配置复测待执行。
+
+## 2026-10-29 — Work 后台完成通知与 Windows 应用身份
+
+- 基线：实时核对 `dataelement/bisheng-work:V1.2.0@804205500286b9cd8a44632acfd9154c9615c466`；独立目录 `.worktrees/bisheng-work-completion-notifications`，分支 `codex/work-completion-notifications`。实际安装 Harness `0.2.1-rc.2`、Electron `43.0.0`。
+- 实现：宿主在公开 projection registry 中记录普通 Work 会话的成功轮次，通过现有认证 control stream 同步到客户端；覆盖后台、最小化、连续任务、短任务、重连和重复快照。通知点击恢复窗口并打开对应 Work 会话。取消、失败、子任务与继承历史分别处理；合并到同一快照的成功轮次显示数量摘要。
+- Windows 身份：正式与开发运行时分别使用 `io.bisheng` / `io.bisheng.dev`，与两套 NSIS 安装器一致；使用提测包应用图标。preload 使用具名 contextBridge，主进程校验发送窗口、主 frame 与参数。浏览器 Notification API 保持原生行为。
+- 诊断：现有 `harness.log` 增加 `[desktop-notification]` 阶段记录，区分 requested / shown / failed / clicked、前台消费及权限边界拒绝；保留系统错误信息，限制长度并脱敏 URL 与凭据值。shown 表示 Electron 回调，Windows 可见通知仍属于实机验收。
+- 自动验证：62 项定向回归、类型检查、生产构建通过；真实 AgentLoop + 模型传输夹具连续完成两轮纯文本任务。macOS Electron 隔离配置验证真实 preload/main IPC、图标解码、失败日志落盘、点击窗口/会话路由与清理，通过；系统 toast 对象使用测试替身。完整串行回归通过：317 文件 / 3154 项通过，4 文件 / 5 项按条件跳过。并发运行曾出现企业聊天代理与 Office 重算两项超时，串行完整复跑均通过。
+- 验收边界：Windows 25H2 提测包构建安装、真实账号、系统发送者/应用图标及 NOTICE-001/002/003 实机验证待执行。当前交付为源码修复与回归证据；证据位于修复目录 `artifacts/work-completion-notifications/`。
+
+## 2026-10-29 — 搜索后会话列表消失
+
+- 根因：输入关键词切换到 SearchResults 时，WorkspaceBrowser 漏传集合渲染接口，触发 `renderSlot is not a function`，导致侧栏渲染崩溃。修复完整传递既有接口，搜索、打开结果与清空恢复沿用原组件流程。
+- 基线 `bisheng-desktop:V1.2.0@919cc8d`，Harness `0.2.1-rc.2`。修复前回归复现异常；修复后相关 11 项及 macOS Electron 4 组组件流程通过，干净安装、类型检查和构建通过。完整回归 3,165 项通过、5 项按环境条件跳过。
+- 真实账号、更新后的安装包及 Windows 验收待执行。详见 [搜索修复记录](status/session-search-20261029.md)。
+## 2026-10-29 — 工作台市场搜索框双层描边
+
+- 搜索框聚焦后以原生主题色改变现有边框，形成单层焦点提示；输入框尺寸稳定，按钮保留键盘焦点轮廓。
+- 基线 `bisheng-desktop:V1.2.0@919cc8d`，Harness `0.2.1-rc.2`。干净安装、类型检查和构建通过；macOS Electron 深浅主题与两种宽度共 4 组交互检查通过，新增验证能捕获修复前的双层描边。完整回归 3,158 项通过、5 项跳过，安全模式启动 1 项因端口占用失败；安全模式与工作台组件串行复测 214 项全部通过。
+- 真实账号、安装包及 Windows 验收待执行。详见 [搜索框焦点修复记录](status/market-search-focus-20261029.md)。
+
+## 2026-10-30 — PPTX 模板局部文字命名空间修复
+
+- 原始三页附件在文字样式继承时丢失属性命名空间，生成重复 `xmlns:a`，模板准备导出时报 `Imported paragraph serialization failed`。合并逻辑改为保留语义属性命名空间，并从合并节点生成局部声明。
+- 基线 `bisheng-desktop:V1.2.0@e928c8c`，Harness `0.2.1-rc.2`。40 项定向回归、干净安装、类型检查与生产构建通过；macOS 生产插件使用原附件完成首次导入、取消后重选、两轮三页真实 Office 预览及保存。
+- 完整回归 321 个文件、3,181 项通过，5 项按环境条件跳过；Windows 更新后的安装包、原机字体和 PowerPoint 验收待执行。详见 [PPTX 命名空间修复记录](status/pptx-text-namespace-20261030.md)。

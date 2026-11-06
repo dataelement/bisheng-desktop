@@ -162,6 +162,7 @@ import {
   type DesktopStorageAction
 } from './state/desktop-storage'
 import { registerDesktopNotificationBridge } from './desktop-notification'
+import { configureNotificationIdentity } from './notification-identity'
 import {
   raiseWindowWithoutStealingFocus,
   type WindowFocusIntent
@@ -173,7 +174,8 @@ import {
   stopUpdateManager
 } from './update/update-manager'
 import type { RuntimeSnapshot } from '../shared/contracts'
-import { resolveHarnessLocale } from './application-locale'
+import { resolveShellLocale } from './application-locale'
+import { darwinApplicationMenuRoles } from './darwin-application-menu'
 import { registerNativeLocaleHandlers } from './native-locale'
 import type { HarnessLocale } from '../shared/native-locale'
 import { installContextMenu } from './context-menu'
@@ -185,6 +187,7 @@ import {
 import { buildPluginRecoveryViewModel } from './plugin-recovery-view'
 import {
   buildSafeModeViewModel,
+  type SafeModeNotice,
   safeModeBlockingGroupCount,
   safeModeExitConfirmation,
   shouldStartInSafeMode
@@ -256,7 +259,8 @@ let repairAgentService: RepairAgentService | undefined
 /** A repair prompt from the Recovery page, started by the Safe Mode page load. */
 let pendingRepairPrompt: string | undefined
 /** A Safe Mode reason raised while its manager was already open. */
-let pendingSafeModeNotice: string | undefined
+let pendingSafeModeNotice: SafeModeNotice | undefined
+let refreshSafeModeLocale: (() => void) | undefined
 /** Why the last Repair Agent session could not open, until it is shown once. */
 let repairAgentLaunchError: string | undefined
 /** Desktop storage key the Harness UI restores its selected session from. */
@@ -554,6 +558,7 @@ function applyWindowChromeTheme(window: BrowserWindow, isDark: boolean): void {
 }
 
 function configureAppIdentity(): void {
+  configureNotificationIdentity(app, process.platform, developmentBuild)
   if (developmentBuild) {
     app.setName('BISHENG Dev')
     app.setPath('userData', process.env.BISHENG_DEV_USER_DATA || join(app.getPath('appData'), 'bisheng-dev'))
@@ -686,19 +691,9 @@ function dshBrandLogoPath(variant: 'light' | 'dark'): string {
 let activeHarnessLocale: HarnessLocale | undefined
 
 function harnessLocale(): 'en' | 'zh' {
-  // The live Client owns the resolved Profile preference, including automatic mode.
-  if (activeHarnessLocale) return activeHarnessLocale
-  try {
-    const settings = parse(
-      readFileSync(join(app.getPath('userData'), 'harness', 'settings.yaml'), 'utf8')
-    ) as { locale?: { preference?: unknown } }
-    return resolveHarnessLocale(
-      settings.locale?.preference,
-      app.getPreferredSystemLanguages()
-    )
-  } catch {
-    return resolveHarnessLocale(undefined, app.getPreferredSystemLanguages())
-  }
+  // The Client publishes the resolved Profile language, including automatic mode.
+  // settings.yaml is retired and must not keep native chrome in a stale language.
+  return resolveShellLocale(activeHarnessLocale, app.getPreferredSystemLanguages())
 }
 
 function gpuFallbackStatePath(): string {
@@ -1174,7 +1169,7 @@ async function showSplash(): Promise<void> {
   const navigationVersion = ++mainWindowNavigationVersion
   window.webContents.stop()
   const loaded = await loadDesktopResource(window, desktopResourcePath('splash.html'), {
-    query: { theme: nativeTheme.shouldUseDarkColors ? 'dark' : 'light' }
+    query: { theme: nativeTheme.shouldUseDarkColors ? 'dark' : 'light', locale: harnessLocale() }
   })
   if (!loaded) return
   if (quitting || gpuFallbackRelaunching || window.isDestroyed() || navigationVersion !== mainWindowNavigationVersion) return
@@ -1353,13 +1348,17 @@ async function enterMigrationSafeRecovery(
   if (runtime.snapshot().phase === 'ready') void mobileBridge.start().catch(showUnexpectedError)
   // The native manager remains usable even if shared settings prevent the
   // recovery Harness from starting; it does not depend on its Web UI.
-  const notice = repairable
-    ? (harnessLocale() === 'zh'
-      ? `正常 Profile 启动检查未通过，已进入安全模式。可以在此修复插件后重试。${reason}`
-      : `Normal Profile startup checks failed. Safe Mode is available to repair plugins and retry. ${reason}`)
-    : harnessLocale() === 'zh'
-      ? `正常 Profile 恢复尚未完成，已停止所有自动修复并进入安全模式。恢复材料仍保留。${reason}`
-      : `Normal Profile recovery is incomplete. Automatic maintenance is blocked and recovery material is preserved. ${reason}`
+  const notice: SafeModeNotice = repairable
+    ? {
+      zh: '正常配置启动检查发现问题，已进入安全模式。可以在此修复插件后重试。',
+      en: 'Normal Profile startup checks failed. Safe Mode is available to repair plugins and retry.',
+      detail: reason
+    }
+    : {
+      zh: '正常配置恢复需要处理。自动维护已暂停，恢复材料已保留。',
+      en: 'Normal Profile recovery needs attention. Automatic maintenance is paused and recovery material is preserved.',
+      detail: reason
+    }
   // A manager already on screen suppresses the queued one below, so the reason
   // is parked where that manager's action loop can pick it up instead.
   pendingSafeModeNotice = notice
@@ -1692,6 +1691,8 @@ async function uninstallMarketAndRestart(): Promise<{ ok: boolean }> {
 }
 
 function registerHarnessHandlers(): void {
+  const disposeNotifications = registerDesktopNotificationBridge(() => mainWindow, desktopIconPath, harnessLocale)
+  app.once('will-quit', disposeNotifications)
   for (const channel of ['enterprise-cloud:request', 'enterprise-cloud:open', 'enterprise-cloud:bounds', 'enterprise-cloud:close']) ipcMain.removeHandler(channel)
   const checkCloudHost = (event: IpcMainInvokeEvent) => {
     assertTrustedMainWindowEvent(event)
@@ -1718,7 +1719,6 @@ function registerHarnessHandlers(): void {
   ipcMain.handle('enterprise-cloud:bounds', (event, bounds: unknown, owner: unknown) => { checkCloudHost(event); cloudWorkbenchView.resizeFor(owner, bounds) })
   ipcMain.handle('enterprise-cloud:close', (event, owner: unknown) => { assertTrustedMainWindowEvent(event); cloudWorkbenchView.closeFor(owner) })
 
-  registerDesktopNotificationBridge(() => mainWindow, desktopIconPath)
   ipcMain.removeAllListeners('dsh:storage-load-sync')
   ipcMain.on('dsh:storage-load-sync', (event) => {
     event.returnValue = desktopStorageManager?.getAll() ?? {}
@@ -1731,7 +1731,7 @@ function registerHarnessHandlers(): void {
     }
   })
 
-  for (const channel of ['enterprise-chat:present', 'enterprise-chat:state', 'enterprise-chat:retry', 'enterprise-chat:usage', 'enterprise-chat:history', 'enterprise-chat:open', 'enterprise-chat:open-page', 'enterprise-chat:focus-settings']) ipcMain.removeHandler(channel)
+  for (const channel of ['enterprise-chat:present', 'enterprise-chat:state', 'enterprise-chat:retry', 'enterprise-chat:usage', 'enterprise-chat:history', 'enterprise-chat:open', 'enterprise-chat:remove', 'enterprise-chat:open-page', 'enterprise-chat:focus-settings']) ipcMain.removeHandler(channel)
   ipcMain.handle('enterprise-chat:focus-settings', (event) => {
     assertTrustedMainWindowEvent(event)
     enterpriseChat?.focusSettings()
@@ -1764,6 +1764,11 @@ function registerHarnessHandlers(): void {
   ipcMain.handle('enterprise-chat:open', (event, id: unknown) => {
     assertTrustedMainWindowEvent(event)
     return enterpriseChat?.open(id)
+  })
+  ipcMain.handle('enterprise-chat:remove', (event, id: unknown, epoch: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    if (!enterpriseChat) throw new Error('Enterprise Chat unavailable.')
+    return enterpriseChat.remove(id, epoch)
   })
   ipcMain.removeHandler('harness:restart')
   ipcMain.handle('harness:restart', async (event) => {
@@ -1901,6 +1906,7 @@ async function showAbout(window: BrowserWindow): Promise<void> {
   }
   if (window && !window.isDestroyed() && window.webContents && !window.webContents.isDestroyed()) {
     try {
+      window.webContents.focus()
       window.webContents.send('desktop:show-about', info)
       return
     } catch {
@@ -2550,7 +2556,7 @@ async function waitForSafeModeAction(options: {
   recoveryLocked: boolean
   backupRestoreLocked: boolean
   allowedRestoreId?: string
-  notice?: string
+  notice?: SafeModeNotice
   noticeTone?: 'success' | 'error'
 }): Promise<SafeModeAction> {
   const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : createWindow()
@@ -2585,8 +2591,14 @@ async function waitForSafeModeAction(options: {
     return { type: 'quit' }
   }
   const seq = String(++safeModeLoadSequence)
+  let health: { healthReports?: readonly PluginHealthReport[]; healthPending?: boolean } = { healthPending: options.healthCheck !== undefined }
+  const refresh = () => {
+    if (window.isDestroyed() || String(safeModeLoadSequence) !== seq) return
+    window.applyUpdate({ seq, model: render(health) })
+  }
+  refreshSafeModeLocale = refresh
   window.show(desktopResourceUrl(SAFE_MODE_PAGE, {
-    state: JSON.stringify(render({ healthPending: options.healthCheck !== undefined })),
+    state: JSON.stringify(render(health)),
     icon: app.isPackaged ? 'icon.png' : 'app-icon.png',
     theme: harnessThemePreference(),
     seq
@@ -2596,9 +2608,14 @@ async function waitForSafeModeAction(options: {
   // page in place, unless the page has moved on to a later load.
   void options.healthCheck?.then((healthReports) => {
     if (!healthReports || window.isDestroyed() || String(safeModeLoadSequence) !== seq) return
-    window.applyUpdate({ seq, model: render({ healthReports }) })
+    health = { healthReports }
+    refresh()
   })
-  return actionPromise
+  try {
+    return await actionPromise
+  } finally {
+    if (refreshSafeModeLocale === refresh) refreshSafeModeLocale = undefined
+  }
 }
 
 /**
@@ -2770,13 +2787,13 @@ async function showSafeMode(): Promise<void> {
 }
 
 async function showSafeModeManager(initial?: {
-  notice?: string
+  notice?: SafeModeNotice
   noticeTone?: 'success' | 'error'
 }): Promise<void> {
   if (!safeModeVisible || safeModeManagerVisible || quitting) return
   safeModeManagerVisible = true
   const dshHome = join(app.getPath('userData'), 'harness')
-  const isChinese = harnessLocale() === 'zh'
+  const isChinese = () => harnessLocale() === 'zh'
   let notice = initial?.notice
   let noticeTone = initial?.noticeTone
 
@@ -2825,9 +2842,11 @@ async function showSafeModeManager(initial?: {
         compatibility = { issues: [] }
         const detail = error instanceof Error ? error.message : String(error)
         runtime.note(`[plugin-removal] recovery ledger inspection failed: ${detail}`)
-        notice ??= isChinese
-          ? `卸载恢复账本无法读取，已锁定正常 Profile 并保留原文件：${detail}`
-          : `The removal recovery ledger is unreadable. The normal Profile is locked and the original file is preserved: ${detail}`
+        notice ??= {
+          zh: '插件恢复记录读取失败。正常配置已锁定，原文件已保留。',
+          en: 'The recovery ledger could not be read. The normal Profile is locked and the original file is preserved.',
+          detail
+        }
         noticeTone ??= 'error'
       }
       const installed = [...new Set([...active, ...pendingRemovals])]
@@ -2895,7 +2914,7 @@ async function showSafeModeManager(initial?: {
         if (action.prompt !== undefined) {
           if (snapshot.phase !== 'ready' || !snapshot.url) {
             notice = repairAgentFailureNotice(
-              isChinese ? '安全模式核心服务尚未就绪。' : 'The Safe Mode core is not ready yet.'
+              isChinese() ? '安全模式核心服务尚未就绪。' : 'The Safe Mode core is not ready yet.'
             )
             noticeTone = 'error'
             continue
@@ -2906,10 +2925,10 @@ async function showSafeModeManager(initial?: {
               const owner = safeModeManager?.parent
               const dialogOptions: MessageBoxOptions = {
                 type: 'warning',
-                title: isChinese ? '无法进入智能维修' : 'Cannot Enter Repair Agent',
-                message: availability.message ?? (isChinese ? '当前模型不可用' : 'Model unavailable'),
+                title: isChinese() ? '无法进入智能维修' : 'Cannot Enter Repair Agent',
+                message: availability.message ?? (isChinese() ? '当前模型不可用' : 'Model unavailable'),
                 detail: availability.detail,
-                buttons: [isChinese ? '我知道了' : 'OK'],
+                buttons: [isChinese() ? '我知道了' : 'OK'],
                 defaultId: 0,
                 cancelId: 0,
                 noLink: true
@@ -2942,34 +2961,34 @@ async function showSafeModeManager(initial?: {
       if (action.type === 'recovery-open') {
         const openError = await shell.openPath(dshHome)
         notice = openError
-          ? isChinese ? `无法打开恢复目录：${openError}` : `Unable to open the recovery folder: ${openError}`
-          : isChinese ? '已打开 Profile 恢复材料目录。' : 'Opened the Profile recovery material folder.'
+          ? isChinese() ? `无法打开恢复目录：${openError}` : `Unable to open the recovery folder: ${openError}`
+          : isChinese() ? '已打开 Profile 恢复材料目录。' : 'Opened the Profile recovery material folder.'
         noticeTone = openError ? 'error' : 'success'
         continue
       }
       if (action.type === 'backup-open') {
         const backup = await resolvePluginRemovalBackup(dshHome, action.removalId)
         if (!backup) {
-          notice = isChinese ? '这份恢复备份已不存在。' : 'This recovery backup no longer exists.'
+          notice = isChinese() ? '这份恢复备份已不存在。' : 'This recovery backup no longer exists.'
           noticeTone = 'error'
           continue
         }
         const openError = await shell.openPath(backup.backupDirectory)
         notice = openError
-          ? isChinese ? `无法打开备份目录：${openError}` : `Unable to open the backup: ${openError}`
-          : isChinese ? `已打开 ${backup.pluginName} 的恢复备份。` : `Opened the recovery backup for ${backup.pluginName}.`
+          ? isChinese() ? `无法打开备份目录：${openError}` : `Unable to open the backup: ${openError}`
+          : isChinese() ? `已打开 ${backup.pluginName} 的恢复备份。` : `Opened the recovery backup for ${backup.pluginName}.`
         noticeTone = openError ? 'error' : 'success'
         continue
       }
       if (action.type === 'backup-restore') {
         if (!await canRetryLockedPluginRestore(dshHome, action.removalId)) {
-          notice = isChinese ? '另一个恢复事务尚未完成，只能重试对应的插件备份。' : 'Another recovery transaction is incomplete; only its matching plugin backup can be retried.'
+          notice = isChinese() ? '另一个恢复事务尚未完成，只能重试对应的插件备份。' : 'Another recovery transaction is incomplete; only its matching plugin backup can be retried.'
           noticeTone = 'error'
           continue
         }
         const backup = await resolvePluginRemovalBackup(dshHome, action.removalId)
         if (!backup || !backup.canRestore) {
-          notice = isChinese
+          notice = isChinese()
             ? `这份备份无法自动恢复：${backup?.integrityDetail ?? '恢复材料不存在或不完整'}`
             : `This backup cannot be restored automatically: ${backup?.integrityDetail ?? 'recovery material is missing or incomplete'}`
           noticeTone = 'error'
@@ -2977,14 +2996,14 @@ async function showSafeModeManager(initial?: {
         }
         const confirmationOptions: Electron.MessageBoxOptions = {
           type: 'warning',
-          title: isChinese ? '恢复插件' : 'Restore plugin',
-          message: isChinese
+          title: isChinese() ? '恢复插件' : 'Restore plugin',
+          message: isChinese()
             ? `从这份备份恢复 ${backup.pluginName}？`
             : `Restore ${backup.pluginName} from this backup?`,
-          detail: isChinese
+          detail: isChinese()
             ? '若当前已启用该插件的其他 generation，将切换为这份备份记录的版本。备份本身不会删除。'
             : 'If another generation of this plugin is enabled, it will switch to the version recorded here. The backup itself will be kept.',
-          buttons: [isChinese ? '取消' : 'Cancel', isChinese ? '恢复' : 'Restore'],
+          buttons: [isChinese() ? '取消' : 'Cancel', isChinese() ? '恢复' : 'Restore'],
           defaultId: 0,
           cancelId: 0,
           noLink: true
@@ -2994,7 +3013,7 @@ async function showSafeModeManager(initial?: {
           ? await dialog.showMessageBox(owner, confirmationOptions)
           : await dialog.showMessageBox(confirmationOptions)
         if (confirmation.response !== 1) {
-          notice = isChinese ? '未恢复插件，备份保持不变。' : 'The plugin was not restored; the backup is unchanged.'
+          notice = isChinese() ? '未恢复插件，备份保持不变。' : 'The plugin was not restored; the backup is unchanged.'
           continue
         }
         const restored = await restorePluginRemovalBackup(
@@ -3003,31 +3022,31 @@ async function showSafeModeManager(initial?: {
           (line) => runtime.note(line)
         )
         notice = restored.ok
-          ? isChinese ? `已恢复 ${backup.pluginName}；请重启正常模式验证。` : `Restored ${backup.pluginName}; restart in normal mode to verify it.`
-          : isChinese ? `恢复失败：${restored.reason ?? '未知错误'}` : `Restore failed: ${restored.reason ?? 'unknown error'}`
+          ? isChinese() ? `已恢复 ${backup.pluginName}；请重启正常模式验证。` : `Restored ${backup.pluginName}; restart in normal mode to verify it.`
+          : isChinese() ? `恢复失败：${restored.reason ?? '未知错误'}` : `Restore failed: ${restored.reason ?? 'unknown error'}`
         noticeTone = restored.ok ? 'success' : 'error'
         continue
       }
       if (action.type === 'backup-delete') {
         if (await refreshMigrationRecoveryLock(dshHome)) {
-          notice = isChinese ? 'Profile 恢复事务完成前禁止修改任何恢复材料。' : 'Recovery material is locked until the Profile recovery transaction completes.'
+          notice = isChinese() ? 'Profile 恢复事务完成前禁止修改任何恢复材料。' : 'Recovery material is locked until the Profile recovery transaction completes.'
           noticeTone = 'error'
           continue
         }
         const backup = await resolvePluginRemovalBackup(dshHome, action.removalId)
         if (!backup) {
-          notice = isChinese ? '这份恢复备份已不存在。' : 'This recovery backup no longer exists.'
+          notice = isChinese() ? '这份恢复备份已不存在。' : 'This recovery backup no longer exists.'
           noticeTone = 'error'
           continue
         }
         const confirmationOptions: Electron.MessageBoxOptions = {
           type: 'warning',
-          title: isChinese ? '永久删除恢复备份' : 'Permanently delete recovery backup',
-          message: isChinese
+          title: isChinese() ? '永久删除恢复备份' : 'Permanently delete recovery backup',
+          message: isChinese()
             ? `永久删除 ${backup.pluginName} 的这份恢复备份？`
             : `Permanently delete this recovery backup for ${backup.pluginName}?`,
-          detail: isChinese ? '此操作不可撤销。' : 'This action cannot be undone.',
-          buttons: [isChinese ? '取消' : 'Cancel', isChinese ? '永久删除' : 'Delete permanently'],
+          detail: isChinese() ? '此操作不可撤销。' : 'This action cannot be undone.',
+          buttons: [isChinese() ? '取消' : 'Cancel', isChinese() ? '永久删除' : 'Delete permanently'],
           defaultId: 0,
           cancelId: 0,
           noLink: true
@@ -3037,7 +3056,7 @@ async function showSafeModeManager(initial?: {
           ? await dialog.showMessageBox(owner, confirmationOptions)
           : await dialog.showMessageBox(confirmationOptions)
         if (confirmation.response !== 1) {
-          notice = isChinese ? '已保留恢复备份。' : 'The recovery backup was kept.'
+          notice = isChinese() ? '已保留恢复备份。' : 'The recovery backup was kept.'
           continue
         }
         const cleaned = await cleanupVerifiedRemovalBackup(
@@ -3046,8 +3065,8 @@ async function showSafeModeManager(initial?: {
           (line) => runtime.note(line)
         )
         notice = cleaned.ok
-          ? isChinese ? `已永久删除 ${backup.pluginName} 的这份恢复备份。` : `Permanently deleted the recovery backup for ${backup.pluginName}.`
-          : isChinese ? `备份未删除：${cleaned.reason ?? '尚未通过正常启动验证'}` : `Backup kept: ${cleaned.reason ?? 'normal boot has not been verified'}`
+          ? isChinese() ? `已永久删除 ${backup.pluginName} 的这份恢复备份。` : `Permanently deleted the recovery backup for ${backup.pluginName}.`
+          : isChinese() ? `备份未删除：${cleaned.reason ?? '尚未通过正常启动验证'}` : `Backup kept: ${cleaned.reason ?? 'normal boot has not been verified'}`
         noticeTone = cleaned.ok ? 'success' : 'error'
         continue
       }
@@ -3066,7 +3085,7 @@ async function showSafeModeManager(initial?: {
           // and show the reason that manager would have shown.
           const raised = pendingSafeModeNotice
           pendingSafeModeNotice = undefined
-          notice = raised ?? (isChinese
+          notice = raised ?? (isChinese()
             ? '正常 Profile 仍未恢复，已继续保留安全模式。请检查启动日志并修复后重试。'
             : 'The normal Profile is still unavailable. Safe Mode remains active; check the startup log, repair and retry.')
           noticeTone = 'error'
@@ -3079,14 +3098,14 @@ async function showSafeModeManager(initial?: {
 
       if (action.type === 'upgrade') {
         if (communityUpgradeBlocked('upgrade', undefined, await liveThirdPartyPluginsAllowed())) {
-          notice = isChinese
+          notice = isChinese()
             ? '企业版不支持社区插件升级，请选择卸载。'
             : 'This edition cannot upgrade community plugins. Choose removal instead.'
           noticeTone = 'error'
           continue
         }
         if (await refreshMigrationRecoveryLock(dshHome)) {
-          notice = isChinese ? 'Profile 恢复事务完成前禁止升级插件。' : 'Plugins cannot be upgraded until the recovery transaction completes.'
+          notice = isChinese() ? 'Profile 恢复事务完成前禁止升级插件。' : 'Plugins cannot be upgraded until the recovery transaction completes.'
           noticeTone = 'error'
           continue
         }
@@ -3097,7 +3116,7 @@ async function showSafeModeManager(initial?: {
         })
 
         if (targets.length === 0) {
-          notice = isChinese ? '所选插件没有可升级的兼容版本。' : 'No compatible upgrade candidate found for selected plugins.'
+          notice = isChinese() ? '所选插件没有可升级的兼容版本。' : 'No compatible upgrade candidate found for selected plugins.'
           noticeTone = 'error'
           continue
         }
@@ -3125,12 +3144,12 @@ async function showSafeModeManager(initial?: {
         }
 
         if (failedPackages.length === 0) {
-          notice = isChinese
+          notice = isChinese()
             ? `成功升级 ${upgradedCount} 个插件。`
             : `Successfully upgraded ${upgradedCount} plugin${upgradedCount === 1 ? '' : 's'}.`
           noticeTone = 'success'
         } else {
-          notice = isChinese
+          notice = isChinese()
             ? `成功升级 ${upgradedCount} 个插件，${failedPackages.length} 个升级失败（${failedPackages.join('、')}）。`
             : `Upgraded ${upgradedCount} plugin${upgradedCount === 1 ? '' : 's'}; ${failedPackages.length} failed (${failedPackages.join(', ')}).`
           noticeTone = 'error'
@@ -3139,7 +3158,7 @@ async function showSafeModeManager(initial?: {
       }
 
       if (await refreshMigrationRecoveryLock(dshHome)) {
-        notice = isChinese ? 'Profile 恢复事务完成前禁止修改正常 Profile。' : 'The normal Profile is locked until the recovery transaction completes.'
+        notice = isChinese() ? 'Profile 恢复事务完成前禁止修改正常 Profile。' : 'The normal Profile is locked until the recovery transaction completes.'
         noticeTone = 'error'
         continue
       }
@@ -3150,10 +3169,10 @@ async function showSafeModeManager(initial?: {
         if (targets.length === 0) {
           const communityRequest = requested.length > 0 && requested.every((plugin) => !isProtectedProfileBundle(plugin))
           notice = communityRequest
-            ? isChinese
+            ? isChinese()
               ? '企业版不能重新启用社区插件。需要插件时请联系管理员，从企业插件市场安装。'
               : 'This edition cannot re-enable community plugins. Ask an administrator to install plugins from the enterprise market.'
-            : isChinese
+            : isChinese()
               ? '该插件当前不能重新启用。'
               : 'This plugin cannot be re-enabled.'
           noticeTone = 'error'
@@ -3166,10 +3185,10 @@ async function showSafeModeManager(initial?: {
           if (!result.ok) failedPlugins.push(plugin)
         }
         notice = failedPlugins.length === 0
-          ? isChinese
+          ? isChinese()
             ? `已重新启用 ${targets.length} 个插件，退出安全模式后生效。`
             : `Re-enabled ${targets.length} plugin${targets.length === 1 ? '' : 's'}; they load after you exit Safe Mode.`
-          : isChinese
+          : isChinese()
             ? `以下插件未能重新启用：${failedPlugins.join('、')}`
             : `These plugins could not be re-enabled: ${failedPlugins.join(', ')}`
         noticeTone = failedPlugins.length === 0 ? 'success' : 'error'
@@ -3185,7 +3204,7 @@ async function showSafeModeManager(initial?: {
         (plugin) => installedSet.has(plugin) && !profileDisabled.includes(plugin)
       )
       if (selectedIssues.length === 0 && selectedPlugins.length === 0) {
-        notice = isChinese ? '请选择要处理的插件或遗留项。' : 'Select at least one plugin or leftover to process.'
+        notice = isChinese() ? '请选择要处理的插件或遗留项。' : 'Select at least one plugin or leftover to process.'
         noticeTone = 'error'
         continue
       }
@@ -3195,7 +3214,7 @@ async function showSafeModeManager(initial?: {
       if (selectedIssues.length > 0) {
         const result = await repairSafeModeCompatibilityIssues(dshHome, selectedIssues)
         if (result.installFailed) {
-          notice = isChinese
+          notice = isChinese()
             ? `已备份并应用部分修复，但依赖重建失败：${result.installFailed}`
             : `Some recoverable repairs were applied, but dependency rebuild failed: ${result.installFailed}`
           noticeTone = 'error'
@@ -3216,14 +3235,14 @@ async function showSafeModeManager(initial?: {
       safeModeSuspectedPlugins = safeModeSuspectedPlugins.filter((plugin) => !disabledPlugins.has(plugin))
       const failed = repairFailures + failedPlugins.length
       notice = pendingPlugins.length > 0
-        ? isChinese
+        ? isChinese()
           ? `已停用 ${pendingPlugins.length} 个插件；Profile 依赖清理待重试。插件不会在后续启动中重新启用。`
           : `Disabled ${pendingPlugins.length} plugin${pendingPlugins.length === 1 ? '' : 's'}; profile dependency cleanup is pending. They will stay disabled on later launches.`
         : failed === 0
-          ? isChinese
+          ? isChinese()
             ? `处理完成：修复 ${repaired} 项，停用 ${selectedPlugins.length} 个插件。`
             : `Completed: ${repaired} repair${repaired === 1 ? '' : 's'} and ${selectedPlugins.length} plugin${selectedPlugins.length === 1 ? '' : 's'} disabled.`
-          : isChinese
+          : isChinese()
             ? `已修复 ${repaired} 项、停用 ${selectedPlugins.length - failedPlugins.length} 个插件；${failed} 项未能处理。`
             : `Completed ${repaired} repairs and disabled ${selectedPlugins.length - failedPlugins.length} plugins; ${failed} items could not be processed.`
       noticeTone = failed === 0 && pendingPlugins.length === 0 ? 'success' : 'error'
@@ -3242,6 +3261,7 @@ function installMenu(): void {
   const checkForUpdatesLabel = isChinese
     ? '检查更新…'
     : 'Check for Updates…'
+  const appMenuRoles = darwinApplicationMenuRoles(isChinese ? 'zh' : 'en', app.name)
   const template: Electron.MenuItemConstructorOptions[] = [
     ...(process.platform === 'darwin'
       ? [
@@ -3262,11 +3282,11 @@ function installMenu(): void {
               click: () => void checkForUpdates(true).catch(showUnexpectedError)
             },
             { type: 'separator' as const },
-            { role: 'hide' as const },
-            { role: 'hideOthers' as const },
-            { role: 'unhide' as const },
+            appMenuRoles.hide,
+            appMenuRoles.hideOthers,
+            appMenuRoles.showAll,
             { type: 'separator' as const },
-            { role: 'quit' as const }
+            appMenuRoles.quit
           ]
         }
       ]
@@ -3495,7 +3515,7 @@ async function bootstrap(): Promise<void> {
     runtime.note('[enterprise] start_failed')
     enterpriseDesktop = undefined
   }
-  if (enterpriseDesktop) enterpriseChat = new EnterpriseChatView(enterpriseDesktop, (line) => runtime.note(line))
+  if (enterpriseDesktop) enterpriseChat = new EnterpriseChatView(enterpriseDesktop, (line) => runtime.note(line), () => mainWindow)
   app.once('before-quit', () => enterpriseChat?.dispose())
   registerHarnessHandlers()
   mobileBridge = new LanMobileBridge({
@@ -3584,6 +3604,7 @@ async function bootstrap(): Promise<void> {
     changed: locale => {
       if (activeHarnessLocale === locale) return
       activeHarnessLocale = locale
+      refreshSafeModeLocale?.()
       installMenu()
     }
   })

@@ -2,7 +2,7 @@ import type { IpcMainInvokeEvent } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
 import { registerNativeLocaleHandlers } from '../src/main/native-locale'
 import { createNativeLocaleBridge } from '../src/preload/native-locale'
-import { NATIVE_LOCALE_CHANGE, NATIVE_LOCALE_READ, type HarnessLocale } from '../src/shared/native-locale'
+import { localeFromHtmlLang, NATIVE_LOCALE_CHANGE, NATIVE_LOCALE_READ, type HarnessLocale } from '../src/shared/native-locale'
 
 function fixture() {
   const trusted = {} as IpcMainInvokeEvent
@@ -62,6 +62,21 @@ describe('native Harness locale bridge', () => {
     const f = fixture()
     await expect(f.invoke(NATIVE_LOCALE_CHANGE, f.trusted, value)).rejects.toThrow('Invalid desktop locale')
     expect(f.changed).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['en', 'en'],
+    ['EN', 'en'],
+    ['en-US', 'en'],
+    ['zh', 'zh'],
+    ['zh-CN', 'zh'],
+    ['zh-Hans-CN', 'zh']
+  ] as const)('maps document language %s to %s', (lang, expected) => {
+    expect(localeFromHtmlLang(lang)).toBe(expected)
+  })
+
+  it.each([null, undefined, '', '   ', 'ja', 'fr-FR'])('leaves document language %j unresolved', lang => {
+    expect(localeFromHtmlLang(lang)).toBeUndefined()
   })
 
   it('does not publish unsupported locales from preload and reports transport failures', async () => {

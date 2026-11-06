@@ -38,6 +38,7 @@ it('gives development Agents the current enterprise toolkit including reverse-pr
     response: envelope({ max_package_mb: 50 }) }), root)
   const result = await service.request({ operation: 'create' }) as { toolkit: Record<string, string> }
   expect(result.toolkit).toEqual({
+    workbenchGuideUrl: 'https://enterprise.test/bisheng/api/v1/dev-toolkit/workbench-guide.md',
     versionsUrl: 'https://enterprise.test/bisheng/api/v1/dev-toolkit/versions',
     sdkGuideUrl: 'https://enterprise.test/bisheng/api/v1/dev-toolkit/sdk-guide.md',
     sdkIndexUrl: 'https://enterprise.test/bisheng/api/v1/dev-toolkit/simple/',
@@ -161,4 +162,17 @@ it('does not label an authentication or upstream failure as an unsupported serve
     }), root)
     await expect(service.request({ operation: 'list' })).rejects.toThrow('Request rejected')
   }
+})
+
+
+it('resolves the online guide on the current enterprise without creating source', async () => {
+  const root = await fixture()
+  const calls: string[] = []
+  const service = new CloudWorkbenchService(async path => {
+    calls.push(path)
+    return { base: 'https://enterprise.test/bisheng/', connectionKey: key, response: envelope({}) }
+  }, root)
+  expect(await service.request({ operation: 'guide' })).toEqual({ guideUrl: 'https://enterprise.test/bisheng/api/v1/dev-toolkit/workbench-guide.md' })
+  expect(calls).toEqual(['/api/v1/dev-toolkit/versions'])
+  expect(await readdir(root)).toEqual([])
 })

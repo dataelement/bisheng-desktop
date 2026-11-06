@@ -15,6 +15,7 @@ it('removes the desktop Chat section row and its reserved height without changin
   const row = document.querySelector('.dsh-chat-section-row')!
   expect(getComputedStyle(row).display).toBe('none')
   expect(getComputedStyle(header).height).toBe('48px')
+  expect(getComputedStyle(header).userSelect).toBe('none')
   expect(getComputedStyle(header).gridTemplateRows).toBe('30px')
   expect(getComputedStyle(document.querySelector('#work [role=tablist]')!).display).not.toBe('none')
   expect(getComputedStyle(document.querySelector('article')!).display).not.toBe('none')

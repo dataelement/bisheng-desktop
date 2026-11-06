@@ -32,7 +32,7 @@ const clientWindow = { sessionStorage, localStorage: {
   getItem: key => sessionValues.has(key) ? sessionValues.get(key) : key === WORKBENCH_ENABLED ? 'true' : null,
   setItem: (key, value) => sessionValues.set(key, String(value)),
   removeItem: key => sessionValues.delete(key)
-}, __ModuleLoader__: { load({ factory }) {
+}, addEventListener() {}, removeEventListener() {}, __ModuleLoader__: { load({ factory }) {
   const client = factory((name) => {
     if (name === 'react') return { createElement() {}, Component: class {} }
     if (name === '@deepseek-ai/cordis') return { Service }
@@ -212,7 +212,7 @@ async function fixture(initial = emptyState()) {
   let service
   const ctx = {
     fiber: { name: 'fixture', entry: { options: { name: 'fixture' } } },
-    locale: { bind: () => key => ({ title: '从你的想法开始', description: '新会话将自动加载规范附件。', create: '创建工作台', creating: '正在创建…', copy: '复制指令', cloud: '云端', add: '加载到工作台', open: '打开工作台' })[key] || key },
+    locale: { bind: () => key => ({ title: '从你的想法开始', description: '新会话将预填在线规范网址。', starter: '我想做一个【工作台名称或用途】，主要给【谁使用】。', instructionBody: '请访问在线开发规范：{guideUrl}，先梳理需求并判断本地、云端或混合部署。', create: '创建工作台', creating: '正在创建…', copy: '复制指令给其他 AI 助手', remove: '卸载', removeHelp: '仅卸载这台客户端中的工作台入口，云端应用和数据会保留。', cloud: '云端', add: '加载到工作台', open: '打开工作台' })[key] || key },
     sessions: {
       list: { getSnapshot: () => list },
       refresh: vi.fn(async () => {}),
@@ -292,11 +292,16 @@ describe('desktop workbench client navigation', () => {
     expect(ui.find(card, node => node.props?.className === 'dshWbCardBody')).toHaveLength(1)
     expect(ui.find(card, node => node.props?.className === 'dshWbCardTitle')).toHaveLength(1)
     expect(ui.find(card, node => node.props?.className === 'dshWbCardControls')).toHaveLength(1)
+    expect(ui.find(card, node => node.props?.className === 'dshWbMediaOpen')).toHaveLength(1)
+    expect(ui.find(card, node => node.props?.className === 'dshWbAuthorRow')).toHaveLength(1)
+    expect(ui.find(card, node => node.props?.className === 'dshWbCardVersionActions')).toHaveLength(1)
     expect(ui.find(card, node => node.props?.role === 'switch')).toHaveLength(0)
     service.open = vi.fn(async () => {})
     service.remove = vi.fn(async () => {})
     const open = ui.find(card, node => node.type?.name === 'Button' && node.props.primary)[0]
     const remove = ui.find(card, node => node.type === 'button' && node.props.className === 'dshWbUninstall')[0]
+    expect(remove.props.children).toEqual(['卸载'])
+    expect(remove.props.title).toContain('云端应用和数据会保留')
     open.props.onClick()
     remove.props.onClick()
     expect(service.open).toHaveBeenCalledWith(id)
@@ -501,6 +506,196 @@ describe('desktop workbench client navigation', () => {
     await service.openNative(startSession)
 
     expect(startSession).toHaveBeenCalledWith('project-2')
+  })
+
+  it('returns to the remembered native session without creating one when logout closes the workbench', async () => {
+    const { service, ctx, list } = await fixture(boundState())
+    const workspaces = ctx.workspaces.list.getSnapshot().items
+    workspaces.push({ workspaceId: 'project-2', title: 'Other project', sessionIds: ['native-2'] })
+    list.ids.push('native-2')
+    list.byId['native-2'] = { sessionId: 'native-2', displayTitle: 'Native session' }
+    selectIn(list, 'native-2')
+    service.selectionChanged()
+    await service.open('writer')
+    const startSession = vi.fn()
+    ctx.uiWorkspace.startSession = startSession
+
+    await service.returnToNativeSession()
+
+    expect(ctx.uiWorkspace.openSession).toHaveBeenLastCalledWith('native-2')
+    expect(currentOf(list)).toBe('native-2')
+    expect(service.state.active).toBeNull()
+    expect(startSession).not.toHaveBeenCalled()
+    expect(ctx.sessions.create).not.toHaveBeenCalled()
+  })
+
+  it('clears the active workbench without creating a session when the remembered native session is gone', async () => {
+    const { service, ctx, list } = await fixture(boundState())
+    ctx.workspaces.list.getSnapshot().items.push({ workspaceId: 'project-2', title: 'Other project', sessionIds: ['native-2'] })
+    list.ids.push('native-2')
+    list.byId['native-2'] = { sessionId: 'native-2', displayTitle: 'Native session' }
+    selectIn(list, 'native-2')
+    service.selectionChanged()
+    await service.open('writer')
+    delete list.byId['native-2']
+    list.ids = list.ids.filter(id => id !== 'native-2')
+    ctx.uiWorkspace.openSession.mockClear()
+    const startSession = vi.fn()
+    ctx.uiWorkspace.startSession = startSession
+
+    await expect(service.returnToNativeSession()).resolves.toBeUndefined()
+
+    expect(service.state.active).toBeNull()
+    expect(startSession).not.toHaveBeenCalled()
+    expect(ctx.sessions.create).not.toHaveBeenCalled()
+    expect(ctx.uiWorkspace.openSession).not.toHaveBeenCalled()
+  })
+
+  it('leaves the workbench when the account change event reports logout and stops binding new sessions', async () => {
+    let signedIn = true
+    let stored = { revision: 0, state: structuredClone(boundState()) }
+    const fetchImpl = vi.fn(async (url, options = {}) => {
+      const path = String(url)
+      if (path.startsWith('/api/enterprise.state')) {
+        return Response.json(signedIn ? {
+          connected: true,
+          sessionExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          connectionKey: 'account-1',
+          allowThirdPartyWorkbenches: true
+        } : { connected: false })
+      }
+      if (path.startsWith('/api/enterprise.workbenches/catalog')) return Response.json({ status: 'empty', data: [] })
+      if (path.startsWith('/api/desktop-workbenches/catalog')) return Response.json({
+        stale: false,
+        catalog: { schemaVersion: 2, kind: 'catalog', categories: [], workbenches: [
+          { id: 'writer', owner: 'test', repository: 'writer', url: 'https://github.com/test/writer', name: 'Writer', category: 'other', description: { zh: 'Writer' }, screenshots: [], version: '1.0.0', distribution: { name: 'writer' } }
+        ] }
+      })
+      if (path.startsWith('/api/desktop-workbenches/market-installs')) return Response.json({ installs: {} })
+      if (path === '/api/desktop-workbenches/state' && options.method !== 'POST') return Response.json(stored)
+      if (options.method === 'POST') {
+        const payload = JSON.parse(options.body)
+        if (payload.revision !== stored.revision) return Response.json({ error: 'Conflict' }, { status: 409 })
+        stored = { revision: stored.revision + 1, state: structuredClone(payload.state) }
+        return Response.json(stored)
+      }
+      return Response.json({ error: 'unexpected' }, { status: 404 })
+    })
+    const listeners = new Map()
+    let nativeChanged, expiryCallback
+    const nativeUnsubscribe = vi.fn()
+    const storage = new Map([[WORKBENCH_ENABLED, 'true']])
+    const testWindow = {
+      localStorage: {
+        getItem: key => storage.has(key) ? storage.get(key) : null,
+        setItem: (key, value) => storage.set(key, String(value)),
+        removeItem: key => storage.delete(key)
+      },
+      sessionStorage,
+      dshEnterpriseChat: { subscribe: fn => { nativeChanged = fn; return nativeUnsubscribe } },
+      setInterval: vi.fn(() => 0),
+      clearInterval: () => {},
+      addEventListener(type, fn) {
+        const list = listeners.get(type) ?? []
+        list.push(fn)
+        listeners.set(type, list)
+      },
+      removeEventListener(type, fn) {
+        listeners.set(type, (listeners.get(type) ?? []).filter(item => item !== fn))
+      },
+      dispatchEvent(event) {
+        for (const fn of [...(listeners.get(event.type) ?? [])]) fn(event)
+      }
+    }
+    let applyLocal
+    vm.runInNewContext(code, {
+      window: Object.assign(testWindow, { __ModuleLoader__: { load({ factory }) {
+        applyLocal = factory(name => name === 'react' ? { createElement() {}, Component: class {} } : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null }).apply
+      } } }),
+      document, fetch: fetchImpl, setTimeout: (fn, delay) => { if (delay > 100_000) { expiryCallback = fn; return 0 } return setTimeout(fn, delay) }, clearTimeout, AbortController
+    })
+    const list = { ids: ['old', 'writer-1', 'writer-2', 'research-1'], byId: {} }
+    for (const id of list.ids) list.byId[id] = { sessionId: id, displayTitle: id }
+    const projects = [{ workspaceId: 'project-1', title: 'User project', sessionIds: [...list.ids] }]
+    let sessionCount = 0
+    let navigation = new AbortController()
+    let service
+    let starter
+    const cleanups = []
+    const ctx = {
+      fiber: { name: 'writer', entry: { options: { name: 'writer' } } },
+      locale: { register: vi.fn(), bind: () => () => '', getSnapshot: () => ({ active: 'zh' }) },
+      reflect: { provide: (name, value) => { if (name === 'desktopWorkbenches') service = value } },
+      effect: (callback, label) => {
+        if (label === 'workbenches: styles' || label === 'workbenches: lifecycle') return
+        const cleanup = callback()
+        if (typeof cleanup === 'function') cleanups.push(cleanup)
+      },
+      slots: { inject: (_name, callback) => callback(), register: vi.fn() },
+      sessions: {
+        list: { getSnapshot: () => list, subscribe: vi.fn(() => () => {}) },
+        refresh: vi.fn(async () => {}),
+        create: vi.fn(async ({ workspaceId }) => {
+          const id = `fresh-${++sessionCount}`
+          list.ids.push(id)
+          list.byId[id] = { sessionId: id, displayTitle: id }
+          projects.find(item => item.workspaceId === workspaceId).sessionIds.push(id)
+          return id
+        })
+      },
+      layout: {
+        selectPanel: vi.fn(),
+        beginNavigation: vi.fn(() => { navigation.abort(); navigation = new AbortController(); return navigation.signal })
+      },
+      uiWorkspace: {
+        openSession: vi.fn(id => { selectIn(list, id); service?.selectionChanged() }),
+        registerSessionStarter: vi.fn(handler => { starter = handler; return () => {} }),
+        registerSessionFilter: vi.fn(),
+        registerWorkspaceFilter: vi.fn(),
+        registerWorkspaceDeleteHandler: vi.fn(),
+        registerSessionReuseFilter: vi.fn(),
+        registerSessionOpener: vi.fn()
+      },
+      workspaces: {
+        list: { getSnapshot: () => ({ items: projects }) },
+        create: vi.fn()
+      }
+    }
+    applyLocal(ctx)
+    setFiberPackage(ctx, 'writer')
+    service.register({ title: 'Writer' }, () => null)
+    await service.load()
+    await vi.waitFor(() => expect(service.getSnapshot().enterpriseCatalogStatus).toBe('empty'))
+    expect(testWindow.setInterval).not.toHaveBeenCalled()
+    projects.push({ workspaceId: 'project-2', title: 'Other project', sessionIds: ['native-2'] })
+    list.ids.push('native-2')
+    list.byId['native-2'] = { sessionId: 'native-2', displayTitle: 'Native session' }
+    selectIn(list, 'native-2')
+    service.selectionChanged()
+    await service.open('writer')
+
+    expect(starter('project-1')).toBe(true)
+    await vi.waitFor(() => expect(service.state.sessionBindings[list.ids.at(-1)]).toBe('writer'))
+    const created = ctx.sessions.create.mock.calls.length
+
+    signedIn = false
+    nativeChanged({ connected: false, epoch: 2 })
+    await vi.waitFor(() => expect(service.state.active).toBeNull())
+    expect(ctx.uiWorkspace.openSession).toHaveBeenLastCalledWith('native-2')
+    expect(currentOf(list)).toBe('native-2')
+    expect(starter('project-1')).toBe(false)
+    expect(ctx.sessions.create).toHaveBeenCalledTimes(created)
+    signedIn = true
+    testWindow.dispatchEvent({ type: 'focus' })
+    await vi.waitFor(() => expect(service.networkMarketAllowed).toBe(true))
+    expect(expiryCallback).toBeTypeOf('function')
+    signedIn = false
+    expiryCallback()
+    await vi.waitFor(() => expect(service.networkMarketAllowed).toBe(false))
+    for (const cleanup of cleanups) cleanup()
+    expect(nativeUnsubscribe).toHaveBeenCalledOnce()
+    expect(listeners.get('focus')).toHaveLength(0)
+    service.dispose()
   })
 
   it('removes a shared workspace only from the active workbench while keeping both session groups', async () => {
@@ -1037,7 +1232,7 @@ describe('desktop workbench client navigation', () => {
     expect(source).toContain('云端工作台在对话确认后提交审核和部署，无需另点发布按钮')
     expect(source).toContain('想上架，再按验收规范提交')
     // The website is the only visible document entry point in this flow.
-    expect(source).toContain('href: developmentPageUrl()')
+    expect(source).toContain('href: service.developmentGuideUrl()')
     expect(source).toContain('href: acceptancePageUrl()')
     expect(source).not.toContain('离线查看')
     expect(source).toContain("createText('copy')")
@@ -1087,8 +1282,8 @@ describe('desktop workbench client navigation', () => {
     expect(development).toContain('不要声称已加载')
     // Prompts give the website as the one link; the bundled copies are for offline reading.
     expect(development).toContain('https://dshdesktop.com/workbench/docs/development.md')
-    expect(development).toContain('/api/desktop-workbenches/cloud-guide')
-    expect(development).toContain('不需要处理市场投稿或发布')
+    expect(development).toContain('cloud_workbench guide')
+    expect(development).toContain('判断采用本地、云端或混合部署')
     expect(development).not.toContain('dataelement/awesome-dsh-workbench')
     expect(development).not.toContain('CONTRIBUTING.md')
     // The preset-package document describes Agent presets, not workbench packages.
@@ -1178,7 +1373,7 @@ describe('desktop workbench client navigation', () => {
     expect(code).toContain('.dshWbMarketHeader :is(button,a,input,select,textarea){-webkit-app-region:no-drag}')
   })
 
-  it.each([['复制指令', '本地开发'], ['复制投稿指令', '市场验收']])('shows the same success toast after %s', async (label, promptFragment) => {
+  it.each([['复制指令给其他 AI 助手', 'https://dshdesktop.com/workbench/docs/development.md'], ['复制投稿指令', '市场验收']])('shows the same success toast after %s', async (label, promptFragment) => {
     const { service } = await fixture()
     const writeText = vi.fn(async () => {})
     const ui = interactiveMarket(service, 'submit', { writeText })
@@ -1187,6 +1382,13 @@ describe('desktop workbench client navigation', () => {
     await ui.button(tree, label).props.onClick()
     expect(writeText).toHaveBeenCalledOnce()
     expect(writeText.mock.calls[0][0]).toContain(promptFragment)
+    if (label === '复制指令给其他 AI 助手') {
+      expect(writeText.mock.calls[0][0]).toContain('【工作台名称或用途】')
+      expect(writeText.mock.calls[0][0]).toContain('云端或混合部署')
+      expect(writeText.mock.calls[0][0]).toBe(service.creationPrompt())
+      expect(writeText.mock.calls[0][0]).toContain('scripts/check-workbench-package.mjs')
+      expect(writeText.mock.calls[0][0]).toContain('不要把常驻会话区当作默认产品设计')
+    }
     const toast = ui.find(ui.render(), node => node.type?.name === 'Toast')[0]
     expect(toast.props).toMatchObject({ text: '已复制', tone: 'success' })
     toast.props.onDone()
@@ -1197,7 +1399,7 @@ describe('desktop workbench client navigation', () => {
   it('shows failure feedback when copying a workbench instruction fails', async () => {
     const { service } = await fixture()
     const ui = interactiveMarket(service, 'submit', { writeText: vi.fn(async () => { throw new Error('denied') }) })
-    await ui.button(ui.render(), '复制指令').props.onClick()
+    await ui.button(ui.render(), '复制指令给其他 AI 助手').props.onClick()
     const toast = ui.find(ui.render(), node => node.type?.name === 'Toast')[0]
     expect(toast.props.text).toContain('复制失败')
     expect(toast.props.tone).toBeUndefined()
@@ -1903,6 +2105,7 @@ describe('desktop workbench client navigation', () => {
     const { service, ctx } = await fixture(boundState())
     await service.open('writer')
     service.setEnabled(false)
+    expect(service.getSnapshot().enabled).toBe(false)
     await service.queue
     expect(service.state.active).toBeNull()
     expect(service.sessionVisible('old')).toBe(true)
@@ -1910,6 +2113,7 @@ describe('desktop workbench client navigation', () => {
     expect(ctx.layout.selectPanel).toHaveBeenLastCalledWith(null)
     await expect(service.open('writer')).rejects.toThrow('工作台功能已关闭')
     service.setEnabled(true)
+    expect(service.getSnapshot().enabled).toBe(true)
   })
 
   it('persists favorites independently from installation and lets an unavailable favorite be removed', async () => {
@@ -2453,7 +2657,7 @@ describe('workbench market screenshot and metadata display', () => {
     const source = Market.toString()
     expect(source).toContain("const [search, setSearch] = React.useState('')")
     expect(source).toContain("const [category, setCategory] = React.useState('all')")
-    expect(source).toContain("visibleTab === 'mine' ? service.checkUpdates() : showingEnterprise ? service.refreshEnterpriseWorkbenches() : service.refreshCatalog()")
+    expect(source).toContain("visibleTab === 'mine' ? service.checkUpdates() : showingEnterprise ? service.refreshEnterpriseCatalog() : showingCloud ? service.refreshCloudCatalog() : service.refreshCatalog()")
     expect(source).toContain("tab === 'mine' ? tr('检查更新') : tr('刷新目录')")
     expect(source).toContain("h(MarketIcon, { name: 'refresh', size: 17 })")
     expect(fullSource).toContain('.dshWbRefresh[aria-busy=true] svg{animation:dshWbSpin .8s linear infinite}')
@@ -3851,7 +4055,7 @@ describe('workbench host localization', () => {
 
 
 describe('sidebar central panel selection', () => {
-  it('merges hosted apps with enterprise packages, tags cloud cards and shares search and refresh', async () => {
+  it('separates cloud apps from enterprise packages and preserves native card actions', async () => {
     const { service } = await fixture()
     const connectionKey = 'a'.repeat(16)
     const item = { id: 'b'.repeat(32), name: 'Team cloud board', description: 'Shared data' }
@@ -3862,10 +4066,12 @@ describe('sidebar central panel selection', () => {
     service.publish()
     const ui = interactiveMarket(service, 'enterprise', undefined, { known: true, connected: true, connectionKey, allowThirdPartyWorkbenches: false })
     let tree = ui.render()
-    expect(ui.find(tree, node => node.props?.role === 'tab')).toHaveLength(4)
-    expect(ui.find(tree, node => node.props?.id === 'dsh-workbench-cloud-tab')).toHaveLength(0)
+    expect(ui.find(tree, node => node.props?.role === 'tab')).toHaveLength(5)
+    expect(ui.find(tree, node => node.type?.name === 'CloudInstalledCard')).toHaveLength(0)
+    ui.find(tree, node => node.props?.id === 'dsh-workbench-cloud-tab')[0].props.onClick()
+    tree = ui.render()
     expect(ui.find(tree, node => node.props?.className === 'dshWbGrid')).toHaveLength(1)
-    expect(ui.find(tree, node => node.type === 'article' && node.props.key === 'package-board')).toHaveLength(1)
+    expect(ui.find(tree, node => node.type === 'article' && node.props.key === 'package-board')).toHaveLength(0)
     const component = ui.find(tree, node => node.type?.name === 'CloudInstalledCard')[0]
     let card = component.type(component.props)
     expect(ui.find(card, node => node.props?.className === 'dshWbCategory')[0].props.children).toEqual(['云端'])
@@ -3882,9 +4088,9 @@ describe('sidebar central panel selection', () => {
     tree = ui.render()
     expect(ui.find(tree, node => node.type === 'article')).toHaveLength(0)
     expect(ui.find(tree, node => node.type?.name === 'CloudInstalledCard')).toHaveLength(1)
-    service.refreshEnterpriseWorkbenches = vi.fn(async () => {})
+    service.refreshCloudCatalog = vi.fn(async () => {})
     ui.find(tree, node => node.props?.className === 'dshWbBtn dshWbRefresh')[0].props.onClick()
-    expect(service.refreshEnterpriseWorkbenches).toHaveBeenCalledOnce()
+    expect(service.refreshCloudCatalog).toHaveBeenCalledOnce()
     service.dispose()
   })
 
@@ -3900,16 +4106,19 @@ describe('sidebar central panel selection', () => {
     const tree = ui.render()
     expect(ui.find(tree, node => node.type === 'article')).toHaveLength(1)
     expect(ui.find(tree, node => node.type?.name === 'CloudInstalledCard')).toHaveLength(0)
-    expect(ui.find(tree, node => node.props?.role === 'alert')).toHaveLength(1)
+    expect(ui.find(tree, node => node.props?.role === 'alert')).toHaveLength(0)
+    ui.find(tree, node => node.props?.id === 'dsh-workbench-cloud-tab')[0].props.onClick()
+    expect(ui.find(ui.render(), node => node.type?.name === 'CloudInstalledCard')).toHaveLength(0)
+    expect(ui.find(ui.render(), node => node.props?.role === 'alert')).toHaveLength(1)
     service.dispose()
   })
 
-  it('redirects the retired cloud tab to the enterprise login panel', async () => {
+  it('keeps the separate cloud login panel discoverable', async () => {
     const { service } = await fixture()
     service.networkMarketAllowed = false
     const ui = interactiveMarket(service, 'cloud', undefined, { known: true, connected: false, allowThirdPartyWorkbenches: false })
     const tree = ui.render()
-    expect(ui.find(tree, node => node.props?.id === 'dsh-workbench-enterprise-panel')).toHaveLength(1)
+    expect(ui.find(tree, node => node.props?.id === 'dsh-workbench-cloud-panel')).toHaveLength(1)
     expect(ui.find(tree, node => node.props?.id === 'dsh-workbench-market-panel')).toHaveLength(0)
     expect(ui.find(tree, node => node.props?.className === 'dshWbBrowseTools')).toHaveLength(0)
     expect(ui.find(tree, node => node.props?.className === 'dshWbSearch')).toHaveLength(0)
@@ -3917,13 +4126,13 @@ describe('sidebar central panel selection', () => {
   it('keeps every collection discoverable before login and shows a login panel on selection', async () => {
     const { service } = await fixture()
     const ui = interactiveMarket(service, 'market', undefined, { known: true, connected: false, allowThirdPartyWorkbenches: false })
-    for (const tab of ['market', 'favorites', 'enterprise', 'mine']) {
+    for (const tab of ['market', 'favorites', 'enterprise', 'cloud', 'mine']) {
       const node = ui.find(ui.render(), node => node.props?.id === `dsh-workbench-${tab}-tab`)[0]
       expect(node).toBeDefined()
       node.props.onClick()
       const tree = ui.render()
       expect(ui.find(tree, node => node.props?.id === `dsh-workbench-${tab}-panel`)).toHaveLength(1)
-      if (['market', 'favorites', 'enterprise'].includes(tab)) {
+      if (['market', 'favorites', 'enterprise', 'cloud'].includes(tab)) {
         expect(ui.button(tree, '登录毕昇账号')).toBeDefined()
         expect(ui.find(tree, node => node.type === 'article')).toHaveLength(0)
         expect(ui.find(tree, node => node.props?.className === 'dshWbBrowseTools')).toHaveLength(0)
@@ -4013,6 +4222,27 @@ describe('workbench feature default', () => {
   })
 })
 
+describe('enterprise workbench Manager outcomes', () => {
+  it.each(['applied', 'restart-required'])('uses the %s outcome without inventing a restart', async application => {
+    const { service, request } = await fixture()
+    const id = 'a'.repeat(32)
+    request.mockImplementation(async url => url === '/api/desktop-workbenches/enterprise-install'
+      ? Response.json({ application, install: { id }, restartRequired: application === 'restart-required' })
+      : Response.json({ installs: {}, packages: {} }))
+    await service.installEnterpriseWorkbench(id)
+    expect(service.pendingRestart.has(id)).toBe(application === 'restart-required')
+    expect(Boolean(service.restartNeeded)).toBe(application === 'restart-required')
+    expect(service.installing).toBeNull()
+  })
+  it('does not accept a failed activation even when package bytes were installed', async () => {
+    const { service, request } = await fixture()
+    const id = 'a'.repeat(32)
+    request.mockResolvedValue(Response.json({ application: 'failed', install: { id }, error: 'activation failed' }, { status: 409 }))
+    await expect(service.installEnterpriseWorkbench(id)).rejects.toThrow('activation failed')
+    expect(service.pendingRestart.has(id)).toBe(false)
+    expect(service.installing).toBeNull()
+  })
+})
 describe('enterprise catalog request lifecycle', () => {
   it('shares an in-flight read and allows another refresh after settlement', async () => {
     let finish
@@ -4029,4 +4259,37 @@ describe('enterprise catalog request lifecycle', () => {
     finish()
     await second
   })
+})
+
+
+it('keeps the published guide URL in the editable draft instead of a local attachment', async () => {
+  const { service, ctx } = await fixture()
+  ctx.locale.bind = () => key => ({ instructionBody: 'Read {guideUrl} and assess local, cloud or hybrid hosting.', starter: 'My 【idea】' })[key] || key
+  // The market view sees the same bound service used by its create action.
+  expect(service.creationPrompt()).toContain('https://dshdesktop.com/workbench/docs/development.md')
+  expect(service.creationPrompt()).not.toContain('.md 的附件')
+  expect(service.creationInstructions()).toBe(developmentWorkbenchAgentPrompt(false, service.developmentGuideUrl()))
+  expect(service.creationInstructions()).not.toContain('My 【idea】')
+  expect(service.creationPrompt()).toContain('My 【idea】')
+  service.dispose()
+})
+
+
+it.each([false, true])('preserves the full development instructions with an enterprise guide URL (English=%s)', async english => {
+  const { service, ctx } = await fixture()
+  const guideUrl = 'https://enterprise.example/proxy/api/v1/dev-toolkit/workbench-guide' + (english ? '-en' : '') + '.md'
+  service.developmentGuideUrl = () => guideUrl
+  const text = developmentWorkbenchAgentPrompt(english, guideUrl)
+  expect(text).toContain(guideUrl)
+  expect(text).not.toContain('https://dshdesktop.com/workbench/docs/development')
+  expect(text).not.toContain('This task is for local development and installation only')
+  expect(text).toContain('customFrame')
+  expect(text).toContain('scripts/check-workbench-package.mjs')
+  expect(text).toContain('cloud_workbench publish')
+  if (!english) {
+    ctx.locale.bind = () => key => ({ starter: 'My 【idea】' })[key] || key
+    expect(service.creationInstructions()).toBe(text)
+    expect(service.creationPrompt()).toBe(text + '\n\nMy 【idea】')
+  }
+  service.dispose()
 })

@@ -37,14 +37,34 @@ export function officeCliTimedOut(error) {
   return Boolean(error && typeof error === 'object' && error.killed === true && error.signal === 'SIGTERM')
 }
 
-/** Retry only a Kit timeout or the outer process kill. Other failures stop immediately. */
+function commandErrorText(error) {
+  const stderrValue = error && typeof error === 'object' && 'stderr' in error ? error.stderr : ''
+  const stderr = Buffer.isBuffer(stderrValue) ? stderrValue.toString('utf8') : typeof stderrValue === 'string' ? stderrValue : ''
+  const message = error instanceof Error ? error.message : ''
+  return `${stderr}\n${message}`
+}
+
+/**
+ * Electron worker threads on the Rosetta Intel runner sometimes fail to stat
+ * `unicode-properties` while resolving fontkit, after the parent thread in the
+ * same process has already loaded it. A new process succeeds.
+ */
+export function officeCliRetriable(error) {
+  if (officeCliTimedOut(error)) return true
+  const text = commandErrorText(error)
+  return text.includes("Cannot find package 'unicode-properties'") &&
+    text.includes('node_modules/fontkit/dist/module.mjs')
+}
+
+/** Retry a Kit timeout, the outer process kill, or a transient worker module lookup. Other failures stop immediately. */
 export async function runOfficeCli(label, run, attempts = officeCliAttempts) {
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       return await run()
     } catch (error) {
-      if (attempt === attempts || !officeCliTimedOut(error)) throw error
-      console.log(`Office ${label} timed out, retrying (${attempt + 1}/${attempts})`)
+      if (attempt === attempts || !officeCliRetriable(error)) throw error
+      const reason = officeCliTimedOut(error) ? 'timed out' : 'could not resolve a worker module'
+      console.log(`Office ${label} ${reason}, retrying (${attempt + 1}/${attempts})`)
     }
   }
 }
@@ -60,6 +80,21 @@ async function files(root, prefix = '') {
   return result
 }
 
+/**
+ * Git for Windows checks text out as CRLF. The notice OFL is pinned to the LF
+ * bytes, so the staged copy is canonicalized before it is hashed or packaged.
+ */
+export async function canonicalizeOfficeText(root) {
+  for (const name of await files(root)) {
+    if (!name.endsWith('.txt') && !name.endsWith('.md') && !name.endsWith('.json')) continue
+    const path = join(root, name)
+    const data = await readFile(path)
+    const text = data.toString('latin1')
+    const canonical = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    if (canonical !== text) await writeFile(path, canonical, 'latin1')
+  }
+}
+
 /** Generate all previews with the same installed Kit used by Office tasks. */
 export async function prepareOfficeTemplates({ runtime = join(project, '.build/office-runtime'), cache = join(project, '.build/office-template-cache') } = {}) {
   const manifest = JSON.parse(await readFile(join(runtime, 'primary-runtime/runtime.json'), 'utf8'))
@@ -67,7 +102,7 @@ export async function prepareOfficeTemplates({ runtime = join(project, '.build/o
   const kit = JSON.parse(await readFile(join(project, 'node_modules/@deepseek-ai/libreoffice-kit/package.json'), 'utf8'))
   const inputs = await files(sources)
   const fingerprint = hash(Buffer.concat([
-    Buffer.from(JSON.stringify({ format: 1, python: manifest.python, kit: kit.version })),
+    Buffer.from(JSON.stringify({ format: 2, platform: manifest.platform, arch: manifest.arch, payloadDigest: manifest.payloadDigest, kit: kit.version })),
     await readFile(fileURLToPath(import.meta.url)), await readFile(join(import.meta.dirname, 'normalize-package.py')),
     await readFile(join(import.meta.dirname, 'check-templates.py')),
     ...await Promise.all(inputs.map(async path => Buffer.concat([Buffer.from(path), await readFile(join(sources, path))])))
@@ -83,6 +118,7 @@ export async function prepareOfficeTemplates({ runtime = join(project, '.build/o
     try {
       const legacy = JSON.parse(await readFile(join(sources, 'catalog.json'), 'utf8'))
       for (const item of legacy) await cp(join(sources, item.source), join(staging, item.id), { recursive: true })
+      await canonicalizeOfficeText(staging)
       const ordered = [legacy.find(x => x.id === 'government-notice'),
         ...legacy.filter(x => x.mode === 'word' && x.id !== 'government-notice'), ...legacy.filter(x => x.mode === 'excel')]
       const catalog = []

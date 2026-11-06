@@ -1,5 +1,5 @@
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js b/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js
-index 5cca45b..3f48e75 100644
+index 5cca45b..25d4837 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js
 @@ -1096,6 +1096,7 @@ window.__ModuleLoader__.load({
@@ -414,20 +414,20 @@ index 5cca45b..3f48e75 100644
  			const statuses = useSessionStatus((s) => s);
  			const currentRemote = remote.query === query ? remote : {
  				query,
-@@ -3469,13 +3631,22 @@ window.__ModuleLoader__.load({
+@@ -3469,13 +3631,25 @@ window.__ModuleLoader__.load({
  							className: WorkspaceBrowser_module_css_default.searchTree,
  							role: "tree",
  							"aria-label": t("search.results.aria"),
 -							children: results.items.map((result) => (0, react_jsx_runtime.jsx)(SearchResultItem, {
 +							children: renderSlot("sidebar.workspaces.collection", {
-+								mode: "search", query, archivedOnly: archivedFilter === "only", projects: () => [],
++								mode: "search", query, archivedOnly: archivedFilter === "only", searchPending: pending, projects: () => [],
 +								items: results.items.map((result) => ({
 +									id: result.id, updatedAt: list.byId[result.id]?.updatedAt ?? 0,
 +									render: (active) => (0, react_jsx_runtime.jsx)(SearchResultItem, {
 +										result, currentId: active ? currentId : void 0, onOpen: open, onUnarchive, renderSlot, t
 +									}, result.id)
 +								}))
-+							}, { fallback: results.items.map((result) => (0, react_jsx_runtime.jsx)(SearchResultItem, {
++							}, { fallback: [...results.items.map((result) => (0, react_jsx_runtime.jsx)(SearchResultItem, {
  								result,
  								currentId,
  								onOpen: open,
@@ -435,11 +435,25 @@ index 5cca45b..3f48e75 100644
 +								renderSlot,
  								t
 -							}, result.id))
-+							}, result.id)) })
++							}, result.id)), !pending && results.items.length === 0 && (0, react_jsx_runtime.jsx)("div", {
++								className: WorkspaceBrowser_module_css_default.empty,
++								children: t("search.noMatches")
++							})] })
  						}),
  						pending && (0, react_jsx_runtime.jsx)("div", {
  							role: "status",
-@@ -3506,19 +3677,27 @@ window.__ModuleLoader__.load({
+@@ -3489,10 +3663,6 @@ window.__ModuleLoader__.load({
+ 								})]
+ 							}, i))
+ 						}),
+-						!pending && results.items.length === 0 && (0, react_jsx_runtime.jsx)("div", {
+-							className: WorkspaceBrowser_module_css_default.empty,
+-							children: t("search.noMatches")
+-						}),
+ 						results.hasMore && (0, react_jsx_runtime.jsx)("div", {
+ 							className: WorkspaceBrowser_module_css_default.searchStatus,
+ 							children: t("search.hasMore", { n: resultLimit })
+@@ -3506,19 +3676,27 @@ window.__ModuleLoader__.load({
  		* @param props - composed slot props (shell owner share + store + injected actions).
  		* @returns the region element tree.
  		*/
@@ -471,7 +485,7 @@ index 5cca45b..3f48e75 100644
  			const workspacePhase = useWorkspaces((state) => state.phase);
  			const workspaceStreamState = useWorkspaces((state) => state.state);
  			const archivedSessionIds = useWorkspaces((state) => state.archivedSessionIds);
-@@ -3529,6 +3708,11 @@ window.__ModuleLoader__.load({
+@@ -3529,6 +3707,11 @@ window.__ModuleLoader__.load({
  			const archivedFilter = useStore((s) => s.archivedFilter ?? "default");
  			const groupExpansion = useStore((s) => s.groupExpansion);
  			const sessionOrderByAccount = useStore((s) => s.sessionOrderByAccount);
@@ -483,7 +497,7 @@ index 5cca45b..3f48e75 100644
  			const guardedOpen = (sessionId) => {
  				if (archivedSessionIds.includes(sessionId)) {
  					notifyArchivedNotOpenable();
-@@ -3798,6 +3982,11 @@ window.__ModuleLoader__.load({
+@@ -3798,6 +3981,11 @@ window.__ModuleLoader__.load({
  			const [deleting, setDeleting] = (0, react.useState)(false);
  			const [deleteCommittedId, setDeleteCommittedId] = (0, react.useState)(null);
  			const [deleteError, setDeleteError] = (0, react.useState)(null);
@@ -495,7 +509,7 @@ index 5cca45b..3f48e75 100644
  			(0, react.useEffect)(() => {
  				if (deleteCommittedId === null || workspaces.some((workspace) => workspace.workspaceId === deleteCommittedId)) return;
  				setDeleting(false);
-@@ -3812,6 +4001,10 @@ window.__ModuleLoader__.load({
+@@ -3812,6 +4000,10 @@ window.__ModuleLoader__.load({
  			const confirmDelete = () => {
  				/* v8 ignore next -- the Modal is absent without a target and its button is disabled while deleting. */
  				if (deleting || deleteTarget === null) return;
@@ -506,7 +520,7 @@ index 5cca45b..3f48e75 100644
  				setDeleting(true);
  				setDeleteCommittedId(null);
  				setDeleteError(null);
-@@ -3830,7 +4023,7 @@ window.__ModuleLoader__.load({
+@@ -3830,7 +4022,7 @@ window.__ModuleLoader__.load({
  						children: [
  							wide && (0, react_jsx_runtime.jsx)("span", {
  								className: clsx(WorkspaceBrowser_module_css_default.sectionLabel, WorkspaceBrowser_module_css_default.wide, searchExpanded && WorkspaceBrowser_module_css_default.sectionLabelHidden),
@@ -515,7 +529,7 @@ index 5cca45b..3f48e75 100644
  							}),
  							wide && (0, react_jsx_runtime.jsx)("div", {
  								className: clsx(WorkspaceBrowser_module_css_default.searchSlot, searchExpanded && WorkspaceBrowser_module_css_default.searchSlotExpanded),
-@@ -3964,7 +4157,7 @@ window.__ModuleLoader__.load({
+@@ -3964,7 +4156,7 @@ window.__ModuleLoader__.load({
  						className: WorkspaceBrowser_module_css_default.listArea,
  						children: wide && (normalizedQuery !== "" ? (0, react_jsx_runtime.jsx)(SearchResults, {
  							usePanelInfo,
@@ -524,7 +538,14 @@ index 5cca45b..3f48e75 100644
  							useSessionStatus,
  							open: openSearchResult,
  							onUnarchive: onSessionUnarchive,
-@@ -3980,6 +4173,8 @@ window.__ModuleLoader__.load({
+@@ -3974,12 +4166,15 @@ window.__ModuleLoader__.load({
+ 							query: normalizedQuery,
+ 							remote: remoteSearch,
+ 							resultLimit: searchResultLimit,
++							renderSlot,
+ 							t
+ 						}) : groupBy === "flat" ? (0, react_jsx_runtime.jsx)(FlatList, {
+ 							usePanelInfo,
  							list,
  							sessionIds: orderedFlatSessionIds,
  							rowState,
@@ -605,10 +626,10 @@ index 5cca45b..3f48e75 100644
  						kind: "single",
  						scope: "root"
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/types/client/contract/slots.d.ts b/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/types/client/contract/slots.d.ts
-index ef666cc..3ef4915 100644
+index ef666cc..374ab1d 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/types/client/contract/slots.d.ts
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/types/client/contract/slots.d.ts
-@@ -105,6 +105,16 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+@@ -105,6 +105,18 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
              scope: 'root';
              owner: DirectoryFlowOwnerProps;
          };
@@ -618,6 +639,8 @@ index ef666cc..3ef4915 100644
 +            kind: 'single'; scope: 'root';
 +            owner: {
 +                mode: 'projects' | 'flat' | 'search'; query: string; archivedOnly: boolean;
++                /** Search contributions own the empty state after combining their rows. */
++                searchPending?: boolean;
 +                projects: (active: boolean) => import('react').ReactNode;
 +                items: ReadonlyArray<{ id: string; updatedAt: number; pinned?: boolean; blank?: boolean; render: (active: boolean) => import('react').ReactNode }>;
 +            };
@@ -625,7 +648,7 @@ index ef666cc..3ef4915 100644
          /** Directory-flow hole under the sidebar browsing region (declared by the WorkspaceBrowser entry). */
          'sidebar.workspaces.directoryFlow': {
              kind: 'single';
-@@ -226,6 +236,8 @@ export type WorkspaceBrowserInjected = {
+@@ -226,6 +238,8 @@ export type WorkspaceBrowserInjected = {
           * saw. Select the field the surface needs (`info => info.home`).
           */
          hostInfo: HostObservable<RemoteHostFacts>;
@@ -634,7 +657,7 @@ index ef666cc..3ef4915 100644
          workspaceShortcuts: HostObservable<WorkspaceShortcutState>;
          shortcuts: HostObservable<readonly ShortcutCatalogEntry[]>;
      };
-@@ -255,13 +267,15 @@ export type WorkspaceBrowserInjected = {
+@@ -255,13 +269,15 @@ export type WorkspaceBrowserInjected = {
      }>;
      /** Maximum number of merged rows rendered for one search. */
      searchResultLimit: number;
@@ -651,7 +674,7 @@ index ef666cc..3ef4915 100644
      deleteWorkspace: (workspaceId: WorkspaceId) => Promise<void>;
      /**
       * Reorder a Workspace in the durable registry display order.
-@@ -448,7 +462,7 @@ export type SessionArchiveConfirmProps = PropsRuntime<'shell.overlay'> & PropsLo
+@@ -448,7 +464,7 @@ export type SessionArchiveConfirmProps = PropsRuntime<'shell.overlay'> & PropsLo
  /** Props of the existing overlay's keyed notice dispatcher. */
  export type RowToastProps = PropsRuntime<'shell.overlay'> & PropsRenderSlots<'workspace.toast'> & Pick<RowToastInjected, 'dismissToast'> & PropsHooks<RowToastInjected['hooks']>;
  /** Full browser props: shell owner share + viewing store + injected actions + the locale seat. */

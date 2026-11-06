@@ -15,6 +15,7 @@ import type { ServerResponse } from 'node:http'
 import type { AuditContextField } from 'dsh-desktop-enterprise/contract'
 import {
   CHAT_HEADER_TIMEOUT_MS,
+  CHAT_FIRST_CHUNK_TIMEOUT_MS,
   CHAT_IDLE_TIMEOUT_MS,
   CHAT_MAX_CONCURRENT,
   CHAT_TOTAL_TIMEOUT_MS,
@@ -153,11 +154,6 @@ interface PendingLogin {
   callback: EnterpriseLoginCallbackServer
 }
 
-const MODELS_INTERVAL_MS = 5 * 60 * 1000
-const MODELS_JITTER_MS = 15_000
-const DEGRADED_BACKOFF_MS = 30_000
-const MAX_DEGRADED_BACKOFF_MS = 5 * 60 * 1000
-
 export class EnterpriseService {
   private cloudService: CloudWorkbenchService | undefined
   private mutation: Promise<unknown> = Promise.resolve()
@@ -175,9 +171,8 @@ export class EnterpriseService {
   private errorCode: string | undefined
   private requestId: string | undefined
   private pendingLogin: PendingLogin | undefined
-  private modelsTimer: NodeJS.Timeout | undefined
+  private modelsRefresh: { epoch: number; promise: Promise<void> } | undefined
   private loginExpiryTimer: NodeJS.Timeout | undefined
-  private modelsAttempt = 0
   private lastPublicSignature = ''
   private chatInFlight = 0
   private readonly chatControllers = new Set<AbortController>()
@@ -251,7 +246,7 @@ export class EnterpriseService {
       await this.refreshAuditCapability()
       this.clearError()
       this.publish()
-      this.scheduleModels(0)
+      void this.refreshModels(true)
     } catch (error) {
       this.session = null
       this.allowPrivateHttpForSession = false
@@ -416,6 +411,25 @@ export class EnterpriseService {
     return this.refreshInFlight
   }
 
+  /** Synchronize catalog metadata using the current account's host-held credentials. */
+  async refreshModels(includeUsage = false): Promise<EnterprisePublicState> {
+    const epoch = this.epoch
+    let refresh = this.modelsRefresh
+    if (refresh?.epoch !== epoch) {
+      refresh = { epoch, promise: this.tickModels() }
+      this.modelsRefresh = refresh
+    }
+    try {
+      await refresh.promise
+    } finally {
+      if (this.modelsRefresh === refresh) this.modelsRefresh = undefined
+    }
+    if (includeUsage && this.epoch === epoch && this.phase === 'connected') {
+      await this.refreshUsageCatalog(epoch)
+    }
+    return this.snapshot()
+  }
+
   async logout(): Promise<EnterprisePublicState> {
     this.invalidateAuthSession()
     return this.enqueueMutation(async () => {
@@ -484,7 +498,6 @@ export class EnterpriseService {
     this.invalidateAuthSession()
     this.auditFields = []
     await this.cancelPendingLogin()
-    this.clearModelsTimer()
     this.epoch += 1
     for (const controller of this.chatControllers) controller.abort(enterpriseSessionChangedAbortReason())
     this.chatControllers.clear()
@@ -606,7 +619,6 @@ export class EnterpriseService {
         this.phase = this.session ? 'degraded' : 'idle'
         this.modelsAvailable = false
         this.publish()
-        this.scheduleModels(this.degradedDelay())
         this.note('refresh_degraded', noteFromError(error))
         return this.snapshot()
       }
@@ -629,7 +641,6 @@ export class EnterpriseService {
       this.vaultGeneration = stored.generation
       this.session = stored.session
       this.clearError()
-      this.modelsAttempt = 0
       // Leave phase as refreshing; syncCatalog flips to connected after usage.
     } catch {
       this.invalidateAuthSession()
@@ -643,7 +654,6 @@ export class EnterpriseService {
       this.phase = 'reauthRequired'
       this.error = 'Enterprise credentials could not be saved. Sign in again.'
       this.errorCode = undefined
-      this.clearModelsTimer()
       this.publish()
       try {
         await this.options.vault.clear()
@@ -696,7 +706,6 @@ export class EnterpriseService {
     if (options.includeUsage) await this.refreshUsageCatalog(expectedEpoch)
     if (this.epoch !== expectedEpoch) return
     if (this.phase === 'refreshing') this.phase = 'connected'
-    if (this.phase === 'connected' || this.phase === 'degraded') this.scheduleModels(this.modelsDelay())
     this.publish()
   }
 
@@ -730,14 +739,8 @@ export class EnterpriseService {
       }))
       this.modelsAvailable = this.models.length > 0
       if (this.phase === 'degraded') this.phase = 'connected'
-      await this.refreshUsageCatalog(epoch)
-      if (this.epoch !== epoch) return
-      this.modelsAttempt = 0
       this.clearError()
-      await this.refreshUsageCatalog(epoch)
-      if (this.epoch !== epoch) return
       this.publish()
-      this.scheduleModels(this.modelsDelay())
     } catch (error) {
       if (this.epoch !== epoch) return
       if (!accessRetried && error instanceof EnterprisePlatformError && error.code === 'invalid_access_token') {
@@ -758,8 +761,6 @@ export class EnterpriseService {
       this.phase = this.session ? 'degraded' : this.phase
       this.rememberRequest(error)
       this.publish()
-      this.modelsAttempt += 1
-      this.scheduleModels(this.degradedDelay())
     }
   }
 
@@ -1081,7 +1082,21 @@ export class EnterpriseService {
         spaces.push({ id: row.id, name: row.name, description: typeof row.description === 'string' ? row.description : '', group, updatedAt: typeof row.update_time === 'string' ? row.update_time : '' })
       }
     }
-    return { spaces }
+    const available = []
+    for (let offset = 0; offset < spaces.length; offset += 10) {
+      const batch = spaces.slice(offset, offset + 10)
+      const allowed = await Promise.all(batch.map(async space => {
+        const result = await call('/api/v1/permissions/check', {
+          resource_type: 'knowledge_space', resource_id: String(space.id), action: 'visible'
+        })
+        if (typeof result !== 'object' || result === null || !('allowed' in result) || typeof result.allowed !== 'boolean') {
+          throw new Error('Knowledge space permission response is invalid.')
+        }
+        return result.allowed
+      }))
+      available.push(...batch.filter((_space, index) => allowed[index]))
+    }
+    return { spaces: available }
   }
 
   /** Host-only exchange. Credentials never cross the renderer or Harness Broker. */
@@ -1396,7 +1411,7 @@ export class EnterpriseService {
     }
     const reader = upstream.body.getReader()
     let totalBytes = 0
-    let idle = setTimeout(() => response.destroy(), CHAT_IDLE_TIMEOUT_MS)
+    let idle = setTimeout(() => response.destroy(), CHAT_FIRST_CHUNK_TIMEOUT_MS)
     const resetIdle = () => {
       clearTimeout(idle)
       idle = setTimeout(() => response.destroy(), CHAT_IDLE_TIMEOUT_MS)
@@ -1445,7 +1460,6 @@ export class EnterpriseService {
     this.invalidateAuthSession()
     this.auditFields = []
     this.epoch += 1
-    this.clearModelsTimer()
     for (const controller of this.chatControllers) controller.abort(enterpriseSessionChangedAbortReason())
     this.chatControllers.clear()
     for (const controller of this.authenticatedControllers) controller.abort(enterpriseSessionChangedAbortReason())
@@ -1546,28 +1560,6 @@ export class EnterpriseService {
         error: 'authorization_expired'
       })
     })
-  }
-
-  private scheduleModels(delayMs: number): void {
-    this.clearModelsTimer()
-    if (!this.session?.access_token) return
-    this.modelsTimer = setTimeout(() => {
-      void this.tickModels()
-    }, delayMs)
-    this.modelsTimer.unref?.()
-  }
-
-  private clearModelsTimer(): void {
-    if (this.modelsTimer) clearTimeout(this.modelsTimer)
-    this.modelsTimer = undefined
-  }
-
-  private modelsDelay(): number {
-    return MODELS_INTERVAL_MS + Math.floor(Math.random() * MODELS_JITTER_MS)
-  }
-
-  private degradedDelay(): number {
-    return Math.min(MAX_DEGRADED_BACKOFF_MS, DEGRADED_BACKOFF_MS * 2 ** Math.min(this.modelsAttempt, 4))
   }
 
   private enqueueMutation<T>(work: () => Promise<T>): Promise<T> {

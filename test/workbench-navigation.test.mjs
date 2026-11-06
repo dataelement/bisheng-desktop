@@ -20,8 +20,12 @@ const UiWorkspaceService = vm.runInNewContext(`(() => {
 let apply, Workbenches
 // Workbench routing only runs once the user has switched the feature on.
 const enabledStorage = { getItem: key => key === 'dsh-workbench-enabled' ? 'true' : null, setItem: () => {}, removeItem: () => {} }
+const windowEvents = new EventTarget()
 vm.runInNewContext(workbenchSource, {
-  window: { localStorage: enabledStorage, __ModuleLoader__: { load({ factory }) {
+  window: {
+    addEventListener: windowEvents.addEventListener.bind(windowEvents),
+    removeEventListener: windowEvents.removeEventListener.bind(windowEvents),
+    localStorage: enabledStorage, __ModuleLoader__: { load({ factory }) {
     const client = factory((name) => {
       if (name === 'react') return { createElement() {}, Component: class {} }
       if (name === '@deepseek-ai/cordis') return { Service }

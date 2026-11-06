@@ -1,5 +1,5 @@
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js b/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js
-index 5d98612..b5536f9 100644
+index 5d98612..14296fe 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js
 @@ -172,6 +172,9 @@ window.__ModuleLoader__.load({
@@ -44,15 +44,19 @@ index 5d98612..b5536f9 100644
  				className: clsx(SidebarRoot_module_css_default.root, !wide && SidebarRoot_module_css_default.collapsed, !wide && everWide.current && SidebarRoot_module_css_default.railIn, collapsed && wide && SidebarRoot_module_css_default.fading, !pointerInside && SidebarRoot_module_css_default.quietBars),
  				style: wide ? { width: collapsed ? lastWideWidth.current : width } : void 0,
  				onPointerEnter: () => {
-@@ -303,17 +308,18 @@ window.__ModuleLoader__.load({
+@@ -303,17 +308,22 @@ window.__ModuleLoader__.load({
  						"data-window-drag": true,
  						children: toggle
  					}),
 -					(0, react_jsx_runtime.jsxs)("div", {
++					// The toggle is position:fixed into the caption, so it does not
++					// need the logo row. That row only held the toggle plus a brand
++					// Desktop hides, and its 40px height pushed New Session down.
++					windowsTitlebar && toggle,
 +					// The wide logo row is a fixed 60px band. On macOS the toggle
 +					// already lives in the traffic-light strip, and the brand mark
 +					// is gone, so keeping the row only pushes New Session down.
-+					!darwinDesktop && (0, react_jsx_runtime.jsxs)("div", {
++					!darwinDesktop && !windowsTitlebar && (0, react_jsx_runtime.jsxs)("div", {
  						className: SidebarRoot_module_css_default.logoRow,
  						"data-window-drag": true,
  						children: [wide && (() => {
@@ -67,7 +71,7 @@ index 5d98612..b5536f9 100644
  									className: SidebarRoot_module_css_default.brandName,
  									children: renderSlot("sidebar.brand.name", {}, { fallback: buildVersion === void 0 ? (0, react_jsx_runtime.jsx)("span", {
  										className: SidebarRoot_module_css_default.fallbackBrandName,
-@@ -330,10 +336,7 @@ window.__ModuleLoader__.load({
+@@ -330,10 +340,7 @@ window.__ModuleLoader__.load({
  									}) })
  								})]
  							});
@@ -79,7 +83,7 @@ index 5d98612..b5536f9 100644
  								type: "button",
  								className: clsx(SidebarRoot_module_css_default.brand, SidebarRoot_module_css_default.wide),
  								"aria-label": t("session.new.label"),
-@@ -343,7 +346,7 @@ window.__ModuleLoader__.load({
+@@ -343,7 +350,7 @@ window.__ModuleLoader__.load({
  								},
  								children: identity
  							});
@@ -88,7 +92,7 @@ index 5d98612..b5536f9 100644
  					}),
  					(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {
  						label: t("session.new.label"),
-@@ -375,7 +378,13 @@ window.__ModuleLoader__.load({
+@@ -375,7 +382,13 @@ window.__ModuleLoader__.load({
  							})]
  						})
  					}),
@@ -103,7 +107,7 @@ index 5d98612..b5536f9 100644
  						className: SidebarRoot_module_css_default.panelList,
  						"aria-label": t("panels.label"),
  						children: panels.map(({ id, label }) => (0, react_jsx_runtime.jsx)(PanelRow, {
-@@ -386,7 +395,7 @@ window.__ModuleLoader__.load({
+@@ -386,7 +399,7 @@ window.__ModuleLoader__.load({
  							selectPanel,
  							renderSlot
  						}, id))
@@ -112,7 +116,7 @@ index 5d98612..b5536f9 100644
  					(0, react_jsx_runtime.jsx)("div", {
  						className: SidebarRoot_module_css_default.regionArea,
  						children: renderSlot("sidebar.workspaces", {
-@@ -402,6 +411,7 @@ window.__ModuleLoader__.load({
+@@ -402,6 +415,7 @@ window.__ModuleLoader__.load({
  							className: SidebarRoot_module_css_default.footerActions,
  							children: renderSlot("sidebar.footer.action", { wide })
  						}), (0, react_jsx_runtime.jsx)("div", {
@@ -120,7 +124,7 @@ index 5d98612..b5536f9 100644
  							className: SidebarRoot_module_css_default.settingsArea,
  							children: renderSlot("sidebar.settings", { wide })
  						})]
-@@ -500,6 +510,11 @@ window.__ModuleLoader__.load({
+@@ -500,6 +514,11 @@ window.__ModuleLoader__.load({
  						kind: "single",
  						scope: "root"
  					},

@@ -24,6 +24,7 @@ async function json(response: Response): Promise<Record<string, unknown>> {
 function developmentToolkit(base: string) {
   const prefix = base.replace(/\/$/u, '')
   return {
+    workbenchGuideUrl: `${prefix}/api/v1/dev-toolkit/workbench-guide.md`,
     versionsUrl: `${prefix}/api/v1/dev-toolkit/versions`,
     sdkGuideUrl: `${prefix}/api/v1/dev-toolkit/sdk-guide.md`,
     sdkIndexUrl: `${prefix}/api/v1/dev-toolkit/simple/`,
@@ -52,6 +53,11 @@ export class CloudWorkbenchService {
 
   async request(input: unknown): Promise<unknown> {
     const request = record(input)
+    if (request.operation === 'guide') {
+      const result = await this.fetch('/api/v1/dev-toolkit/versions')
+      await json(result.response)
+      return { guideUrl: developmentToolkit(result.base).workbenchGuideUrl }
+    }
     if (request.operation === 'list') {
       const query = new URLSearchParams()
       if (request.cursor !== undefined && request.cursor !== null) query.set('cursor', id(request.cursor))

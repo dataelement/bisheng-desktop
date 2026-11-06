@@ -451,6 +451,10 @@ function contentSafetyMessage(safety, locale, localizeContentSafety) {
 }
 
 export function requestFailure(status, requestId, payload, localizeContentSafety) {
+  console.warn('[enterprise] model response failed', {
+    status, requestId: requestIdFrom(requestId, payload),
+    code: platformChatCode(payload), message: sanitizeChatMessage(rawChatMessage(payload))
+  })
   const safety = resolveContentSafetyError(payloadError(payload)?.code, rawChatMessage(payload))
     ?? resolveContentSafetyError(payload?.code, payload?.message)
     ?? resolveContentSafetyError(payload?.errorCode, rawChatMessage(payload))

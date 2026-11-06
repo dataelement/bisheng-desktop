@@ -8,6 +8,8 @@ Python 和 wheel 的固定 URL/SHA-256 来源：[上游固定提交的 primary-r
 
 构建阶段下载并校验固定资源、离线解包 wheel，不运行 pip install，不依赖系统 Python。生成物位于忽略目录 `.build`；构建失败不能继续消费旧 payload。包内验证必须实际调用 Python 创建、重新读取 DOCX/PPTX/XLSX、检查 ZIP 正斜杠路径，执行技能结构检查及 LibreOffice 转换。Windows 和 Intel Mac 的执行验收须在对应原生 runner 完成；其他平台的成功不可替代。
 
+本地重复执行 `npm run office:prepare` 时，运行时按目标平台、锁文件、脚本、桌面版本和技能内容复用，模板预览按输入内容和运行时指纹复用；变更后自动重建。设置 `DSH_OFFICE_FORCE_BUILD=1` 可强制重新组装运行时；删除 `.build/office-template-cache` 可强制重新生成模板预览。这些缓存是本地构建产物，不提交到仓库。
+
 本地 macOS arm64 开发目录包实测 Office 资源约 205 MiB（包含 Python、numpy/pandas 与 Office 库）；这不是 DMG/NSIS 压缩增量。首次运行不做联网安装或 Profile 复制；安装时间增量取决于目标安装器的解压，需要原生产物对照测量。
 
 ## 通用 PPT 与模板 PPT

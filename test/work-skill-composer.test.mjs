@@ -2,12 +2,39 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import { expect, it, vi } from 'vitest'
 import React from 'react'
+import { ReferenceIconRegular } from './helpers/reference-icons.mjs'
 import { renderToStaticMarkup } from 'react-dom/server'
+
+it('inserts skill and tool references with the menu icon kind and stable identity', () => {
+  const { plugin } = setup()
+  const commands = new Map()
+  const input = { state: { getSnapshot: () => ({ draftRev: 4, occurrences: [] }) }, insertReference: vi.fn(() => true) }
+  const scope = { bail: vi.fn() }
+  const ctx = {
+    effect() {}, on() {}, slots: { inject() {} }, locale: { bind: () => key => key },
+    sessions: { scope: () => scope }, conversation: { input: { for: () => input } },
+    commandUi: { register: command => commands.set(command.name, command) },
+    inject: (_dependencies, install) => install(ctx)
+  }
+  plugin.apply(ctx)
+  const options = [
+    ['skills', 'skill', 'desktop-skill', JSON.stringify({ name: 'writing', label: 'Writing' })],
+    ['tools', 'tool', 'desktop-tool', JSON.stringify({ name: 'mcp__bisheng__bisheng_tool_7', label: 'Time', connectionKey: 'account-a' })],
+  ]
+  for (const [name, appearance, source, id] of options) {
+    const label = JSON.parse(id).label
+    commands.get(name).ui.onSelect({ id, label }, { sessionId: 'task' })
+    expect(input.insertReference).toHaveBeenLastCalledWith({ source, appearance, ref: id, label, clipboardText: `/${label}` }, { start: 0, end: 0, draftRev: 4 })
+    const menu = renderToStaticMarkup(React.createElement(commands.get(name).icon))
+    const reference = renderToStaticMarkup(React.createElement(ReferenceIconRegular, { kind: appearance, size: 16 }))
+    expect(menu).toBe(reference)
+  }
+})
 function setup() {
   let plugin
   const fetch = vi.fn(async () => Response.json({ ok: true }))
   vm.runInNewContext(readFileSync(new URL('../packages/dsh-desktop-client-ui/client.js', import.meta.url), 'utf8'), {
-    fetch, window: { __ModuleLoader__: { load: ({ factory }) => { plugin = factory(name => name === 'react' ? React : {}) } } }
+    fetch, window: { __ModuleLoader__: { load: ({ factory }) => { plugin = factory(name => name === 'react' ? React : { ReferenceIconRegular }) } } }
   })
   return { source: plugin.skillReferenceSource, plugin, fetch }
 }

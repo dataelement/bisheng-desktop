@@ -1,4 +1,4 @@
-import { readFile, realpath } from 'node:fs/promises'
+import { realpath } from 'node:fs/promises'
 import { isAbsolute, relative } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -12,7 +12,7 @@ export function registerCloudTools(ctx, store) {
   ctx.inject(['desktopCloud', 'tools', 'sandboxPolicy'], scoped => {
     scoped.tools.register(defineTool({
       name: 'cloud_workbench',
-      description: 'Call guide first for workbench requirements, deployment and publishing instructions. Use the current BiSheng identity to discover hosted workbenches, fetch editable source only for an explicit code/style/layout change, create a cloud project, submit it through the existing approval pipeline, or read release progress. Ordinary business use opens the hosted URL and must not fetch source. Publishing is Agent-led: explain the release scope and obtain user authorization in the conversation before submitting; check actual progress and never ask the user to click a publishing button. Never request a publishing key.',
+      description: 'Call guide first, then visit the returned guideUrl for this enterprise server’s workbench requirements, deployment and publishing protocol. Use the current BiSheng identity to discover hosted workbenches, fetch editable source only for an explicit code/style/layout change, create a cloud project, submit it through the existing approval pipeline, or read release progress. Ordinary business use opens the hosted URL and must not fetch source. Publishing is Agent-led: explain the release scope and obtain user authorization in the conversation before submitting; check actual progress and never ask the user to click a publishing button. Never request a publishing key.',
       parameters: {
         operation: { type: 'string', enum: ['guide', 'list', 'create', 'checkout', 'publish', 'progress', 'limits'], required: true },
         appId: { type: 'string' }, versionId: { type: 'string' }, projectId: { type: 'string' },
@@ -24,7 +24,6 @@ export function registerCloudTools(ctx, store) {
       isConcurrencySafe: () => false,
       async execute(input, exec) {
         exec.signal?.throwIfAborted()
-        if (input.operation === 'guide') return { protocol: await readFile(new URL('./cloud-guide.en.md', import.meta.url), 'utf8') }
         let policy
         if (['create', 'checkout', 'publish'].includes(input.operation)) {
           policy = scoped.sandboxPolicy.resolve({ session: exec.agent.session })

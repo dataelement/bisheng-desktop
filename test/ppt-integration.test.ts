@@ -321,6 +321,8 @@ describe('opening PPT template card', () => {
       leadingUserKey: null,
       leadingPendingId: null
     })
+    expect(chat).toContain('const hasMore = useSession((snapshot) => snapshot.hasMore);')
+    expect(chat).not.toContain('useChat((snapshot) => snapshot.hasMore)')
     expect(chat).toContain('renderSlot("conversation.chat.userMessageFooter", { leading: true })')
     expect(chat).toContain('footer: item.requestId === leadingPendingId ? messageFooter : null')
     expect(chat).toContain('const showBubble = text !== "" || extraBlocks.length > 0 || footer != null')
@@ -337,6 +339,8 @@ describe('opening PPT template card', () => {
     expect(adapter).toContain('name: "conversation.chat.userMessageFooter"')
     expect(card).toContain('loadTemplateState')
     expect(card).toContain('applyLoadedTemplates')
+    expect(card).toContain('mode.adopt')
+    expect(adapter).toContain("if (detail.mode !== 'word' && detail.mode !== 'excel') return;")
     expect(card).toContain('showModal()')
     expect(card).toContain('data-ppt-opening-template')
     expect(card).toContain('className: "dsh-ppt-opening-title"')

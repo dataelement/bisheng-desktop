@@ -121,8 +121,8 @@ describe('enterprise chat payload validation', () => {
 })
 
 describe('desktop chat abort reasons', () => {
-  it('waits 60 seconds for the upstream response headers', () => {
-    expect(CHAT_HEADER_TIMEOUT_MS).toBe(60_000)
+  it('waits five minutes for the upstream response headers', () => {
+    expect(CHAT_HEADER_TIMEOUT_MS).toBe(300_000)
   })
 
   it('recognizes session and header reasons and ignores a caller abort', () => {
