@@ -191,7 +191,7 @@ describe('enterprise policy', () => {
 
 })
 
-async function fixture() {
+async function fixture(options: { authorizationAvailable?: boolean } = {}) {
   const root = await home(), ctx = new Context()
   let current = bundle(), currentId = versionId, disabled = false, online = true, revision = 2, connected = true
   let identity = account
@@ -208,7 +208,7 @@ async function fixture() {
     return { status_code: 200, data }
   })
   const active = new Set<string>()
-  const market = createMarketController(ctx, { state: () => ({ ...identity, connected }), marketRequest: request }, { home: root, target,
+  const market = createMarketController(ctx, { state: () => ({ ...identity, connected }), marketRequest: request }, { home: root, target, ...options,
     load: async (record: { directory: string; version: string; config?: Record<string, unknown> }) => {
       const module = await import(pathToFileURL(join(record.directory, 'node_modules/company-demo/index.js')).href)
       const fiber = ctx.plugin(module, record.config)
@@ -223,6 +223,15 @@ async function fixture() {
 }
 
 describe('account-bound lifecycle', () => {
+  it('fails closed before catalog or activation without the desktop authorization service', async () => {
+    const { market, request, active } = await fixture({ authorizationAvailable: false })
+    await market.synchronize()
+    expect(market.state()).toMatchObject({ connected: true, online: true })
+    expect(await market.catalog()).toMatchObject({ total: 1, installReady: false, failureCode: 'authorization_unavailable', error: expect.stringContaining('desktop authorization service') })
+    await expect(market.act({ action: 'install', plugin_id: pluginId })).rejects.toMatchObject({ code: 'authorization_unavailable' })
+    expect(request.mock.calls.some(([path]) => path.endsWith('/artifact'))).toBe(false)
+    expect(active.size).toBe(0)
+  })
   it('installs from an unsigned enterprise market without a deployment signing key', async () => {
     const { market, active } = await fixture()
     expect(await market.catalog()).toMatchObject({ connected: true, installReady: true, total: 1, user: { id: '20' } })
@@ -324,6 +333,24 @@ describe('review regressions', () => {
     expect(isMarketVersionCompatible('0.9.2', '0.9.2-beta.1')).toBe(true)
     expect(isMarketVersionCompatible('', '0.9.2')).toBe(false)
     expect(isMarketVersionCompatible('0.9.2', 'invalid')).toBe(false)
+  })
+
+  it('keeps catalog browsing available but disables installation on an unpatched Manager', async () => {
+    const { root, request } = await fixture()
+    const ctx = new Context()
+    const registrations = new Map<string, (request: { url: string }) => Promise<Response>>()
+    ctx.provide('connection', { fetch: { register(config: { path: string; fetch: (request: { url: string }) => Promise<Response> }) { registrations.set(config.path, config.fetch); return () => undefined } } })
+    const manager = { managedBundleSourceContract: 0 }
+    ctx.provide('pluginManager', manager)
+    try {
+      applyEnterpriseMarket(ctx, { state: () => account, marketRequest: request }, { home: root, target })
+      const fetchCatalog = registrations.get('/api/enterprise.market.catalog')
+      if (!fetchCatalog) throw new Error('Catalog route was not registered.')
+      const browse = async () => (await fetchCatalog({ url: 'http://localhost/api/enterprise.market.catalog' })).json()
+      expect(await browse()).toMatchObject({ connected: true, total: 1, installReady: false })
+      manager.managedBundleSourceContract = 1
+      expect(await browse()).toMatchObject({ connected: true, total: 1, installReady: true })
+    } finally { await ctx.fiber.dispose() }
   })
 
   it('returns a market failure code to the settings page', async () => {

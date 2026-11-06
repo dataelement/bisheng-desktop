@@ -1,0 +1,109 @@
+diff --git a/packages/boot/app-boot/README.i18n.yaml b/packages/boot/app-boot/README.i18n.yaml
+index 9ce0beae8e..0b9ed56fbb 100644
+--- a/packages/boot/app-boot/README.i18n.yaml
++++ b/packages/boot/app-boot/README.i18n.yaml
+@@ -24,8 +24,8 @@
+   en: 65bf2834b81f87da
+   zh: c864ac60a3005b99
+ /deepseek-ai-dsh-app-boot/use-this-package/profiles:
+-  en: a9c82cd220ae8d59
+-  zh: 8c7c1c97efcdfc25
++  en: 961dbe85a9d18b4b
++  zh: 2e982f734810a381
+ /deepseek-ai-dsh-app-boot/use-this-package/previewing-the-effective-configuration:
+   en: 646a0ccdd7881ad1
+   zh: e3696acb1573dd7b
+diff --git a/packages/boot/app-boot/README.md b/packages/boot/app-boot/README.md
+index 4d30457f81..3b4e66a0d7 100644
+--- a/packages/boot/app-boot/README.md
++++ b/packages/boot/app-boot/README.md
+@@ -66,7 +66,7 @@ The enabled `dsh-hmr` plugin watches the profile manifest and both user patch fi
+ 
+ Inserted plugin names may be absolute filesystem paths, file URLs, or package specifiers. Patch loading converts absolute paths and patch-relative `./` or `../` paths to file URLs within `insert` rows and their nested groups; existing-entry name assertions and replacement `config` values remain literal.
+ 
+-Before mounting profile rows, the `dsh` launcher computes one immutable runtime resolution from the installation and ordered bundle dependency graphs. Every profile launcher uses runtime resolution, including plain Node, packaged executables, and the Electron Host. It installs the runtime resolution through Node's ESM and CommonJS resolvers without creating fallback links. Traversal includes installed optional dependencies and skips those absent from the target installation.
++Before mounting profile rows, the `dsh` launcher computes one immutable runtime resolution from the installation and ordered bundle dependency graphs. Every profile launcher uses runtime resolution, including plain Node, packaged executables, and the Electron Host. It installs the runtime resolution through Node's ESM and CommonJS resolvers without creating fallback links. Traversal includes installed optional dependencies and skips those absent from the target installation. Package-directory requests such as `punycode/` resolve userland packages even when the package name matches a Node builtin; bare builtin requests and `node:` requests retain Node semantics.
+ 
+ `sanitizeProfile(binName, profileDir, bundles)` provides filesystem recovery without loading plugins or parsing patches. Desktop uses it for native fatal recovery. Call it only after stopping the profile and excluding concurrent profile writes. It renames the profile’s `cordis.patch.yml` to a unique `.bak-<timestamp>` sibling and restores the supplied bundle list, preserving installed packages and other manifest fields. The timestamp is Unix time in milliseconds; collisions append an ordinal (`-1`, `-2`, …) without changing it. It returns the backup path, or `undefined` when no patch exists; missing profiles remain absent. Profile initialization recreates an empty patch on the next launch. The home-level patch is unchanged. Invalid profile JSON fails before mutation; later errors propagate and retain completed changes for retry.
+ 
+diff --git a/packages/boot/app-boot/README.zh.md b/packages/boot/app-boot/README.zh.md
+index a4d8554ca5..11eb300b56 100644
+--- a/packages/boot/app-boot/README.zh.md
++++ b/packages/boot/app-boot/README.zh.md
+@@ -66,7 +66,7 @@ profile 导入插件前，DSH 会将其声明的 DSH 版本要求与 `getDshRunt
+ 
+ 插入条目的插件名可以是绝对文件系统路径、文件 URL 或包标识符。patch 加载会把 `insert` 条目及其嵌套分组中的绝对路径以及相对于 patch 文件的 `./` 或 `../` 路径转换为文件 URL；对已有条目名称的断言及替换用的 `config` 值保持原样。
+ 
+-挂载 profile 条目前，`dsh` launcher 会从安装依赖图与有序 bundle 依赖图计算一份不可变的 runtime resolution。普通 Node、打包可执行文件与 Electron Host 等所有 profile 启动器都使用 runtime 解析，将 runtime resolution 安装到 Node 的 ESM 与 CommonJS 解析器中，不创建 fallback 链接。依赖遍历包含已安装的可选依赖，跳过目标安装中缺席的包。
++挂载 profile 条目前，`dsh` launcher 会从安装依赖图与有序 bundle 依赖图计算一份不可变的 runtime resolution。普通 Node、打包可执行文件与 Electron Host 等所有 profile 启动器都使用 runtime 解析，将 runtime resolution 安装到 Node 的 ESM 与 CommonJS 解析器中，不创建 fallback 链接。依赖遍历包含已安装的可选依赖，跳过目标安装中缺席的包。`punycode/` 等包目录请求即使与 Node 内置模块同名也解析到用户态包；裸内置模块请求与 `node:` 请求保留 Node 语义。
+ 
+ `sanitizeProfile(binName, profileDir, bundles)` 提供文件恢复，无需加载插件或解析 patch。Desktop 在原生致命错误恢复中调用它。调用前必须停止 profile 并排除并发 profile 写入。它将 profile 的 `cordis.patch.yml` 重命名为带唯一 `.bak-<timestamp>` 后缀的同目录备份，并恢复调用方指定的 bundle 列表，保留已安装包和其他 manifest 字段。时间戳为 Unix 毫秒数；同名备份已存在时追加序号（`-1`、`-2`、……），时间戳保持不变。返回值为备份路径；patch 不存在时返回 `undefined`，缺失的 profile 不会被创建。下次启动的 profile 初始化会重新创建空 patch。home 级 patch 不变。无效 profile JSON 在修改前报错；后续错误向调用方抛出，保留已完成的修改供重试。
+ 
+diff --git a/packages/boot/app-boot/src/profile-resolution/resolver.ts b/packages/boot/app-boot/src/profile-resolution/resolver.ts
+index 468ec82e24..d641062c62 100644
+--- a/packages/boot/app-boot/src/profile-resolution/resolver.ts
++++ b/packages/boot/app-boot/src/profile-resolution/resolver.ts
+@@ -273,7 +273,7 @@ function profileChild(path: string, treePrefix: string): string {
+ }
+ 
+ function nativePackageDir(parent: string, name: string): string | undefined {
+-  for (const searchPath of createRequire(parent).resolve.paths(name) as string[]) {
++  for (const searchPath of createRequire(parent).resolve.paths(`${name}/`) as string[]) {
+     const candidate = join(searchPath, name)
+     if (existsSync(join(candidate, 'package.json'))) return candidate
+   }
+@@ -588,7 +588,7 @@ class ResolutionRouter {
+     const target = resolution.entries.get(name)
+     const candidates: string[] = []
+     const localSearchPaths: string[] = []
+-    for (const searchPath of createRequire(parent).resolve.paths(name) as string[]) {
++    for (const searchPath of createRequire(parent).resolve.paths(`${name}/`) as string[]) {
+       if (!searchPath.startsWith(layer.localPrefix)) break
+       localSearchPaths.push(searchPath)
+       const candidate = localPackageCandidate(searchPath, name, flavor)
+@@ -641,7 +641,7 @@ class ResolutionRouter {
+     if (target === undefined) return { route: { kind: 'native' } }
+     const ancestors = this.nodeModulePaths(dirname(parent))
+     const ancestorSet = new Set(ancestors)
+-    const searchPaths = flavor === 'esm' ? ancestors : createRequire(parent).resolve.paths(name) as string[]
++    const searchPaths = flavor === 'esm' ? ancestors : createRequire(parent).resolve.paths(`${name}/`) as string[]
+     for (const searchPath of searchPaths) {
+       const directory = dirname(searchPath)
+       if (ancestorSet.has(searchPath) && readPeerNames(directory).has(name)) {
+diff --git a/packages/boot/app-boot/tests/profile-resolution.spec.ts b/packages/boot/app-boot/tests/profile-resolution.spec.ts
+index b56d1a1774..c27e2b46ac 100644
+--- a/packages/boot/app-boot/tests/profile-resolution.spec.ts
++++ b/packages/boot/app-boot/tests/profile-resolution.spec.ts
+@@ -2131,6 +2131,32 @@ describe('runtime resolution', { concurrent: false }, () => {
+     return { f, linkedRoot, helper, writeManifest }
+   }
+ 
++  it.each(['profile', 'linked', 'native'] as const)(
++    'resolves builtin-named userland packages from a %s importer', async (location) => {
++      const { f, linkedRoot } = linkedPluginFixture()
++      const importer = location === 'profile' ? f.profile.dir : location === 'linked' ? linkedRoot : join(f.root, 'native')
++      const local = join(importer, 'node_modules', 'punycode')
++      file(join(local, 'package.json'), JSON.stringify({ name: 'punycode', version: '1.0.0', main: './index.js' }))
++      file(join(local, 'index.js'), 'module.exports = { marker: 42 }\n')
++      const resolution = await resolutionOf(f)
++      const registration = installRuntimeInterception({
++        ...resolution,
++        entries: [...resolution.entries, {
++          name: 'punycode', packageDir: local, version: '1.0.0', declarer: f.installAnchor, scope: 'installation',
++        }],
++      })
++      registrations.push(registration)
++      const require = createRequire(join(importer, 'entry.cjs'))
++      const parent = pathToFileURL(join(importer, 'entry.mjs')).href
++      expect(require('punycode/')).toEqual({ marker: 42 })
++      expect(await importFrom('punycode/index.js', parent)).toMatchObject({ default: { marker: 42 } })
++      expect(registration.packageDir('punycode/index.js', parent)).toBe(local)
++      expect(require('punycode')).toBe(require('node:punycode'))
++      expect(resolveFrom('punycode', parent)).toBe('node:punycode')
++      expect(resolveFrom('node:punycode', parent)).toBe('node:punycode')
++    },
++  )
++
+   describe('linked root generations', () => {
+     const peer = '@deepseek-ai/dsh-core'
+ 

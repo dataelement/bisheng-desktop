@@ -1,0 +1,334 @@
+diff --git a/packages/client/ui-workspace/src/client/contract/slots.ts b/packages/client/ui-workspace/src/client/contract/slots.ts
+index edbce796de..46e2338c0d 100644
+--- a/packages/client/ui-workspace/src/client/contract/slots.ts
++++ b/packages/client/ui-workspace/src/client/contract/slots.ts
+@@ -137,6 +137,20 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+     'conversation.hero.workspace.directoryFlow': { kind: 'single'; scope: 'root'; owner: DirectoryFlowOwnerProps }
+     /** Directory-flow hole under the sidebar browsing region (declared by the WorkspaceBrowser entry). */
+     'sidebar.workspaces.directoryFlow': { kind: 'single'; scope: 'root'; owner: DirectoryFlowOwnerProps }
++    'sidebar.workspaces.title': { kind: 'single'; scope: 'root'; owner: { flat: boolean } }
++    /** Compose projects and unassigned rows while retaining native row actions. */
++    'sidebar.workspaces.collection': {
++      kind: 'single'
++      scope: 'root'
++      owner: {
++        mode: 'projects' | 'flat' | 'search'
++        query: string
++        archivedOnly: boolean
++        searchPending?: boolean
++        projects: (active: boolean) => import('react').ReactNode
++        items: ReadonlyArray<{ id: string; updatedAt: number; pinned?: boolean; blank?: boolean; render: (active: boolean) => import('react').ReactNode }>
++      }
++    }
+     /**
+      * Leading decoration of one Session row, in the 16px cell before the title
+      * that the row's own state dot otherwise occupies. A higher-priority state
+@@ -499,6 +513,8 @@ export type RowToastProps =
+ export type WorkspaceBrowserProps =
+   PropsRuntime<'sidebar.workspaces'>
+   & PropsRenderSlots<
++    | 'sidebar.workspaces.title'
++    | 'sidebar.workspaces.collection'
+     | 'sidebar.workspaces.directoryFlow'
+     | 'sidebar.workspaces.session.row.action'
+     | 'sidebar.session.row.trailing'
+diff --git a/packages/client/ui-workspace/src/client/index.ts b/packages/client/ui-workspace/src/client/index.ts
+index ff7890aec5..e08250c39b 100644
+--- a/packages/client/ui-workspace/src/client/index.ts
++++ b/packages/client/ui-workspace/src/client/index.ts
+@@ -331,6 +331,8 @@ export function apply(ctx: Context): void {
+     {
+       name: 'sidebar.workspaces',
+       children: {
++        'sidebar.workspaces.title': { kind: 'single', scope: 'root' },
++        'sidebar.workspaces.collection': { kind: 'single', scope: 'root' },
+         'sidebar.workspaces.directoryFlow': { kind: 'single', scope: 'root' },
+         'sidebar.workspaces.session.row.action': { kind: 'list', scope: 'root' },
+         'sidebar.session.row.leading': { kind: 'list', scope: 'root', inline: true },
+diff --git a/packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx b/packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx
+index 44f3d56036..1acded63d7 100644
+--- a/packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx
++++ b/packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx
+@@ -469,7 +469,7 @@ function SessionTree({
+     && workspaceDrag.over.half === 'before'
+ 
+   const rowKeys: string[] = groups.length === 0 ? ['empty'] : []
+-  const renderGroup = (group: GroupNode, depth: number): ReactNode => {
++  const renderGroup = (group: GroupNode, depth: number, active = true): ReactNode => {
+     const workspaceId = group.workspaceId
+     const children = childrenByParent.get(group.key) ?? []
+     const compatibleDrag = workspaceDrag !== null && parents.get(workspaceDrag.workspaceId) === parents.get(group.key)
+@@ -478,7 +478,7 @@ function SessionTree({
+     const visible = watermarkRows(group.sessions, watermark)
+     const sessionsExpanded = visible.hiddenCount === 0
+     rowKeys.push(`workspace:${group.key}`)
+-    const childRows = group.expanded ? children.map(child => renderGroup(child, depth + 1)) : []
++    const childRows = group.expanded ? children.map(child => renderGroup(child, depth + 1, active)) : []
+     const sessions = visible.rows
+     for (const node of sessions) rowKeys.push(`session:${node.id}`)
+     if (collapsed.hiddenCount > 0) rowKeys.push(`overflow:${group.key}`)
+@@ -612,7 +612,7 @@ function SessionTree({
+             <SessionNodeItem
+               key={node.id}
+               node={node}
+-              currentId={current}
++              currentId={active ? current : undefined}
+               now={now}
+               onOpen={open}
+               onRenameRequest={onSessionRenameRequest}
+@@ -657,6 +657,30 @@ function SessionTree({
+   }
+ 
+   const groupRows = rootGroups.map(group => renderGroup(group, 0))
++  const recentItems = deriveFlat(list, ungroupedSessionIds, rowState, statuses).map((node) => ({
++    id: node.id,
++    updatedAt: node.updatedAt,
++    pinned: node.pinned,
++    blank: node.blank,
++    render: (active: boolean) => (
++      <SessionNodeItem
++        key={node.id}
++        node={node}
++        currentId={active ? current : undefined}
++        now={now}
++        onOpen={open}
++        onRenameRequest={onSessionRenameRequest}
++        renderSlot={renderSlot}
++        openSessionMenu={openSessionMenu}
++        useContextMenu={useContextMenu}
++        useContextMenuTarget={useContextMenuTarget}
++        onReveal={node.id === revealSessionId ? () => { onSessionRevealed(node.id) } : undefined}
++        useSessionAccess={useSessionAccess}
++        home={home}
++        t={t}
++      />
++    ),
++  }))
+   return (
+     <HoverCardGroup className={clsx(css.treeBody, css.wide)}>
+       {workspaceDropAtListStart && <span className={css.listTopDropIndicator} aria-hidden="true" />}
+@@ -668,10 +692,20 @@ function SessionTree({
+         ready={list.phase === 'ready' && workspaceReady && !nativeDragActive}
+         resetKey={JSON.stringify([animationResetKey, watermarkMotionKey])}
+       >
+-        {groups.length === 0 && (
+-          <EmptySessions rowState={rowState} onLeaveArchivedOnly={onLeaveArchivedOnly} t={t} />
+-        )}
+-        {groupRows}
++        {renderSlot('sidebar.workspaces.collection', {
++          mode: 'projects',
++          query: '',
++          archivedOnly: rowState.archivedFilter === 'only',
++          projects: (active: boolean) => rootGroups.filter(group => group.workspaceId !== undefined).map(group => renderGroup(group, 0, active)),
++          items: recentItems,
++        }, {
++          fallback: [
++            groups.length === 0 && (
++              <EmptySessions rowState={rowState} onLeaveArchivedOnly={onLeaveArchivedOnly} t={t} />
++            ),
++            groupRows,
++          ],
++        })}
+       </AnimatedRows>
+       <span className={css.fade} />
+     </HoverCardGroup>
+@@ -735,54 +769,73 @@ function FlatList({
+         ready={list.phase === 'ready' && workspaceReady && drag === null}
+         resetKey={animationResetKey}
+       >
+-        {rows.length === 0 && (
+-          <EmptySessions rowState={rowState} onLeaveArchivedOnly={onLeaveArchivedOnly} t={t} />
+-        )}
+-        {rows.map((node) => {
+-          const active = drag !== null && drag.pinned === node.pinned
+-          const normalizeHalf = (half: 'before' | 'after'): 'before' | 'after' =>
+-            node.blank ? 'after' : half
+-          return (
+-            <SessionNodeItem
+-              key={node.id}
+-              node={node}
+-              currentId={currentId}
+-              now={now}
+-              onOpen={open}
+-              onRenameRequest={onSessionRenameRequest}
+-              renderSlot={renderSlot}
+-              openSessionMenu={openSessionMenu} useContextMenu={useContextMenu}
+-              useContextMenuTarget={useContextMenuTarget}
+-              onReveal={node.id === revealSessionId
+-                ? () => { onSessionRevealed(node.id) }
+-                : undefined}
+-              useSessionAccess={useSessionAccess}
+-              drag={{
+-                start: () => {
+-                  dropCommitted.current = false
+-                  setDrag({ accountKey: FLAT_SESSION_ORDER_KEY, sessionId: node.id, pinned: node.pinned, over: null })
+-                },
+-                active,
+-                marker: active && drag.over?.id === node.id ? drag.over.half : null,
+-                hover: (half) => {
+-                  setDrag(current => current === null ? current : {
+-                    ...current, over: { id: node.id, half: normalizeHalf(half) },
+-                  })
+-                },
+-                drop: (half) => {
+-                  if (drag !== null) commitDrag(drag, { id: node.id, half: normalizeHalf(half) })
+-                },
+-                end: () => {
+-                  if (drag?.over !== null && drag?.over !== undefined) commitDrag(drag, drag.over)
+-                  else setDrag(null)
+-                  dropCommitted.current = false
+-                },
+-              }}
+-              home={home}
+-              t={t}
+-            />
+-          )
+-        })}
++        {(() => {
++          const items = rows.map(node => ({
++            id: node.id,
++            updatedAt: node.updatedAt,
++            pinned: node.pinned,
++            blank: node.blank,
++            render: (selected: boolean) => {
++              const active = drag !== null && drag.pinned === node.pinned
++              const normalizeHalf = (half: 'before' | 'after'): 'before' | 'after' =>
++                node.blank ? 'after' : half
++              return (
++                <SessionNodeItem
++                  key={node.id}
++                  node={node}
++                  currentId={selected ? currentId : undefined}
++                  now={now}
++                  onOpen={open}
++                  onRenameRequest={onSessionRenameRequest}
++                  renderSlot={renderSlot}
++                  openSessionMenu={openSessionMenu} useContextMenu={useContextMenu}
++                  useContextMenuTarget={useContextMenuTarget}
++                  onReveal={node.id === revealSessionId
++                    ? () => { onSessionRevealed(node.id) }
++                    : undefined}
++                  useSessionAccess={useSessionAccess}
++                  drag={{
++                    start: () => {
++                      dropCommitted.current = false
++                      setDrag({ accountKey: FLAT_SESSION_ORDER_KEY, sessionId: node.id, pinned: node.pinned, over: null })
++                    },
++                    active,
++                    marker: active && drag.over?.id === node.id ? drag.over.half : null,
++                    hover: (half) => {
++                      setDrag(current => current === null ? current : {
++                        ...current, over: { id: node.id, half: normalizeHalf(half) },
++                      })
++                    },
++                    drop: (half) => {
++                      if (drag !== null) commitDrag(drag, { id: node.id, half: normalizeHalf(half) })
++                    },
++                    end: () => {
++                      if (drag?.over !== null && drag?.over !== undefined) commitDrag(drag, drag.over)
++                      else setDrag(null)
++                      dropCommitted.current = false
++                    },
++                  }}
++                  home={home}
++                  t={t}
++                />
++              )
++            },
++          }))
++          return renderSlot('sidebar.workspaces.collection', {
++            mode: 'flat',
++            query: '',
++            archivedOnly: rowState.archivedFilter === 'only',
++            projects: () => [],
++            items,
++          }, {
++            fallback: [
++              rows.length === 0 && (
++                <EmptySessions rowState={rowState} onLeaveArchivedOnly={onLeaveArchivedOnly} t={t} />
++              ),
++              items.map(item => item.render(true)),
++            ],
++          })
++        })()}
+       </AnimatedRows>
+       <span className={css.fade} />
+     </HoverCardGroup>
+@@ -810,8 +863,9 @@ function SearchResults({
+   resultLimit,
+   usePanelInfo,
+   useSessionAccess,
++  renderSlot,
+   t,
+-}: Pick<WorkspaceBrowserProps, 'useSessions' | 'useSessionStatus' | 'open' | 't' | 'usePanelInfo' | 'useSessionAccess'> & {
++}: Pick<WorkspaceBrowserProps, 'useSessions' | 'useSessionStatus' | 'open' | 't' | 'usePanelInfo' | 'useSessionAccess' | 'renderSlot'> & {
+   workspaces: readonly WorkspaceView[]
+   archivedSessionIds: readonly SessionNode['id'][]
+   /** Search matches follow the archived filter selected for the list. */
+@@ -850,17 +904,47 @@ function SearchResults({
+     <div className={clsx(css.treeBody, css.wide)}>
+       <div className={css.list}>
+         <div className={css.searchTree} role="tree" aria-label={t('search.results.aria')}>
+-          {results.items.map(result => (
+-            <SearchResultItem
+-              key={result.id}
+-              result={result}
+-              currentId={currentId}
+-              onOpen={open}
+-              onUnarchive={onUnarchive}
+-              useSessionAccess={useSessionAccess}
+-              t={t}
+-            />
+-          ))}
++          {renderSlot('sidebar.workspaces.collection', {
++            mode: 'search',
++            query,
++            archivedOnly: archivedFilter === 'only',
++            searchPending: pending,
++            projects: () => [],
++            items: results.items.map(result => ({
++              id: result.id,
++              updatedAt: list.byId[result.id]?.updatedAt ?? 0,
++              render: (selected: boolean) => (
++                <SearchResultItem
++                  key={result.id}
++                  result={result}
++                  currentId={selected ? currentId : undefined}
++                  onOpen={open}
++                  onUnarchive={onUnarchive}
++                  useSessionAccess={useSessionAccess}
++                  t={t}
++                />
++              ),
++            })),
++          }, {
++            fallback: [
++              ...results.items.map(result => (
++                <SearchResultItem
++                  key={result.id}
++                  result={result}
++                  currentId={currentId}
++                  onOpen={open}
++                  onUnarchive={onUnarchive}
++                  useSessionAccess={useSessionAccess}
++                  t={t}
++                />
++              )),
++              !pending && results.items.length === 0 && (
++                <div key="empty" className={css.empty}>
++                  {t('search.noMatches')}
++                </div>
++              ),
++            ],
++          })}
+         </div>
+         {pending && (
+           /* Two skeleton rows on an empty list, one when local matches already
+@@ -1367,6 +1451,7 @@ export function WorkspaceBrowser({
+               query={normalizedQuery}
+               remote={remoteSearch}
+               resultLimit={searchResultLimit}
++              renderSlot={renderSlot}
+               t={t}
+             />
+           )

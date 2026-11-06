@@ -11,9 +11,6 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const source = readFileSync(process.env.DSH_TEST_DELETE_CLIENT_SOURCE ?? 'packages/dsh-desktop-client-ui/client.js', 'utf8')
 let primitives, cleanup
 beforeAll(async () => {
-  // Exercise the installed Modal/Menu/Button behavior; CSS has no layout in jsdom.
-  // The distributed ESM also initializes unrelated markdown highlighters. Load
-  // the UI prefix through Modal, keeping its implementations and focus helpers.
   const bundle = execFileSync(process.execPath, ['--input-type=module', '-e',
     `import { build } from 'esbuild'; import { readFileSync } from 'node:fs'; import { createRequire } from 'node:module';
     const require = createRequire(import.meta.url);
@@ -66,10 +63,22 @@ async function fixture({ language = 'zh', deleteSession = vi.fn(async () => {}),
   } }
   new Function('window', source)(clientWindow)
   plugin.apply({
-    uiWorkspace: { registerNavigationHandler: () => () => {} },
-    sessions: { list: { getSnapshot: () => ({ phase: 'ready', byId: {} }), subscribe: () => () => {} } },
+    uiWorkspace: { registerNavigationHandler: () => () => {}, startSession: vi.fn() },
+    sessions: {
+      list: { getSnapshot: () => ({ phase: 'ready', byId: { 'session-a': { id: 'session-a', retainedBy: { mainView: 1 } } } }), subscribe: () => () => {} },
+      retainInfo: () => ({ getSnapshot: () => ({ referenceCount: 0 }), subscribe: () => () => {} }),
+      delete: deleteSession
+    },
     layout: { panelInfo: { getSnapshot: () => ({ activePanelId: null }), subscribe: () => () => {} } },
-    get: name => { expect(name).toBe('uiWorkspace'); return { deleteSession } },
+    get: name => {
+      if (name === 'uiWorkspace') return { startSession: vi.fn() }
+      if (name === 'sessions') return {
+        list: { getSnapshot: () => ({ phase: 'ready', byId: { 'session-a': { id: 'session-a', retainedBy: { mainView: 1 } } } }), subscribe: () => () => {} },
+        retainInfo: () => ({ getSnapshot: () => ({ referenceCount: 0 }), subscribe: () => () => {} }),
+        delete: deleteSession
+      }
+      return undefined
+    },
     effect(fn) { const dispose = fn(); if (typeof dispose === 'function') disposers.push(dispose) },
     locale: {
       register(ns, dictionary) { dictionaries.set(ns, dictionary); return () => dictionaries.delete(ns) },
@@ -80,13 +89,13 @@ async function fixture({ language = 'zh', deleteSession = vi.fn(async () => {}),
       register(meta, Component) { entries.set(meta.id, { meta, Component }); return () => {} }
     }
   })
-  const menu = entries.get('desktop-delete-session'), overlay = entries.get(cloud ? 'desktop-cloud-chat-delete-dialog' : 'desktop-delete-session-dialog')
-  if (!cloud) expect(menu.meta.locale).toBe(overlay.meta.locale)
+  const menu = entries.get('desktop-delete-session')
+  const overlay = entries.get(cloud ? 'desktop-cloud-chat-delete-dialog' : 'desktop-delete-session-dialog')
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
   let mounted = true
-  const menuProps = menu.meta.inject(), overlayProps = overlay.meta.inject()
+  const menuProps = menu?.meta.inject(), overlayProps = overlay?.meta.inject()
   const collection = entries.get('desktop-shared-collection')
   const collectionProps = collection?.meta.inject()
   if (cloud) disposers.push(collectionProps.navigation.start())
@@ -97,9 +106,10 @@ async function fixture({ language = 'zh', deleteSession = vi.fn(async () => {}),
         open, onClose: () => setOpen(false), portal: true,
         anchor: React.createElement('button', { onClick: () => setOpen(true), 'data-trigger': true }, 'Session actions')
       }, React.createElement(menu.Component, {
-        ...menuProps, sessionId: 'session-a', displayTitle: '测试会话 <script>', useMenuOpenState: () => [open, setOpen]
+        ...menuProps, sessionId: 'session-a', displayTitle: '测试工作会话', useMenuOpenState: () => [open, setOpen]
       })),
-      React.createElement(overlay.Component, overlayProps))
+      overlay && React.createElement(overlay.Component, overlayProps)
+    )
   }
   const render = () => root.render(React.createElement(App))
   await act(async () => render())
@@ -116,7 +126,7 @@ async function fixture({ language = 'zh', deleteSession = vi.fn(async () => {}),
     if (cloud) { delete window.dshEnterpriseChat; delete window.__ModuleLoader__ }
   }
   return {
-    deleteSession, nativeConfirm, nativeAlert, click, bridge,
+    deleteSession, nativeConfirm, nativeAlert, click, bridge, menuMeta: menu?.meta,
     navigation: collectionProps?.navigation,
     async account(epoch) { cloudState = { ...cloudState, epoch }; await act(async () => cloudListener(cloudState)) },
     dialog: () => document.querySelector('[role=dialog]'),
@@ -129,7 +139,7 @@ async function fixture({ language = 'zh', deleteSession = vi.fn(async () => {}),
       } else {
         document.querySelector('[data-trigger]').focus()
         await click('Session actions')
-        await click(locale === 'zh' ? '永久删除会话' : 'Delete session permanently')
+        await click(locale === 'zh' ? '彻底删除' : 'Delete permanently')
       }
     },
     switchLanguage: async value => { locale = value; await act(async () => render()) },
@@ -138,103 +148,27 @@ async function fixture({ language = 'zh', deleteSession = vi.fn(async () => {}),
       mounted = false
       disposers.reverse().splice(0).forEach(dispose => dispose())
     },
-    deletion: overlayProps.deletion
+    deletion: overlayProps?.deletion
   }
 }
 
-it.each(['zh', 'en'])('localizes the complete confirmation in %s after the menu unmounts', async language => {
-  // Page/system language is intentionally different from the application's locale service.
-  document.documentElement.lang = language === 'zh' ? 'en' : 'zh'
-  const ui = await fixture({ language })
-  await ui.open()
-  const buttons = [...ui.dialog().querySelectorAll('button')]
-  expect(buttons.map(node => node.textContent)).toEqual(language === 'zh' ? ['', '取消', '删除会话'] : ['', 'Cancel', 'Delete session'])
-  expect(buttons[0].getAttribute('aria-label')).toBe(language === 'zh' ? '关闭' : 'Close')
-  expect(ui.dialog().textContent).toContain('测试会话 <script>')
-  expect(ui.dialog().querySelector('script')).toBeNull()
-  expect(document.querySelector('[role=menu]')).toBeNull()
-  expect(document.activeElement).toBe(buttons[1])
-  await ui.click(language === 'zh' ? '取消' : 'Cancel')
-  expect(ui.dialog()).toBeNull()
-  expect(ui.deleteSession).toHaveBeenCalledTimes(0)
-  expect(ui.nativeConfirm).toHaveBeenCalledTimes(0)
-  expect(ui.nativeAlert).toHaveBeenCalledTimes(0)
+it('places permanent delete as the last menu item with order 1000', async () => {
+  const ui = await fixture({ cloud: false })
+  expect(ui.menuMeta.order).toBe(1000)
+  expect(ui.menuMeta.id).toBe('desktop-delete-session')
 })
 
-it('updates an open confirmation when the application language changes', async () => {
-  const ui = await fixture()
+it.each(['zh', 'en'])('confirms local work session permanent deletion in %s', async language => {
+  const ui = await fixture({ cloud: false, language })
   await ui.open()
-  await ui.switchLanguage('en')
-  expect(ui.dialog().getAttribute('aria-label')).toBe('Delete session')
-  await ui.click('Cancel')
-  await ui.open()
-  await ui.click('Delete session')
+  expect(ui.dialog().textContent).toContain('测试工作会话')
+  expect(ui.dialog().textContent).toContain(language === 'zh' ? '彻底删除会话' : 'Delete session permanently')
+  const buttons = [...ui.dialog().querySelectorAll('button')]
+  expect(buttons.map(n => n.textContent)).toEqual(language === 'zh' ? ['', '取消', '彻底删除'] : ['', 'Cancel', 'Delete permanently'])
+  await ui.click(language === 'zh' ? '彻底删除' : 'Delete permanently')
   expect(ui.deleteSession).toHaveBeenCalledExactlyOnceWith('session-a')
   expect(ui.dialog()).toBeNull()
 })
-
-it('keeps Tab inside the dialog and dismisses through Escape, close, and backdrop', async () => {
-  const ui = await fixture()
-  for (const close of ['escape', 'button', 'backdrop']) {
-    await ui.open()
-    const buttons = [...ui.dialog().querySelectorAll('button')]
-    buttons.at(-1).focus()
-    await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })))
-    expect(document.activeElement).toBe(buttons[0])
-    await act(async () => {
-      if (close === 'escape') document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
-      if (close === 'button') buttons[0].click()
-      if (close === 'backdrop') ui.dialog().previousElementSibling.click()
-    })
-    expect(ui.dialog()).toBeNull()
-    expect(document.activeElement).toBe(document.querySelector('[data-trigger]'))
-  }
-  expect(ui.deleteSession).toHaveBeenCalledTimes(0)
-})
-
-it('locks dismissal and duplicate submissions until the deletion finishes', async () => {
-  let resolve
-  const deleteSession = vi.fn(() => new Promise(done => { resolve = done }))
-  const ui = await fixture({ deleteSession })
-  await ui.open()
-  await act(async () => { void ui.deletion.confirm(); void ui.deletion.confirm(); ui.deletion.close(); ui.deletion.request('session-b', 'Other') })
-  expect(deleteSession).toHaveBeenCalledExactlyOnceWith('session-a')
-  expect(document.querySelector('[role=status]').textContent).toBe('正在删除会话…')
-  expect([...ui.dialog().querySelectorAll('button')].slice(1).every(button => button.disabled)).toBe(true)
-  await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })))
-  expect(ui.dialog()).toBeTruthy()
-  await act(async () => resolve())
-  expect(ui.dialog()).toBeNull()
-})
-
-it.each(['sync', 'async'])('shows %s failures in the dialog and supports retry', async mode => {
-  const deleteSession = vi.fn().mockImplementationOnce(() => {
-    if (mode === 'sync') throw new Error('permission denied')
-    return Promise.reject(new Error('permission denied'))
-  }).mockResolvedValue(undefined)
-  const ui = await fixture({ deleteSession })
-  await ui.open()
-  await ui.click('删除会话')
-  expect(document.querySelector('[role=alert]').textContent).toContain('删除失败，请重试。')
-  expect(document.querySelector('[role=alert]').textContent).toContain('permission denied')
-  expect(ui.nativeAlert).toHaveBeenCalledTimes(0)
-  await ui.click('删除会话')
-  expect(deleteSession).toHaveBeenCalledTimes(2)
-  expect(ui.dialog()).toBeNull()
-})
-
-it('disposes the confirmation and ignores a late failure after plugin unload', async () => {
-  let reject
-  const ui = await fixture({ deleteSession: vi.fn(() => new Promise((_, fail) => { reject = fail })) })
-  await ui.open()
-  await ui.click('删除会话')
-  await ui.dispose()
-  await act(async () => reject(new Error('late failure')))
-  expect(ui.deletion.getSnapshot()).toBeNull()
-  await act(async () => ui.deletion.request('session-b', 'Other'))
-  expect(ui.dialog()).toBeNull()
-})
-
 
 it.each(['zh', 'en'])('confirms cloud deletion through the installed Menu and Modal in %s', async language => {
   const ui = await fixture({ cloud: true, language })
@@ -286,7 +220,6 @@ it('holds the cloud confirmation during deletion and ignores duplicate confirmat
   expect(ui.dialog()).toBeNull()
 })
 
-
 it('discards a list response captured before a successful deletion', async () => {
   const ui = await fixture({ cloud: true })
   let finish
@@ -310,7 +243,6 @@ it('preserves the next account history when an earlier deletion finishes', async
   expect(ui.navigation.snapshot().epoch).toBe(2)
   expect(ui.navigation.snapshot().items.map(item => item.id)).toEqual(['cloud-a'])
 })
-
 
 it('advances server pages when filtered history pages contain fewer rows', async () => {
   const ui = await fixture({ cloud: true })

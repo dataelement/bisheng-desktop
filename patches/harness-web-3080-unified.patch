@@ -1,0 +1,1007 @@
+diff --git a/packages/boot/app-boot/README.i18n.yaml b/packages/boot/app-boot/README.i18n.yaml
+index 9ce0beae8e..0b9ed56fbb 100644
+--- a/packages/boot/app-boot/README.i18n.yaml
++++ b/packages/boot/app-boot/README.i18n.yaml
+@@ -24,8 +24,8 @@
+   en: 65bf2834b81f87da
+   zh: c864ac60a3005b99
+ /deepseek-ai-dsh-app-boot/use-this-package/profiles:
+-  en: a9c82cd220ae8d59
+-  zh: 8c7c1c97efcdfc25
++  en: 961dbe85a9d18b4b
++  zh: 2e982f734810a381
+ /deepseek-ai-dsh-app-boot/use-this-package/previewing-the-effective-configuration:
+   en: 646a0ccdd7881ad1
+   zh: e3696acb1573dd7b
+diff --git a/packages/boot/app-boot/README.md b/packages/boot/app-boot/README.md
+index 4d30457f81..3b4e66a0d7 100644
+--- a/packages/boot/app-boot/README.md
++++ b/packages/boot/app-boot/README.md
+@@ -66,7 +66,7 @@ The enabled `dsh-hmr` plugin watches the profile manifest and both user patch fi
+ 
+ Inserted plugin names may be absolute filesystem paths, file URLs, or package specifiers. Patch loading converts absolute paths and patch-relative `./` or `../` paths to file URLs within `insert` rows and their nested groups; existing-entry name assertions and replacement `config` values remain literal.
+ 
+-Before mounting profile rows, the `dsh` launcher computes one immutable runtime resolution from the installation and ordered bundle dependency graphs. Every profile launcher uses runtime resolution, including plain Node, packaged executables, and the Electron Host. It installs the runtime resolution through Node's ESM and CommonJS resolvers without creating fallback links. Traversal includes installed optional dependencies and skips those absent from the target installation.
++Before mounting profile rows, the `dsh` launcher computes one immutable runtime resolution from the installation and ordered bundle dependency graphs. Every profile launcher uses runtime resolution, including plain Node, packaged executables, and the Electron Host. It installs the runtime resolution through Node's ESM and CommonJS resolvers without creating fallback links. Traversal includes installed optional dependencies and skips those absent from the target installation. Package-directory requests such as `punycode/` resolve userland packages even when the package name matches a Node builtin; bare builtin requests and `node:` requests retain Node semantics.
+ 
+ `sanitizeProfile(binName, profileDir, bundles)` provides filesystem recovery without loading plugins or parsing patches. Desktop uses it for native fatal recovery. Call it only after stopping the profile and excluding concurrent profile writes. It renames the profile’s `cordis.patch.yml` to a unique `.bak-<timestamp>` sibling and restores the supplied bundle list, preserving installed packages and other manifest fields. The timestamp is Unix time in milliseconds; collisions append an ordinal (`-1`, `-2`, …) without changing it. It returns the backup path, or `undefined` when no patch exists; missing profiles remain absent. Profile initialization recreates an empty patch on the next launch. The home-level patch is unchanged. Invalid profile JSON fails before mutation; later errors propagate and retain completed changes for retry.
+ 
+diff --git a/packages/boot/app-boot/README.zh.md b/packages/boot/app-boot/README.zh.md
+index a4d8554ca5..11eb300b56 100644
+--- a/packages/boot/app-boot/README.zh.md
++++ b/packages/boot/app-boot/README.zh.md
+@@ -66,7 +66,7 @@ profile 导入插件前，DSH 会将其声明的 DSH 版本要求与 `getDshRunt
+ 
+ 插入条目的插件名可以是绝对文件系统路径、文件 URL 或包标识符。patch 加载会把 `insert` 条目及其嵌套分组中的绝对路径以及相对于 patch 文件的 `./` 或 `../` 路径转换为文件 URL；对已有条目名称的断言及替换用的 `config` 值保持原样。
+ 
+-挂载 profile 条目前，`dsh` launcher 会从安装依赖图与有序 bundle 依赖图计算一份不可变的 runtime resolution。普通 Node、打包可执行文件与 Electron Host 等所有 profile 启动器都使用 runtime 解析，将 runtime resolution 安装到 Node 的 ESM 与 CommonJS 解析器中，不创建 fallback 链接。依赖遍历包含已安装的可选依赖，跳过目标安装中缺席的包。
++挂载 profile 条目前，`dsh` launcher 会从安装依赖图与有序 bundle 依赖图计算一份不可变的 runtime resolution。普通 Node、打包可执行文件与 Electron Host 等所有 profile 启动器都使用 runtime 解析，将 runtime resolution 安装到 Node 的 ESM 与 CommonJS 解析器中，不创建 fallback 链接。依赖遍历包含已安装的可选依赖，跳过目标安装中缺席的包。`punycode/` 等包目录请求即使与 Node 内置模块同名也解析到用户态包；裸内置模块请求与 `node:` 请求保留 Node 语义。
+ 
+ `sanitizeProfile(binName, profileDir, bundles)` 提供文件恢复，无需加载插件或解析 patch。Desktop 在原生致命错误恢复中调用它。调用前必须停止 profile 并排除并发 profile 写入。它将 profile 的 `cordis.patch.yml` 重命名为带唯一 `.bak-<timestamp>` 后缀的同目录备份，并恢复调用方指定的 bundle 列表，保留已安装包和其他 manifest 字段。时间戳为 Unix 毫秒数；同名备份已存在时追加序号（`-1`、`-2`、……），时间戳保持不变。返回值为备份路径；patch 不存在时返回 `undefined`，缺失的 profile 不会被创建。下次启动的 profile 初始化会重新创建空 patch。home 级 patch 不变。无效 profile JSON 在修改前报错；后续错误向调用方抛出，保留已完成的修改供重试。
+ 
+diff --git a/packages/boot/app-boot/src/profile-resolution/resolver.ts b/packages/boot/app-boot/src/profile-resolution/resolver.ts
+index 468ec82e24..d641062c62 100644
+--- a/packages/boot/app-boot/src/profile-resolution/resolver.ts
++++ b/packages/boot/app-boot/src/profile-resolution/resolver.ts
+@@ -273,7 +273,7 @@ function profileChild(path: string, treePrefix: string): string {
+ }
+ 
+ function nativePackageDir(parent: string, name: string): string | undefined {
+-  for (const searchPath of createRequire(parent).resolve.paths(name) as string[]) {
++  for (const searchPath of createRequire(parent).resolve.paths(`${name}/`) as string[]) {
+     const candidate = join(searchPath, name)
+     if (existsSync(join(candidate, 'package.json'))) return candidate
+   }
+@@ -588,7 +588,7 @@ class ResolutionRouter {
+     const target = resolution.entries.get(name)
+     const candidates: string[] = []
+     const localSearchPaths: string[] = []
+-    for (const searchPath of createRequire(parent).resolve.paths(name) as string[]) {
++    for (const searchPath of createRequire(parent).resolve.paths(`${name}/`) as string[]) {
+       if (!searchPath.startsWith(layer.localPrefix)) break
+       localSearchPaths.push(searchPath)
+       const candidate = localPackageCandidate(searchPath, name, flavor)
+@@ -641,7 +641,7 @@ class ResolutionRouter {
+     if (target === undefined) return { route: { kind: 'native' } }
+     const ancestors = this.nodeModulePaths(dirname(parent))
+     const ancestorSet = new Set(ancestors)
+-    const searchPaths = flavor === 'esm' ? ancestors : createRequire(parent).resolve.paths(name) as string[]
++    const searchPaths = flavor === 'esm' ? ancestors : createRequire(parent).resolve.paths(`${name}/`) as string[]
+     for (const searchPath of searchPaths) {
+       const directory = dirname(searchPath)
+       if (ancestorSet.has(searchPath) && readPeerNames(directory).has(name)) {
+diff --git a/packages/boot/app-boot/tests/profile-resolution.spec.ts b/packages/boot/app-boot/tests/profile-resolution.spec.ts
+index b56d1a1774..c27e2b46ac 100644
+--- a/packages/boot/app-boot/tests/profile-resolution.spec.ts
++++ b/packages/boot/app-boot/tests/profile-resolution.spec.ts
+@@ -2131,6 +2131,32 @@ describe('runtime resolution', { concurrent: false }, () => {
+     return { f, linkedRoot, helper, writeManifest }
+   }
+ 
++  it.each(['profile', 'linked', 'native'] as const)(
++    'resolves builtin-named userland packages from a %s importer', async (location) => {
++      const { f, linkedRoot } = linkedPluginFixture()
++      const importer = location === 'profile' ? f.profile.dir : location === 'linked' ? linkedRoot : join(f.root, 'native')
++      const local = join(importer, 'node_modules', 'punycode')
++      file(join(local, 'package.json'), JSON.stringify({ name: 'punycode', version: '1.0.0', main: './index.js' }))
++      file(join(local, 'index.js'), 'module.exports = { marker: 42 }\n')
++      const resolution = await resolutionOf(f)
++      const registration = installRuntimeInterception({
++        ...resolution,
++        entries: [...resolution.entries, {
++          name: 'punycode', packageDir: local, version: '1.0.0', declarer: f.installAnchor, scope: 'installation',
++        }],
++      })
++      registrations.push(registration)
++      const require = createRequire(join(importer, 'entry.cjs'))
++      const parent = pathToFileURL(join(importer, 'entry.mjs')).href
++      expect(require('punycode/')).toEqual({ marker: 42 })
++      expect(await importFrom('punycode/index.js', parent)).toMatchObject({ default: { marker: 42 } })
++      expect(registration.packageDir('punycode/index.js', parent)).toBe(local)
++      expect(require('punycode')).toBe(require('node:punycode'))
++      expect(resolveFrom('punycode', parent)).toBe('node:punycode')
++      expect(resolveFrom('node:punycode', parent)).toBe('node:punycode')
++    },
++  )
++
+   describe('linked root generations', () => {
+     const peer = '@deepseek-ai/dsh-core'
+ 
+diff --git a/packages/client/ui-chat/README.i18n.yaml b/packages/client/ui-chat/README.i18n.yaml
+index 0966845bde..e4f632e017 100644
+--- a/packages/client/ui-chat/README.i18n.yaml
++++ b/packages/client/ui-chat/README.i18n.yaml
+@@ -15,8 +15,8 @@
+   en: 41cd21266011d571
+   zh: 3172d1a2acbb27b7
+ /deepseek-ai-dsh-client-ui-chat/reference-previews:
+-  en: 9386791a9e5efa00
+-  zh: 7cb9f3bbc42319d6
++  en: dded94a66d8c2dba
++  zh: 07bde5c35e734ae4
+ /deepseek-ai-dsh-client-ui-chat/hidden-chat-rows:
+   en: b0c4e6711d69d2f8
+   zh: 09add0ea1a243922
+diff --git a/packages/client/ui-chat/README.md b/packages/client/ui-chat/README.md
+index be43482e8a..b0a5ec26d2 100644
+--- a/packages/client/ui-chat/README.md
++++ b/packages/client/ui-chat/README.md
+@@ -47,6 +47,8 @@ The session-scoped `conversation.chat.user.content` Factory renders only the use
+ 
+ The official user and steering renderer declares the session-scoped `conversation.chat.user.before` chain slot at its `user` registration and renders it directly above the bubble with `renderSlotChain`; the `steering` registration shares the renderer without owning the seat. Owner props carry the durable message `source` and row `kind`; each entry’s `select` matches its own sources, and the first non-null result reaches the elected component as `matched`. No match displays no content. Entries own their markup and copy; Chat does not interpret message sources.
+ 
++The user registration also owns the additive session-scoped `conversation.chat.user.references` list after message content and before actions. Its `UserReferencesOwnerProps` carries `source`, `kind`, and the durable `messageId`. Only ordinary durable user rows with an identity render this list; steering, pending, and local submission echoes do not. Multiple independent references compose without participating in the source chain election. Consumers derive history boundaries from public `useChat` and `useSession` state, and must not treat a paged history window as the start of the conversation.
++
+ Standalone Markdown images show contained previews and open the shared image lightbox; local paths resolve against the viewed workspace after settlement. Image file links keep their sidebar activation and show a thumbnail after hover dwell or keyboard focus. Escape dismisses the thumbnail. Failed images retain a localized status and their description; no duplicate-image filtering is applied.
+ 
+ Settings → General → Open chat links in selects the destination for ordinary clicks on Chat HTTP(S) links: In-App Sidebar (default) opens a new right-Sidebar Browser tab, while Default Browser opens an external tab. The setting follows Keyboard shortcuts and is shown only while the Sidebar Browser is available. If the Sidebar Browser is not registered, both choices use the external browser; modified clicks retain native behavior. The `ui-chat.linkOpening` preference persists on the Host for authenticated browsers and stays process-local when settings cannot persist writes. Sent file references and skills confirmed by the message’s logged invocation also open in the right Sidebar. File paths use the viewed Session; skill names resolve through its current input-trigger source. Both use the prose file-link dotted underline on hover or focus. Sessions, directories, and command labels remain non-navigating references.
+diff --git a/packages/client/ui-chat/README.zh.md b/packages/client/ui-chat/README.zh.md
+index 9c0314fbd8..6d4d124aac 100644
+--- a/packages/client/ui-chat/README.zh.md
++++ b/packages/client/ui-chat/README.zh.md
+@@ -47,6 +47,8 @@ Session 作用域的 `conversation.chat.user.content` Factory 只渲染用户内
+ 
+ 官方 user 与 steering 共用的渲染器在 `user` 注册项上声明 session-scoped `conversation.chat.user.before` chain slot，并在气泡上方直接通过 `renderSlotChain` 渲染；`steering` 注册项复用该渲染器但不拥有该槽位。owner props 携带 Session 记录的持久化消息 `source` 与行 `kind`；各条目的 `select` 匹配自己负责的来源，首个非 null 结果作为 `matched` 交给获选组件。无匹配时不显示内容。条目自行拥有标记和文案；Chat 不解析消息来源。
+ 
++user 注册项还拥有可叠加的 session-scoped `conversation.chat.user.references` list，位于消息内容后、操作栏前。其 `UserReferencesOwnerProps` 携带 `source`、`kind` 和持久化 `messageId`。只有具有真实消息身份的普通持久化 user 行渲染此列表；steering、pending 和本地提交回显不渲染。多个独立引用无需参与来源 chain 选举即可组合。消费者通过公开 `useChat` 与 `useSession` 状态判断历史边界，不得把分页历史窗口当作整个会话的开头。
++
+ 独立的 Markdown 图片以内嵌预览显示，点击打开共享图片浮层；本地路径在消息落定后基于当前查看的工作区解析。图片文件链接保持点击打开侧栏，鼠标停留或键盘聚焦时显示缩略图，Esc 关闭缩略图。图片加载失败时保留本地化状态与图片说明；不执行重复图片过滤。
+ 
+ 设置 → 通用设置 → 网页链接默认打开方式控制普通点击 Chat HTTP(S) 链接时的目标：「应用内侧边栏」（默认）打开新的右侧 Sidebar Browser tab，「默认浏览器」打开外部标签页。该设置项位于快捷键之后，仅在 Sidebar Browser 可用时显示。若 Sidebar Browser 未注册，两种选择均使用外部浏览器；带修饰键的点击保留原生行为。已认证浏览器的 `ui-chat.linkOpening` 偏好在 Host 上持久化，设置无法持久化写入时仅在当前进程内生效。已发送的文件引用及消息日志确认调用的 skill 也可在右侧栏打开预览。文件路径使用当前查看的 Session；skill 名称由该 Session 当前的输入触发源解析。两者悬停或聚焦时均使用正文文件链接的虚线下划线。会话、目录和命令标签仍只作为引用展示。
+diff --git a/packages/client/ui-chat/src/client/chat/MessageItem.tsx b/packages/client/ui-chat/src/client/chat/MessageItem.tsx
+index f9551a8698..28973d1c44 100644
+--- a/packages/client/ui-chat/src/client/chat/MessageItem.tsx
++++ b/packages/client/ui-chat/src/client/chat/MessageItem.tsx
+@@ -177,13 +177,14 @@ const NO_MESSAGE_SOURCE: PropsRenderSlots<'conversation.chat.user.before'>['rend
+ 
+ /** Right-aligned bubble shared by user and steering rows. */
+ function UserStyleBubble({
+-  node, renderSlotChain, content, loadImage, renderFactorySlot, actions,
++  node, renderSlotChain, content, loadImage, renderFactorySlot, actions, references,
+   pending = false, echo = false, batchStart = false,
+   referenceLabels, skillNames, previewAttachments, facts: inputFacts = EMPTY_TEXT_FACTS, interactive = false,
+ }: {
+   content: readonly unknown[]
+   renderFactorySlot: PropsRenderFactories['renderFactorySlot']
+   /** Optional IconActions (or similar) below the bubble; receives the joined text. */
++  references?: ReactNode
+   actions?: (text: string) => ReactNode
+   /** Row whose durable source the message-source seat elects above this bubble. */
+   node: DecoratedRow
+@@ -230,6 +231,7 @@ function UserStyleBubble({
+         facts,
+         interactive,
+       })}
++      {references}
+       {actions?.(prepared.text)}
+     </div>
+   )
+@@ -330,16 +332,18 @@ export function PendingSubmissionBubble({ submission, loadImage, renderFactorySl
+  * bubble without asking for it.
+  */
+ export const UserMessageNodeView = memo(function UserMessageNodeView({
+-  node, renderFactorySlot, loadImage, renderSlotChain, t,
++  node, renderFactorySlot, loadImage, renderSlotChain, renderSlot, t,
+ }: ChatNodeViewProps<'user' | 'steering'> & {
+   /** Bound by the `user` keyed registration, the only entry that declares the seat. */
+   renderSlotChain: PropsRenderSlots<'conversation.chat.user.before'>['renderSlotChain']
++  renderSlot?: PropsRenderSlots<'conversation.chat.user.references'>['renderSlot'] | PropsRenderSlots<never>['renderSlot']
+ }) {
+   const data = node.data
+   return (
+     <UserStyleBubble
+       node={node}
+       renderSlotChain={renderSlotChain}
++      references={node.kind === 'user' && data.messageId !== undefined && typeof renderSlot === 'function' ? renderSlot('conversation.chat.user.references', { source: data.source, kind: node.kind, messageId: data.messageId }) : null}
+       content={data.content}
+       interactive
+       renderFactorySlot={renderFactorySlot}
+diff --git a/packages/client/ui-chat/src/client/chat/register-node-renderers.ts b/packages/client/ui-chat/src/client/chat/register-node-renderers.ts
+index d12619a624..e25f60beb0 100644
+--- a/packages/client/ui-chat/src/client/chat/register-node-renderers.ts
++++ b/packages/client/ui-chat/src/client/chat/register-node-renderers.ts
+@@ -40,7 +40,10 @@ export function registerChatNodeRenderers(
+   }, DefaultReasoningBody))
+   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
+     name: 'conversation.chat.node', key: 'user', locale: NS,
+-    children: { 'conversation.chat.user.before': { kind: 'chain', scope: 'session' } },
++    children: {
++      'conversation.chat.user.before': { kind: 'chain', scope: 'session' },
++      'conversation.chat.user.references': { kind: 'list', scope: 'session' },
++    },
+   }, UserMessageNodeView))
+   // Steering rows share the renderer without owning the message-source seat.
+   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
+diff --git a/packages/client/ui-chat/src/client/contract/slots.ts b/packages/client/ui-chat/src/client/contract/slots.ts
+index a879601747..0f9f88c887 100644
+--- a/packages/client/ui-chat/src/client/contract/slots.ts
++++ b/packages/client/ui-chat/src/client/contract/slots.ts
+@@ -234,6 +234,12 @@ export interface UserBeforeOwnerProps {
+   readonly kind: 'user' | 'steering'
+ }
+ 
++/** Durable identity for additive references after one ordinary user message. */
++export interface UserReferencesOwnerProps extends UserBeforeOwnerProps {
++  /** Absent for synthetic or transient rows, which do not render references. */
++  readonly messageId?: MessageId | undefined
++}
++
+ /** Stable owner currency delivered to a keyed Chat renderer. */
+ export interface ChatNodeOwnerProps {
+   /** Renderer-owned Node portion selected by the grouping Definition. */
+@@ -454,6 +460,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+      * No match renders no visible content; steering and pending rows do not
+      * render this slot.
+      */
++    /** Additive durable-message references; independent of source-decoration chain election. */
++    'conversation.chat.user.references': {
++      kind: 'list'
++      scope: 'session'
++      owner: UserReferencesOwnerProps
++    }
+     'conversation.chat.user.before': {
+       kind: 'chain'
+       scope: 'session'
+diff --git a/packages/client/ui-chat/src/client/index.ts b/packages/client/ui-chat/src/client/index.ts
+index c785329f0a..4c4e350453 100644
+--- a/packages/client/ui-chat/src/client/index.ts
++++ b/packages/client/ui-chat/src/client/index.ts
+@@ -40,7 +40,7 @@ export type {
+   CommandRowOwnerProps, CommandRowProps, MessageImagesProps, OpenFileOptions, PresentationInjected,
+   QuotaNoticeCode, QuotaNoticeHostProps, QuotaNoticeInjected, QuotaNoticeOwnerProps, QuotaNoticeState,
+   ReasoningBodyOwnerProps, ReasoningContentInput, UserContentAttachment, UserContentData, UserContentInput,
+-  UserBeforeOwnerProps,
++  UserBeforeOwnerProps, UserReferencesOwnerProps,
+   TurnProcessOwnerProps, TurnTailOwnerProps, UseChat, UseChatNodeTurnData, UseDisclosure, UsePresentation, UseGroupAction,
+ } from './contract/slots.ts'
+ export type {
+diff --git a/packages/client/ui-chat/tests/user-origin-slot.client.spec.tsx b/packages/client/ui-chat/tests/user-origin-slot.client.spec.tsx
+index 7a522be8ed..74380882ca 100644
+--- a/packages/client/ui-chat/tests/user-origin-slot.client.spec.tsx
++++ b/packages/client/ui-chat/tests/user-origin-slot.client.spec.tsx
+@@ -14,7 +14,7 @@ import type {
+   ChatConversationViewNode, SteeringMessageNode, UserMessageNode,
+ } from '@deepseek-ai/dsh-client-ui-chat/client'
+ import type { ChatNodeViewProps, UserContentInput } from '../src/client/contract/slots.ts'
+-import { UserMessageNodeView } from '../src/client/chat/MessageItem.tsx'
++import { PendingSteeringBubble, PendingSubmissionBubble, UserMessageNodeView } from '../src/client/chat/MessageItem.tsx'
+ import { zh } from '../src/client/locale.ts'
+ import { createUserContentFixture } from './user-content-component-fixture.tsx'
+ import { unusedImageLoader } from './reasoning-component-fixture.tsx'
+@@ -61,6 +61,7 @@ function viewProps(data: UserMessageNode | SteeringMessageNode): ChatNodeViewPro
+ 
+ const userData: UserMessageNode = {
+   kind: 'user',
++  messageId: 'opening-human' as NonNullable<UserMessageNode['messageId']>,
+   seq: 7,
+   time: 7_000,
+   content: [{ type: 'text', text: 'hello' }] as never,
+@@ -137,3 +138,41 @@ describe('official user renderer origin seat', () => {
+     expect(view.container.querySelector('[data-chat-steering-batch]')).toBeNull()
+   })
+ })
++
++it('distinguishes durable messages sharing a source and keeps identity after history prepend', () => {
++  const later: UserMessageNode = { ...userData, messageId: 'later-human' as NonNullable<UserMessageNode['messageId']>, seq: 11 }
++  const owners: { messageId?: UserMessageNode['messageId'] }[] = []
++  const references: PropsRenderSlots<'conversation.chat.user.references'>['renderSlot'] = (_name, owner) => { owners.push(owner); return <><span data-reference="office">Office</span><span data-reference="ppt">PPT</span></> }
++  const chain = () => <span data-source-decoration="">source</span>
++  const view = render(<UserMessageNodeView {...viewProps(later)} {...userSlots} renderSlotChain={chain} renderSlot={references} />)
++  expect(owners.at(-1)?.messageId).toBe('later-human')
++  expect(view.container.querySelector('[data-source-decoration]')).not.toBeNull()
++  expect(view.container.querySelectorAll('[data-reference]')).toHaveLength(2)
++  const bubble = view.container.querySelector('[data-message-bubble]')
++  const reference = view.container.querySelector('[data-reference]')
++  if (bubble === null || reference === null) throw new Error('Expected message content and references')
++  expect(bubble.compareDocumentPosition(reference) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
++  view.rerender(<>
++    <UserMessageNodeView {...viewProps(userData)} {...userSlots} renderSlotChain={chain} renderSlot={references} />
++    <UserMessageNodeView {...viewProps(later)} {...userSlots} renderSlotChain={chain} renderSlot={references} />
++  </>)
++  expect(owners.slice(-2).map(owner => owner.messageId)).toEqual(['opening-human', 'later-human'])
++})
++
++it('does not decorate pending steering or submission echoes before durable admission', () => {
++  const pending = render(<PendingSteeringBubble content={[{ type: 'text', text: 'pending input' }]} loadImage={unusedImageLoader} renderFactorySlot={renderUserFactory} t={t} />)
++  expect(pending.getByText('pending input')).toBeDefined()
++  expect(pending.container.querySelector('[data-pending-steering]')).not.toBeNull()
++  pending.unmount()
++  const echo = render(<PendingSubmissionBubble submission={{ requestId: 'echo' as never, text: 'echo input', attachments: [], time: 1, placement: 'transcript' }} loadImage={unusedImageLoader} renderFactorySlot={renderUserFactory} t={t} />)
++  expect(echo.getByText('echo input')).toBeDefined()
++  expect(echo.container.querySelector('[data-submission-echo]')).not.toBeNull()
++})
++it('omits additive references for durable steering and user rows without a message identity', () => {
++  const references = vi.fn(() => null)
++  const { messageId: _identity, ...synthetic } = userData
++  const view = render(<UserMessageNodeView {...viewProps(synthetic)} {...userSlots} renderSlot={references} />)
++  expect(references).not.toHaveBeenCalled()
++  view.rerender(<UserMessageNodeView {...viewProps(steeringData)} {...userSlots} renderSlot={references} />)
++  expect(references).not.toHaveBeenCalled()
++})
+diff --git a/packages/client/ui-conversation/README.i18n.yaml b/packages/client/ui-conversation/README.i18n.yaml
+index f17358e4b5..4d782ce297 100644
+--- a/packages/client/ui-conversation/README.i18n.yaml
++++ b/packages/client/ui-conversation/README.i18n.yaml
+@@ -24,8 +24,8 @@
+   en: 99ec447f0a6bda48
+   zh: 922cf64666676530
+ /deepseek-ai-dsh-client-ui-conversation/temporary-composer-entries:
+-  en: 59cd63057dfb6eeb
+-  zh: b2e2c86e810b7bb8
++  en: 678fb6c87c832be3
++  zh: d5b862e51ff9dfbd
+ /deepseek-ai-dsh-client-ui-conversation/model-experience:
+   en: e0a05b73ba3e4318
+   zh: dc85ab8433bb4456
+diff --git a/packages/client/ui-conversation/README.md b/packages/client/ui-conversation/README.md
+index 14f54dc287..108343f4ae 100644
+--- a/packages/client/ui-conversation/README.md
++++ b/packages/client/ui-conversation/README.md
+@@ -182,6 +182,8 @@ The selector must be a pure function of the owner currency. Its non-null return
+ 
+ `InputActions.captureInsertion()` captures the draft selection and revision; `insertText(text, span)` inserts one undoable plain-text edit only while that revision is current and the editor permits editing. Asynchronous consumers retain rejected results for user action.
+ 
++`conversation.input.after` is a session-scoped list after the composer bar and receives the same `InputZone` owner as `conversation.input.dock`. `conversation.input.inside` is a session-scoped list after attachments and to the left of the draft editor; its owner supplies the current `session` snapshot (undefined while unavailable), and it does not replace the existing `accessory` prop. Fixed overlays must portal to the document body.
++
+ `conversation.input.activity` hosts one control between the model selector and Send. Its `onActiveChange` callback expands that control across the toolbar and hides ordinary accessory controls and the context meter while preserving the editor and submit action. Closing the activity restores those controls with context details closed. The empty hero dock remains collapsed when it has no content. The occupant releases expansion on unmount and owns any activity-specific feedback.
+ 
+ Session title context gestures use the shared [context menu](../ui-context-menu/README.md) with the clicked breadcrumb’s Session. The reusable image gallery receives `getTriggerProps` from its Factory’s injected `useContextMenu` hook.
+diff --git a/packages/client/ui-conversation/README.zh.md b/packages/client/ui-conversation/README.zh.md
+index 473e15825e..6bf78bbcbf 100644
+--- a/packages/client/ui-conversation/README.zh.md
++++ b/packages/client/ui-conversation/README.zh.md
+@@ -182,6 +182,8 @@ selector 必须是 owner currency 的纯函数。非 null 返回值作为 `match
+ 
+ `InputActions.captureInsertion()` 捕获草稿选区与版本；`insertText(text, span)` 仅在版本未变且编辑器允许编辑时，插入一次可撤销的纯文本编辑。异步消费者在插入被拒绝后负责保留结果，等待用户操作。
+ 
++`conversation.input.after` 是输入栏之后的 session 作用域列表，接收与 `conversation.input.dock` 相同的 `InputZone` owner。`conversation.input.inside` 是附件之后、草稿编辑器左侧的 session 作用域列表，其 owner 提供当前 `session` 快照（尚不可用时为 undefined），不替代既有 `accessory` 属性。固定定位浮层必须 portal 到 document body。
++
+ `conversation.input.activity` 在模型选择器与发送按钮之间承载一个控件。其 `onActiveChange` 回调将控件展开至整条工具栏并隐藏普通辅助控件和上下文用量按钮，同时保留编辑器与提交按钮。关闭活动后恢复这些控件，上下文详情保持关闭。首页输入框下方没有内容时，该区域保持收起。占用者在卸载时释放展开状态，并拥有活动专属反馈。
+ 
+ 会话标题右键使用共享[右键菜单](../ui-context-menu/README.zh.md)，目标是被点击面包屑所属会话。可复用图片库从其 Factory 注入的 `useContextMenu` hook 获取 `getTriggerProps`。
+diff --git a/packages/client/ui-conversation/src/client/apply.ts b/packages/client/ui-conversation/src/client/apply.ts
+index 3328e1e5da..394f640093 100644
+--- a/packages/client/ui-conversation/src/client/apply.ts
++++ b/packages/client/ui-conversation/src/client/apply.ts
+@@ -349,6 +349,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
+       'conversation.composer': { kind: 'chain', scope: 'session' },
+       'conversation.composer.bar': { kind: 'single', scope: 'session-maybe' },
+       'conversation.input.dock': { kind: 'list', scope: 'session' },
++      'conversation.input.after': { kind: 'list', scope: 'session' },
+       'conversation.hero.brand.mark': { kind: 'single', scope: 'root' },
+       'conversation.hero.workspace': { kind: 'single', scope: 'root' },
+       'conversation.hero.agentPreset': { kind: 'single', scope: 'session-maybe' },
+@@ -465,6 +466,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
+     children: {
+       'conversation.input.attachments': { kind: 'single', scope: 'session-maybe' },
+       'conversation.input.overlay': { kind: 'list', scope: 'session' },
++      'conversation.input.inside': { kind: 'list', scope: 'session' },
+       'conversation.input.permission': { kind: 'single', scope: 'session' },
+       'conversation.input.left': { kind: 'list', scope: 'session' },
+       'conversation.input.plan': { kind: 'single', scope: 'session' },
+@@ -578,7 +580,10 @@ export function apply(ctx: Context, config: Config = Config({})): void {
+     yield slots.register({
+       name: 'main',
+       key: 'conversation',
+-      children: { 'main.conversation': { kind: 'single', scope: 'session-maybe' } },
++      children: {
++        'main.conversation': { kind: 'single', scope: 'session-maybe' },
++        'desktop.workbench.frame': { kind: 'single', scope: 'root' },
++      },
+     }, ConversationPanel)
+     yield registerConversationRoot()
+     yield registerConversationContent()
+diff --git a/packages/client/ui-conversation/src/client/contract/slots.ts b/packages/client/ui-conversation/src/client/contract/slots.ts
+index 0c438e0f4c..e9ea65c988 100644
+--- a/packages/client/ui-conversation/src/client/contract/slots.ts
++++ b/packages/client/ui-conversation/src/client/contract/slots.ts
+@@ -220,6 +220,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+     }
+     /** Conversation shell beneath its root-scoped main-panel entry. */
+     'main.conversation': { kind: 'single'; scope: 'session-maybe' }
++    /** Desktop workbench frame wrapper around conversation. */
++    'desktop.workbench.frame': {
++      kind: 'single'
++      scope: 'root'
++      owner: { conversation: ReactNode }
++    }
+     /** Strict per-Session Conversation body. */
+     'conversation.session': {
+       kind: 'single'
+@@ -294,6 +300,10 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+      * because the docked composer contains them.
+      */
+     'conversation.input.dock': { kind: 'list'; scope: 'session'; owner: InputZone }
++    /** Entries after the composer bar; fixed overlays must portal to the document body. */
++    'conversation.input.after': { kind: 'list'; scope: 'session'; owner: InputZone }
++    /** Compact entries to the left of the draft editor, after attachments. */
++    'conversation.input.inside': { kind: 'list'; scope: 'session'; owner: { session: SessionSnapshot | undefined } }
+     /**
+      * Floating entries rendered inside the resident composer card; fixed overlays must portal to
+      * the document body because the docked composer contains them.
+@@ -363,6 +373,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+         'conversation.composer': { kind: 'chain'; scope: 'session' }
+         'conversation.composer.bar': { kind: 'single'; scope: 'session-maybe' }
+         'conversation.input.dock': { kind: 'list'; scope: 'session' }
++        'conversation.input.after': { kind: 'list'; scope: 'session' }
+         'conversation.hero.brand.mark': { kind: 'single'; scope: 'root' }
+         'conversation.hero.workspace': { kind: 'single'; scope: 'root' }
+         'conversation.hero.agentPreset': { kind: 'single'; scope: 'session-maybe' }
+@@ -597,7 +608,7 @@ export interface InputActivityOwnerProps extends InputControlOwnerProps {
+ export type ComposerBarProps =
+   PropsRuntime<'conversation.composer.bar'>
+   & PropsRenderSlots<
+-    | 'conversation.input.attachments' | 'conversation.input.overlay'
++    | 'conversation.input.attachments' | 'conversation.input.overlay' | 'conversation.input.inside'
+     | 'conversation.input.permission'
+     | 'conversation.input.left' | 'conversation.input.plan'
+     | 'conversation.input.right' | 'conversation.input.model' | 'conversation.input.activity'
+diff --git a/packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx b/packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx
+index 218082ae31..a968162183 100644
+--- a/packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx
++++ b/packages/client/ui-conversation/src/client/skeleton/ConversationContent.tsx
+@@ -167,6 +167,7 @@ export function ConversationContent(props: ConversationContentProps) {
+       {hero && heroWorkspaceRow}
+       {zone !== undefined && renderSlot('conversation.input.dock', zone)}
+       {inputBar}
++      {zone !== undefined && renderSlot('conversation.input.after', zone)}
+     </div>
+   )
+ 
+diff --git a/packages/client/ui-conversation/src/client/skeleton/ConversationPanel.tsx b/packages/client/ui-conversation/src/client/skeleton/ConversationPanel.tsx
+index 8bd11aac33..97c326ccc9 100644
+--- a/packages/client/ui-conversation/src/client/skeleton/ConversationPanel.tsx
++++ b/packages/client/ui-conversation/src/client/skeleton/ConversationPanel.tsx
+@@ -7,6 +7,7 @@ import type {} from '../contract/slots.ts'
+  * @param props - main-slot inputs and the declared Conversation renderer.
+  * @returns the Conversation subtree.
+  */
+-export function ConversationPanel({ renderSlot }: PropsRuntime<'main'> & PropsRenderSlots<'main.conversation'>) {
+-  return renderSlot('main.conversation', {})
++export function ConversationPanel({ renderSlot }: PropsRuntime<'main'> & PropsRenderSlots<'main.conversation' | 'desktop.workbench.frame'>) {
++  const conversation = renderSlot('main.conversation', {})
++  return renderSlot('desktop.workbench.frame', { conversation }, { fallback: conversation })
+ }
+diff --git a/packages/client/ui-conversation/src/client/skeleton/InputBar.module.css b/packages/client/ui-conversation/src/client/skeleton/InputBar.module.css
+index b3cd1dd271..e370100d00 100644
+--- a/packages/client/ui-conversation/src/client/skeleton/InputBar.module.css
++++ b/packages/client/ui-conversation/src/client/skeleton/InputBar.module.css
+@@ -124,6 +124,28 @@
+   }
+ }
+ 
++.promptRow {
++  display: flex;
++  align-items: flex-start;
++  min-width: 0;
++}
++
++.promptAccessory {
++  display: flex;
++  align-items: flex-start;
++  padding: 4px 0 0 12px;
++}
++
++/* The slot outlet is a stable display:contents anchor even when empty. */
++.promptAccessory:not(:has(> [data-slot] > *)) {
++  display: none;
++}
++
++.promptRow > .scroll {
++  flex: 1;
++  min-width: 0;
++}
++
+ .accessory {
+   display: flex;
+   align-items: center;
+diff --git a/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx b/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
+index 892a410223..c89dda017d 100644
+--- a/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
++++ b/packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
+@@ -68,6 +68,7 @@ export const InputBar = memo(function InputBar({
+   const commandMenuOpen = useMenuLauncher(source => source === 'command')
+   const [activity, setActivity] = useState(false)
+   useEffect(() => { setActivity(false) }, [sessionId])
++  const session = useSession(s => s)
+   const promptError = useSession(s => s.promptError) ?? null
+   const running = useSession(s => s.running) ?? false
+   const subagent = useSession(s => s.subagent) ?? null
+@@ -466,21 +467,26 @@ export const InputBar = memo(function InputBar({
+             thing that scrolls. Chips are decorator portals inside the same
+             surface, so wrapping, caret geometry, and scrolling are the
+             browser's own. */}
+-        <DraftEditor
+-          classNames={css}
+-          editor={editor}
+-          scrollRef={scrollRef}
+-          editable={editable}
+-          editorDisabled={editorDisabled}
+-          phase={input?.phase ?? 'inert'}
+-          placeholderText={placeholderText}
+-          ariaLabel={workspaceTrigger ? t('hero.chooseWorkspace') : placeholderText}
+-          workspaceTrigger={workspaceTrigger}
+-          workspacePickerOpen={workspacePickerOpen}
+-          onWorkspaceKeyDown={onWorkspaceKeyDown}
+-          hint={hint}
+-          showPlaceholder={draft === '' && attachments.length === 0 && !claimActive}
+-        />
++        <div className={css.promptRow}>
++          {sessionId !== undefined && (
++            <div className={css.promptAccessory}>{renderSlot('conversation.input.inside', { session })}</div>
++          )}
++          <DraftEditor
++            classNames={css}
++            editor={editor}
++            scrollRef={scrollRef}
++            editable={editable}
++            editorDisabled={editorDisabled}
++            phase={input?.phase ?? 'inert'}
++            placeholderText={placeholderText}
++            ariaLabel={workspaceTrigger ? t('hero.chooseWorkspace') : placeholderText}
++            workspaceTrigger={workspaceTrigger}
++            workspacePickerOpen={workspacePickerOpen}
++            onWorkspaceKeyDown={onWorkspaceKeyDown}
++            hint={hint}
++            showPlaceholder={draft === '' && attachments.length === 0 && !claimActive}
++          />
++        </div>
+         <div ref={rowRef} className={css.row}>
+           <div className={css.tools} hidden={activity}>
+             <Tooltip label={t('input.commands')} side="top" delayMs={500} portal>
+diff --git a/packages/client/ui-conversation/tests/composer-seat-styles.client.spec.ts b/packages/client/ui-conversation/tests/composer-seat-styles.client.spec.ts
+index 657c0007e6..8678592c5c 100644
+--- a/packages/client/ui-conversation/tests/composer-seat-styles.client.spec.ts
++++ b/packages/client/ui-conversation/tests/composer-seat-styles.client.spec.ts
+@@ -43,6 +43,14 @@ describe('docked composer seat styles', () => {
+   })
+ })
+ 
++describe('inside prompt seat styles', () => {
++  it('pads populated entries and hides the stable empty slot anchor', () => {
++    expect(rule(inputBarCss, '.promptAccessory')).toMatch(/padding:\s*4px 0 0 12px;/)
++    expect(rule(inputBarCss, '.promptAccessory:not(:has(> [data-slot] > *))')).toMatch(/display:\s*none;/)
++    expect(rule(inputBarCss, '.promptRow > .scroll')).toMatch(/min-width:\s*0;/)
++  })
++})
++
+ describe('composer statistics row styles', () => {
+   it('reserves one reading row in the docked composer only', () => {
+     expect(rule(inputBarCss, '.root:not(.hero) > .dock'))
+diff --git a/packages/client/ui-conversation/tests/input-bar.client.spec.tsx b/packages/client/ui-conversation/tests/input-bar.client.spec.tsx
+index bf3f83e133..b00041fce5 100644
+--- a/packages/client/ui-conversation/tests/input-bar.client.spec.tsx
++++ b/packages/client/ui-conversation/tests/input-bar.client.spec.tsx
+@@ -98,6 +98,8 @@ interface BenchOptions {
+   placeholder?: string
+   t?: InputBarProps['t']
+   accessory?: React.ReactNode
++  inside?: React.ReactNode
++  insideForSession?: (session: SessionSnapshot | undefined) => React.ReactNode
+   overlay?: React.ReactNode
+   leftItems?: React.ReactNode
+   rightItems?: React.ReactNode
+@@ -169,6 +171,8 @@ function bench(over?: BenchOptions) {
+   const slotCalls: { key: string; owner: unknown }[] = []
+   const renderSlot = ((key: string, owner: object) => {
+     slotCalls.push({ key, owner })
++    if (key === 'conversation.input.inside') return <div data-slot={key} style={{ display: 'contents' }}>{over?.insideForSession ? over.insideForSession((owner as { session: SessionSnapshot | undefined }).session) : over?.inside}</div>
++    if (key === 'conversation.input.attachments') return <i data-testid="attachment-seat" />
+     if (key === 'conversation.input.overlay') return over?.overlay ?? null
+     if (key === 'conversation.input.left') return over?.leftItems ?? null
+     if (key === 'conversation.input.right') return over?.rightItems ?? null
+@@ -2069,6 +2073,40 @@ describe('strips and variants', () => {
+     expect(view.container.querySelector('[class*="hero"]')).not.toBeNull()
+   })
+ 
++  it('places inside after attachments and before the editor without replacing accessory', () => {
++    const { view } = bench({ accessory: <i data-testid="acc" />, inside: <><button data-testid="inside">inside</button><button data-testid="inside-two">second</button></> })
++    const accessory = view.getByTestId('acc')
++    const attachment = view.getByTestId('attachment-seat')
++    const inside = view.getByTestId('inside')
++    const editor = view.container.querySelector('[data-input-scroll]')!
++    expect(accessory.compareDocumentPosition(attachment) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
++    expect(attachment.compareDocumentPosition(inside) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
++    const wrapper = inside.closest('[data-slot]')?.parentElement
++    expect(view.getByTestId('inside-two').parentElement).toBe(inside.parentElement)
++    expect(wrapper?.nextElementSibling).toBe(editor)
++    expect(editor.parentElement?.children.length).toBe(2)
++  })
++
++  it('passes the live session to inside entries as blank state changes', () => {
++    const b = bench({ insideForSession: session => session?.blank ? <i data-testid="blank-entry" /> : null })
++    act(() => { b.session.set(snapshotOf({ blank: true })) })
++    expect(b.view.getByTestId('blank-entry')).toBeTruthy()
++    expect(b.slotCalls.filter(call => call.key === 'conversation.input.inside').at(-1)?.owner)
++      .toEqual({ session: b.session.getSnapshot() })
++    act(() => { b.session.set(snapshotOf({ blank: false })) })
++    expect(b.view.queryByTestId('blank-entry')).toBeNull()
++    expect(b.slotCalls.filter(call => call.key === 'conversation.input.inside').at(-1)?.owner)
++      .toEqual({ session: b.session.getSnapshot() })
++  })
++
++  it('renders the editor alone in the empty prompt row', () => {
++    const { view } = bench()
++    const editor = view.container.querySelector('[data-input-scroll]')!
++    const anchor = editor.parentElement?.querySelector('[data-slot="conversation.input.inside"]')
++    expect(anchor?.children.length).toBe(0)
++    expect(anchor?.parentElement?.nextElementSibling).toBe(editor)
++  })
++
+   it('renders overlay, left/right, and footer slots at their layout positions', () => {
+     const { view } = bench({
+       overlay: <i data-testid="ov" />,
+@@ -2092,7 +2130,7 @@ describe('command launcher chrome and control seats', () => {
+     // Every seat dispatched, nothing rendered (render passes may repeat; the
+     // seat set is the contract).
+     expect([...new Set(slotCalls.map(c => c.key))]).toEqual([
+-      'conversation.input.overlay', 'conversation.input.attachments',
++      'conversation.input.overlay', 'conversation.input.attachments', 'conversation.input.inside',
+       'conversation.input.permission', 'conversation.input.plan', 'conversation.input.left',
+       'conversation.input.right', 'conversation.input.model', 'conversation.input.activity',
+       'conversation.composer.dock',
+diff --git a/packages/client/ui-conversation/tests/skeleton.client.spec.tsx b/packages/client/ui-conversation/tests/skeleton.client.spec.tsx
+index 8eb125df03..51d6a876ad 100644
+--- a/packages/client/ui-conversation/tests/skeleton.client.spec.tsx
++++ b/packages/client/ui-conversation/tests/skeleton.client.spec.tsx
+@@ -208,6 +208,8 @@ function mount(
+     if (key === 'conversation.input.model' || key === 'conversation.input.plan') {
+       seatOwners.push({ key, owner })
+     }
++    if (key === 'conversation.input.dock') { seatOwners.push({ key, owner }); return null }
++    if (key === 'conversation.input.after') { seatOwners.push({ key, owner }); return <i data-testid="input-after" /> }
+     if (key === 'conversation.hero.workspace') { pickerOwner = owner; return null }
+     if (key === 'conversation.session.header.views.actions') {
+       actionsOwner = owner as ConversationViewActionsOwnerProps
+@@ -438,6 +440,17 @@ describe('ConversationRoot resident composer', () => {
+     expect(b.view.queryByTestId('view-conversation.session.header.corner')).toBeNull()
+   })
+ 
++  it('renders input after below the bar with the input zone only for a Session', () => {
++    const b = mount(sessionSnapshotOf())
++    const after = b.view.getByTestId('input-after')
++    expect(after.previousElementSibling?.querySelector('[data-composer-card]')).not.toBeNull()
++    expect(b.seatOwners.find(call => call.key === 'conversation.input.after')?.owner).toEqual(
++      b.seatOwners.find(call => call.key === 'conversation.input.dock')?.owner,
++    )
++    const noSession = mount(sessionSnapshotOf(), [], undefined, { sessionId: undefined })
++    expect(noSession.view.container.querySelector('[data-testid="input-after"]')).toBeNull()
++  })
++
+   it('does not redispatch composer child slots for an unrelated Session publication', () => {
+     const b = mount(sessionSnapshotOf())
+     const childKeys = new Set([
+diff --git a/packages/client/ui-workspace/src/client/contract/slots.ts b/packages/client/ui-workspace/src/client/contract/slots.ts
+index edbce796de..46e2338c0d 100644
+--- a/packages/client/ui-workspace/src/client/contract/slots.ts
++++ b/packages/client/ui-workspace/src/client/contract/slots.ts
+@@ -137,6 +137,20 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+     'conversation.hero.workspace.directoryFlow': { kind: 'single'; scope: 'root'; owner: DirectoryFlowOwnerProps }
+     /** Directory-flow hole under the sidebar browsing region (declared by the WorkspaceBrowser entry). */
+     'sidebar.workspaces.directoryFlow': { kind: 'single'; scope: 'root'; owner: DirectoryFlowOwnerProps }
++    'sidebar.workspaces.title': { kind: 'single'; scope: 'root'; owner: { flat: boolean } }
++    /** Compose projects and unassigned rows while retaining native row actions. */
++    'sidebar.workspaces.collection': {
++      kind: 'single'
++      scope: 'root'
++      owner: {
++        mode: 'projects' | 'flat' | 'search'
++        query: string
++        archivedOnly: boolean
++        searchPending?: boolean
++        projects: (active: boolean) => import('react').ReactNode
++        items: ReadonlyArray<{ id: string; updatedAt: number; pinned?: boolean; blank?: boolean; render: (active: boolean) => import('react').ReactNode }>
++      }
++    }
+     /**
+      * Leading decoration of one Session row, in the 16px cell before the title
+      * that the row's own state dot otherwise occupies. A higher-priority state
+@@ -499,6 +513,8 @@ export type RowToastProps =
+ export type WorkspaceBrowserProps =
+   PropsRuntime<'sidebar.workspaces'>
+   & PropsRenderSlots<
++    | 'sidebar.workspaces.title'
++    | 'sidebar.workspaces.collection'
+     | 'sidebar.workspaces.directoryFlow'
+     | 'sidebar.workspaces.session.row.action'
+     | 'sidebar.session.row.trailing'
+diff --git a/packages/client/ui-workspace/src/client/index.ts b/packages/client/ui-workspace/src/client/index.ts
+index ff7890aec5..e08250c39b 100644
+--- a/packages/client/ui-workspace/src/client/index.ts
++++ b/packages/client/ui-workspace/src/client/index.ts
+@@ -331,6 +331,8 @@ export function apply(ctx: Context): void {
+     {
+       name: 'sidebar.workspaces',
+       children: {
++        'sidebar.workspaces.title': { kind: 'single', scope: 'root' },
++        'sidebar.workspaces.collection': { kind: 'single', scope: 'root' },
+         'sidebar.workspaces.directoryFlow': { kind: 'single', scope: 'root' },
+         'sidebar.workspaces.session.row.action': { kind: 'list', scope: 'root' },
+         'sidebar.session.row.leading': { kind: 'list', scope: 'root', inline: true },
+diff --git a/packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx b/packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx
+index 44f3d56036..1acded63d7 100644
+--- a/packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx
++++ b/packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx
+@@ -469,7 +469,7 @@ function SessionTree({
+     && workspaceDrag.over.half === 'before'
+ 
+   const rowKeys: string[] = groups.length === 0 ? ['empty'] : []
+-  const renderGroup = (group: GroupNode, depth: number): ReactNode => {
++  const renderGroup = (group: GroupNode, depth: number, active = true): ReactNode => {
+     const workspaceId = group.workspaceId
+     const children = childrenByParent.get(group.key) ?? []
+     const compatibleDrag = workspaceDrag !== null && parents.get(workspaceDrag.workspaceId) === parents.get(group.key)
+@@ -478,7 +478,7 @@ function SessionTree({
+     const visible = watermarkRows(group.sessions, watermark)
+     const sessionsExpanded = visible.hiddenCount === 0
+     rowKeys.push(`workspace:${group.key}`)
+-    const childRows = group.expanded ? children.map(child => renderGroup(child, depth + 1)) : []
++    const childRows = group.expanded ? children.map(child => renderGroup(child, depth + 1, active)) : []
+     const sessions = visible.rows
+     for (const node of sessions) rowKeys.push(`session:${node.id}`)
+     if (collapsed.hiddenCount > 0) rowKeys.push(`overflow:${group.key}`)
+@@ -612,7 +612,7 @@ function SessionTree({
+             <SessionNodeItem
+               key={node.id}
+               node={node}
+-              currentId={current}
++              currentId={active ? current : undefined}
+               now={now}
+               onOpen={open}
+               onRenameRequest={onSessionRenameRequest}
+@@ -657,6 +657,30 @@ function SessionTree({
+   }
+ 
+   const groupRows = rootGroups.map(group => renderGroup(group, 0))
++  const recentItems = deriveFlat(list, ungroupedSessionIds, rowState, statuses).map((node) => ({
++    id: node.id,
++    updatedAt: node.updatedAt,
++    pinned: node.pinned,
++    blank: node.blank,
++    render: (active: boolean) => (
++      <SessionNodeItem
++        key={node.id}
++        node={node}
++        currentId={active ? current : undefined}
++        now={now}
++        onOpen={open}
++        onRenameRequest={onSessionRenameRequest}
++        renderSlot={renderSlot}
++        openSessionMenu={openSessionMenu}
++        useContextMenu={useContextMenu}
++        useContextMenuTarget={useContextMenuTarget}
++        onReveal={node.id === revealSessionId ? () => { onSessionRevealed(node.id) } : undefined}
++        useSessionAccess={useSessionAccess}
++        home={home}
++        t={t}
++      />
++    ),
++  }))
+   return (
+     <HoverCardGroup className={clsx(css.treeBody, css.wide)}>
+       {workspaceDropAtListStart && <span className={css.listTopDropIndicator} aria-hidden="true" />}
+@@ -668,10 +692,20 @@ function SessionTree({
+         ready={list.phase === 'ready' && workspaceReady && !nativeDragActive}
+         resetKey={JSON.stringify([animationResetKey, watermarkMotionKey])}
+       >
+-        {groups.length === 0 && (
+-          <EmptySessions rowState={rowState} onLeaveArchivedOnly={onLeaveArchivedOnly} t={t} />
+-        )}
+-        {groupRows}
++        {renderSlot('sidebar.workspaces.collection', {
++          mode: 'projects',
++          query: '',
++          archivedOnly: rowState.archivedFilter === 'only',
++          projects: (active: boolean) => rootGroups.filter(group => group.workspaceId !== undefined).map(group => renderGroup(group, 0, active)),
++          items: recentItems,
++        }, {
++          fallback: [
++            groups.length === 0 && (
++              <EmptySessions rowState={rowState} onLeaveArchivedOnly={onLeaveArchivedOnly} t={t} />
++            ),
++            groupRows,
++          ],
++        })}
+       </AnimatedRows>
+       <span className={css.fade} />
+     </HoverCardGroup>
+@@ -735,54 +769,73 @@ function FlatList({
+         ready={list.phase === 'ready' && workspaceReady && drag === null}
+         resetKey={animationResetKey}
+       >
+-        {rows.length === 0 && (
+-          <EmptySessions rowState={rowState} onLeaveArchivedOnly={onLeaveArchivedOnly} t={t} />
+-        )}
+-        {rows.map((node) => {
+-          const active = drag !== null && drag.pinned === node.pinned
+-          const normalizeHalf = (half: 'before' | 'after'): 'before' | 'after' =>
+-            node.blank ? 'after' : half
+-          return (
+-            <SessionNodeItem
+-              key={node.id}
+-              node={node}
+-              currentId={currentId}
+-              now={now}
+-              onOpen={open}
+-              onRenameRequest={onSessionRenameRequest}
+-              renderSlot={renderSlot}
+-              openSessionMenu={openSessionMenu} useContextMenu={useContextMenu}
+-              useContextMenuTarget={useContextMenuTarget}
+-              onReveal={node.id === revealSessionId
+-                ? () => { onSessionRevealed(node.id) }
+-                : undefined}
+-              useSessionAccess={useSessionAccess}
+-              drag={{
+-                start: () => {
+-                  dropCommitted.current = false
+-                  setDrag({ accountKey: FLAT_SESSION_ORDER_KEY, sessionId: node.id, pinned: node.pinned, over: null })
+-                },
+-                active,
+-                marker: active && drag.over?.id === node.id ? drag.over.half : null,
+-                hover: (half) => {
+-                  setDrag(current => current === null ? current : {
+-                    ...current, over: { id: node.id, half: normalizeHalf(half) },
+-                  })
+-                },
+-                drop: (half) => {
+-                  if (drag !== null) commitDrag(drag, { id: node.id, half: normalizeHalf(half) })
+-                },
+-                end: () => {
+-                  if (drag?.over !== null && drag?.over !== undefined) commitDrag(drag, drag.over)
+-                  else setDrag(null)
+-                  dropCommitted.current = false
+-                },
+-              }}
+-              home={home}
+-              t={t}
+-            />
+-          )
+-        })}
++        {(() => {
++          const items = rows.map(node => ({
++            id: node.id,
++            updatedAt: node.updatedAt,
++            pinned: node.pinned,
++            blank: node.blank,
++            render: (selected: boolean) => {
++              const active = drag !== null && drag.pinned === node.pinned
++              const normalizeHalf = (half: 'before' | 'after'): 'before' | 'after' =>
++                node.blank ? 'after' : half
++              return (
++                <SessionNodeItem
++                  key={node.id}
++                  node={node}
++                  currentId={selected ? currentId : undefined}
++                  now={now}
++                  onOpen={open}
++                  onRenameRequest={onSessionRenameRequest}
++                  renderSlot={renderSlot}
++                  openSessionMenu={openSessionMenu} useContextMenu={useContextMenu}
++                  useContextMenuTarget={useContextMenuTarget}
++                  onReveal={node.id === revealSessionId
++                    ? () => { onSessionRevealed(node.id) }
++                    : undefined}
++                  useSessionAccess={useSessionAccess}
++                  drag={{
++                    start: () => {
++                      dropCommitted.current = false
++                      setDrag({ accountKey: FLAT_SESSION_ORDER_KEY, sessionId: node.id, pinned: node.pinned, over: null })
++                    },
++                    active,
++                    marker: active && drag.over?.id === node.id ? drag.over.half : null,
++                    hover: (half) => {
++                      setDrag(current => current === null ? current : {
++                        ...current, over: { id: node.id, half: normalizeHalf(half) },
++                      })
++                    },
++                    drop: (half) => {
++                      if (drag !== null) commitDrag(drag, { id: node.id, half: normalizeHalf(half) })
++                    },
++                    end: () => {
++                      if (drag?.over !== null && drag?.over !== undefined) commitDrag(drag, drag.over)
++                      else setDrag(null)
++                      dropCommitted.current = false
++                    },
++                  }}
++                  home={home}
++                  t={t}
++                />
++              )
++            },
++          }))
++          return renderSlot('sidebar.workspaces.collection', {
++            mode: 'flat',
++            query: '',
++            archivedOnly: rowState.archivedFilter === 'only',
++            projects: () => [],
++            items,
++          }, {
++            fallback: [
++              rows.length === 0 && (
++                <EmptySessions rowState={rowState} onLeaveArchivedOnly={onLeaveArchivedOnly} t={t} />
++              ),
++              items.map(item => item.render(true)),
++            ],
++          })
++        })()}
+       </AnimatedRows>
+       <span className={css.fade} />
+     </HoverCardGroup>
+@@ -810,8 +863,9 @@ function SearchResults({
+   resultLimit,
+   usePanelInfo,
+   useSessionAccess,
++  renderSlot,
+   t,
+-}: Pick<WorkspaceBrowserProps, 'useSessions' | 'useSessionStatus' | 'open' | 't' | 'usePanelInfo' | 'useSessionAccess'> & {
++}: Pick<WorkspaceBrowserProps, 'useSessions' | 'useSessionStatus' | 'open' | 't' | 'usePanelInfo' | 'useSessionAccess' | 'renderSlot'> & {
+   workspaces: readonly WorkspaceView[]
+   archivedSessionIds: readonly SessionNode['id'][]
+   /** Search matches follow the archived filter selected for the list. */
+@@ -850,17 +904,47 @@ function SearchResults({
+     <div className={clsx(css.treeBody, css.wide)}>
+       <div className={css.list}>
+         <div className={css.searchTree} role="tree" aria-label={t('search.results.aria')}>
+-          {results.items.map(result => (
+-            <SearchResultItem
+-              key={result.id}
+-              result={result}
+-              currentId={currentId}
+-              onOpen={open}
+-              onUnarchive={onUnarchive}
+-              useSessionAccess={useSessionAccess}
+-              t={t}
+-            />
+-          ))}
++          {renderSlot('sidebar.workspaces.collection', {
++            mode: 'search',
++            query,
++            archivedOnly: archivedFilter === 'only',
++            searchPending: pending,
++            projects: () => [],
++            items: results.items.map(result => ({
++              id: result.id,
++              updatedAt: list.byId[result.id]?.updatedAt ?? 0,
++              render: (selected: boolean) => (
++                <SearchResultItem
++                  key={result.id}
++                  result={result}
++                  currentId={selected ? currentId : undefined}
++                  onOpen={open}
++                  onUnarchive={onUnarchive}
++                  useSessionAccess={useSessionAccess}
++                  t={t}
++                />
++              ),
++            })),
++          }, {
++            fallback: [
++              ...results.items.map(result => (
++                <SearchResultItem
++                  key={result.id}
++                  result={result}
++                  currentId={currentId}
++                  onOpen={open}
++                  onUnarchive={onUnarchive}
++                  useSessionAccess={useSessionAccess}
++                  t={t}
++                />
++              )),
++              !pending && results.items.length === 0 && (
++                <div key="empty" className={css.empty}>
++                  {t('search.noMatches')}
++                </div>
++              ),
++            ],
++          })}
+         </div>
+         {pending && (
+           /* Two skeleton rows on an empty list, one when local matches already
+@@ -1367,6 +1451,7 @@ export function WorkspaceBrowser({
+               query={normalizedQuery}
+               remote={remoteSearch}
+               resultLimit={searchResultLimit}
++              renderSlot={renderSlot}
+               t={t}
+             />
+           )

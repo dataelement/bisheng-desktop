@@ -22,7 +22,7 @@ export declare function hostDshEntryPath(): string
 export declare function createMarketController(ctx: Context, account: {
   state(): MarketAccount
   marketRequest(path: string, body?: unknown, binary?: boolean): Promise<unknown>
-}, options?: { home?: string; target?: string; desktopVersion?: string; dshEntryPath?: string;
+}, options?: { home?: string; target?: string; desktopVersion?: string; dshEntryPath?: string; authorizationAvailable?: boolean;
   auth?: EnterpriseAuthHost; load?: (record: InstalledMarketPlugin) => Promise<MarketRuntimeFiber> }): MarketController
 
 export declare function applyEnterpriseMarket(ctx: Context, account: {
@@ -30,6 +30,7 @@ export declare function applyEnterpriseMarket(ctx: Context, account: {
   refreshState?(): Promise<unknown>
   refreshProfile?(): Promise<unknown>
   marketRequest(path: string, body?: unknown, binary?: boolean): Promise<unknown>
-}, options?: { auth?: EnterpriseAuthHost }): MarketController
+}, options?: { home?: string; target?: string; desktopVersion?: string; dshEntryPath?: string; authorizationAvailable?: boolean;
+  auth?: EnterpriseAuthHost; load?: (record: InstalledMarketPlugin) => Promise<MarketRuntimeFiber> }): MarketController
 
 export declare function isMarketVersionCompatible(version: string, minimum: string): boolean

@@ -45,9 +45,11 @@
     "package:win": "node scripts/verify-target.mjs win32 x64 && npm run build && node scripts/electron-builder-windows.mjs --win --x64 --publish never",
     "package:win:unpacked": "node scripts/verify-target.mjs win32 x64 && npm run build && node scripts/electron-builder-windows.mjs --win --x64 --dir --publish never",
     "ppt:build": "node scripts/prepare-ppt-runtime.mjs",
+    "ppt:web:pack": "npm run ppt:build && node scripts/pack-ppt-web.mjs",
     "pretest": "npm run reference-icons:prepare && npm run office:prepare && npm run ppt:build",
     "pretest:watch": "npm run reference-icons:prepare && npm run office:prepare && npm run ppt:build",
     "office:prepare": "node scripts/office-runtime/prepare.mjs && node scripts/office-runtime/prepare-templates.mjs",
+    "office:web:pack": "node scripts/pack-office-web.mjs",
     "loader:generate": "node scripts/generate-loader-gifs.mjs",
     "reference-icons:prepare": "node scripts/prepare-reference-icons.mjs"
   },

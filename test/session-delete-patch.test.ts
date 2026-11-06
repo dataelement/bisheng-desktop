@@ -95,8 +95,8 @@ describe('permanent session deletion dependency patches', () => {
       'utf8'
     )
 
-    expect(ui).toContain('工作区文件会保留。此操作无法撤销。')
-    expect(ui).toContain('Workspace files are kept. This can’t be undone.')
+    expect(ui).toContain('工作区文件会保留，会话记录将永久删除且无法撤销。')
+    expect(ui).toContain('Workspace files are kept. The conversation will be permanently deleted and cannot be undone.')
   })
 
   it('removes one materialized JSONL log without touching another session', async () => {

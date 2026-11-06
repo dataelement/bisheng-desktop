@@ -1,9 +1,18 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { EnterpriseLlmAdapter } from '../packages/dsh-desktop-enterprise/openai.js'
 import { CONTENT_SAFETY_ERROR_COPY } from '../packages/dsh-desktop-enterprise/error-copy.js'
 
 // Coverage AC: AC-05, AC-23, AC-24, AC-29, AC-30, AC-31, AC-32, AC-56.
+const originalLanguage = globalThis.navigator?.language
+beforeEach(() => {
+  if (globalThis.navigator) Object.defineProperty(globalThis.navigator, 'language', { value: 'en-US', configurable: true })
+})
+afterEach(() => {
+  if (globalThis.navigator && originalLanguage !== undefined) {
+    Object.defineProperty(globalThis.navigator, 'language', { value: originalLanguage, configurable: true })
+  }
+})
 const connectionKey = '1234567890abcdef'
 const model = {
   id: 'bisheng:42', display_name: 'Synthetic safety Responses',

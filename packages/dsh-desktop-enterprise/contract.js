@@ -202,6 +202,14 @@ function parseModelEntry(entry, seen) {
   }
   seen.add(entry.id)
   const usage = isObject(entry.usage) ? parseUsageLenient(entry.usage) : undefined
+  const contextWindow = optionalInteger(entry.context_window) ??
+    optionalInteger(entry.contextWindow) ??
+    optionalInteger(entry.capabilities.context_window) ??
+    optionalInteger(entry.capabilities.contextWindow)
+  const maxTokens = optionalInteger(entry.max_tokens) ??
+    optionalInteger(entry.maxTokens) ??
+    optionalInteger(entry.capabilities.max_tokens) ??
+    optionalInteger(entry.capabilities.maxTokens)
   return {
     id: entry.id,
     object: typeof entry.object === 'string' && entry.object.length > 0 ? entry.object : 'model',
@@ -209,12 +217,16 @@ function parseModelEntry(entry, seen) {
     owned_by: typeof entry.owned_by === 'string' && entry.owned_by.length > 0 ? entry.owned_by : 'bisheng',
     display_name: typeof entry.display_name === 'string' && entry.display_name.length > 0 ? entry.display_name : entry.id,
     ...(reasoning === undefined ? {} : { reasoning }),
+    ...(contextWindow && contextWindow > 0 ? { context_window: contextWindow } : {}),
+    ...(maxTokens && maxTokens > 0 ? { max_tokens: maxTokens } : {}),
     capabilities: {
       streaming: entry.capabilities.streaming,
       tools: entry.capabilities.tools,
       vision: entry.capabilities.vision ?? false,
       reasoning_content: entry.capabilities.reasoning_content,
-      ...(entry.capabilities.responses === undefined ? {} : { responses: entry.capabilities.responses })
+      ...(entry.capabilities.responses === undefined ? {} : { responses: entry.capabilities.responses }),
+      ...(contextWindow && contextWindow > 0 ? { context_window: contextWindow } : {}),
+      ...(maxTokens && maxTokens > 0 ? { max_tokens: maxTokens } : {})
     },
     ...(usage && usage.source !== 'unavailable' ? { usage } : {})
   }

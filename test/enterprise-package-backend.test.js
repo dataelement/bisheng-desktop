@@ -26,12 +26,51 @@ describe('enterprise admission on the official package backend', () => {
     expect(install).not.toHaveBeenCalled()
   })
 
+  it('does not trust a local archive path when the installed spec differs', async () => {
+    const install = vi.fn()
+    const backend = restrictCommunityPackageBackend({ install })
+    for (const spec of ['https://example.com/plugin.tgz', 'example@1.0.0', join(tmpdir(), 'other.tgz'), undefined]) {
+      const request = { kind: 'tarball', path: localArchive, spec }
+      await expect(backend.install(request)).rejects.toThrow('POLICY_DISABLED')
+      await expect(backend.authorizeSpec(request)).resolves.toMatchObject({ status: 'refused' })
+    }
+    expect(install).not.toHaveBeenCalled()
+  })
+
   it('installs a local directory or local tarball without a network grant', async () => {
     const install = vi.fn(async () => ({ ok: true }))
     const backend = restrictCommunityPackageBackend({ install })
     await backend.install({ kind: 'path', path: localDirectory, spec: localDirectory })
     await backend.install({ kind: 'tarball', path: localArchive, spec: localArchive })
-    expect(install).toHaveBeenCalledTimes(2)
+    await backend.install({ kind: 'tarball', path: localArchive, spec: `file:${localArchive}` })
+    expect(install).toHaveBeenCalledTimes(3)
+  })
+
+  it('releases quarantine only after a successful backend result', async () => {
+    const releaseQuarantine = vi.fn()
+    const install = vi.fn()
+    const backend = restrictCommunityPackageBackend({ install }, { authorizePluginMutation: async () => {} }, { releaseQuarantine })
+    const request = { kind: 'registry', spec: 'demo@1.0.0', expectedName: 'demo' }
+    for (const result of [undefined, { packageResult: { exitCode: 1, output: 'POLICY_DISABLED' } }, { packageResult: { exitCode: 0, timedOut: true } }, {}]) {
+      install.mockResolvedValueOnce(result)
+      expect(await backend.install(request)).toBe(result)
+      expect(releaseQuarantine).not.toHaveBeenCalled()
+    }
+    install.mockRejectedValueOnce(new Error('backend failed'))
+    await expect(backend.install(request)).rejects.toThrow('backend failed')
+    expect(releaseQuarantine).not.toHaveBeenCalled()
+    install.mockResolvedValueOnce({ packageResult: { exitCode: 0 } })
+    await backend.install(request)
+    expect(releaseQuarantine).toHaveBeenCalledExactlyOnceWith('demo')
+  })
+
+  it('keeps quarantine when recording a switch fails', async () => {
+    const releaseQuarantine = vi.fn()
+    const backend = restrictCommunityPackageBackend({ switched: async () => { throw new Error('switch failed') } }, undefined, {
+      releaseQuarantine, isPhysicallyInstalled: async () => true
+    })
+    await expect(backend.switched({ name: 'demo', enabled: true })).rejects.toThrow('switch failed')
+    expect(releaseQuarantine).not.toHaveBeenCalled()
   })
 
   it('refuses a network spec before inspection and lets a local path continue', async () => {

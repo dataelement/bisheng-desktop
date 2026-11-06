@@ -44,6 +44,39 @@ it.each([1,10,25])('publishes every page before its image batch returns, with a 
   expect(unzipSync(await readFile(path.join(root,'preview-deck.pptx')))['ppt/slides/slide1.xml']).toEqual(strToU8('Font context retained'));
 });
 
+it.each([1,12])('publishes a validated %i-page manifest when Kit has no progress callback',async pages=>{
+  const raster=mocks.images.getMockImplementation();
+  mocks.images.mockImplementation((request,signal)=>raster(request,signal,async()=>{}));
+  const published=[];
+  await renderOfficeTemplatePreview(project(pages),root,1920,200,async p=>{
+    expect(await readFile(p.path,'utf8')).toBe(String(p.page));published.push(p.page);
+  });
+  expect(published).toEqual(Array.from({length:pages},(_,i)=>i+1));
+  expect(mocks.dispose).toHaveBeenCalledTimes(1);
+});
+
+it('rejects an incomplete manifest even when Kit has no progress callback',async()=>{
+  mocks.images.mockResolvedValue({pageCount:1,images:[]});
+  await expect(renderOfficeTemplatePreview(project(1),root,1920,200)).rejects.toThrow('page count mismatch');
+});
+
+it('rejects a partial progress callback stream even with a complete manifest',async()=>{
+  const raster=mocks.images.getMockImplementation();
+  mocks.images.mockImplementation((request,signal,onImage)=>raster(request,signal,async(image,total)=>{if(image.page===1)await onImage(image,total)}));
+  await expect(renderOfficeTemplatePreview(project(3),root,1920,200)).rejects.toThrow('page count mismatch');
+});
+
+it('rejects an out-of-order manifest without callbacks before publishing that batch',async()=>{
+  const raster=mocks.images.getMockImplementation();
+  mocks.images.mockImplementation(async(request,signal)=>{
+    const result=await raster(request,signal,async()=>{});
+    return {...result,images:[...result.images].reverse()};
+  });
+  const published=[];
+  await expect(renderOfficeTemplatePreview(project(3),root,1920,200,async p=>published.push(p.page))).rejects.toThrow('page count mismatch');
+  expect(published).toEqual([1]);
+});
+
 it('joins and disposes the next Office export when page publication fails',async()=>{
   let rejectNext;
   const original=mocks.render.getMockImplementation();

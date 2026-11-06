@@ -13,12 +13,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createDesktopPnpmService } from '../packages/dsh-desktop-market-installer/index.js'
+import { restrictCommunityPackageBackend } from '../packages/dsh-desktop-market-installer/enterprise-policy.mjs'
 import { createGenerationPackageBackend } from '../packages/dsh-desktop-market-installer/generations/package-backend.mjs'
 import { installGeneration } from '../packages/dsh-desktop-market-installer/generations/installer.mjs'
 import { projectGenerations, publishInstalledGeneration } from '../packages/dsh-desktop-market-installer/generations/projection.mjs'
 import {
   listGenerations,
   readDesired,
+  withRegistryLock,
   writeDesired
 } from '../packages/dsh-desktop-market-installer/generations/registry.mjs'
 
@@ -165,6 +167,95 @@ describe('the market install boundary', () => {
     }
     expect(calls).toEqual([])
     expect(await readFile(join(profile, 'package.json'), 'utf8')).toBe(before)
+    expect(await readDesired(home)).toEqual([])
+  })
+
+  it.each(['plugin', 'workbench', 'shared market'])('rechecks %s authorization after waiting for the registry lock', async (kind) => {
+    const home = await freshHome()
+    const profile = join(home, 'profiles', 'web')
+    const before = await readFile(join(profile, 'package.json'), 'utf8')
+    let releaseLock
+    let locked
+    const acquired = new Promise(resolve => { locked = resolve })
+    const held = withRegistryLock(home, async () => {
+      locked()
+      await new Promise(resolve => { releaseLock = resolve })
+    })
+    await acquired
+    let allowed = true
+    let checked
+    const earlyCheck = new Promise(resolve => { checked = resolve })
+    const authorize = async () => {
+      checked()
+      if (!allowed) throw new Error('POLICY_DISABLED: revoked')
+    }
+    const installs = []
+    const svc = createDesktopPnpmService({
+      home, binDirectory: join(home, '.desktop-bin'), dshEntryPath: join(home, 'bin.js'),
+      policy: { authorizePluginMutation: authorize, authorizeWorkbenchMarketInstall: authorize },
+      runGenerationInstall: async () => { installs.push('install'); throw new Error('unexpected install') },
+      spawnProcess: () => { installs.push('spawn'); throw new Error('unexpected spawn') }
+    })
+    try {
+      const handle = kind === 'workbench'
+        ? svc.installWorkbenchGeneration({ source: 'market', pluginSpec: 'demo@1.0.0', expectedPluginName: 'demo', expectedVersion: '1.0.0' }, profile)
+        : svc.runExternalMarketPluginInstall(['add', kind === 'plugin' ? 'demo@1.0.0' : 'dshmarket@1.0.0'], profile)
+      const result = drainHandle(handle)
+      await earlyCheck
+      allowed = false
+      releaseLock()
+      await held
+      expect(await result).toMatchObject({ exitCode: 1, stderr: expect.stringContaining('POLICY_DISABLED') })
+      expect(installs).toEqual([])
+      expect(await readDesired(home)).toEqual([])
+      expect(await readFile(join(profile, 'package.json'), 'utf8')).toBe(before)
+    } finally {
+      releaseLock()
+      await held
+      svc.dispose()
+    }
+  })
+
+  it.each(['plugin', 'workbench'])('does not publish a %s generation when authorization is revoked during staging', async (kind) => {
+    const home = await freshHome()
+    const profile = join(home, 'profiles', 'web')
+    const previous = await seedProjectedPlugin(home, 'demo', '0.9.0')
+    const link = join(profile, 'node_modules', 'demo')
+    const previousTarget = await readlink(link)
+    const before = await readFile(join(profile, 'package.json'), 'utf8')
+    let allowed = true
+    const authorize = async () => { if (!allowed) throw new Error('POLICY_DISABLED: revoked') }
+    const svc = createDesktopPnpmService({
+      home, binDirectory: join(home, '.desktop-bin'), dshEntryPath: join(home, 'bin.js'),
+      policy: { authorizePluginMutation: authorize, authorizeWorkbenchMarketInstall: authorize },
+      runGenerationInstall: async (staging) => {
+        const result = await stubGenerationInstall('demo', '1.0.0')(staging)
+        allowed = false
+        return result
+      }
+    })
+    const handle = kind === 'plugin'
+      ? svc.runExternalMarketPluginInstall(['add', 'demo@1.0.0'], profile)
+      : svc.installWorkbenchGeneration({ source: 'market', pluginSpec: 'demo@1.0.0', expectedPluginName: 'demo', expectedVersion: '1.0.0' }, profile)
+    expect(await drainHandle(handle)).toMatchObject({ exitCode: 1, stderr: expect.stringContaining('POLICY_DISABLED') })
+    expect(await readDesired(home)).toEqual([previous.id])
+    expect(await readlink(link)).toBe(previousTarget)
+    expect(await readFile(join(profile, 'package.json'), 'utf8')).toBe(before)
+    svc.dispose()
+  })
+
+  it('keeps quarantine when the generation backend rejects under its lock', async () => {
+    const home = await freshHome()
+    const releaseQuarantine = vi.fn()
+    const raw = createGenerationPackageBackend({
+      dshHome: home, nodeExecutablePath: process.execPath, pnpmEntryPath: 'unused',
+      authorizeInstall: async () => { throw new Error('POLICY_DISABLED: revoked') },
+      runInstall: async () => { throw new Error('must not install') }
+    })
+    const backend = restrictCommunityPackageBackend(raw, { authorizePluginMutation: async () => {} }, { releaseQuarantine })
+    const result = await backend.install({ kind: 'registry', spec: 'demo@1.0.0', expectedName: 'demo' })
+    expect(result.packageResult).toMatchObject({ exitCode: 1, output: expect.stringContaining('POLICY_DISABLED') })
+    expect(releaseQuarantine).not.toHaveBeenCalled()
     expect(await readDesired(home)).toEqual([])
   })
 

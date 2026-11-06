@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 const projectRoot = path.resolve(import.meta.dirname, '..')
 
 interface Registration {
-  config: { name: string; id?: string; order?: number }
+  config: { name: string; id?: string; order?: number; key?: string }
   component: (props: Record<string, unknown>) => unknown
 }
 
@@ -107,7 +107,10 @@ describe('BISHENG client slot occupants', () => {
     expect(registrations.map(({ config }) => config.name)).toEqual([
       'shell.overlay',
       'shell.overlay',
+      'main',
+      'conversation.header.leading',
       'sidebar.primaryNavigation',
+      'sidebar.panellist.actions',
       'sidebar.workspaces.title',
       'desktop.mode.content',
       'sidebar.workspaces.collection',
@@ -120,6 +123,7 @@ describe('BISHENG client slot occupants', () => {
       'sidebar.workspaces.session.menu.item',
       'sidebar.workspaces.session.menu.item'
     ])
+    expect(registrations.find(({ config }) => config.name === 'main')?.config.key).toBe('desktop-chat')
     // Desktop toolbar styles have an owned lifetime; branding stays in currentColor.
     expect(appended).toHaveLength(2)
     // Match Harness panelList spacing without changing navigation's outer padding.
@@ -128,13 +132,54 @@ describe('BISHENG client slot occupants', () => {
     // The in-place dropdown fills its trigger wrapper instead of shrink-wrapping its labels.
     expect(appended[0]?.textContent).toContain('.dshNavigationMenu .dshNavigationMenuList{width:100%;min-width:0;max-width:100%;box-sizing:border-box}')
     const primaryNavigation = registrations.find(({ config }) => config.name === 'sidebar.primaryNavigation')!.component
+    const startSpy = vi.fn(() => vi.fn())
+    const mockEntries = [
+      { id: 'knowledge', label: 'Knowledge' },
+      { id: 'apps', label: 'Apps' },
+      { id: 'skills', label: 'Skills' }
+    ]
+    const zhDict: Record<string, string> = { knowledge: '知识空间', apps: '应用中心', skills: '企业技能' }
+    const zhTranslate = (key: string) => zhDict[key] || key
     for (const wide of [true, false]) {
       const nav = primaryNavigation({
-        wide, panels: [], navigation: { subscribe: vi.fn(), snapshot: () => ({ mode: 'work' }) }, t: (key: string) => key
+        wide, panels: [], navigation: { subscribe: vi.fn(), snapshot: () => ({ mode: 'work', connected: true, navigation: { entries: mockEntries } }), start: startSpy }, t: zhTranslate
       }) as { props: Record<string, unknown> }
       expect(nav.props.className).toBe('dshPrimaryNavigation')
       expect(nav.props['data-wide']).toBe(wide)
+      expect(startSpy).toHaveBeenCalled()
+      const children = (nav.props.children as Array<any>).filter(Boolean)
+      const menu = children.find(child => child?.props?.items)
+      expect(menu).toBeDefined()
+      expect(menu.props.portal).toBe(true)
+      expect(menu.props.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'web:knowledge', label: '知识空间' }),
+        expect.objectContaining({ id: 'web:apps', label: '应用中心' }),
+        expect.objectContaining({ id: 'web:skills', label: '企业技能' })
+      ]))
     }
+
+    const panelActions = registrations.find(({ config }) => config.name === 'sidebar.panellist.actions')!.component
+    const actionsNav = { subscribe: vi.fn(), snapshot: () => ({ mode: 'work', connected: true, navigation: { entries: mockEntries } }), start: startSpy, openPage: vi.fn() }
+    const dismissSpy = vi.fn()
+    const openSpy = vi.fn()
+    const renderedActions = panelActions({
+      onDismiss: dismissSpy, onOpen: openSpy, navigation: actionsNav, t: zhTranslate
+    }) as { props: Record<string, unknown> }
+    const actionItems = renderedActions.props.children as Array<{ props: { onSelect: () => void; children: string } }>
+    expect(actionItems).toHaveLength(3)
+    expect(actionItems.map(item => Array.isArray(item.props.children) ? item.props.children[0] : item.props.children)).toEqual(['知识空间', '应用中心', '企业技能'])
+    actionItems[0]!.props.onSelect()
+    expect(dismissSpy).toHaveBeenCalled()
+    expect(actionsNav.openPage).toHaveBeenCalledWith('knowledge')
+    expect(panelActions({ onDismiss: dismissSpy, onOpen: openSpy, navigation: { subscribe: vi.fn(), snapshot: () => ({ mode: 'work', connected: true }) }, t: zhTranslate })).toBeNull()
+
+    // When English locale is selected, entry labels translate to English
+    const enDict: Record<string, string> = { knowledge: 'Knowledge Spaces', apps: 'App Store', skills: 'Skills' }
+    const enActions = panelActions({
+      onDismiss: dismissSpy, onOpen: openSpy, navigation: actionsNav, t: (key: string) => enDict[key] || key
+    }) as { props: Record<string, unknown> }
+    const enActionItems = enActions.props.children as Array<{ props: { children: string } }>
+    expect(enActionItems.map(item => Array.isArray(item.props.children) ? item.props.children[0] : item.props.children)).toEqual(['Knowledge Spaces', 'App Store', 'Skills'])
     // A native WebContentsView steals window focus without an iframe target.
     menuOpen = true
     primaryNavigation({

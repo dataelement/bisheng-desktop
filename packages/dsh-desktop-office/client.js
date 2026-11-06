@@ -107,9 +107,9 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
   }
 
   // Share the existing Composer seat geometry used by the PPT chooser.
-  function useDockGeometry(root, panel, visible) {
+  function useDockGeometry(root, panel, visible, flow) {
     React.useLayoutEffect(() => {
-      if (!visible || !root.current || !panel.current) return
+      if (flow || !visible || !root.current || !panel.current) return
       const element = root.current, body = element.closest('[data-conversation-scroll]')
       const card = element.closest('[data-composer-seat]')?.querySelector('[data-composer-card]')
       if (!body || !card) return
@@ -126,7 +126,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
         window.cancelAnimationFrame(frame); observer?.disconnect(); window.removeEventListener('resize', sync)
         element.style.removeProperty('--dso-dock-width'); element.style.removeProperty('--dso-dock-height')
       }
-    }, [root, panel, visible])
+    }, [root, panel, visible, flow])
   }
 
   function Preview({ item, store, sessionId, t, choose, close, busy, actionError }) {
@@ -192,22 +192,24 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
         choose ? h('button', { type: 'button', className: 'dso-use', disabled: busy || !!error || !preview, onClick: async () => { if (await choose(item) && active.current) close() } }, busy ? t('loading') : t('use')) : null))
   }
 
-  function ModeActions({ store, sessionId, t }) {
+  function ModeActions({ store, sessionId, session, t }) {
     const state = useOffice(store, sessionId)
+    if (session && !session.blank) return null
     return h(React.Fragment, null, ['word', 'excel'].map(mode => h('button', { key: mode, type: 'button', className: 'dso-mode-action', 'data-office-mode': mode,
       'aria-pressed': state.mode === mode, 'aria-expanded': state.mode === mode, disabled: state.loading || state.busy, onClick: () => store.mutate(sessionId, 'mode', { mode: state.mode === mode ? null : mode }) }, h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.75, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
         h('path', { d: mode === 'word' ? 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13h8M8 17h6' : 'M4 3h16a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1ZM3 9h18M3 15h18M9 3v18M15 3v18' })), mode === 'word' ? 'Word' : 'Excel')),
       state.error ? h('span', { role: 'alert' }, state.error, h('button', { type: 'button', onClick: () => store.load(sessionId, true) }, t('retry'))) : null)
   }
-  function Dock({ store, sessionId, session, t }) {
+  function Dock({ store, sessionId, session, t, flow = false, inlineAccessory = flow }) {
     const state = useOffice(store, sessionId), [opened, setOpened] = React.useState(null)
     const root = React.useRef(), panel = React.useRef(), visible = !!state.mode && (session == null || session.blank === true)
-    useDockGeometry(root, panel, visible)
+    useDockGeometry(root, panel, visible, flow)
     React.useEffect(() => setOpened(null), [sessionId, state.mode])
     React.useEffect(() => { if (opened && state.templates.find(item => item.id === opened.id)?.revision !== opened.revision) setOpened(null) }, [state.templates, opened])
     if (!visible) return null
     const items = state.templates.filter(item => item.mode === state.mode)
-    return h('div', { ref: root, className: 'dso-dock-root' }, h('section', { ref: panel, className: 'dso-dock', 'data-office-dock': state.mode, 'aria-label': t('templates') },
+    return h('div', { ref: root, className: 'dso-dock-root', 'data-layout': flow ? 'flow' : undefined }, h('section', { ref: panel, className: 'dso-dock', 'data-office-dock': state.mode, 'aria-label': t('templates') },
+      inlineAccessory ? h(Accessory, { store, sessionId, session, t }) : null,
       h('div', { className: 'dso-viewport', 'data-native-wheel-owner': '' },
       state.error ? h('div', { role: 'alert' }, state.error, h('button', { type: 'button', onClick: () => store.load(sessionId, true) }, t('retry'))) : null,
       state.selectionExpired ? h('p', { role: 'status' }, t('expired')) : null,
@@ -217,6 +219,9 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
       opened ? h(Preview, { key: `${sessionId}:${opened.id}`, item: opened, store, sessionId, t, close: () => setOpened(null), busy: state.busy, actionError: state.error,
         choose: item => store.mutate(sessionId, 'select', { templateId: item.id, revision: item.revision }) }) : null))
   }
+  // Modern hero options own the controls; the shared dock owns the panel.
+  function ModernDock(props) { return h(Dock, { ...props, flow: true }) }
+  function PositionedDock(props) { return h(Dock, { ...props, flow: true, inlineAccessory: false }) }
   function Accessory({ store, sessionId, session, t }) {
     const state = useOffice(store, sessionId), [opened, setOpened] = React.useState(false)
     React.useEffect(() => setOpened(false), [sessionId, state.selectedTemplateId, session?.blank])
@@ -227,11 +232,11 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
       h('button', { type: 'button', className: 'dso-selected-remove', disabled: state.busy, 'aria-label': t('remove'), onClick: () => store.mutate(sessionId, 'deselect', {}) }, '×')),
       opened ? h(Preview, { item, store, sessionId, t, close: () => setOpened(false), busy: state.busy }) : null)
   }
-  function OpeningTemplate({ store, sessionId, leading, t }) {
+  function OpeningTemplate({ store, sessionId, t }) {
     const state = useOffice(store, sessionId), [opened, setOpened] = React.useState(false)
     const item = state.templates.find(item => item.id === state.selectedTemplateId && item.mode === state.mode)
-    React.useEffect(() => setOpened(false), [sessionId, state.selectedTemplateId, leading])
-    if (leading !== true || !item) return null
+    React.useEffect(() => setOpened(false), [sessionId, state.selectedTemplateId])
+    if (!item) return null
     return h(React.Fragment, null,
       h('div', { className: 'dso-opening-row', 'data-office-opening-template': item.id, 'data-mode': item.mode },
         h('svg', { className: 'dso-opening-file', width: 22, height: 26, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.75, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
@@ -240,11 +245,27 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
         h('button', { type: 'button', className: 'dso-opening-title', 'aria-haspopup': 'dialog', 'aria-label': `${t('preview')} ${titleOf(item, t)}`, onClick: () => setOpened(true) }, titleOf(item, t))),
       opened ? h(Preview, { item, store, sessionId, t, close: () => setOpened(false), busy: state.busy }) : null)
   }
+  function LegacyOpeningTemplate({ leading, ...props }) {
+    return leading === true ? h(OpeningTemplate, props) : null
+  }
+  // Read only the public Chat node order and durable identity. A tail page is
+  // not evidence that its first loaded human opened the whole conversation.
+  function firstHumanMessage(chat) {
+    for (const key of chat.order) {
+      const node = chat.nodes.get(key)
+      if (node?.kind === 'user' && node.data.source?.kind === 'user') return node.data.messageId
+    }
+  }
+  function ModernOpeningTemplate({ messageId, source, kind, useChat, useSession, ...props }) {
+    const first = useChat(firstHumanMessage), hasMore = useSession(session => session.hasMore)
+    return kind === 'user' && source?.kind === 'user' && typeof messageId === 'string' && hasMore === false && first === messageId ? h(OpeningTemplate, props) : null
+  }
   const css = `
 .dso-opening-row{display:flex;align-items:center;gap:6px;min-width:0}.dso-opening-row:not(:first-child){margin-top:8px;padding-top:8px;border-top:.5px solid var(--dsw-alias-border-l2)}.dso-opening-file{flex:none;color:var(--dsw-alias-state-business-primary)}.dso-opening-row[data-mode=excel] .dso-opening-file{color:var(--dsw-alias-state-success-primary)}.dso-opening-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:0;background:transparent;padding:0;color:var(--dsw-alias-state-business-primary);font:inherit;font-size:13px;line-height:20px;text-align:left;cursor:pointer}.dso-opening-title:hover{text-decoration:underline}.dso-opening-title:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
 .dso-preview-actions{display:flex;gap:12px;align-items:center}
 .dso-mode-action{display:inline-flex;align-items:center;gap:6px;line-height:16px;font:inherit;font-size:12px;border-radius:999px;padding:7px 13px;background:transparent;border:1px solid var(--dsw-alias-border-l2-darkmode-thin);color:var(--dsw-alias-label-secondary);cursor:pointer}.dso-mode-action[aria-pressed=true]{color:var(--dsw-alias-label-primary-foreground)!important;border-color:var(--dsw-alias-label-primary);background:var(--dsw-alias-label-primary)!important}
 .dso-dock-root{box-sizing:border-box;position:relative;width:100%;height:0;padding:0 var(--dsh-composer-side-clearance);overflow:visible}.dso-dock{box-sizing:border-box;position:absolute;top:0;left:50%;transform:translateX(-50%);z-index:2;display:flex;flex-direction:column;width:var(--dso-dock-width,var(--dsh-composer-card-max-width,100%));max-width:calc(100vw - 32px);height:var(--dso-dock-height,calc(100dvh - 178px));margin-top:8px;color:var(--dsw-alias-label-primary);font-size:12px}.dso-viewport{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:4px 4px 12px;scrollbar-width:none}.dso-viewport::-webkit-scrollbar{display:none}.dso-sheets{display:flex;align-items:center;flex:none;overflow:auto;gap:4px;scrollbar-width:none}.dso-sheets::-webkit-scrollbar{display:none}.dso-sheets button{font:inherit;font-size:11px;line-height:16px;border:0;border-radius:999px;padding:5px 10px;flex:none;color:var(--dsw-alias-label-caption);background:transparent;cursor:pointer}.dso-sheets button:hover{color:var(--dsw-alias-label-primary)}.dso-sheets button[aria-pressed=true]{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dso-dock-root[data-layout=flow]{height:auto;padding:0}.dso-dock-root[data-layout=flow] .dso-dock{position:relative;top:auto;left:auto;transform:none;width:100%;max-width:var(--dsh-composer-card-max-width,100%);height:auto;max-height:50dvh;margin-left:auto;margin-right:auto}.dso-dock-root[data-layout=flow] .dso-selected{flex:none;padding:8px 4px 12px}
 .dso-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 14px}.dso-card{min-width:0;position:relative}.dso-card-select{font:inherit;display:flex;flex-direction:column;width:100%;padding:0;min-width:0;border:0;text-align:center;background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer}.dso-card-select:disabled{cursor:default;opacity:.65}.dso-cover{box-sizing:border-box;display:block;position:relative;width:100%;aspect-ratio:16/9;border:2px solid transparent;border-radius:9px;overflow:hidden;background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 5%,var(--dsw-alias-bg-layer-1))}.dso-cover[data-mode=excel]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 6%,var(--dsw-alias-bg-layer-1))}.dso-thumbnail{display:block;width:100%;border-radius:8px;overflow:hidden}.dso-thumbnail img{display:block;width:100%;height:auto}.dso-cover>.dso-thumbnail{position:absolute;left:13%;top:14%;width:74%;box-shadow:0 2px 10px color-mix(in srgb,var(--dsw-alias-label-primary) 15%,transparent);transform-origin:center top;transition:transform 180ms cubic-bezier(.23,1,.32,1)}.dso-cover[data-mode=excel]>.dso-thumbnail{left:8%;width:84%;height:100%}.dso-card[data-selected=true] .dso-cover{border-color:var(--dsw-alias-state-business-primary)}.dso-card-name{display:block;box-sizing:border-box;width:100%;padding-top:5px;text-align:center;font-size:12px;line-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dso-card[data-selected=true] .dso-card-name{color:var(--dsw-alias-label-primary)}.dso-card-preview{position:absolute;left:10px;top:10px;z-index:1;display:grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid var(--dsw-alias-border-l2-darkmode-thin);border-radius:7px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);cursor:pointer;opacity:0;transition:opacity 120ms ease}.dso-card:hover .dso-card-preview,.dso-card:focus-within .dso-card-preview{opacity:1}.dso-card-preview:disabled{cursor:default}.dso-card-select:active:not(:focus-visible) .dso-thumbnail{transform:scale(.98)}
 @media(hover:hover) and (pointer:fine){.dso-card:has(.dso-card-select:enabled):hover .dso-thumbnail{transform:translateY(-3px) scale(1.045)}}@media(hover:none){.dso-card-preview{opacity:1}}@media(prefers-reduced-motion:reduce){.dso-cover>.dso-thumbnail,.dso-card-preview{transition:none}.dso-card:has(.dso-card-select:enabled):hover .dso-thumbnail,.dso-card-select:active:not(:focus-visible) .dso-thumbnail{transform:none}}
 /* Match the detailed viewer in PPT PR 675; Office keeps its native page navigation. */
@@ -281,9 +302,36 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     ctx.effect(() => { if (document.querySelector('style[data-plugin-css="desktop-office/styles"]')) return; const tag = document.createElement('style'); tag.dataset.plugin = NS; tag.dataset.pluginCss = 'desktop-office/styles'; tag.textContent = css; document.head.append(tag); return () => tag.remove() }, 'Office styles')
     ctx.effect(() => { const listener = event => store.syncPpt(event.detail ?? {}); window.addEventListener(EVENT, listener); return () => { window.removeEventListener(EVENT, listener); store.dispose() } }, 'Office mode synchronization')
     ctx.on('connection/reset', () => store.reset())
-    for (const [seat, component] of [['conversation.hero.modeActions', ModeActions], ['conversation.input.accessory', Accessory], ['conversation.chat.userMessageFooter', OpeningTemplate], ['conversation.hero.dock', Dock], ['conversation.composer.dock', Dock]]) {
-      ctx.slots.inject(seat, () => ctx.slots.register({ name: seat, id: NS, order: seat === 'conversation.hero.modeActions' ? 30 : 10, locale: NS, inject: () => ({ store }) }, component))
-    }
+    const register = (seat, component) => ctx.slots.register({ name: seat, id: NS, order: seat === 'conversation.hero.modeActions' || seat === 'conversation.hero.options' ? 30 : 10, locale: NS, inject: () => ({ store }) }, component)
+    const mount = (seat, component) => ctx.slots.inject(seat, () => register(seat, component))
+    const legacy = () => typeof ctx.slots.spec !== 'function' || ctx.slots.spec('conversation.hero.modeActions') !== undefined
+    ctx.slots.inject('conversation.input.dock', () => {
+      if (legacy()) return () => {}
+      const stopActions = mount('conversation.hero.options', ModeActions)
+      let stopping = false
+      let fallback = register('conversation.input.dock', ModernDock)
+      const stopAfter = ctx.slots.inject('conversation.input.after', () =>
+        ctx.slots.inject('conversation.input.inside', () => {
+          fallback?.()
+          fallback = undefined
+          const stopPanel = register('conversation.input.after', PositionedDock)
+          const stopAccessory = register('conversation.input.inside', Accessory)
+          return () => {
+            stopAccessory()
+            stopPanel()
+            if (!stopping) fallback = register('conversation.input.dock', ModernDock)
+          }
+        }))
+      return () => {
+        stopping = true
+        stopAfter()
+        fallback?.()
+        stopActions()
+      }
+    })
+    for (const [seat, component] of [['conversation.hero.modeActions', ModeActions], ['conversation.input.accessory', Accessory], ['conversation.chat.userMessageFooter', LegacyOpeningTemplate], ['conversation.hero.dock', Dock]]) mount(seat, component)
+    ctx.slots.inject('conversation.chat.user.references', () => ctx.slots.register({ name: 'conversation.chat.user.references', id: NS, locale: NS, inject: () => ({ store }) }, ModernOpeningTemplate))
+    ctx.slots.inject('conversation.composer.dock', () => legacy() ? register('conversation.composer.dock', Dock) : () => {})
   }
   return { apply, inject: ['slots', 'locale', 'connection'] }
 } })

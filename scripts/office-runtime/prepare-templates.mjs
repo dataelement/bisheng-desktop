@@ -96,7 +96,7 @@ export async function canonicalizeOfficeText(root) {
 }
 
 /** Generate all previews with the same installed Kit used by Office tasks. */
-export async function prepareOfficeTemplates({ runtime = join(project, '.build/office-runtime'), cache = join(project, '.build/office-template-cache') } = {}) {
+export async function prepareOfficeTemplates({ runtime = join(project, '.build/office-runtime'), cache = join(project, '.build/office-template-cache'), node, cli: cliPath } = {}) {
   const manifest = JSON.parse(await readFile(join(runtime, 'primary-runtime/runtime.json'), 'utf8'))
   const python = join(runtime, 'primary-runtime/dependencies/python', ...(manifest.platform === 'win32' ? ['python.exe'] : ['bin/python3']))
   const kit = JSON.parse(await readFile(join(project, 'node_modules/@deepseek-ai/libreoffice-kit/package.json'), 'utf8'))
@@ -128,7 +128,7 @@ export async function prepareOfficeTemplates({ runtime = join(project, '.build/o
         const produced = outputFlag >= 0 ? args[outputFlag + 1] : directoryFlag >= 0 ? args[directoryFlag + 1] : undefined
         // A timed-out helper may leave the exclusive output behind; the next call opens it with wx.
         if (produced) await rm(produced, { recursive: true, force: true })
-        const command = officeCliCommand(electronExecutable(project), join(project, 'build/office-cli.mjs'), args)
+        const command = officeCliCommand(node ?? electronExecutable(project), cliPath ?? join(project, 'build/office-cli.mjs'), args)
         const { stdout } = await exec(command.file, command.args,
           { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: command.timeout, maxBuffer: 4 * 1024 * 1024, windowsHide: true })
         return JSON.parse(stdout.trim())

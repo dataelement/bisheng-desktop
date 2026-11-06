@@ -74,6 +74,16 @@ export async function performMarketAction(manager, source, market, input) {
   // Configuration belongs to the enterprise instance, not the shared Profile.
   if (input.action === 'configure') return market.act(input)
   if (!['install', 'enable', 'disable', 'uninstall'].includes(input.action)) throw new Error('Unknown plugin operation.')
+  // An unpatched Manager would pass the ticket to its generic package backend.
+  if (manager.managedBundleSourceContract !== 1) {
+    // Local recovery must remain available without handing targets to pnpm.
+    if (input.action === 'disable' || input.action === 'uninstall') {
+      const expectedAccountKey = market.state().accountKey
+      if (!expectedAccountKey) throw new Error('Sign in and select an enterprise plugin.')
+      return market.act({ ...input, expectedAccountKey })
+    }
+    throw new Error('Plugin Manager does not support enterprise managed sources. Update BISHENG Desktop.')
+  }
   const prepared = source.prepare(input)
   try {
     const result = input.action === 'install'

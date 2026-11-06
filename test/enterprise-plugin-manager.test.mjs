@@ -55,6 +55,37 @@ describe('enterprise source through the real Plugin Manager methods', () => {
     expect(events.filter(([name]) => name === 'plugin-manager/changed')).toHaveLength(4)
   })
 
+  it('refuses an unpatched Manager before preparing or submitting managed targets', async () => {
+    const { source, market } = await fixture()
+    const manager = { installBundle: vi.fn(), removeBundle: vi.fn(), setBundleEnabled: vi.fn() }
+    const prepare = vi.spyOn(source, 'prepare')
+    for (const action of ['install', 'enable']) {
+      await expect(performMarketAction(manager, source, market, { action, plugin_id: id })).rejects.toThrow('does not support enterprise managed sources')
+    }
+    expect(prepare).not.toHaveBeenCalled()
+    expect(manager.installBundle).not.toHaveBeenCalled()
+    expect(manager.removeBundle).not.toHaveBeenCalled()
+    expect(manager.setBundleEnabled).not.toHaveBeenCalled()
+    expect(market.act).not.toHaveBeenCalled()
+  })
+
+  it('allows account-scoped recovery without invoking an unpatched Manager', async () => {
+    const { source, market, switchAccount } = await fixture()
+    const manager = { installBundle: vi.fn(), removeBundle: vi.fn(), setBundleEnabled: vi.fn() }
+    await market.act({ action: 'install', plugin_id: id, expectedAccountKey: key })
+    await performMarketAction(manager, source, market, { action: 'disable', plugin_id: id })
+    expect(market.state().installed[0].status).toBe('disabled')
+    expect(market.act).toHaveBeenLastCalledWith({ action: 'disable', plugin_id: id, expectedAccountKey: key })
+    await performMarketAction(manager, source, market, { action: 'uninstall', plugin_id: id })
+    expect(market.state().installed).toEqual([])
+    expect(market.act).toHaveBeenLastCalledWith({ action: 'uninstall', plugin_id: id, expectedAccountKey: key })
+    expect(manager.removeBundle).not.toHaveBeenCalled()
+    expect(manager.setBundleEnabled).not.toHaveBeenCalled()
+    const act = market.act.getMockImplementation()
+    market.act.mockImplementationOnce(async input => { switchAccount(); return act(input) })
+    await expect(performMarketAction(manager, source, market, { action: 'disable', plugin_id: id })).rejects.toThrow('Enterprise account changed.')
+  })
+
   it('rejects stale account targets and consumes install tickets exactly once', async () => {
     const { manager, source, market, switchAccount } = await fixture()
     const prepared = source.prepare({ action: 'install', plugin_id: id })
@@ -89,6 +120,7 @@ describe('enterprise workbench lifecycle', () => {
     const release = vi.fn()
     const packages = { open: vi.fn(async () => ({ path: '/temporary/verified.tgz', packageName: 'company-workbench', version: '1.0.0', release })) }
     const manager = {
+      verifiedInstallContract: 1,
       listBundles: vi.fn(async () => []),
       installBundle: vi.fn(async () => ({ application, stage: 'enable', bundle: 'company-workbench', changed: true, ...(application === 'restart-required' ? { restartReason: 'no-hmr' } : {}) }))
     }

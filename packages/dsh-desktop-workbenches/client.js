@@ -172,10 +172,21 @@ window.__ModuleLoader__.load({
       listeners: new Set(),
       // The general-settings switch is hidden. A stored "true" still turns the
       // feature on; anything else keeps it off.
-      enabled: (() => { try { return window.localStorage.getItem(WORKBENCH_PREF) === 'true' } catch { return false } })(),
+      enabled: (() => {
+        try {
+          return window.localStorage.getItem(WORKBENCH_PREF) === 'true' || window.localStorage.getItem('dsh_workbench') === 'true'
+        } catch { return false }
+      })(),
       subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener) },
       getSnapshot() { return this.enabled },
-      set(value) { this.enabled = !!value; try { window.localStorage.setItem(WORKBENCH_PREF, String(this.enabled)) } catch {} ; for (const listener of this.listeners) listener() }
+      set(value) {
+        this.enabled = !!value
+        try {
+          window.localStorage.setItem(WORKBENCH_PREF, String(this.enabled))
+          window.localStorage.setItem('dsh_workbench', String(this.enabled))
+        } catch {}
+        for (const listener of this.listeners) listener()
+      }
     }
     const policyWorkbenchCopy = {
       zh: '当前企业未开放网络工作台安装',
@@ -693,8 +704,13 @@ window.__ModuleLoader__.load({
         const names = [...new Set([...this.providers.keys(), ...Object.values(this.knownProviders).map(item => item.sourcePackage)])].filter(name => typeof name === 'string').slice(0, 64)
         const evidenceQuery = names.map(name => `package=${encodeURIComponent(name)}`).join('&')
         const response = await this.request(evidenceQuery ? `${MARKET_INSTALLS_API}?${evidenceQuery}` : MARKET_INSTALLS_API, { credentials: 'same-origin', cache: 'no-store' })
-        const data = await response.json()
-        if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`)
+        let data
+        try { data = await response.json() }
+        catch (error) {
+          if (response.ok || error?.name !== 'SyntaxError') throw error
+          data = {}
+        }
+        if (!response.ok) throw new Error(data?.error || `HTTP ${response.status}`)
         if (data.packages && typeof data.packages === 'object') this.packageEvidence = data.packages
         return data.installs && typeof data.installs === 'object' ? data.installs : {}
       }
@@ -707,11 +723,16 @@ window.__ModuleLoader__.load({
           const response = await this.request(path, {
             method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: catalogId, ...options })
           })
-          const data = await response.json()
+          let data
+          try { data = await response.json() }
+          catch (error) {
+            if (response.ok || error?.name !== 'SyntaxError') throw error
+            data = {}
+          }
           if (!response.ok) {
             const policyDisabled = data?.error === 'POLICY_DISABLED' || (typeof data?.error === 'string' && data.error.startsWith('POLICY_DISABLED:'))
             const error = new Error(policyDisabled ? apiErrorMessage(data, response.status, this.ctx) : installErrorMessage(this.ctx, data, response.status))
-            if (response.status === 409 && data.code === 'confirmation_required' && (data.params?.updateRisk === 'local' || data.params?.updateRisk === 'modified')) {
+            if (response.status === 409 && data?.code === 'confirmation_required' && (data.params?.updateRisk === 'local' || data.params?.updateRisk === 'modified')) {
               error.code = 'confirmation_required'
               error.updateRisk = data.params.updateRisk
             }
@@ -1761,7 +1782,7 @@ window.__ModuleLoader__.load({
     function WorkbenchSidebarSwitcher({ service, wide, startSession, usePanelInfo }) {
       useHostLocale(service)
       const { state, catalog, ready, pending, marketOpen, switcherHint } = useWorkbench(service)
-      const activePanelId = usePanelInfo((info) => info.activePanelId)
+      const activePanelId = typeof usePanelInfo === 'function' ? usePanelInfo((info) => info?.activePanelId) : (marketOpen ? PANEL : null)
       const marketSelected = activePanelId === PANEL
       const enabled = React.useSyncExternalStore(workbenchPreference.subscribe.bind(workbenchPreference), workbenchPreference.getSnapshot.bind(workbenchPreference))
       const enterprise = React.useSyncExternalStore(enterpriseCapability.subscribe.bind(enterpriseCapability), enterpriseCapability.getSnapshot.bind(enterpriseCapability))
@@ -2680,12 +2701,13 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
             account = { connected: false }
           }
           if (disposed || request !== revision) return
-          expiresAt = Date.parse(account?.sessionExpiresAt) || 0
-          const connected = account?.connected === true && expiresAt > Date.now()
+          expiresAt = account?.sessionExpiresAt ? (Date.parse(account.sessionExpiresAt) || 0) : 0
+          const connected = account?.connected === true && (expiresAt === 0 || expiresAt > Date.now())
           clearTimeout(expiryTimer)
-          if (connected) expiryTimer = setTimeout(() => { void sync() }, Math.min(expiresAt - Date.now() + 1, 2_147_483_647))
+          if (connected && expiresAt > Date.now()) expiryTimer = setTimeout(() => { void sync() }, Math.min(expiresAt - Date.now() + 1, 2_147_483_647))
           const previousConnected = enterpriseCapability.getSnapshot().connected
           const previousKey = service.enterpriseAccountKey
+          const accountChanged = previousKey !== (account?.connectionKey || '')
           if (!connected || (previousKey && account.connectionKey && account.connectionKey !== previousKey)) {
             service.enterpriseTicket += 1
             service.enterpriseCatalog = []
@@ -2703,7 +2725,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           service.networkMarketAllowed = marketAllowed
           if (!marketAllowed) service.closePublicMarket()
           service.publish()
-          if (connected) service.run(service.refreshEnterpriseCatalog())
+          if (connected && (accountChanged || service.enterpriseCatalogStatus === 'idle')) service.run(service.refreshEnterpriseCatalog())
         }
         const syncTab = () => {
           disposeTab?.()
@@ -2762,16 +2784,20 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
         })
         : undefined, 'workbenches: new session scope')
       ctx.effect(() => ctx.sessions.list.subscribe(() => service.selectionChanged()), 'workbenches: session navigation')
-      ctx.effect(() => ctx.uiWorkspace.registerSessionReuseFilter((sessionId) => !service.state.sessionBindings[sessionId]), 'workbenches: blank session reuse')
-      ctx.effect(() => ctx.uiWorkspace.registerSessionOpener((sessionId, source = 'explicit-session', context) => {
-        if (!workbenchPreference.getSnapshot()) return false
-        if (service.internalSessionOpen === sessionId) return false
-        if (source === 'workspace' && service.routeWorkspaceSession(sessionId, context)) return true
-        const id = service.state.sessionBindings[sessionId]
-        if (!service.ready || !id || !service.state.added.includes(id) || !service.catalog.has(id) || service.activationFor(service.catalog.get(id)) === 'off') return false
-        service.run(service.open(id, sessionId))
-        return true
-      }), 'workbenches: open linked session')
+      ctx.effect(() => typeof ctx.uiWorkspace.registerSessionReuseFilter === 'function'
+        ? ctx.uiWorkspace.registerSessionReuseFilter((sessionId) => !service.state.sessionBindings[sessionId])
+        : undefined, 'workbenches: blank session reuse')
+      ctx.effect(() => typeof ctx.uiWorkspace.registerSessionOpener === 'function'
+        ? ctx.uiWorkspace.registerSessionOpener((sessionId, source = 'explicit-session', context) => {
+          if (!workbenchPreference.getSnapshot()) return false
+          if (service.internalSessionOpen === sessionId) return false
+          if (source === 'workspace' && service.routeWorkspaceSession(sessionId, context)) return true
+          const id = service.state.sessionBindings[sessionId]
+          if (!service.ready || !id || !service.state.added.includes(id) || !service.catalog.has(id) || service.activationFor(service.catalog.get(id)) === 'off') return false
+          service.run(service.open(id, sessionId))
+          return true
+        })
+        : undefined, 'workbenches: open linked session')
       ctx.effect(() => {
         service.run(service.load())
         const beforeUnload = (event) => { if (service.pending || service.blocked || service.draftNotes.size) { event.preventDefault(); event.returnValue = '' } }

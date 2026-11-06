@@ -161,12 +161,13 @@ function sidebarSwitcher({ pinned = [], active = null, title = '工作台', work
   }
   let activePanelId = null
   const render = () => { stateIndex = 0; return renderSidebar({ service, wide: true, startSession: vi.fn(), usePanelInfo: selector => selector({ activePanelId }) }) }
+  const renderWithoutPanelInfo = () => { stateIndex = 0; return renderSidebar({ service, wide: true, startSession: vi.fn() }) }
   const find = (node, predicate) => {
     if (Array.isArray(node)) return node.flatMap(item => find(item, predicate))
     if (!node || typeof node !== 'object') return []
     return [...(predicate(node) ? [node] : []), ...find(node.props?.children, predicate)]
   }
-  return { render, find, service, selectPanel: id => { activePanelId = id } }
+  return { render, renderWithoutPanelInfo, find, service, selectPanel: id => { activePanelId = id } }
 }
 
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); sidebarWide = false; sidebarCollapsed = false; sessionStorage.clear() })
@@ -2467,6 +2468,13 @@ describe('workbench market screenshot and metadata display', () => {
     expect(fullSource).not.toContain('dshWbDockWrap')
     expect(fullSource).not.toContain("ctx.slots.inject('sidebar.footer.action'")
     expect(fullSource).not.toContain('dshWbNavItems')
+  })
+
+  it('safely renders when usePanelInfo is not provided by the sidebar slot', () => {
+    const switcher = sidebarSwitcher({ pinned: ['writer'], active: 'writer' })
+    expect(() => switcher.renderWithoutPanelInfo()).not.toThrow()
+    const tree = switcher.renderWithoutPanelInfo()
+    expect(tree).not.toBeNull()
   })
 
   it('uses one compact grip per Workbench and keeps selection rows non-draggable', () => {

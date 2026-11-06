@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { projectGenerations } from 'dsh-desktop-market-installer/generations/projection'
 import { readDesired, writeDesired, writeGenerationMeta, registryLayout } from 'dsh-desktop-market-installer/generations/registry'
-import { canReenableProfilePlugin, enforceCommunityPluginPolicy } from '../src/main/state/community-plugin-policy'
+import { canReenableProfilePlugin } from '../src/main/state/community-plugin-policy'
+import { enforceCommunityPluginPolicy } from '../src/main/enterprise/startup-plugin-policy'
 import { rm } from 'node:fs/promises'
 
 const homes: string[] = []
@@ -55,6 +56,24 @@ describe('community plugin policy', () => {
     expect(manifest.dependencies['transitive-lib']).toBe('1.2.3')
     expect(manifest.dsh.profile.bundles).toEqual(['community-plugin', '@deepseek-ai/dsh-base', 'dsh-image-generation'])
     expect(notes.filter((line) => line.includes('removed dshmarket'))).toHaveLength(1)
+  })
+
+  it('fails closed for corrupt policy and restores the market only when allowed', async () => {
+    const { home, profile } = await profileHome()
+    const policyDir = join(profile, '.dsh-desktop')
+    await mkdir(policyDir, { recursive: true })
+    await writeFile(join(profile, 'package.json'), JSON.stringify({ dependencies: { dshmarket: '1.0.0' }, dsh: { profile: { bundles: ['dshmarket'] } } }))
+    await writeFile(join(policyDir, 'third-party-policy.json'), '{invalid')
+    const notes: string[] = []
+    await enforceCommunityPluginPolicy(home, line => notes.push(line))
+    expect(JSON.parse(await readFile(join(profile, 'package.json'), 'utf8')).dsh.profile.bundles).toEqual([])
+    await writeFile(join(policyDir, 'third-party-policy.json'), JSON.stringify({ allowThirdPartyPlugins: true }))
+    await enforceCommunityPluginPolicy(home, line => notes.push(line))
+    expect(JSON.parse(await readFile(join(profile, 'package.json'), 'utf8')).dsh.profile.bundles).toEqual(['dshmarket'])
+    expect(notes).toEqual([
+      '[desktop] removed dshmarket from the active profile until third-party plugins are allowed',
+      '[desktop] restored dshmarket to the active profile'
+    ])
   })
 
   it('keeps a switched-off generation installed and out of the running set', async () => {

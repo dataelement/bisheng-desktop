@@ -1,13 +1,14 @@
 // Coverage AC: AC-03, AC-30, AC-31, AC-56.
 import { createServer, type Server } from 'node:http'
+import { unlinkSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { zipSync } from 'fflate'
 // @ts-expect-error Runtime plugin is authored as JavaScript.
 import { skillContentHash } from '../packages/dsh-desktop-enterprise/work-skills.js'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { requestImageDimensions } from '@deepseek-ai/dsh-attachment'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { apply as applyEnterprise } from '../packages/dsh-desktop-enterprise/index.js'
 import { startEnterpriseCredentialBroker } from '../src/main/enterprise/credential-broker'
@@ -126,10 +127,23 @@ async function invoke(routes: RegisteredRoute[], path: string, method = 'GET', b
 
 const adapterCleanups: Array<() => Promise<void>> = []
 
+let testDshHome: string | undefined
+
+beforeEach(async () => {
+  testDshHome = await mkdtemp(join(tmpdir(), 'dsh-test-enterprise-'))
+  process.env.DSH_HOME = testDshHome
+})
+
 afterEach(async () => {
   delete process.env.DSH_DESKTOP_ENTERPRISE_BROKER_URL
   delete process.env.DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY
   delete process.env.DSH_DESKTOP_ENTERPRISE_ALLOW_INSECURE_LOOPBACK
+  delete process.env.DSH_HOME
+  if (testDshHome) {
+    await rm(testDshHome, { recursive: true, force: true }).catch(() => {})
+    testDshHome = undefined
+  }
+  try { unlinkSync(join(homedir(), '.dsh', 'enterprise-session.json')) } catch {}
   while (adapterCleanups.length > 0) await adapterCleanups.pop()?.()
 })
 
@@ -143,14 +157,15 @@ function memorySafeStorage(): SafeStorageCryptoAdapter {
 }
 
 describe('enterprise adapter without a Broker', () => {
-  it('loads and reports a local disabled state', async () => {
+  it('loads and reports a local idle session storage state', async () => {
     const routes = createPluginContext()
     const response = await invoke(routes, '/api/enterprise.state')
     expect(response.status).toBe(200)
     await expect(response.json()).resolves.toEqual({
       connected: false,
-      secureStorageAvailable: false,
-      phase: 'disabled',
+      secureStorageAvailable: true,
+      storageMode: 'session',
+      phase: 'idle',
       revision: 0,
       models: [],
       modelsAvailable: false,
@@ -159,7 +174,7 @@ describe('enterprise adapter without a Broker', () => {
     })
   })
 
-  it('inspects a deep link locally and rejects login until the Broker exists', async () => {
+  it('inspects a deep link locally and handles login without the Broker', async () => {
     const routes = createPluginContext()
     const inspected = await invoke(routes, '/api/enterprise.deep-link.inspect', 'POST', {
       url: 'bisheng://login?server=https%3A%2F%2Fbisheng.example.com'
@@ -185,11 +200,50 @@ describe('enterprise adapter without a Broker', () => {
     const started = await invoke(routes, '/api/enterprise.login.start', 'POST', {
       base: 'https://bisheng.example.com'
     })
-    expect(started.status).toBe(503)
+    expect(started.status).toBe(400)
     await expect(started.json()).resolves.toMatchObject({
-      ok: false,
-      error: 'Enterprise login is not available yet.'
+      ok: false
     })
+  })
+
+  it('completes session authorization and token exchange without a Broker', async () => {
+    process.env.DSH_DESKTOP_ENTERPRISE_ALLOW_INSECURE_LOOPBACK = '1'
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    adapterCleanups.push(async () => {
+      delete process.env.DSH_DESKTOP_ENTERPRISE_ALLOW_INSECURE_LOOPBACK
+      await platform.close()
+    })
+
+    const routes = createPluginContext()
+    const started = await invoke(routes, '/api/enterprise.login.start', 'POST', { base: origin })
+    expect(started.status).toBe(200)
+    const startPayload = await started.json() as { authorizationUrl: string; base: string }
+    expect(startPayload.base).toBe(origin)
+    expect(startPayload.authorizationUrl).toContain('/desktop-login?auth_id=')
+
+    const authId = new URL(startPayload.authorizationUrl).searchParams.get('auth_id')!
+    const authResponse = await fetch(`${origin}/__mock/authorize`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        auth_id: authId,
+        email: 'alice@demo.bisheng.local',
+        password: 'WorkBuddy123!',
+        decision: 'allow'
+      })
+    })
+    const html = await authResponse.text()
+    const match = /<code>([^<]+)<\/code>/.exec(html)
+    expect(match).toBeTruthy()
+    const ticket = match![1]
+
+    const verified = await invoke(routes, '/api/enterprise.login.manual', 'POST', { identityTicket: ticket })
+    expect(verified.status).toBe(200)
+    const verifiedState = await verified.json() as { connected: boolean; storageMode: string; models: unknown[] }
+    expect(verifiedState.connected).toBe(true)
+    expect(verifiedState.storageMode).toBe('session')
+    expect(verifiedState.models.length).toBeGreaterThan(0)
   })
 })
 
@@ -287,7 +341,7 @@ describe('enterprise adapter with a Broker', () => {
     expect(verified.status).toBe(200)
     await expect(verified.json()).resolves.toEqual({ ok: true })
     expect(calls.some(call => call.path === '/v1/state')).toBe(true)
-    expect(calls.map(call => call.path).filter(path => path !== '/v1/state')).toEqual(['/v1/market', '/v1/workbench/verify'])
+    expect(calls.map(call => call.path).filter(path => path !== '/v1/state')).toEqual(['/v1/market', '/v1/market', '/v1/workbench/verify'])
     expect(calls.every(call => call.authorization === 'Bearer ' + capability)).toBe(true)
   })
 

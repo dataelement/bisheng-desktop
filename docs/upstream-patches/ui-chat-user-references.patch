@@ -1,0 +1,211 @@
+diff --git a/packages/client/ui-chat/README.i18n.yaml b/packages/client/ui-chat/README.i18n.yaml
+index 0966845bde..e4f632e017 100644
+--- a/packages/client/ui-chat/README.i18n.yaml
++++ b/packages/client/ui-chat/README.i18n.yaml
+@@ -15,8 +15,8 @@
+   en: 41cd21266011d571
+   zh: 3172d1a2acbb27b7
+ /deepseek-ai-dsh-client-ui-chat/reference-previews:
+-  en: 9386791a9e5efa00
+-  zh: 7cb9f3bbc42319d6
++  en: dded94a66d8c2dba
++  zh: 07bde5c35e734ae4
+ /deepseek-ai-dsh-client-ui-chat/hidden-chat-rows:
+   en: b0c4e6711d69d2f8
+   zh: 09add0ea1a243922
+diff --git a/packages/client/ui-chat/README.md b/packages/client/ui-chat/README.md
+index be43482e8a..b0a5ec26d2 100644
+--- a/packages/client/ui-chat/README.md
++++ b/packages/client/ui-chat/README.md
+@@ -47,6 +47,8 @@ The session-scoped `conversation.chat.user.content` Factory renders only the use
+ 
+ The official user and steering renderer declares the session-scoped `conversation.chat.user.before` chain slot at its `user` registration and renders it directly above the bubble with `renderSlotChain`; the `steering` registration shares the renderer without owning the seat. Owner props carry the durable message `source` and row `kind`; each entry’s `select` matches its own sources, and the first non-null result reaches the elected component as `matched`. No match displays no content. Entries own their markup and copy; Chat does not interpret message sources.
+ 
++The user registration also owns the additive session-scoped `conversation.chat.user.references` list after message content and before actions. Its `UserReferencesOwnerProps` carries `source`, `kind`, and the durable `messageId`. Only ordinary durable user rows with an identity render this list; steering, pending, and local submission echoes do not. Multiple independent references compose without participating in the source chain election. Consumers derive history boundaries from public `useChat` and `useSession` state, and must not treat a paged history window as the start of the conversation.
++
+ Standalone Markdown images show contained previews and open the shared image lightbox; local paths resolve against the viewed workspace after settlement. Image file links keep their sidebar activation and show a thumbnail after hover dwell or keyboard focus. Escape dismisses the thumbnail. Failed images retain a localized status and their description; no duplicate-image filtering is applied.
+ 
+ Settings → General → Open chat links in selects the destination for ordinary clicks on Chat HTTP(S) links: In-App Sidebar (default) opens a new right-Sidebar Browser tab, while Default Browser opens an external tab. The setting follows Keyboard shortcuts and is shown only while the Sidebar Browser is available. If the Sidebar Browser is not registered, both choices use the external browser; modified clicks retain native behavior. The `ui-chat.linkOpening` preference persists on the Host for authenticated browsers and stays process-local when settings cannot persist writes. Sent file references and skills confirmed by the message’s logged invocation also open in the right Sidebar. File paths use the viewed Session; skill names resolve through its current input-trigger source. Both use the prose file-link dotted underline on hover or focus. Sessions, directories, and command labels remain non-navigating references.
+diff --git a/packages/client/ui-chat/README.zh.md b/packages/client/ui-chat/README.zh.md
+index 9c0314fbd8..6d4d124aac 100644
+--- a/packages/client/ui-chat/README.zh.md
++++ b/packages/client/ui-chat/README.zh.md
+@@ -47,6 +47,8 @@ Session 作用域的 `conversation.chat.user.content` Factory 只渲染用户内
+ 
+ 官方 user 与 steering 共用的渲染器在 `user` 注册项上声明 session-scoped `conversation.chat.user.before` chain slot，并在气泡上方直接通过 `renderSlotChain` 渲染；`steering` 注册项复用该渲染器但不拥有该槽位。owner props 携带 Session 记录的持久化消息 `source` 与行 `kind`；各条目的 `select` 匹配自己负责的来源，首个非 null 结果作为 `matched` 交给获选组件。无匹配时不显示内容。条目自行拥有标记和文案；Chat 不解析消息来源。
+ 
++user 注册项还拥有可叠加的 session-scoped `conversation.chat.user.references` list，位于消息内容后、操作栏前。其 `UserReferencesOwnerProps` 携带 `source`、`kind` 和持久化 `messageId`。只有具有真实消息身份的普通持久化 user 行渲染此列表；steering、pending 和本地提交回显不渲染。多个独立引用无需参与来源 chain 选举即可组合。消费者通过公开 `useChat` 与 `useSession` 状态判断历史边界，不得把分页历史窗口当作整个会话的开头。
++
+ 独立的 Markdown 图片以内嵌预览显示，点击打开共享图片浮层；本地路径在消息落定后基于当前查看的工作区解析。图片文件链接保持点击打开侧栏，鼠标停留或键盘聚焦时显示缩略图，Esc 关闭缩略图。图片加载失败时保留本地化状态与图片说明；不执行重复图片过滤。
+ 
+ 设置 → 通用设置 → 网页链接默认打开方式控制普通点击 Chat HTTP(S) 链接时的目标：「应用内侧边栏」（默认）打开新的右侧 Sidebar Browser tab，「默认浏览器」打开外部标签页。该设置项位于快捷键之后，仅在 Sidebar Browser 可用时显示。若 Sidebar Browser 未注册，两种选择均使用外部浏览器；带修饰键的点击保留原生行为。已认证浏览器的 `ui-chat.linkOpening` 偏好在 Host 上持久化，设置无法持久化写入时仅在当前进程内生效。已发送的文件引用及消息日志确认调用的 skill 也可在右侧栏打开预览。文件路径使用当前查看的 Session；skill 名称由该 Session 当前的输入触发源解析。两者悬停或聚焦时均使用正文文件链接的虚线下划线。会话、目录和命令标签仍只作为引用展示。
+diff --git a/packages/client/ui-chat/src/client/chat/MessageItem.tsx b/packages/client/ui-chat/src/client/chat/MessageItem.tsx
+index f9551a8698..28973d1c44 100644
+--- a/packages/client/ui-chat/src/client/chat/MessageItem.tsx
++++ b/packages/client/ui-chat/src/client/chat/MessageItem.tsx
+@@ -177,13 +177,14 @@ const NO_MESSAGE_SOURCE: PropsRenderSlots<'conversation.chat.user.before'>['rend
+ 
+ /** Right-aligned bubble shared by user and steering rows. */
+ function UserStyleBubble({
+-  node, renderSlotChain, content, loadImage, renderFactorySlot, actions,
++  node, renderSlotChain, content, loadImage, renderFactorySlot, actions, references,
+   pending = false, echo = false, batchStart = false,
+   referenceLabels, skillNames, previewAttachments, facts: inputFacts = EMPTY_TEXT_FACTS, interactive = false,
+ }: {
+   content: readonly unknown[]
+   renderFactorySlot: PropsRenderFactories['renderFactorySlot']
+   /** Optional IconActions (or similar) below the bubble; receives the joined text. */
++  references?: ReactNode
+   actions?: (text: string) => ReactNode
+   /** Row whose durable source the message-source seat elects above this bubble. */
+   node: DecoratedRow
+@@ -230,6 +231,7 @@ function UserStyleBubble({
+         facts,
+         interactive,
+       })}
++      {references}
+       {actions?.(prepared.text)}
+     </div>
+   )
+@@ -330,16 +332,18 @@ export function PendingSubmissionBubble({ submission, loadImage, renderFactorySl
+  * bubble without asking for it.
+  */
+ export const UserMessageNodeView = memo(function UserMessageNodeView({
+-  node, renderFactorySlot, loadImage, renderSlotChain, t,
++  node, renderFactorySlot, loadImage, renderSlotChain, renderSlot, t,
+ }: ChatNodeViewProps<'user' | 'steering'> & {
+   /** Bound by the `user` keyed registration, the only entry that declares the seat. */
+   renderSlotChain: PropsRenderSlots<'conversation.chat.user.before'>['renderSlotChain']
++  renderSlot?: PropsRenderSlots<'conversation.chat.user.references'>['renderSlot'] | PropsRenderSlots<never>['renderSlot']
+ }) {
+   const data = node.data
+   return (
+     <UserStyleBubble
+       node={node}
+       renderSlotChain={renderSlotChain}
++      references={node.kind === 'user' && data.messageId !== undefined && typeof renderSlot === 'function' ? renderSlot('conversation.chat.user.references', { source: data.source, kind: node.kind, messageId: data.messageId }) : null}
+       content={data.content}
+       interactive
+       renderFactorySlot={renderFactorySlot}
+diff --git a/packages/client/ui-chat/src/client/chat/register-node-renderers.ts b/packages/client/ui-chat/src/client/chat/register-node-renderers.ts
+index d12619a624..e25f60beb0 100644
+--- a/packages/client/ui-chat/src/client/chat/register-node-renderers.ts
++++ b/packages/client/ui-chat/src/client/chat/register-node-renderers.ts
+@@ -40,7 +40,10 @@ export function registerChatNodeRenderers(
+   }, DefaultReasoningBody))
+   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
+     name: 'conversation.chat.node', key: 'user', locale: NS,
+-    children: { 'conversation.chat.user.before': { kind: 'chain', scope: 'session' } },
++    children: {
++      'conversation.chat.user.before': { kind: 'chain', scope: 'session' },
++      'conversation.chat.user.references': { kind: 'list', scope: 'session' },
++    },
+   }, UserMessageNodeView))
+   // Steering rows share the renderer without owning the message-source seat.
+   ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
+diff --git a/packages/client/ui-chat/src/client/contract/slots.ts b/packages/client/ui-chat/src/client/contract/slots.ts
+index a879601747..0f9f88c887 100644
+--- a/packages/client/ui-chat/src/client/contract/slots.ts
++++ b/packages/client/ui-chat/src/client/contract/slots.ts
+@@ -234,6 +234,12 @@ export interface UserBeforeOwnerProps {
+   readonly kind: 'user' | 'steering'
+ }
+ 
++/** Durable identity for additive references after one ordinary user message. */
++export interface UserReferencesOwnerProps extends UserBeforeOwnerProps {
++  /** Absent for synthetic or transient rows, which do not render references. */
++  readonly messageId?: MessageId | undefined
++}
++
+ /** Stable owner currency delivered to a keyed Chat renderer. */
+ export interface ChatNodeOwnerProps {
+   /** Renderer-owned Node portion selected by the grouping Definition. */
+@@ -454,6 +460,12 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
+      * No match renders no visible content; steering and pending rows do not
+      * render this slot.
+      */
++    /** Additive durable-message references; independent of source-decoration chain election. */
++    'conversation.chat.user.references': {
++      kind: 'list'
++      scope: 'session'
++      owner: UserReferencesOwnerProps
++    }
+     'conversation.chat.user.before': {
+       kind: 'chain'
+       scope: 'session'
+diff --git a/packages/client/ui-chat/src/client/index.ts b/packages/client/ui-chat/src/client/index.ts
+index c785329f0a..4c4e350453 100644
+--- a/packages/client/ui-chat/src/client/index.ts
++++ b/packages/client/ui-chat/src/client/index.ts
+@@ -40,7 +40,7 @@ export type {
+   CommandRowOwnerProps, CommandRowProps, MessageImagesProps, OpenFileOptions, PresentationInjected,
+   QuotaNoticeCode, QuotaNoticeHostProps, QuotaNoticeInjected, QuotaNoticeOwnerProps, QuotaNoticeState,
+   ReasoningBodyOwnerProps, ReasoningContentInput, UserContentAttachment, UserContentData, UserContentInput,
+-  UserBeforeOwnerProps,
++  UserBeforeOwnerProps, UserReferencesOwnerProps,
+   TurnProcessOwnerProps, TurnTailOwnerProps, UseChat, UseChatNodeTurnData, UseDisclosure, UsePresentation, UseGroupAction,
+ } from './contract/slots.ts'
+ export type {
+diff --git a/packages/client/ui-chat/tests/user-origin-slot.client.spec.tsx b/packages/client/ui-chat/tests/user-origin-slot.client.spec.tsx
+index 7a522be8ed..74380882ca 100644
+--- a/packages/client/ui-chat/tests/user-origin-slot.client.spec.tsx
++++ b/packages/client/ui-chat/tests/user-origin-slot.client.spec.tsx
+@@ -14,7 +14,7 @@ import type {
+   ChatConversationViewNode, SteeringMessageNode, UserMessageNode,
+ } from '@deepseek-ai/dsh-client-ui-chat/client'
+ import type { ChatNodeViewProps, UserContentInput } from '../src/client/contract/slots.ts'
+-import { UserMessageNodeView } from '../src/client/chat/MessageItem.tsx'
++import { PendingSteeringBubble, PendingSubmissionBubble, UserMessageNodeView } from '../src/client/chat/MessageItem.tsx'
+ import { zh } from '../src/client/locale.ts'
+ import { createUserContentFixture } from './user-content-component-fixture.tsx'
+ import { unusedImageLoader } from './reasoning-component-fixture.tsx'
+@@ -61,6 +61,7 @@ function viewProps(data: UserMessageNode | SteeringMessageNode): ChatNodeViewPro
+ 
+ const userData: UserMessageNode = {
+   kind: 'user',
++  messageId: 'opening-human' as NonNullable<UserMessageNode['messageId']>,
+   seq: 7,
+   time: 7_000,
+   content: [{ type: 'text', text: 'hello' }] as never,
+@@ -137,3 +138,41 @@ describe('official user renderer origin seat', () => {
+     expect(view.container.querySelector('[data-chat-steering-batch]')).toBeNull()
+   })
+ })
++
++it('distinguishes durable messages sharing a source and keeps identity after history prepend', () => {
++  const later: UserMessageNode = { ...userData, messageId: 'later-human' as NonNullable<UserMessageNode['messageId']>, seq: 11 }
++  const owners: { messageId?: UserMessageNode['messageId'] }[] = []
++  const references: PropsRenderSlots<'conversation.chat.user.references'>['renderSlot'] = (_name, owner) => { owners.push(owner); return <><span data-reference="office">Office</span><span data-reference="ppt">PPT</span></> }
++  const chain = () => <span data-source-decoration="">source</span>
++  const view = render(<UserMessageNodeView {...viewProps(later)} {...userSlots} renderSlotChain={chain} renderSlot={references} />)
++  expect(owners.at(-1)?.messageId).toBe('later-human')
++  expect(view.container.querySelector('[data-source-decoration]')).not.toBeNull()
++  expect(view.container.querySelectorAll('[data-reference]')).toHaveLength(2)
++  const bubble = view.container.querySelector('[data-message-bubble]')
++  const reference = view.container.querySelector('[data-reference]')
++  if (bubble === null || reference === null) throw new Error('Expected message content and references')
++  expect(bubble.compareDocumentPosition(reference) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
++  view.rerender(<>
++    <UserMessageNodeView {...viewProps(userData)} {...userSlots} renderSlotChain={chain} renderSlot={references} />
++    <UserMessageNodeView {...viewProps(later)} {...userSlots} renderSlotChain={chain} renderSlot={references} />
++  </>)
++  expect(owners.slice(-2).map(owner => owner.messageId)).toEqual(['opening-human', 'later-human'])
++})
++
++it('does not decorate pending steering or submission echoes before durable admission', () => {
++  const pending = render(<PendingSteeringBubble content={[{ type: 'text', text: 'pending input' }]} loadImage={unusedImageLoader} renderFactorySlot={renderUserFactory} t={t} />)
++  expect(pending.getByText('pending input')).toBeDefined()
++  expect(pending.container.querySelector('[data-pending-steering]')).not.toBeNull()
++  pending.unmount()
++  const echo = render(<PendingSubmissionBubble submission={{ requestId: 'echo' as never, text: 'echo input', attachments: [], time: 1, placement: 'transcript' }} loadImage={unusedImageLoader} renderFactorySlot={renderUserFactory} t={t} />)
++  expect(echo.getByText('echo input')).toBeDefined()
++  expect(echo.container.querySelector('[data-submission-echo]')).not.toBeNull()
++})
++it('omits additive references for durable steering and user rows without a message identity', () => {
++  const references = vi.fn(() => null)
++  const { messageId: _identity, ...synthetic } = userData
++  const view = render(<UserMessageNodeView {...viewProps(synthetic)} {...userSlots} renderSlot={references} />)
++  expect(references).not.toHaveBeenCalled()
++  view.rerender(<UserMessageNodeView {...viewProps(steeringData)} {...userSlots} renderSlot={references} />)
++  expect(references).not.toHaveBeenCalled()
++})

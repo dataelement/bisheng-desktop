@@ -112,7 +112,7 @@ export function createWorkbenchMarketController(accountController) {
       throw error
     }
     if (started !== epoch || identity() !== key) throw changed()
-    if (!data || data.status_code !== 200) throw invalid(data?.status_message || 'Enterprise workbench request failed.')
+    if (!data || data.status_code !== 200) throw invalid(data?.status_message || 'Enterprise workbench request failed.', Number(data?.status_code) || 400)
     return data.data
   }
   const unavailableResult = () => ({
