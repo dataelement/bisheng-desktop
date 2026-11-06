@@ -3,6 +3,7 @@ import { parseWorkSkillRequest, readSkillBytes } from './work-skills'
 import { parseWorkResourceRequest, readResourceJson } from './work-resources'
 import { parseWorkMcpRequest, sendWorkMcp } from './work-mcp'
 import { parseWebSession, type EnterpriseWebSession } from './web-session'
+import { CloudWorkbenchService } from './cloud-workbench'
 import { parseMarketRequest } from './enterprise-market'
 import { parseEnterpriseResponsesPayload } from './enterprise-responses'
 import { discardWorkbenchArtifact, rememberWorkbenchArtifact, releaseWorkbenchArtifact as releaseRetainedWorkbenchArtifact, verifyWorkbenchArtifactResponse, WORKBENCH_ARTIFACT_LIMIT } from './workbench-artifact'
@@ -130,6 +131,7 @@ export interface EnterpriseServiceNote {
 }
 
 export interface EnterpriseServiceOptions {
+  cloudRoot?: string
   desktopVersion?: string
   activateDesktop?: () => Promise<void> | void
   vault: SecureEnterpriseCredentialVault
@@ -153,6 +155,7 @@ interface PendingLogin {
 }
 
 export class EnterpriseService {
+  private cloudService: CloudWorkbenchService | undefined
   private mutation: Promise<unknown> = Promise.resolve()
   private refreshInFlight: Promise<EnterprisePublicState> | undefined
   private epoch = 0
@@ -1124,6 +1127,63 @@ export class EnterpriseService {
     assertCurrent()
     this.options.note?.({ event: 'web_session_created', status: result.status })
     return parseWebSession(result.body, base, connectionKey, this.now())
+  }
+
+  async cloudRequest(input: unknown): Promise<unknown> {
+    if (!this.options.cloudRoot) throw new Error('Cloud workbench storage is unavailable.')
+    this.cloudService ??= new CloudWorkbenchService(async (path, init = {}, expectedConnectionKey) => {
+      const epoch = this.epoch
+      const connectionKey = this.connectionKey()
+      if (expectedConnectionKey !== undefined && expectedConnectionKey !== connectionKey) throw new Error('Enterprise account changed.')
+      const accessToken = await this.ensureAccess(epoch)
+      const base = this.session?.base
+      if (!base || !this.snapshot().connected || this.epoch !== epoch) throw new Error('Enterprise login required.')
+      const { endpoint } = await resolveEnterpriseEndpoint(base, path, this.options.allowInsecureLoopback,
+        this.platformRequestOptions().allowInsecurePrivateHttp)
+      if (endpoint.origin !== new URL(base).origin) throw new Error('Invalid enterprise cloud endpoint.')
+      if (this.epoch !== epoch || this.connectionKey() !== connectionKey) throw new Error('Enterprise account changed.')
+      const controller = new AbortController()
+      this.chatControllers.add(controller)
+      try {
+        const response = await createEnterpriseFetch(this.options.fetchImpl)(endpoint.toString(), {
+          ...init, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(120000)]),
+          headers: { authorization: `Bearer ${accessToken}` }
+        })
+        if (this.epoch !== epoch || this.connectionKey() !== connectionKey) {
+          await response.body?.cancel()
+          throw new Error('Enterprise account changed.')
+        }
+        // Pull one chunk at a time; bounded consumers can cancel before a
+        // large source response is buffered in the privileged process.
+        const reader = response.body?.getReader()
+        const owner = this
+        if (!reader) this.chatControllers.delete(controller)
+        const stream = reader ? new ReadableStream<Uint8Array>({
+          async pull(sink) {
+            try {
+              const chunk = await reader.read()
+              if (owner.epoch !== epoch) throw new Error('Enterprise account changed.')
+              if (chunk.done) { sink.close(); owner.chatControllers.delete(controller); reader.releaseLock() }
+              else sink.enqueue(chunk.value)
+            } catch (error) {
+              sink.error(error)
+              owner.chatControllers.delete(controller)
+              await reader.cancel().catch(() => undefined)
+            }
+          },
+          async cancel() {
+            controller.abort()
+            owner.chatControllers.delete(controller)
+            await reader.cancel().catch(() => undefined)
+          }
+        }) : null
+        return { response: new Response(stream, { status: response.status, headers: response.headers }), base, connectionKey }
+      } catch (error) {
+        this.chatControllers.delete(controller)
+        throw error
+      }
+    }, this.options.cloudRoot)
+    return this.cloudService.request(input)
   }
 
   async verifyWorkbenchArtifact(input: unknown): Promise<{ ok: boolean, stage?: string, error?: string }> {

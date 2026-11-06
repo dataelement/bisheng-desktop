@@ -293,3 +293,20 @@ Final delivery must list actual results and evidence: changed files, package ver
 
 - DSH plugin packaging and publication: `docs/user/develop/basic/publish.md` and `config.md` in deepseek-harness; package manifest types in `@deepseek-ai/dsh-package-manifest`; client module loading in `@deepseek-ai/dsh-client-modules`.
 - Market listing: [Workbench Market Acceptance Standard](https://dshdesktop.com/workbench/docs/market-acceptance-en/).
+
+
+## BiSheng cloud deployment supplement
+
+During requirements discovery, assess continuous execution, collaboration and local-device dependencies. Record deployment rationale, shared/personal state and conflict policy. On the BiSheng client, call `cloud_workbench` with operation `guide` for the packaged hosted-use, source-on-demand development and acceptance protocol. Do not search the user workspace for Desktop implementation files or relative documentation paths. Normal use loads the hosted URL; source is fetched only for authorized code changes. Do not ask for a publishing key.
+
+## Agent-led publishing conversation
+
+“From enterprise” lists enterprise workbenches together, with a “Cloud” label on hosted workbenches. This page only discovers and opens workbenches; it has no manual publishing form. Users start with “Make my workbench” or a development conversation. The Agent completes the flow in that conversation without sending users to a publish button:
+
+1. Reuse confirmed requirements, explain the local/cloud/hybrid deployment rationale in business language, and confirm the smallest scope.
+2. After implementation and verification, show the change summary, target, schema effects and proposed team visibility. Proceed when release authorization already exists; otherwise confirm in the conversation. Permission to develop does not imply permission to release or broaden access.
+3. Use the `cloud_workbench` tool with create/checkout, publish and progress, genuine project IDs, version baselines and receipts. If the managed project is outside the session workspace, enter it through the supported workspace/development-session flow; never bypass the sandbox.
+4. Submit through existing scan, precheck and approval steps, and check progress. Distinguish submitted, awaiting approval and online. Never approve on behalf of an administrator. Preserve source and receipts on failure, and merge stale baselines.
+5. Verify the production entry, explain native workbench switching, and guide the owner to team visibility management. Never change member permissions without authorization.
+
+Publishing belongs to the development conversation. Viewing apps, querying data and changing business records never triggers source download or code deployment.

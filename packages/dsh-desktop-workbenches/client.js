@@ -3,7 +3,7 @@ window.__ModuleLoader__.load({
   factory: (require) => {
     const React = require('react')
     const { Service } = require('@deepseek-ai/cordis')
-    const { Switch, Toast } = require('@deepseek-ai/dsh-client-ui-primitives')
+    const { Switch, Toast, Modal } = require('@deepseek-ai/dsh-client-ui-primitives')
     const h = React.createElement
     const SETTINGS_NS = 'dsh-desktop-workbenches.settings'
     const settingsCopy = {
@@ -19,6 +19,26 @@ window.__ModuleLoader__.load({
       }
     }
     const DOWNLOAD_NS = 'dsh-desktop-workbenches.download'
+    const CREATE_NS = 'dsh-desktop-workbenches.create'
+    const CLOUD_CARD_NS = 'dsh-desktop-workbenches.cloud-card'
+    const cloudCardCopy = {
+      zh: { title: '云端工作台', emptyCatalog: '暂无可使用的云端工作台，可通过「制作我的工作台」开始制作。', cloud: '云端', open: '打开工作台', add: '加载到工作台', remove: '卸载', removeHelp: '仅卸载这台客户端中的工作台入口，云端应用和数据会保留。', hosted: '企业托管应用', online: '已上线', empty: '这个工作台暂时还没有填写介绍。', loading: '正在加载云端工作台…', failed: '云端工作台暂时无法加载，请刷新重试。', unavailable: '当前企业服务未提供云端工作台接口，请联系管理员确认服务端版本。' },
+      en: { title: 'Cloud workbenches', emptyCatalog: 'No cloud workbenches available. Start with “Build my workbench”.', cloud: 'Cloud', open: 'Open workbench', add: 'Add to workbenches', remove: 'Uninstall', removeHelp: 'Uninstall this device’s workbench shortcut. The hosted app and its data are retained.', hosted: 'Enterprise hosted app', online: 'Online', empty: 'This workbench has no description yet.', loading: 'Loading cloud workbenches…', failed: 'Cloud workbenches could not be loaded. Refresh to try again.', unavailable: 'This enterprise server does not provide cloud workbench APIs. Contact your administrator to check the server version.' }
+    }
+    const createCopy = {
+      zh: {
+        title: '从你的想法开始', description: '创建新会话，开发指令会收起为可查看的指令块。补充你的想法后手动发送，Agent 会访问企业在线规范。也可以复制指令，交给其他 AI 助手。',
+        create: '创建工作台', creating: '正在创建…', copy: '复制指令给其他 AI 助手', instructions: '工作台开发指令', close: '关闭',
+        starter: '我想做一个【工作台的用途或名称】，主要给【谁使用】，帮助解决【什么问题】。\n最希望实现的功能是：【描述核心功能或一个使用场景】。',
+        unsupported: '当前运行版本暂不支持创建引导会话，请更新后重试，或使用复制指令。', draftChanged: '新会话内容已变化，已停止自动引导，请重试。'
+      },
+      en: {
+        title: 'Start with your idea', description: 'Start a conversation with expandable development instructions. Describe your idea and send when ready; the Agent will visit the enterprise online guide. You can also copy the instructions for another AI assistant.',
+        create: 'Create workbench', creating: 'Creating…', copy: 'Copy instructions for another AI assistant', instructions: 'Workbench development instructions', close: 'Close',
+        starter: 'I want to build [a workbench name or purpose] for [who will use it] to solve [the problem].\nThe main feature I want is: [describe a core feature or usage scenario].',
+        unsupported: 'This runtime cannot prepare a conversation. Update and retry, or copy the instructions.', draftChanged: 'The new conversation changed. Automatic guidance stopped; please retry.'
+      }
+    }
     const downloadCopy = {
       zh: { download_failed: '无法下载工作台安装包', download_interrupted: '工作台安装包下载中断', invalid_download_url: '工作台下载地址无效。', unsafe_download_url: '工作台下载地址必须使用 HTTPS，且不能包含凭据或自定义端口。' },
       en: { download_failed: 'Could not download the workbench package', download_interrupted: 'Workbench package download interrupted', invalid_download_url: 'The workbench download URL is invalid.', unsafe_download_url: 'The workbench download URL must use HTTPS without credentials or a custom port.' }
@@ -43,7 +63,8 @@ window.__ModuleLoader__.load({
       '工作台': 'Workbenches', '会话': 'Sessions', '工作台导航': 'Workbench navigation', '工作台主页': 'Workbench home', '打开工作台主页': 'Open workbench home', '选择会话模式': 'Choose session mode',
       '工作台市场': 'Workbench Market', '制作属于你的工作台': 'Build your own workbench', '制作我的工作台': 'Build my workbench', '返回工作台市场': 'Back to Workbench Market',
       '工作台把专属界面、会话和资料组织在一起。可通过顶部快捷栏在会话与不同工作台之间切换。': 'Workbenches bring dedicated interfaces, sessions, and files together. Use the top switcher to move between sessions and workbenches.',
-      '遵循规范开发、安装并验证，也可以准备材料提交到工作台市场。': 'Follow the guidelines to build, install, and test a workbench. You can also prepare a market submission.',
+      '与 Agent 确认需求，完成开发和部署，也可以准备材料提交到工作台市场。': 'Confirm requirements with your Agent, then develop and deploy. You can also prepare a market submission.',
+      '来自企业': 'From enterprise', '登录毕昇账号后查看工作台': 'Sign in to BiSheng to view workbenches', '登录毕昇账号': 'Sign in to BiSheng', '请联系管理员开放网络工作台市场。': 'Ask your administrator to enable the network workbench market.', '当前企业未开放网络工作台安装': 'This enterprise has not opened network workbench installation',
       '有序组织专属界面、会话与资料': 'Organize your dedicated interfaces, conversations, and resources', '市场': 'Market', '全部类型': 'All types', '在此切换会话与不同工作台': 'Switch between conversations and workbenches here', '知道了': 'Got it', '停用': 'Disable', '启用': 'Enable', '已收藏': 'Favorited', '查看 GitHub': 'View GitHub', '查看详情': 'View details',
       '正在更新目录…': 'Updating catalog…', '正在首次读取市场目录…': 'Loading the market catalog for the first time…', '市场目录暂不可用': 'Market catalog unavailable', '请重试读取目录，或使用已安装的工作台。': 'Retry loading the catalog, or use your installed workbenches.',
       '刷新目录': 'Refresh catalog', '正在检查更新': 'Checking for updates', '检查更新': 'Check for updates', '正在检查…': 'Checking…',
@@ -66,7 +87,7 @@ window.__ModuleLoader__.load({
       '还没有收藏工作台': 'No favorites yet', '还没有安装工作台': 'No installed workbenches yet', '没有找到匹配的工作台': 'No matching workbenches', '把鼠标移到市场卡片上，点击书签即可收藏。': 'Hover over a market card and select the bookmark to add a favorite.', '到工作台市场选择一个工作台开始。': 'Choose a workbench in the market to get started.', '试试其他关键词或分类。': 'Try another keyword or category.',
       '已复制': 'Copied', '复制失败，请展开指令手动复制。': 'Copy failed. Open the instructions and copy them manually.',
       '把开发指令交给 Agent': 'Give the development instructions to your agent', '工作台开发规范': 'workbench development guide', '复制开发指令': 'Copy development instructions', '收起指令': 'Hide instructions', '查看指令': 'View instructions',
-      '装到本机，自测确认能用': 'Install locally and test', '想上架，再按验收规范提交': 'Submit for listing when ready', '工作台市场验收规范': 'market acceptance guide', '工作台市场仓库': 'market repository', '上架分类': 'Market category', '让 Agent 按规范选择': 'Let the agent choose', '想要的新分类（可选）': 'Suggested new category (optional)', '例如：法务合规': 'For example: Legal compliance', '想要的新分类': 'Suggested new category', '复制投稿指令': 'Copy submission instructions', '开发工作台给 Agent 的指令': 'Development instructions for agent', '投稿工作台给 Agent 的指令': 'Submission instructions for agent', '工作台制作步骤': 'Workbench creation steps',
+      '由 Agent 部署，自测确认能用': 'Deploy with your Agent and test', '想上架，再按验收规范提交': 'Submit for listing when ready', '工作台市场验收规范': 'market acceptance guide', '工作台市场仓库': 'market repository', '上架分类': 'Market category', '让 Agent 按规范选择': 'Let the agent choose', '想要的新分类（可选）': 'Suggested new category (optional)', '例如：法务合规': 'For example: Legal compliance', '想要的新分类': 'Suggested new category', '复制投稿指令': 'Copy submission instructions', '开发工作台给 Agent 的指令': 'Development instructions for agent', '投稿工作台给 Agent 的指令': 'Submission instructions for agent', '工作台制作步骤': 'Workbench creation steps',
       '已经提交了 PR？粘贴链接查看进度': 'Already submitted a PR? Paste its link to check progress', '投稿 PR 链接': 'Submission PR link', '正在查询…': 'Checking…', '查询': 'Check', '在 GitHub 查看': 'View on GitHub',
       '提交 PR 就是进入审核，进度以 GitHub 上的 PR 为准，本机不保存投稿状态。PR 合并、市场目录更新后，工作台就会出现在工作台市场中。': 'Submitting a PR starts review. Track progress on GitHub; submission status is not stored locally. The workbench appears in the market after the PR is merged and the catalog updates.',
       '保存失败，当前内容仍保留在界面中。': 'Save failed. Your text is still visible here.', '正在保存…': 'Saving…', '已保存在本地 · 此工作台的会话共用这份笔记': 'Saved locally · Sessions in this workbench share these notes', '工作台加载失败': 'Workbench failed to load', '请检查该工作台是否已正确安装，重启 DSH 后重试；若仍失败，请联系工作台作者修复。': 'Check that this workbench is installed correctly, then restart DSH and try again. If it still fails, contact the workbench author for a fix.',
@@ -153,7 +174,7 @@ window.__ModuleLoader__.load({
     const developmentPageUrl = () => isEnglish() ? DEVELOPMENT_EN_PAGE_URL : DEVELOPMENT_PAGE_URL
     const acceptancePageUrl = () => isEnglish() ? ACCEPTANCE_EN_PAGE_URL : ACCEPTANCE_PAGE_URL
     const GUIDE_READING = `先阅读并遵循工作台开发规范：${DEVELOPMENT_DOC_URL} 。它包含包格式、运行规则和本地自测清单。`
-    const DEVELOPMENT_GUIDE_READING = `${GUIDE_READING}当前任务只做本地开发和安装，不需要处理市场投稿或发布。`
+    const DEVELOPMENT_GUIDE_READING = GUIDE_READING
     const ACCEPTANCE_READING = `先阅读并遵循工作台市场验收规范：${ACCEPTANCE_DOC_URL} 。它包含上传 GitHub、安装来源、上架资料、收录 PR 和验收清单。`
     const DEVELOPMENT_EN_READING = `First read and follow the Workbench Development Standard: ${DEVELOPMENT_EN_DOC_URL}. It covers package format, runtime rules, and the local self-test checklist. This task is for local development and installation only, without market submission or publication.`
     const ACCEPTANCE_EN_READING = `First read and follow the Workbench Market Acceptance Standard: ${ACCEPTANCE_EN_DOC_URL}. It covers GitHub publication, installation sources, listing materials, the listing PR, and the acceptance checklist.`
@@ -170,9 +191,8 @@ window.__ModuleLoader__.load({
     }
     const workbenchPreference = {
       listeners: new Set(),
-      // The general-settings switch is hidden. A stored "true" still turns the
-      // feature on; anything else keeps it off.
-      enabled: (() => { try { return window.localStorage.getItem(WORKBENCH_PREF) === 'true' } catch { return false } })(),
+      // Keep the entry discoverable on a fresh install; preserve an explicit opt-out.
+      enabled: (() => { try { return window.localStorage.getItem(WORKBENCH_PREF) !== 'false' } catch { return true } })(),
       subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener) },
       getSnapshot() { return this.enabled },
       set(value) { this.enabled = !!value; try { window.localStorage.setItem(WORKBENCH_PREF, String(this.enabled)) } catch {} ; for (const listener of this.listeners) listener() }
@@ -221,11 +241,29 @@ window.__ModuleLoader__.load({
       getSnapshot() { return this.snapshot },
       replace(next) {
         const current = this.snapshot
-        if (current.known === next.known && current.connected === next.connected && current.allowThirdPartyWorkbenches === next.allowThirdPartyWorkbenches) return
+        if (current.known === next.known && current.connected === next.connected && current.connectionKey === next.connectionKey && current.base === next.base && current.allowThirdPartyWorkbenches === next.allowThirdPartyWorkbenches) return
         this.snapshot = next
         for (const listener of this.listeners) listener()
       }
     }
+    let cloudComponents
+    let cloudLoading
+    function CloudHost(props) {
+      useHostLocale(props.service)
+      const [components, setComponents] = React.useState(cloudComponents)
+      const [error, setError] = React.useState('')
+      React.useEffect(() => {
+        let alive = true
+        cloudLoading ||= import('/api/desktop-workbenches/cloud-client.mjs').then(module => {
+          cloudComponents = module.createCloudComponents(React, props.service.ctx)
+          return cloudComponents
+        }).catch(error => { cloudLoading = undefined; throw error })
+        void cloudLoading.then(value => { if (alive) setComponents(value) }).catch(error => { if (alive) setError(error.message) })
+        return () => { alive = false }
+      }, [])
+      return error ? h('p', { role: 'alert' }, error) : components ? h(components.CloudFrame, props) : h('p', { role: 'status' }, '…')
+    }
+    function CloudFrameHost(props) { return h(CloudHost, { ...props, frame: true }) }
     const EMPTY = () => ({ version: 1, added: [], pinned: [], favorites: [], active: null, sessionBindings: {}, recentSessions: {}, notes: {}, hiddenWorkspaces: {} })
     // This controller owns navigation and local state only. It never terminates
     // agents, changes a running session's preset, or registers global tools.
@@ -241,6 +279,7 @@ window.__ModuleLoader__.load({
         this.error = ''
         this.blocked = false
         this.restoreMarketOnLoad = storedMarketOpen()
+        this.cloudConversationId = null
         this.marketOpen = this.restoreMarketOnLoad
         this.pending = 0
         this.disposed = false
@@ -274,11 +313,17 @@ window.__ModuleLoader__.load({
         this.pendingRestart = new Set()
         this.installFailures = new Map()
         this.enterpriseCatalog = []
+        this.cloudEntryAccountKey = ''
         this.enterpriseCatalogStatus = 'idle'
         this.enterpriseCatalogError = ''
         this.enterpriseAccountKey = ''
         this.enterpriseDetail = null
         this.enterpriseTicket = 0
+        this.cloudCatalog = []
+        this.cloudCatalogStatus = 'idle'
+        this.cloudCatalogError = ''
+        this.cloudAccountKey = ''
+        this.cloudTicket = 0
         this.enterpriseVerify = { id: '', status: 'idle', error: '' }
         this.draftNotes = new Map()
         this.noteTimers = new Map()
@@ -330,6 +375,7 @@ window.__ModuleLoader__.load({
         return { ...display, version: this.installedVersionFor(entry), origin: this.originFor(entry) }
       }
       pluginFor(entry) {
+        if (entry.cloud) return null
         // A disabled native bundle unloads its provider. The market package name
         // remains available on the listing even when no install record exists.
         return this.installRecordFor(entry.catalogId || entry.id)?.pluginName || entry.sourcePackage || entry.distribution?.name || this.knownProviders[entry.catalogId || entry.id]?.sourcePackage || null
@@ -343,6 +389,7 @@ window.__ModuleLoader__.load({
         return entries.some((entry) => entry.id !== id && this.state.added.includes(entry.id) && entry.installed && this.pluginFor(entry) === source)
       }
       activationFor(entry) {
+        if (entry.cloud) return 'on'
         const name = this.pluginFor(entry)
         if (!name || this.native.status !== NATIVE_STATUS.ready) return 'unknown'
         const bundle = this.native.bundles[name]
@@ -500,6 +547,33 @@ window.__ModuleLoader__.load({
         if (identities.length !== 1) throw new Error(identities.length ? `Client package ${source} matches multiple workbenches.` : `Client package ${source} is not attributed to a market repository.`)
         return identities[0]
       }
+      cloudEntries() {
+        return Object.entries(this.state.cloudWorkbenches || {}).filter(([, item]) =>
+          this.cloudEntryAccountKey && item.connectionKey === this.cloudEntryAccountKey).map(([id, item]) => ({ ...item, id, cloud: true,
+          installed: true, listed: false, customFrame: true, Component: CloudFrameHost }))
+      }
+      syncCloudIdentity(connectionKey) {
+        const next = typeof connectionKey === 'string' ? connectionKey : ''
+        if (this.cloudEntryAccountKey === next) return
+        this.cloudEntryAccountKey = next
+        // Keep saved entrances for a later sign-in, but never offer another
+        // account's entries or retain its active title in the current UI.
+        this.rebuildProviders()
+        this.publish()
+      }
+      async addCloud(item, connectionKey) {
+        if (!/^[a-f0-9]{32}$/.test(item.id) || !/^[a-f0-9]{16}$/.test(connectionKey)) throw new Error('Invalid cloud application identity.')
+        const id = `cloud:${connectionKey}:${item.id}`
+        await this.commit(state => {
+          state.cloudWorkbenches ||= {}
+          state.cloudWorkbenches[id] = { appId: item.id, connectionKey, title: item.name,
+            description: item.description || '', versionId: item.version_id || null }
+          if (!state.added.includes(id)) state.added.push(id)
+          if (!state.pinned.includes(id)) state.pinned.push(id)
+        })
+        this.rebuildProviders({ preserveActive: true })
+        this.publish()
+      }
       rebuildProviders({ preserveActive = false } = {}) {
         const previous = this.catalog
         const catalog = new Map()
@@ -514,6 +588,7 @@ window.__ModuleLoader__.load({
             screenshots: provider.screenshots, author: provider.author, version: provider.version }
         }
         try { window.localStorage?.setItem(KNOWN_PROVIDERS_KEY, JSON.stringify(this.knownProviders)) } catch {}
+        for (const entry of this.cloudEntries()) catalog.set(entry.id, entry)
         this.catalog = catalog
         for (const [id] of previous) {
           if (!preserveActive && !catalog.has(id) && this.state.active === id) this.state = { ...this.state, active: null }
@@ -544,6 +619,7 @@ window.__ModuleLoader__.load({
         // once their package is on this computer, that listing must not leave
         // them out of the switcher. Unlisted local providers still join immediately.
         const local = this.marketCatalog().filter(entry => {
+          if (entry.cloud) return false
           if (!this.catalog.has(entry.id) || this.installRecordFor(entry.catalogId || entry.id)) return false
           if (entry.local || entry.listed === false) return true
           const bundle = entry.sourcePackage && this.native.bundles[entry.sourcePackage]
@@ -617,7 +693,7 @@ window.__ModuleLoader__.load({
         this.snapshot = { state: this.state, enabled: workbenchPreference.getSnapshot(), drafts: Object.fromEntries(this.draftNotes), ready: this.ready, error: this.error,
           catalogLoaded: this.catalogLoaded, catalogError: this.catalogError, catalogStale: this.catalogStale, catalogRefreshing: this.catalogRefreshing, checkingUpdates: this.checkingUpdates, pending: this.pending, marketOpen: this.marketOpen,
           catalog: this.marketCatalog(), categories: this.marketCategories, installs: this.installs, installing: this.installing, native: this.native, togglingPlugin: this.togglingPlugin, removingPlugin: this.removingPlugin, removedWorkbenchIds: [...this.removedWorkbenchIds], restartNeeded: this.restartNeeded, switcherHint: this.switcherHint === true,
-          enterpriseCatalog: this.enterpriseCatalog, enterpriseCatalogStatus: this.enterpriseCatalogStatus, enterpriseCatalogError: this.enterpriseCatalogError, enterpriseDetail: this.enterpriseDetail, enterpriseVerify: this.enterpriseVerify }
+          enterpriseCatalog: this.enterpriseCatalog, enterpriseCatalogStatus: this.enterpriseCatalogStatus, enterpriseCatalogError: this.enterpriseCatalogError, enterpriseDetail: this.enterpriseDetail, enterpriseVerify: this.enterpriseVerify, cloudCatalog: this.cloudCatalog, cloudCatalogStatus: this.cloudCatalogStatus, cloudCatalogError: this.cloudCatalogError, cloudAccountKey: this.cloudAccountKey, creatingWorkbench: !!this.workbenchCreation }
         for (const listener of this.listeners) listener()
       }
       report(error) { if (!this.disposed) { this.error = error instanceof Error ? error.message : String(error); this.publish() } }
@@ -1001,6 +1077,7 @@ window.__ModuleLoader__.load({
         if (!this.catalog.has(id) || !this.state.added.includes(id)) throw new Error('请先添加可用的工作台。')
         if (this.activationFor(this.catalog.get(id)) === 'off') throw new Error('工作台插件已关闭，请先开启。')
         if (sessionId && this.state.sessionBindings[sessionId] !== id) throw new Error('会话不属于当前工作台。')
+        this.cloudConversationId = this.catalog.get(id)?.cloud && sessionId ? id : null
         this.rememberNativeSession(this.currentSession())
         this.setMarketOpen(false)
         const ticket = ++this.navigation
@@ -1020,6 +1097,7 @@ window.__ModuleLoader__.load({
         else if (this.catalog.get(id)?.initialization === 'new-session' && defaultWorkspace) await this.newSession(defaultWorkspace.workspaceId)
       }
       async home(id = this.state.active) {
+        this.cloudConversationId = null
         if (!workbenchPreference.getSnapshot()) throw new Error('工作台功能已关闭。')
         if (!id || !this.catalog.has(id) || !this.state.added.includes(id)) throw new Error('请先添加可用的工作台。')
         if (this.activationFor(this.catalog.get(id)) === 'off') throw new Error('工作台插件已关闭，请先开启。')
@@ -1049,11 +1127,63 @@ window.__ModuleLoader__.load({
         if (!this.ready || this.loading) this.run(this.load())
         else {
           this.run(this.refreshCatalog())
-          this.run(this.refreshEnterpriseCatalog())
+          this.run(this.refreshEnterpriseWorkbenches())
           this.run(this.refreshNative())
         }
       }
-      async refreshEnterpriseCatalog() {
+      refreshEnterpriseCatalog() {
+        if (this.enterpriseCatalogRequest) return this.enterpriseCatalogRequest
+        const request = this.readEnterpriseCatalog().finally(() => {
+          if (this.enterpriseCatalogRequest === request) this.enterpriseCatalogRequest = undefined
+        })
+        this.enterpriseCatalogRequest = request
+        return request
+      }
+      refreshEnterpriseWorkbenches() {
+        return Promise.all([this.refreshEnterpriseCatalog(), this.refreshCloudCatalog()])
+      }
+      refreshCloudCatalog(account = enterpriseCapability.getSnapshot()) {
+        if (this.cloudCatalogRequest?.accountKey === account.connectionKey && account.connected) return this.cloudCatalogRequest.promise
+        const promise = this.readCloudCatalog(account).finally(() => {
+          if (this.cloudCatalogRequest?.promise === promise) this.cloudCatalogRequest = undefined
+        })
+        this.cloudCatalogRequest = { accountKey: account.connectionKey, promise }
+        return promise
+      }
+      async readCloudCatalog({ connected, connectionKey }) {
+        const ticket = ++this.cloudTicket
+        if (!connected || this.cloudAccountKey !== connectionKey) this.cloudCatalog = []
+        this.cloudAccountKey = connected ? connectionKey || '' : ''
+        this.cloudCatalogError = ''
+        this.cloudCatalogStatus = connected ? 'loading' : 'idle'
+        this.publish()
+        if (!connected) return
+        try {
+          const request = window.dshDesktopEnterprise?.cloudRequest
+          if (!request) throw new Error('CLOUD_WORKBENCH_API_UNAVAILABLE')
+          const rows = new Map()
+          const cursors = new Set()
+          let cursor = null
+          do {
+            const data = await request({ operation: 'list', managed: false, cursor })
+            if (this.disposed || ticket !== this.cloudTicket) return
+            if (data.connectionKey !== connectionKey || !Array.isArray(data.items)) throw new Error('Cloud account changed.')
+            for (const item of data.items) rows.set(item.id, item)
+            cursor = data.next_cursor || null
+            if (cursor && cursors.has(cursor)) throw new Error('Cloud catalog cursor repeated.')
+            cursors.add(cursor)
+          } while (cursor)
+          this.cloudCatalog = [...rows.values()]
+          this.cloudCatalogStatus = this.cloudCatalog.length ? 'ready' : 'empty'
+        } catch (error) {
+          if (this.disposed || ticket !== this.cloudTicket) return
+          this.cloudCatalogStatus = 'error'
+          this.cloudCatalogError = error?.message?.includes('CLOUD_WORKBENCH_API_UNAVAILABLE') ? 'unavailable' : 'failed'
+        } finally {
+          if (!this.disposed && ticket === this.cloudTicket) this.publish()
+        }
+      }
+      async readEnterpriseCatalog() {
         const connected = enterpriseCapability.getSnapshot().connected === true
         if (!connected) {
           this.enterpriseCatalog = []
@@ -1142,6 +1272,63 @@ window.__ModuleLoader__.load({
           this.installing = null
           this.publish()
         }
+      }
+      developmentGuideUrl() {
+        const account = enterpriseCapability.getSnapshot()
+        return account.connected && account.base
+          ? `${account.base.replace(/\/$/, '')}/api/v1/dev-toolkit/workbench-guide${isEnglish() ? '-en' : ''}.md`
+          : isEnglish() ? DEVELOPMENT_EN_DOC_URL : DEVELOPMENT_DOC_URL
+      }
+      creationInstructions() {
+        // Collapsing the UI must preserve the complete development contract.
+        return developmentWorkbenchAgentPrompt(isEnglish(), this.developmentGuideUrl())
+      }
+      creationPrompt(t = this.ctx.locale.bind(CREATE_NS)) {
+        return this.creationInstructions() + '\n\n' + t('starter')
+      }
+      createWorkbench() {
+        if (this.workbenchCreation) return this.workbenchCreation
+        const ticket = ++this.navigation
+        const controller = new AbortController()
+        let navigationSignal = this.ctx.layout.beginNavigation()
+        const abort = () => controller.abort()
+        navigationSignal.addEventListener('abort', abort, { once: true })
+        this.workbenchCreationController = controller
+        const t = this.ctx.locale.bind(CREATE_NS)
+        const workspaceId = this.defaultWorkspace(null)?.workspaceId
+        this.workbenchCreation = (async () => {
+          const { createWorkbenchConversation, createInstructionSource } = await import('/api/desktop-workbenches/create-workbench.mjs')
+          const triggers = this.ctx.get('inputTriggers')
+          if (triggers && !this.instructionSourceDispose) {
+            this.instructionSourceDispose = this.ctx.effect(() => triggers.registerSource(createInstructionSource(text => { this.instructionPreview = text; this.publish() })), 'workbenches: instruction reference')
+          }
+          return createWorkbenchConversation({
+            ctx: this.ctx, request: this.request, signal: controller.signal,
+            current: () => !this.disposed && ticket === this.navigation,
+            workspaceId, prompt: this.creationInstructions(), starter: t('starter'), label: t('instructions'), compact: !!triggers, errorText: t,
+            activate: async sessionId => {
+              await this.commit(state => { state.active = null })
+              if (controller.signal.aborted || this.disposed || ticket !== this.navigation) return
+              // Selecting the destination aborts layout's old navigation; only
+              // subsequent user navigation should cancel draft preparation.
+              navigationSignal.removeEventListener('abort', abort)
+              this.suppressSelection = true
+              try { this.setMarketOpen(false); this.showSession(sessionId); this.ctx.layout.selectPanel(null) }
+              finally { this.suppressSelection = false }
+              navigationSignal = this.ctx.layout.beginNavigation()
+              navigationSignal.addEventListener('abort', abort, { once: true })
+            }
+          })
+        })().catch(error => {
+          if (!controller.signal.aborted) throw error
+        }).finally(() => {
+          navigationSignal.removeEventListener('abort', abort)
+          this.workbenchCreation = null
+          this.workbenchCreationController = null
+          this.publish()
+        })
+        this.publish()
+        return this.workbenchCreation
       }
       async openNative(startSession) {
         await this.returnToNativeSession(startSession)
@@ -1361,10 +1548,23 @@ window.__ModuleLoader__.load({
         }
       }
       // Providers keep their own project/profile flows; Desktop owns session identity.
-      ensureSession({ folder, sessionId: savedSessionId } = {}) {
+      ensureSession(options = {}) {
         const source = this.sourcePackage()
-        const id = this.identityForSource(source, this.providers.get(source)?.repository)
+        return this.ensureOwnedSession(this.identityForSource(source, this.providers.get(source)?.repository), options)
+      }
+      bindCloudDevelopmentSession(sessionId, projectId) {
+        return this.commit(state => {
+          state.cloudDevelopmentSessions ||= {}
+          state.cloudDevelopmentSessions[sessionId] = projectId
+        })
+      }
+      ensureCloudDevelopmentSession(id, options) {
+        if (!this.catalog.get(id)?.cloud) return Promise.reject(new Error('Cloud workbench required.'))
+        return this.ensureOwnedSession(id, options)
+      }
+      ensureOwnedSession(id, { folder, sessionId: savedSessionId } = {}) {
         if (!this.ready || this.blocked || this.disposed || this.state.active !== id || !this.state.added.includes(id) || !this.catalog.has(id)) return Promise.reject(new Error('请先打开可用的工作台。'))
+        if (this.catalog.get(id)?.cloud) { this.cloudConversationId = id; this.publish() }
         const key = JSON.stringify([id, folder, savedSessionId || null])
         if (this.sessionRequests.has(key)) return this.sessionRequests.get(key)
         const ticket = ++this.navigation
@@ -1426,6 +1626,7 @@ window.__ModuleLoader__.load({
         if (!workbenchPreference.getSnapshot()) throw new Error('工作台功能已关闭。')
         const id = this.state.active
         if (!id || !this.catalog.has(id)) throw new Error('请先打开工作台。')
+        if (this.catalog.get(id)?.cloud) { this.cloudConversationId = id; this.publish() }
         const workspace = workspaceId || this.defaultWorkspace()?.workspaceId
         if (!workspace) return this.newWorkspaceSession()
         if (!this.workspaceVisible(workspace, id)) throw new Error('此工作区已从当前工作台移除。请重新添加该文件夹。')
@@ -1461,6 +1662,7 @@ window.__ModuleLoader__.load({
         }))
       }
       dispose() {
+        this.workbenchCreationController?.abort()
         for (const timer of this.noteTimers.values()) clearTimeout(timer)
         for (const id of this.draftNotes.keys()) this.run(this.saveNote(id))
         this.disposed = true; ++this.navigation; this.listeners.clear()
@@ -1539,6 +1741,7 @@ window.__ModuleLoader__.load({
       .dshWbCard h2{overflow-wrap:anywhere;display:flex;align-items:center;gap:7px;min-width:0;font-size:18px;line-height:26px;letter-spacing:-.018em;font-weight:650;margin:0}.dshWbCard p{overflow-wrap:anywhere;margin:0;font-size:14px;line-height:22px}.dshWbCardDescription{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;height:66px;min-height:66px;max-height:66px}
       .dshWbCard .dshWbActions{margin-top:auto;flex-shrink:0;min-height:36px;gap:8px;padding-top:8px;align-items:center;justify-content:flex-end;flex-wrap:nowrap}.dshWbCardVersionActions{display:flex;align-items:center;gap:8px;min-width:0;margin-right:auto;flex:1 1 0;flex-wrap:nowrap}.dshWbCardControls{display:flex;align-items:center;gap:8px;margin-left:auto;min-width:0;flex-shrink:0}.dshWbCardVersion{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);white-space:nowrap;font-variant-numeric:tabular-nums}.dshWbCardIcon{display:grid;place-items:center;width:20px;height:20px;flex-shrink:0;color:var(--dsw-alias-label-secondary)}.dshWbGlyph{display:inline-grid;place-items:center;line-height:1;flex-shrink:0}.dshWbMonogram{box-sizing:border-box;border:1.3px solid currentColor;border-radius:4px;font-weight:600}.dshWbCard .dshWbBtn{font-size:12px;line-height:18px;padding:6px 11px}.dshWbInstalled{display:inline-flex;align-items:center;min-height:32px;padding:6px 11px;box-sizing:border-box;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}.dshWbInstallFailed{color:var(--dsw-alias-state-error-primary)}.dshWbFailureHint{position:static;display:inline-flex;flex:none;align-items:center;gap:2px;color:var(--dsw-alias-state-error-primary);font-size:12px;line-height:18px;white-space:nowrap;cursor:help}.dshWbFailureIcon{display:inline-grid;place-items:center;width:24px;height:24px;flex:0 0 24px;color:var(--dsw-alias-state-error-primary)}.dshWbFailureTooltip{display:none;position:absolute;z-index:4;bottom:56px;left:16px;right:16px;width:auto;max-width:none;max-height:140px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:8px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);box-shadow:0 8px 24px rgba(0,0,0,.14);font-size:12px;line-height:18px}.dshWbFailureHint:hover .dshWbFailureTooltip,.dshWbFailureHint:focus-within .dshWbFailureTooltip{display:block}.dshWbRetry{display:inline-grid;flex:0 0 28px;place-items:center;width:28px;height:28px;padding:0;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary)}.dshWbRetry:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2)}.dshWbRunSwitch{position:relative;width:38px;height:22px;flex:0 0 38px;padding:0;border:0;border-radius:999px;background:var(--dsw-alias-border-l2);transition:background .15s}.dshWbRunSwitch[aria-checked=true]{background:var(--dsw-alias-label-primary)}.dshWbRunSwitch::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:var(--dsw-alias-bg-layer-1);transition:transform .15s}.dshWbRunSwitch[aria-checked=true]::after{transform:translateX(16px)}
       .dshWbCategory{margin-left:auto;font-size:11px;line-height:18px;color:var(--dsw-alias-label-secondary);background:transparent;padding:0;white-space:nowrap}
+      .dshWbCategory[data-cloud]{display:inline-flex;align-items:center;flex-shrink:0;font-size:12px;font-weight:600;line-height:18px;padding:2px 9px;border-radius:999px;color:var(--dsw-alias-label-primary-foreground);background:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-label-primary)}
       .dshWbFailureIcon:focus-visible{outline:2px solid var(--dsw-alias-state-error-primary);outline-offset:2px;border-radius:4px}
       .dshWbMedia{position:relative;aspect-ratio:3/1;max-height:120px;flex-shrink:0;margin:16px 16px 0;border-radius:6px;background:var(--dsw-alias-bg-module-platform);overflow:visible}
       .dshWbMediaOpen{overflow:hidden;border-radius:6px;display:block;position:absolute;inset:0;width:100%;height:100%;padding:0;border:0;background:transparent;cursor:pointer}.dshWbMediaOpen:focus-visible{outline:2px solid var(--dsw-alias-label-primary);outline-offset:-3px;z-index:1}.dshWbMediaZoom{opacity:0;transition:opacity .16s;position:absolute;right:12px;bottom:10px;display:grid;place-items:center;width:28px;height:28px;border-radius:6px;background:var(--dsw-alias-label-primary);color:var(--dsw-alias-label-primary-foreground)}.dshWbMediaOpen:hover .dshWbMediaZoom,.dshWbMediaOpen:focus-visible .dshWbMediaZoom{opacity:1}
@@ -1764,14 +1967,13 @@ window.__ModuleLoader__.load({
       const activePanelId = usePanelInfo((info) => info.activePanelId)
       const marketSelected = activePanelId === PANEL
       const enabled = React.useSyncExternalStore(workbenchPreference.subscribe.bind(workbenchPreference), workbenchPreference.getSnapshot.bind(workbenchPreference))
-      const enterprise = React.useSyncExternalStore(enterpriseCapability.subscribe.bind(enterpriseCapability), enterpriseCapability.getSnapshot.bind(enterpriseCapability))
       const [open, setOpen] = React.useState(false)
       const [draggingId, setDraggingId] = React.useState(null)
       const [dropTarget, setDropTarget] = React.useState(null)
       const [announcement, setAnnouncement] = React.useState('')
       const draggingIdRef = React.useRef(null)
       const dropTargetRef = React.useRef(null)
-      if (!enabled || !wide || (enterprise.known && !enterprise.connected)) return null
+      if (!enabled || !wide) return null
       const disabled = !ready || pending > 0 || service.blocked
       const pinned = state.pinned.map((id) => catalog.find((item) => item.id === id)).filter((item) => item && state.added.includes(item.id) && service.catalog.has(item.id) && service.activationFor(item) !== 'off').map(displayEntry)
       const active = state.active && pinned.find((item) => item.id === state.active)
@@ -1910,6 +2112,25 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dshWbPreviewPane', style: { order: entry.layout?.businessSide === 'left' ? 2 : 1 } }, h('em'), tr('会话'), h('i'), h('i')),
           h('div', { className: 'dshWbPreviewPane', style: { order: entry.layout?.businessSide === 'left' ? 1 : 2 } }, h('em'), entry.panelTitle || tr('业务区域'), h('i'), h('i'))))
     }
+    function CloudInstalledCard({ entry, service, disabled }) {
+      const t = service.ctx.locale.bind(CLOUD_CARD_NS)
+      const loaded = service.state.added.includes(entry.id)
+      const enter = () => loaded ? service.open(entry.id) : service.addCloud(entry.cloudItem, entry.connectionKey).then(() => service.open(entry.id))
+      // Match the market card's clipped media, metadata row and footer slots.
+      // The original market CSS remains the single source of visual styling.
+      return h('article', { className: 'dshWbCard' },
+        h('div', { className: 'dshWbMedia' },
+          h('button', { type: 'button', className: 'dshWbMediaOpen', 'aria-label': `${t('open')} · ${entry.title}`, disabled, onClick: () => service.run(enter()) }, h(Preview, { entry }))),
+        h('div', { className: 'dshWbCardBody' },
+          h('div', { className: 'dshWbCardTitle' }, h('h2', { title: entry.title }, h(EntryTitle, { entry })), h('span', { className: 'dshWbCategory', 'data-cloud': true }, t('cloud'))),
+          h('div', { className: 'dshWbAuthorRow' }, h('span', { className: 'dshWbMetaItem' }, t('hosted'))),
+          h('div', { className: 'dshWbDescriptionHint' }, h('p', { className: 'dshWbMuted dshWbCardDescription', title: entry.description }, entry.description || t('empty'))),
+          h('div', { className: 'dshWbActions' },
+            h('div', { className: 'dshWbCardVersionActions' }, entry.cloudItem?.state === 'online' && h('span', { className: 'dshWbCardVersion' }, t('online'))),
+            h('div', { className: 'dshWbCardControls' },
+              loaded && h('button', { type: 'button', className: 'dshWbUninstall', disabled, title: t('removeHelp'), onClick: () => service.run(service.remove(entry.id)) }, t('remove')),
+              h(Button, { primary: true, disabled, onClick: () => service.run(enter()) }, t(loaded ? 'open' : 'add'))))))
+    }
     function ScreenshotGallery({ entry }) {
       const [screenshots, failScreenshot] = useScreenshots(entry)
       const [lightbox, setLightbox] = React.useState(null)
@@ -1984,6 +2205,13 @@ window.__ModuleLoader__.load({
         }
       }, [open, dialogRef])
     }
+    function InstructionPreview({ service }) {
+      if (!service.instructionPreview) return null
+      const t = service.ctx.locale.bind(CREATE_NS)
+      return h(Modal, { open: true, title: t('instructions'), closeLabel: t('close'), backdropBlur: false,
+        onClose: () => { service.instructionPreview = null; service.publish() } },
+      h('pre', { style: { whiteSpace: 'pre-wrap', maxHeight: '55vh', overflowY: 'auto', margin: 0 } }, service.instructionPreview))
+    }
     function DetailModal({ entry, service, onClose }) {
       const dialogRef = React.useRef(null)
       const snapshot = useWorkbench(service || { subscribe: () => () => {}, getSnapshot: () => ({}) })
@@ -2053,27 +2281,30 @@ window.__ModuleLoader__.load({
               h(Button, { className: 'dshWbBtn dshWbDanger', disabled, onClick: onConfirm }, uninstall || nativeUninstall ? tr('确认卸载') : tr('确认移除'))))),
         document.body)
     }
-    function developmentWorkbenchAgentPrompt(english = isEnglish()) {
-      if (english) return `I want to build and use a DSH Desktop workbench locally, without uploading or submitting it. This generic instruction does not contain business requirements; do not choose a workbench concept from it. You may use your own development process; DSH does not control that process.
+    function developmentWorkbenchAgentPrompt(english = isEnglish(), guideUrl) {
+      const reading = guideUrl
+        ? english ? `First read and follow the Workbench Development Standard: ${guideUrl}.` : `先阅读并遵循工作台开发规范：${guideUrl} 。`
+        : english ? DEVELOPMENT_EN_READING : DEVELOPMENT_GUIDE_READING
+      if (english) return `I want to build and use a workbench. First assess continuous processing, collaboration and local dependencies to choose local, cloud or hybrid deployment. This generic instruction does not contain business requirements; do not choose a workbench concept from it. You may use your own development process; DSH does not control that process.
 
-${DEVELOPMENT_EN_READING} Reuse the requirements I explicitly provided in this conversation. Ask only one necessary question at a time; do not repeat information I already gave or use a fixed questionnaire. If the name is unknown, first ask “What would you like to call this workbench?”; a provisional name is fine and must not block implementation. Then fill gaps about the intended users, main functions, or business scenario based on context. If the core workflow is unclear, suggest a minimal flow based on my answers and let me confirm or adjust it; do not require a complete requirements form. Start when the business goal and minimal scope are sufficiently clear and confirmed. You may inspect directories, existing documentation, and uncommitted changes read-only, but names, examples, or existing code do not establish my intent by themselves. While the business intent or scope is unclear, wait for my answer to the current question. Until then, do not create or change business code, UI, or package files, and do not build, pack, install, or submit. With an empty directory and no business goal, stop after asking; a name alone is not a business brief.
+${reading} Reuse the requirements I explicitly provided in this conversation. Ask only one necessary question at a time; do not repeat information I already gave or use a fixed questionnaire. If the name is unknown, first ask “What would you like to call this workbench?”; a provisional name is fine and must not block implementation. Then fill gaps about the intended users, main functions, or business scenario based on context. If the core workflow is unclear, suggest a minimal flow based on my answers and let me confirm or adjust it; do not require a complete requirements form. Start when the business goal and minimal scope are sufficiently clear and confirmed. You may inspect directories, existing documentation, and uncommitted changes read-only, but names, examples, or existing code do not establish my intent by themselves. While the business intent or scope is unclear, wait for my answer to the current question. Until then, do not create or change business code, UI, or package files, and do not build, pack, install, or submit. With an empty directory and no business goal, stop after asking; a name alone is not a business brief.
 
 Use business language for requirements discovery, layout suggestions, confirmation choices, and installation or completion status, such as “Show the business content on a full page and open AI conversation when needed” or “Talk while viewing supporting information.” Do not ask ordinary users to confirm code fields such as \`customFrame\`, \`register()\`, \`repository\`, \`dshHomePath\`, or \`reconcileLocalProviders\`, internal identities, or placeholder repository URLs; do not present lengthy implementation details as choices. The Agent handles technical fields during development under this standard. Missing publication identity must not block confirmed local development, and a real repository must never be fabricated. Ask only for practical information affecting the business or installation, such as “Which folder should hold the data?” Explain technical details briefly when the user asks. Lead completion reports with what works, how to open it, actual operations tested, and items still pending verification; put changed files and technical checks in a short appendix.
 
-Development execution (for the Agent): Once requirements are clear, define the smallest business flow and preserve existing uncommitted changes. Under Section 4, choose a standard split or \`customFrame\` and design first use without a session: do not default the product design to a persistent conversation pane. Recommend a business-first full page for content review, renovation management, reports, or dashboards; create or restore a conversation and display it only when the user requests AI help. A standard split suits conversation-led tasks or compact companion tools. If the primary task is unclear, suggest layouts and confirm it with the user. In a split, check the host generic guidance beside the business panel. With \`customFrame\`, provide your own first-use action and place the host-provided \`conversation\` node when needed. Then implement the package format in Section 3 (the package.json dsh fields, cordis.patch.yml, server and client entries), workbench behavior, and UI; run relevant tests and builds. If scripts/check-workbench-package.mjs exists, use it to verify the package. Make the business area responsive to its own container width, not only window breakpoints. Check first entry without a session, an owned session, expanded and collapsed sidebar, and a narrow window. Use realistic Chinese and English content to catch single-character vertical wrapping, clipped controls, and page-wide horizontal overflow; preserve host shared entrances.
+Development execution (for the Agent): Assess continuous processing, collaboration and local dependencies first. For BiSheng cloud, call cloud_workbench guide and visit the returned enterprise guideUrl, reuse enterprise login without a publishing key and fetch source only for code changes. Once requirements are clear, define the smallest business flow and preserve existing uncommitted changes. Under Section 4, choose a standard split or \`customFrame\` and design first use without a session: do not default the product design to a persistent conversation pane. Recommend a business-first full page for content review, renovation management, reports, or dashboards; create or restore a conversation and display it only when the user requests AI help. A standard split suits conversation-led tasks or compact companion tools. If the primary task is unclear, suggest layouts and confirm it with the user. In a split, check the host generic guidance beside the business panel. With \`customFrame\`, provide your own first-use action and place the host-provided \`conversation\` node when needed. For local deployment, implement the package format in Section 3; for cloud deployment follow cloud-guide for the BiSheng app manifest, startup, persistence and collaboration protocol. Then implement (the package.json dsh fields, cordis.patch.yml, server and client entries), workbench behavior, and UI; run relevant tests and builds. If scripts/check-workbench-package.mjs exists, use it to verify the package. Make the business area responsive to its own container width, not only window breakpoints. Check first entry without a session, an owned session, expanded and collapsed sidebar, and a narrow window. Use realistic Chinese and English content to catch single-character vertical wrapping, clipped controls, and page-wide horizontal overflow; preserve host shared entrances.
 
-Then install the workbench in this DSH Desktop using an installation method actually supported by this version; do not ask me to re-enter project information. If you are running inside the DSH Desktop session that needs restarting, do not close or restart DSH Desktop or Harness yourself, and do not use process probes such as \`ps\` or \`pgrep\` to manage the restart. After fully quitting and reopening DSH Desktop, offer two optional paths: (1) Try it directly: expand the sidebar, click the current workbench name / switch area to the right of “Workbenches” at the upper left, and select the new workbench. If it is missing, check its entry and running state in Workbench Market → Installed, then switch after it loads or is enabled. New local workbenches are added to the switch menu automatically when loaded; there is no separate “Add” button. (2) Continue Agent verification: return to the original development conversation and tell the Agent “Restart complete”; the Agent then follows Section 8 to check loading, the installed list, the switch entry, and the real business UI. I may try it independently without returning to the conversation. Checks the Agent has not actually performed remain pending verification; installation success does not mean all acceptance checks passed. If you run outside the target app, follow the normal restart process.
+For cloud deployment, the Agent confirms the release summary and sharing scope with the user, submits through cloud_workbench publish and checks progress; do not send the user to a publish button. Waiting for approval is not online. For local deployment, install the workbench in this DSH Desktop using an installation method actually supported by this version; do not ask me to re-enter project information. If you are running inside the DSH Desktop session that needs restarting, do not close or restart DSH Desktop or Harness yourself, and do not use process probes such as \`ps\` or \`pgrep\` to manage the restart. After fully quitting and reopening DSH Desktop, offer two optional paths: (1) Try it directly: expand the sidebar, click the current workbench name / switch area to the right of “Workbenches” at the upper left, and select the new workbench. If it is missing, check its entry and running state in Workbench Market → Installed, then switch after it loads or is enabled. New local workbenches are added to the switch menu automatically when loaded; there is no separate “Add” button. (2) Continue Agent verification: return to the original development conversation and tell the Agent “Restart complete”; the Agent then follows Section 8 to check loading, the installed list, the switch entry, and the real business UI. I may try it independently without returning to the conversation. Checks the Agent has not actually performed remain pending verification; installation success does not mean all acceptance checks passed. If you run outside the target app, follow the normal restart process.
 
 If this Desktop version has no supported local installation method, or you cannot operate it, keep the verified package and precisely state which steps remain; do not claim it loaded. Finally report changed files, self-test results, actual loading state, and unverified items.`
-      return `我想在本机制作和使用一个 DSH Desktop 工作台，不需要上传或投稿。这条通用指令没有提供业务需求，不能据此直接决定做什么工作台。你可以使用自己的开发流程，DSH 不控制开发过程。
+      return `我想制作和使用一个工作台。先根据持续运行、多人协作和本机依赖判断采用本地、云端或混合部署。这条通用指令没有提供业务需求，不能据此直接决定做什么工作台。你可以使用自己的开发流程，DSH 不控制开发过程。
 
-${DEVELOPMENT_GUIDE_READING}先复用我在当前对话中明确提供的需求。每次只问一个必要问题，不重复已提供的信息，不使用固定问卷。名称未知时先问“这个工作台想叫什么名字？”，允许暂定名，名称不应阻碍开工；再按已有上下文补问目标使用者、主要功能或业务场景。核心流程不清楚时，根据我的回答给出最小流程建议，让我确认或调整，不要求我填全需求表。业务目标和最小范围足够明确并经确认后即可开始。可以只读检查项目目录、已有说明和未提交更改，但目录名、示例或现有代码不能自行当作我的开发意图。业务意图或范围仍不清楚时，等待我回答当前问题；此前不要创建或修改业务代码、界面或包文件，也不要构建、打包、安装或投稿。空目录且没有业务目标时，到提问为止；只回答了名称不等于确认业务需求。
+${reading}先复用我在当前对话中明确提供的需求。每次只问一个必要问题，不重复已提供的信息，不使用固定问卷。名称未知时先问“这个工作台想叫什么名字？”，允许暂定名，名称不应阻碍开工；再按已有上下文补问目标使用者、主要功能或业务场景。核心流程不清楚时，根据我的回答给出最小流程建议，让我确认或调整，不要求我填全需求表。业务目标和最小范围足够明确并经确认后即可开始。可以只读检查项目目录、已有说明和未提交更改，但目录名、示例或现有代码不能自行当作我的开发意图。业务意图或范围仍不清楚时，等待我回答当前问题；此前不要创建或修改业务代码、界面或包文件，也不要构建、打包、安装或投稿。空目录且没有业务目标时，到提问为止；只回答了名称不等于确认业务需求。
 
 需求引导、布局建议、确认选项以及安装和完成状态都使用业务语言，例如“整页展示业务内容，需要时再打开 AI 对话”或“边对话边查看辅助资料”。不要要求普通用户确认 \`customFrame\`、\`register()\`、\`repository\`、\`dshHomePath\`、\`reconcileLocalProviders\` 等代码字段、内部身份或占位仓库地址，也不要大段呈现内部实现后让用户选择。技术字段由 Agent 在开发执行时按本规范处理；缺少发布身份不能阻断已明确的本地开发，不得捏造真实仓库。确实需要用户提供信息时，只询问影响业务或安装的实际问题，例如“要保存在哪个文件夹？”；用户主动询问技术细节时再简短解释。完成汇报先说明能做什么、如何打开、哪些操作已实测和哪些仍待验证，修改文件与技术检查作为简短附录。
 
-开发执行（由 Agent 处理）：需求明确后，确定最小业务流程，不要覆盖已有的未提交更改。按规范第 4 节明确选择标准分栏或 customFrame，并设计首次无会话时的入口：不要把常驻会话区当作默认产品设计。内容审核、装修管理、报表、看板等优先建议业务整页；用户主动请求 AI 协助时才创建或恢复会话并显示会话区。对话主导或紧凑伴随工具适合标准分栏。主任务不明确时，先给用户布局建议并确认。标准分栏要检查宿主通用引导与业务面板并列的状态；customFrame 要自行提供首次使用入口，并在需要时放置宿主的 conversation 节点。再按规范第 3 节完成包格式（package.json 的 dsh 字段、cordis.patch.yml、服务端和客户端入口），实现工作台功能和界面，运行相关测试与构建；若存在 scripts/check-workbench-package.mjs，用它校验工作台包。业务区按自身容器宽度重排，不只依赖整窗断点。分别检查首次无会话、已关联会话、侧栏展开/收起及较窄窗口，用真实长度的中英文内容确认没有单字竖排、控件裁切或整页横向溢出，并保留宿主公共入口。
+开发执行（由 Agent 处理）：先判断持续运行、多人协作和本机依赖；毕昇云端先调用 cloud_workbench guide 并访问返回的企业服务器规范网址，使用现有登录，不要求发布 Key，修改代码时才拉取源码。需求明确后，确定最小业务流程，不要覆盖已有的未提交更改。按规范第 4 节明确选择标准分栏或 customFrame，并设计首次无会话时的入口：不要把常驻会话区当作默认产品设计。内容审核、装修管理、报表、看板等优先建议业务整页；用户主动请求 AI 协助时才创建或恢复会话并显示会话区。对话主导或紧凑伴随工具适合标准分栏。主任务不明确时，先给用户布局建议并确认。标准分栏要检查宿主通用引导与业务面板并列的状态；customFrame 要自行提供首次使用入口，并在需要时放置宿主的 conversation 节点。本地方案按规范第 3 节完成包格式；云端方案按 cloud-guide 完成毕昇应用清单、启动入口、持久化和实时协作协议。然后（package.json 的 dsh 字段、cordis.patch.yml、服务端和客户端入口），实现工作台功能和界面，运行相关测试与构建；若存在 scripts/check-workbench-package.mjs，用它校验工作台包。业务区按自身容器宽度重排，不只依赖整窗断点。分别检查首次无会话、已关联会话、侧栏展开/收起及较窄窗口，用真实长度的中英文内容确认没有单字竖排、控件裁切或整页横向溢出，并保留宿主公共入口。
 
-完成后，按当前可用的插件安装方式把工作台装到我这台 BISHENG，不要让我重新填写项目信息。若你正运行在这台需要重启的 BISHENG 会话内，不要自行关闭或重启 BISHENG、Harness，也不要用 ps、pgrep 等进程探测来尝试管理重启；完整退出并重新打开 BISHENG 后，给用户两条可选路径：① 直接试用：展开左侧栏，点击左上角「工作台」右侧的当前工作台名称／切换区域，选择新工作台；若未显示，进入工作台市场的「已安装」检查条目和运行状态，加载或启用成功后再切换。新本地工作台加载后会自动加入切换菜单，不存在单独的「添加」按钮。② 继续 Agent 验收：回到原开发对话告诉 Agent「重启好了」，由 Agent 按第 8 节继续检查加载、已安装列表、切换入口和真实业务界面。用户可自行试用，不必返回对话；Agent 尚未实测的项目仍标为待验证，安装成功不能表述为全部验收通过。按规范第 8 节“本地自测清单”分别记录「已安装的工作台」、左侧入口和界面证据。若你运行在目标应用之外，可按正常重启流程操作。
+云端方案由 Agent 向用户说明发布内容和团队可见范围，确认后调用 cloud_workbench publish 并查询 progress，不让用户去点击发布按钮；等待审批不能报告为已上线。本地方案完成后，按当前可用的插件安装方式把工作台装到我这台 BISHENG，不要让我重新填写项目信息。若你正运行在这台需要重启的 BISHENG 会话内，不要自行关闭或重启 BISHENG、Harness，也不要用 ps、pgrep 等进程探测来尝试管理重启；完整退出并重新打开 BISHENG 后，给用户两条可选路径：① 直接试用：展开左侧栏，点击左上角「工作台」右侧的当前工作台名称／切换区域，选择新工作台；若未显示，进入工作台市场的「已安装」检查条目和运行状态，加载或启用成功后再切换。新本地工作台加载后会自动加入切换菜单，不存在单独的「添加」按钮。② 继续 Agent 验收：回到原开发对话告诉 Agent「重启好了」，由 Agent 按第 8 节继续检查加载、已安装列表、切换入口和真实业务界面。用户可自行试用，不必返回对话；Agent 尚未实测的项目仍标为待验证，安装成功不能表述为全部验收通过。按规范第 8 节“本地自测清单”分别记录「已安装的工作台」、左侧入口和界面证据。若你运行在目标应用之外，可按正常重启流程操作。
 
 若当前版本没有可用的本地安装方式，或你不能操作这台 DSH Desktop，请保留经过校验的包，准确说明缺少的步骤，不要声称已加载。最后告诉我修改的文件、自测结果、实际加载状态和未验证的项目。`
     }
@@ -2184,12 +2415,13 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
     }
     function Market({ service }) {
       useHostLocale(service)
-      const { state, catalog, categories: marketCategories = [], ready, pending, installing, catalogLoaded, catalogError, catalogRefreshing, checkingUpdates, native, togglingPlugin, removingPlugin, removedWorkbenchIds = [], enterpriseCatalog = [], enterpriseCatalogStatus = 'idle', enterpriseCatalogError = '' } = useWorkbench(service)
+      const { state, catalog, categories: marketCategories = [], ready, pending, installing, catalogLoaded, catalogError, catalogRefreshing, checkingUpdates, native, togglingPlugin, removingPlugin, removedWorkbenchIds = [], enterpriseCatalog = [], enterpriseCatalogStatus = 'idle', enterpriseCatalogError = '', cloudCatalog = [], cloudCatalogStatus = 'idle', cloudCatalogError = '', cloudAccountKey = '', creatingWorkbench = false } = useWorkbench(service)
+      const createText = service.ctx.locale.bind(CREATE_NS)
+      const cloudText = service.ctx.locale.bind(CLOUD_CARD_NS)
       const workbenchEnabled = React.useSyncExternalStore(workbenchPreference.subscribe.bind(workbenchPreference), workbenchPreference.getSnapshot.bind(workbenchPreference))
       const enterprise = React.useSyncExternalStore(enterpriseCapability.subscribe.bind(enterpriseCapability), enterpriseCapability.getSnapshot.bind(enterpriseCapability))
       const publicMarket = !enterprise.known || enterprise.allowThirdPartyWorkbenches === true
       const enterpriseVisible = enterprise.connected === true
-      const enterpriseAsMarket = enterpriseVisible && !publicMarket
       const [tab, setTab] = React.useState('market')
       const [search, setSearch] = React.useState('')
       const [category, setCategory] = React.useState('all')
@@ -2217,34 +2449,47 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
       }
       if (!workbenchEnabled) return h('section', { className: 'dshWb dshWbMarket', 'aria-label': tr('工作台市场') },
         h('div', { className: 'dshWbDisabledHint' }, h('h1', null, tr('工作台功能已关闭')), null))
-      const developmentPrompt = developmentWorkbenchAgentPrompt()
+      const developmentPrompt = service.creationPrompt(createText)
       const chosenCategory = marketCategories.find((item) => item.id === submitCategory)
       const submissionPrompt = submissionWorkbenchAgentPrompt({ category: chosenCategory, suggestion: categoryIdea })
       const disabled = !ready || pending > 0 || service.blocked
       const added = state.added
       const favorites = state.favorites || []
       const unavailableEntry = (id) => ({ id, title: id, category: tr('其他'), categoryId: 'other', unavailable: true, description: both('提供此工作台的插件当前未加载。', 'The plugin for this workbench is not loaded.'), loadFailure: both('工作台插件当前未加载。', 'The workbench plugin is not loaded.') })
-      const collectionValues = [...(publicMarket ? ['market', 'favorites'] : enterpriseAsMarket ? ['market'] : []), ...(enterpriseVisible && publicMarket ? ['enterprise'] : []), 'mine']
+      // Keep navigation stable across sign-in and policy changes; gate each panel's content.
+      const collectionValues = ['market', 'favorites', 'enterprise', 'cloud', 'mine']
       const visibleTab = collectionValues.includes(tab) ? tab : collectionValues[0]
-      const showingEnterprise = visibleTab === 'enterprise' || (visibleTab === 'market' && enterpriseAsMarket)
+      const showingEnterprise = visibleTab === 'enterprise'
+      const showingCloud = visibleTab === 'cloud'
+      const enterpriseLoading = showingEnterprise && enterpriseCatalogStatus === 'loading'
+      const cloudLoading = showingCloud && cloudCatalogStatus === 'loading'
+      const requiresLogin = (enterprise.known || showingEnterprise || showingCloud) && !enterpriseVisible && ['market', 'favorites', 'enterprise', 'cloud'].includes(visibleTab)
+      const policyBlocked = !publicMarket && ['market', 'favorites'].includes(visibleTab)
+      const collectionBlocked = requiresLogin || policyBlocked
+      const signIn = () => window.dispatchEvent(new window.CustomEvent('dsh-desktop:open-settings-section', { detail: { id: 'enterprise-account' } }))
       const localizedCatalog = catalog.map((entry) => displayEntry(visibleTab === 'mine' ? service.installedEntry(entry) : entry))
       const marketEntries = localizedCatalog.filter((entry) => entry.listed === true)
       const installedEntries = [
         ...added.filter((id) => !removedWorkbenchIds.includes(id) &&
+          (!id.startsWith('cloud:') || localizedCatalog.some((entry) => entry.id === id)) &&
           (localizedCatalog.some((entry) => entry.id === id) || !service.hasUsablePackageAlias(id, catalog)))
           .map((id) => localizedCatalog.find((entry) => entry.id === id) || unavailableEntry(id)),
         ...localizedCatalog.filter((entry) => entry.installed && !added.includes(entry.id))
       ]
-      const enterpriseEntries = enterpriseCatalog.map((item) => ({
+      const enterpriseEntries = [...enterpriseCatalog.map((item) => ({
         id: item.id, catalogId: item.id, title: item.displayName, description: item.description || '', enterprise: true, listed: false, local: false,
         packageName: item.packageName, identityKind: item.identityKind, workbenchKey: item.workbenchKey, legacyId: item.legacyId,
         version: item.currentVersion?.version, category: item.identityKind === 'legacy' ? '旧格式' : '企业', author: item.packageName
-      }))
+      }))]
+      const cloudEntries = cloudAccountKey && cloudAccountKey === enterprise.connectionKey ? cloudCatalog.map(item => ({
+        id: `cloud:${cloudAccountKey}:${item.id}`, appId: item.id, title: item.name, description: item.description || '',
+        cloud: true, cloudItem: item, connectionKey: cloudAccountKey, categoryId: 'cloud', category: cloudText('cloud'), listed: false
+      })) : []
       const allEntries = visibleTab === 'mine'
         ? installedEntries
         : visibleTab === 'favorites'
           ? favorites.map((id) => localizedCatalog.find((entry) => entry.catalogId === id || entry.id === id) || unavailableEntry(id))
-          : showingEnterprise ? enterpriseEntries : marketEntries
+          : showingEnterprise ? enterpriseEntries : showingCloud ? cloudEntries : marketEntries
       const categoryKey = (entry) => entry.categoryId || (entry.local ? 'local' : entry.categoryNames?.zh || entry.category || 'other')
       const categories = [{ id: 'all', name: tr('全部') }, ...[...new Set(allEntries.map(categoryKey))].map((id) => ({ id, name: id === 'local' ? tr('本地') : allEntries.find((entry) => categoryKey(entry) === id)?.category || tr('其他') }))]
       const query = search.toLowerCase().trim()
@@ -2270,25 +2515,26 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
       }
       const copyPrompt = async (text) => {
         try { await copySubmissionPrompt(text); setCopyStatus({ id: `${Date.now()}-${Math.random()}`, text: tr('已复制'), tone: 'success' }) }
-        catch { setCopyStatus({ id: `${Date.now()}-${Math.random()}`, text: tr('复制失败，请展开指令手动复制。') }) }
+        catch { setCopyStatus({ id: `${Date.now()}-${Math.random()}`, text: tr('复制失败，请展开指令手动复制。'), developmentFallback: text === developmentPrompt }) }
       }
       return h('section', { className: `dshWb dshWbMarket${detail != null || removing != null ? ' dshWbMarketModalOpen' : ''}`, 'aria-label': tr('工作台市场') },
         h('header', { className: 'dshWbMarketHeader', 'data-window-drag': true },
           h('div', { className: 'dshWbMarketHeaderText' },
             h('h1', null, tab === 'submit' ? tr('制作属于你的工作台') : tr('工作台')),
-            h('p', { className: 'dshWbMuted' }, tab === 'submit' ? tr('遵循规范开发、安装并验证，也可以准备材料提交到工作台市场。') : tr('有序组织专属界面、会话与资料')), tab !== 'submit' && h('label', { className: 'dshWbSearch' }, h(MarketIcon, { name: 'search' }), h('input', { type: 'search', placeholder: tr('搜索名称、作者或分类'), 'aria-label': tr('搜索工作台'), value: search, onChange: (event) => { setSearch(event.target.value); setVisibleCount(PAGE_SIZE) } }))),
+            h('p', { className: 'dshWbMuted' }, tab === 'submit' ? tr('与 Agent 确认需求，完成开发和部署，也可以准备材料提交到工作台市场。') : tr('有序组织专属界面、会话与资料')), tab !== 'submit' && !collectionBlocked && h('label', { className: 'dshWbSearch' }, h(MarketIcon, { name: 'search' }), h('input', { type: 'search', placeholder: tr('搜索名称、作者或分类'), 'aria-label': tr('搜索工作台'), value: search, onChange: (event) => { setSearch(event.target.value); setVisibleCount(PAGE_SIZE) } }))),
           h('div', { className: 'dshWbMarketHeaderActions' },
             !publicMarket && h(Button, { className: 'dshWbBtn', onClick: () => { void globalThis.dshDesktop?.installLocalWorkbench?.() } }, '安装本地工作台'),
             h(Button, { primary: tab !== 'submit', className: `dshWbBtn${tab !== 'submit' ? ' dshWbPrimary' : ''} dshWbCreate`, onClick: () => { setTab(tab === 'submit' ? (publicMarket ? 'market' : 'mine') : 'submit'); setDetail(null); setCopyStatus(null) } }, h(MarketIcon, { name: tab === 'submit' ? 'search' : 'plus' }), tab === 'submit' ? (publicMarket ? tr('返回工作台市场') : tr('返回已安装')) : tr('制作我的工作台')))),
         h(Notice, { service, showCatalogStatus: true }),
         tab !== 'submit' && h('div', { className: 'dshWbToolbar' },
           h('div', { className: 'dshWbTabs' }, h('div', { role: 'tablist', 'aria-label': tr('工作台集合') },
-            (publicMarket || enterpriseAsMarket) && h(Button, { id: 'dsh-workbench-market-tab', role: 'tab', tabIndex: visibleTab === 'market' ? 0 : -1, 'aria-selected': visibleTab === 'market', 'aria-controls': 'dsh-workbench-market-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('market') }, tr('工作台市场')),
-            publicMarket && h(Button, { id: 'dsh-workbench-favorites-tab', role: 'tab', tabIndex: visibleTab === 'favorites' ? 0 : -1, 'aria-selected': visibleTab === 'favorites', 'aria-controls': 'dsh-workbench-favorites-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('favorites') }, `${tr('我的收藏')} (${favorites.length})`),
-            enterpriseVisible && publicMarket && h(Button, { id: 'dsh-workbench-enterprise-tab', role: 'tab', tabIndex: visibleTab === 'enterprise' ? 0 : -1, 'aria-selected': visibleTab === 'enterprise', 'aria-controls': 'dsh-workbench-enterprise-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('enterprise') }, service.ctx.locale.bind('workbench.enterprise')('tab')),
+            h(Button, { id: 'dsh-workbench-market-tab', role: 'tab', tabIndex: visibleTab === 'market' ? 0 : -1, 'aria-selected': visibleTab === 'market', 'aria-controls': 'dsh-workbench-market-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('market') }, tr('工作台市场')),
+            h(Button, { id: 'dsh-workbench-favorites-tab', role: 'tab', tabIndex: visibleTab === 'favorites' ? 0 : -1, 'aria-selected': visibleTab === 'favorites', 'aria-controls': 'dsh-workbench-favorites-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('favorites') }, `${tr('我的收藏')} (${favorites.length})`),
+            h(Button, { id: 'dsh-workbench-enterprise-tab', role: 'tab', tabIndex: visibleTab === 'enterprise' ? 0 : -1, 'aria-selected': visibleTab === 'enterprise', 'aria-controls': 'dsh-workbench-enterprise-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('enterprise') }, tr('来自企业')),
+            h(Button, { id: 'dsh-workbench-cloud-tab', role: 'tab', tabIndex: showingCloud ? 0 : -1, 'aria-selected': showingCloud, 'aria-controls': 'dsh-workbench-cloud-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('cloud') }, cloudText('title')),
             h(Button, { id: 'dsh-workbench-mine-tab', role: 'tab', tabIndex: visibleTab === 'mine' ? 0 : -1, 'aria-selected': visibleTab === 'mine', 'aria-controls': 'dsh-workbench-mine-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('mine') }, `${tr('已安装')} (${installedEntries.length})`))),
-          h('div', { className: 'dshWbBrowseTools' },
-            h('span', { className: 'dshWbRefreshHint' }, h(Button, { className: 'dshWbBtn dshWbRefresh', 'aria-describedby': 'dsh-workbench-refresh-tooltip', 'aria-label': checkingUpdates ? tr('正在检查更新') : tab === 'mine' ? tr('检查更新') : tr('刷新目录'), 'aria-busy': catalogRefreshing || checkingUpdates, disabled: catalogRefreshing || checkingUpdates, onClick: () => service.run(visibleTab === 'mine' ? service.checkUpdates() : showingEnterprise ? service.refreshEnterpriseCatalog() : service.refreshCatalog()) }, h(MarketIcon, { name: 'refresh', size: 17 })), h('span', { id: 'dsh-workbench-refresh-tooltip', className: 'dshWbControlTooltip', role: 'tooltip' }, checkingUpdates ? tr('正在检查更新') : tab === 'mine' ? tr('检查更新') : tr('刷新目录'))),
+          !collectionBlocked && h('div', { className: 'dshWbBrowseTools' },
+            h('span', { className: 'dshWbRefreshHint' }, h(Button, { className: 'dshWbBtn dshWbRefresh', 'aria-describedby': 'dsh-workbench-refresh-tooltip', 'aria-label': checkingUpdates ? tr('正在检查更新') : tab === 'mine' ? tr('检查更新') : tr('刷新目录'), 'aria-busy': catalogRefreshing || checkingUpdates || enterpriseLoading || cloudLoading, disabled: catalogRefreshing || checkingUpdates || enterpriseLoading || cloudLoading, onClick: () => service.run(visibleTab === 'mine' ? service.checkUpdates() : showingEnterprise ? service.refreshEnterpriseCatalog() : showingCloud ? service.refreshCloudCatalog() : service.refreshCatalog()) }, h(MarketIcon, { name: 'refresh', size: 17 })), h('span', { id: 'dsh-workbench-refresh-tooltip', className: 'dshWbControlTooltip', role: 'tooltip' }, checkingUpdates ? tr('正在检查更新') : tab === 'mine' ? tr('检查更新') : tr('刷新目录'))),
             h('label', { className: 'dshWbSort' }, h('select', { 'aria-label': tr('按分类筛选'), value: category, onChange: (event) => { setCategory(event.target.value); setVisibleCount(PAGE_SIZE) } }, categories.map((value) => h('option', { key: value.id, value: value.id }, value.id === 'all' ? tr('全部类型') : value.name)))),
             h('label', { className: 'dshWbSort' }, h('select', { 'aria-label': tr('工作台排序方式'), value: sortBy, onChange: (event) => { setSortBy(event.target.value); setVisibleCount(PAGE_SIZE) } },
               h('option', { value: 'stars' }, tr('Star 数量')),
@@ -2299,16 +2545,16 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           h('div', { className: 'dshWbSteps', 'aria-label': tr('工作台制作步骤') },
             h('div', { className: 'dshWbStep' },
               h('span', { className: 'dshWbStepNum' }, '1'),
-              h('strong', null, tr('把开发指令交给 Agent')),
-              h('p', null, both('复制指令给你的 Agent。若你还没说明要做什么，它会先确认业务场景、目标用户和核心流程，得到答复后再按', 'Copy the instructions to your agent. If you have not described the workbench yet, it will ask about the business scenario, target users, and core workflow before following the '), h('a', { href: developmentPageUrl(), target: '_blank', rel: 'noopener noreferrer' }, tr('工作台开发规范')), both('开发。只在本机使用，不需要上传代码。', '. For local use, no code upload is needed.')),
+              h('strong', null, createText('title')),
+              h('p', null, createText('description'), ' ', h('a', { href: service.developmentGuideUrl(), target: '_blank', rel: 'noopener noreferrer' }, tr('工作台开发规范'))),
               h('div', { className: 'dshWbStepActions' },
-                h(Button, { primary: true, onClick: () => copyPrompt(developmentPrompt) }, tr('复制开发指令')),
-                h('button', { type: 'button', className: 'dshWbStepLink', onClick: () => setOpenPrompt(openPrompt === 'development' ? null : 'development') }, openPrompt === 'development' ? tr('收起指令') : tr('查看指令'))),
-              openPrompt === 'development' && h('textarea', { className: 'dshWbPrompt', readOnly: true, value: developmentPrompt, 'aria-label': tr('开发工作台给 Agent 的指令'), onFocus: (event) => event.currentTarget.select() })),
+                h(Button, { primary: true, className: 'dshWbBtn dshWbPrimary dshWbStartCreate', disabled: disabled || creatingWorkbench, 'aria-busy': creatingWorkbench, onClick: () => service.run(service.createWorkbench()) }, createText(creatingWorkbench ? 'creating' : 'create')),
+                h('button', { type: 'button', className: 'dshWbStepLink', onClick: () => copyPrompt(developmentPrompt) }, createText('copy'))),
+              copyStatus?.developmentFallback && h('textarea', { className: 'dshWbPrompt', readOnly: true, value: developmentPrompt, 'aria-label': createText('instructions'), onFocus: event => event.currentTarget.select() })),
             h('div', { className: 'dshWbStep' },
               h('span', { className: 'dshWbStepNum' }, '2'),
-              h('strong', null, tr('装到本机，自测确认能用')),
-              h('p', null, both('需求确认并完成开发后，Agent 会把工作台装到这台 Desktop，并按开发规范的本地自测清单检查。尚未上架的版本会以「本地」标识出现在「已安装」中，添加后也会出现在顶部快捷栏。自己用的话，到这一步就完成了。', 'Once requirements and development are complete, your agent installs the workbench on this Desktop and runs the local checks. Unlisted versions appear as “Local” in Installed and can be added to the top switcher. For personal use, you can stop here.'))),
+              h('strong', null, tr('由 Agent 部署，自测确认能用')),
+              h('p', null, both('Agent 会先判断是否需要持续运行和多人协作。本地工作台安装到这台 Desktop；云端工作台在对话确认后提交审核和部署，无需另点发布按钮。完成后，Agent 会检查真实入口，并说明已验证和待验证的项目。', 'Your Agent first assesses continuous processing and collaboration. Local workbenches install on this Desktop; cloud workbenches enter approval and deployment after confirmation in the conversation, with no separate publish button. The Agent verifies the real entry and reports tested and unverified items.'))),
             h('div', { className: 'dshWbStep' },
               h('span', { className: 'dshWbStepNum' }, '3'),
               h('strong', null, tr('想上架，再按验收规范提交')),
@@ -2327,8 +2573,16 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
               h(SubmissionStatus, { service }))),
           h('p', { className: 'dshWbMuted dshWbSubmitOutcome' }, tr('提交 PR 就是进入审核，进度以 GitHub 上的 PR 为准，本机不保存投稿状态。PR 合并、市场目录更新后，工作台就会出现在工作台市场中。')),
           copyStatus && h(Toast, { key: copyStatus.id, text: copyStatus.text, tone: copyStatus.tone, holdMs: 2000, onDone: () => setCopyStatus((current) => current?.id === copyStatus.id ? null : current) })),
-        tab !== 'submit' && h('section', { id: `dsh-workbench-${tab}-panel`, role: 'tabpanel', 'aria-labelledby': `dsh-workbench-${tab}-tab`, tabIndex: 0 },
-          h('div', { className: 'dshWbGrid', 'data-tab': tab }, displayedEntries.map((entry) => {
+        tab !== 'submit' && collectionBlocked && h('section', { id: `dsh-workbench-${visibleTab}-panel`, role: 'tabpanel', 'aria-labelledby': `dsh-workbench-${visibleTab}-tab`, tabIndex: 0 },
+          h('div', { className: 'dshWbEmpty', role: 'status' }, h('div', null,
+            h('strong', null, tr(requiresLogin ? '登录毕昇账号后查看工作台' : '当前企业未开放网络工作台安装')),
+            !requiresLogin && h('p', { className: 'dshWbMuted' }, tr('请联系管理员开放网络工作台市场。')),
+            requiresLogin && h(Button, { onClick: signIn }, tr('登录毕昇账号'))))),
+        tab !== 'submit' && !collectionBlocked && h('section', { id: `dsh-workbench-${visibleTab}-panel`, role: 'tabpanel', 'aria-labelledby': `dsh-workbench-${visibleTab}-tab`, tabIndex: 0 },
+          showingCloud && cloudCatalogStatus === 'loading' && h('div', { className: 'dshWbNotice', role: 'status' }, cloudText('loading')),
+          showingCloud && cloudCatalogError && h('div', { className: 'dshWbNotice', role: 'alert' }, cloudText(cloudCatalogError)),
+          h('div', { className: 'dshWbGrid', 'data-tab': visibleTab }, displayedEntries.map((entry) => {
+            if (entry.cloud) return h(CloudInstalledCard, { key: entry.id, entry, service, disabled })
             const catalogId = entry.catalogId || entry.id
             const isFavorite = favorites.includes(catalogId)
             const pluginName = service.pluginFor(entry)
@@ -2404,13 +2658,13 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
                         ? h(Button, { primary: true, disabled: disabled || !!installing, onClick: () => installMarket(entry) }, installing === catalogId ? tr('正在安装…') : tr('安装'))
                         : entry.listed === true && entry.repository && h('a', { className: 'dshWbBtn dshWbPrimary', href: entry.repository, target: '_blank', rel: 'noopener noreferrer' }, tr('查看安装说明'))))))
           }), entries.length === 0 && (tab !== 'market' || (ready && !catalogRefreshing) || catalogLoaded) && h('div', { className: 'dshWbEmpty' }, h('div', null,
-            h('strong', null, showingEnterprise && !search ? (enterpriseCatalogStatus === 'unavailable' ? enterpriseText(service.ctx, 'unavailable') : enterpriseCatalogStatus === 'error' ? enterpriseText(service.ctx, 'failed') : (enterpriseCatalogStatus === 'loading' || enterpriseCatalogStatus === 'idle') ? enterpriseText(service.ctx, 'loading') : enterpriseText(service.ctx, 'empty')) : tab === 'market' && !catalogLoaded && catalogError ? tr('市场目录暂不可用') : tab === 'favorites' && !search ? tr('还没有收藏工作台') : tab === 'mine' && !search ? tr('还没有安装工作台') : tr('没有找到匹配的工作台')),
-            h('p', { className: 'dshWbMuted' }, tab === 'market' && !catalogLoaded && catalogError ? tr('请重试读取目录，或使用已安装的工作台。') : tab === 'favorites' && !search ? tr('把鼠标移到市场卡片上，点击书签即可收藏。') : tab === 'mine' && !search ? tr('到工作台市场选择一个工作台开始。') : tr('试试其他关键词或分类。'))))),
+            h('strong', null, showingCloud && !search ? cloudLoading ? cloudText('loading') : cloudCatalogError ? cloudText(cloudCatalogError) : cloudText('emptyCatalog') : showingEnterprise && !search ? (enterpriseLoading ? enterpriseText(service.ctx, 'loading') : enterpriseCatalogStatus === 'unavailable' ? enterpriseText(service.ctx, 'unavailable') : enterpriseCatalogStatus === 'error' ? enterpriseText(service.ctx, 'failed') : enterpriseText(service.ctx, 'empty')) : tab === 'market' && !catalogLoaded && catalogError ? tr('市场目录暂不可用') : tab === 'favorites' && !search ? tr('还没有收藏工作台') : tab === 'mine' && !search ? tr('还没有安装工作台') : tr('没有找到匹配的工作台')),
+            h('p', { className: 'dshWbMuted' }, showingCloud && !search ? cloudCatalogError ? enterpriseText(service.ctx, 'retryHint') : '' : tab === 'market' && !catalogLoaded && catalogError ? tr('请重试读取目录，或使用已安装的工作台。') : tab === 'favorites' && !search ? tr('把鼠标移到市场卡片上，点击书签即可收藏。') : tab === 'mine' && !search ? tr('到工作台市场选择一个工作台开始。') : tr('试试其他关键词或分类。'))))),
           hasMore && h('div', { className: 'dshWbMoreContainer' },
             h(Button, { className: 'dshWbBtn dshWbMore', onClick: () => setVisibleCount((current) => current + PAGE_SIZE) }, tr('加载更多')),
             h('p', { className: 'dshWbMoreCount' }, isEnglish() ? `Showing ${displayedEntries.length} of ${entries.length}` : `已显示 ${displayedEntries.length} / 共 ${entries.length} 个工作台`))),
         replacing && h(ConfirmMarketUpdate, { entry: replacing.entry, risk: replacing.risk, disabled: !!installing, onCancel: () => setReplacing(null), onConfirm: () => { service.run(service.installFromMarket(replacing.entry.catalogId || replacing.entry.id, { confirmedReplacement: true })); setReplacing(null) } }),
-        detail != null && h(DetailModal, { entry: selected, service, onClose: () => setDetail(null) }),
+        !collectionBlocked && detail != null && h(DetailModal, { entry: selected, service, onClose: () => setDetail(null) }),
         removing != null && h(ConfirmRemoveModal, { entry: removingEntry, disabled: disabled || !!installing || !!removingPlugin, onCancel: () => setRemoving(null), uninstall: !removingStale && !removingEntry?.unavailable && !!service.marketInstallFor(removing), nativeUninstall: !removingStale && !removingEntry?.unavailable && !service.marketInstallFor(removing), recordOnly: !!removingStale || !!removingEntry?.unavailable, onConfirm: () => service.run((removingEntry?.unavailable ? service.clearUnavailableRecord(removing) : removingStale ? service.removeStaleWorkbenchRecord(removing) : service.removeWorkbench(removing)).then(() => setRemoving(null))) }))
     }
     function Notebook({ service, entry }) {
@@ -2605,9 +2859,9 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
       const disabled = !ready || pending > 0 || service.blocked
       const visibleWorkspaces = workspaces.items.filter((item) => service.workspaceVisible(item.workspaceId, state.active))
       const chosen = visibleWorkspaces.find((item) => item.workspaceId === workspaceId) || service.defaultWorkspace()
-      return h('div', { className: 'dshWb dshWbFrame', ref: frameRef, 'data-dsh-workbench-active': entry ? '' : undefined }, runtimeEntry && h('div', { className: 'dshWbCaptionRow', 'aria-hidden': true }), h(Notice, { service }),
+      return h('div', { className: 'dshWb dshWbFrame', ref: frameRef, 'data-dsh-workbench-active': entry ? '' : undefined }, runtimeEntry && h('div', { className: 'dshWbCaptionRow', 'aria-hidden': true }), h(Notice, { service }), h(InstructionPreview, { service }),
         require('react-dom').createPortal(conversation, conversationContainer),
-        ...loaded.filter((item) => item.customFrame === true).map((item) => h(HeaderHost, { entry: item, key: item.id, className: 'dshWbCustomFrame', hidden: id !== item.id, style: { position: 'relative', overflow: 'hidden', flex: 1, minHeight: 0, minWidth: 0, width: '100%', maxWidth: '100%', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' } }, h(PanelBoundary, { service }, h(item.Component, { service, entry: item, active: id === item.id, conversation: id === item.id ? h('div', { style: { display: hasCurrentSession ? 'contents' : 'none' } }, conversationMount) : null })))),
+        ...loaded.filter((item) => item.customFrame === true).map((item) => h(HeaderHost, { entry: item, key: item.id, className: 'dshWbCustomFrame', hidden: id !== item.id, style: { position: 'relative', overflow: 'hidden', flex: 1, minHeight: 0, minWidth: 0, width: '100%', maxWidth: '100%', display: 'flex', flexDirection: 'column', boxSizing: 'border-box' } }, h(PanelBoundary, { service }, h(item.Component, { service, entry: item, active: id === item.id, conversation: id === item.id ? h('div', { style: { display: hasCurrentSession && (!item.cloud || service.cloudConversationId === item.id) ? 'contents' : 'none' } }, conversationMount) : null })))),
         h('div', { className: 'dshWbBody', hidden: customFrame, style: { '--workbench-business-width': `${(entry?.layout?.businessWidth ?? 0.36) * 100}%` } },
           h('div', { className: 'dshWbConversation' },
             entry && !hasCurrentSession && h('section', { className: 'dshWbInit' },
@@ -2650,8 +2904,18 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
       hostLocale = ctx.locale
       ctx.effect(() => ctx.locale.register(SETTINGS_NS, settingsCopy), 'workbenches: settings dictionaries')
       ctx.effect(() => ctx.locale.register(DOWNLOAD_NS, downloadCopy), 'workbenches: download dictionaries')
+      ctx.effect(() => ctx.locale.register(CREATE_NS, createCopy), 'workbenches: creation dictionaries')
+      ctx.effect(() => ctx.locale.register(CLOUD_CARD_NS, cloudCardCopy), 'workbenches: cloud card dictionaries')
       const service = new Workbenches(ctx)
       ctx.effect(() => ctx.reflect.provide('desktopWorkbenches', service), 'workbenches: service')
+      ctx.inject?.(['inputTriggers'], scoped => {
+        let disposed = false
+        import('/api/desktop-workbenches/create-workbench.mjs').then(({ createInstructionSource }) => {
+          if (disposed || service.instructionSourceDispose) return
+          service.instructionSourceDispose = scoped.effect(() => scoped.inputTriggers.registerSource(createInstructionSource(text => { service.instructionPreview = text; service.publish() })), 'workbenches: instruction reference')
+        }).catch(error => { if (!disposed) service.run(Promise.reject(error)) })
+        return () => { disposed = true; service.instructionSourceDispose = null }
+      })
       ctx.effect(() => ctx.modules?.entries?.state?.subscribe?.(() => service.publish()), 'workbenches: client module failures')
       ctx.effect(() => {
         const refresh = () => service.run(service.refreshNative())
@@ -2688,6 +2952,11 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           const previousKey = service.enterpriseAccountKey
           if (!connected || (previousKey && account.connectionKey && account.connectionKey !== previousKey)) {
             service.enterpriseTicket += 1
+            service.cloudTicket += 1
+            service.cloudCatalog = []
+            service.cloudAccountKey = ''
+            service.cloudCatalogStatus = connected ? 'loading' : 'idle'
+            service.cloudCatalogError = ''
             service.enterpriseCatalog = []
             service.enterpriseDetail = null
             service.enterpriseAccountKey = ''
@@ -2696,19 +2965,23 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           enterpriseCapability.replace({
             known: true,
             connected,
+            base: typeof account.base === 'string' ? account.base : null,
+            connectionKey: connected && typeof account.connectionKey === 'string' ? account.connectionKey : null,
             allowThirdPartyWorkbenches: connected && account.allowThirdPartyWorkbenches === true
           })
           if (previousConnected && !connected && (service.state.active || service.marketOpen)) service.run(service.returnToNativeSession())
+          service.syncCloudIdentity(connected ? account.connectionKey : null)
           const marketAllowed = connected && account.allowThirdPartyWorkbenches === true
           service.networkMarketAllowed = marketAllowed
           if (!marketAllowed) service.closePublicMarket()
           service.publish()
-          if (connected) service.run(service.refreshEnterpriseCatalog())
+          // Account polling must not refetch the full marketplace during an
+          // Agent conversation. Explicit open/refresh still reads fresh data.
+          if (connected && (previousKey !== account.connectionKey || service.enterpriseCatalogStatus === 'idle')) service.run(service.refreshEnterpriseWorkbenches())
         }
         const syncTab = () => {
           disposeTab?.()
           disposeTab = undefined
-          if (!enterpriseCapability.getSnapshot().connected) return
           disposeTab = ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({
             name: 'settings.plugins.tab', id: 'desktop-workbenches', order: 40, label: () => ctx.locale.bind(SETTINGS_NS)('title')
           }, WorkbenchSettingsTab))
@@ -2779,6 +3052,8 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
         return () => { window.removeEventListener('beforeunload', beforeUnload); service.dispose() }
       }, 'workbenches: lifecycle')
     }
+    // The composer is needed only by the explicit creation action, where its
+    // capabilities are checked. Keep navigation independent of its reload cycle.
     return { apply, inject: ['slots', 'layout', 'sessions', 'workspaces', 'uiWorkspace', 'modules', 'remote', 'remote.pluginManager', 'locale'], Workbenches, Frame, Market, Notebook, submissionAgentPrompt, developmentWorkbenchAgentPrompt, submissionWorkbenchAgentPrompt, copySubmissionPrompt }
   }
 })

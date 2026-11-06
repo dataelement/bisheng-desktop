@@ -295,6 +295,12 @@ export function apply(ctx) {
       body: JSON.stringify({ connectionKey, ticket })
     }).catch(() => undefined)
   }
+  ctx.provide('desktopCloud', {
+    async request(input) {
+      if (!input || input.operation === 'launch') throw new Error('Use the native cloud workbench view.')
+      return brokerJson('/v1/cloud', input)
+    }
+  })
   applyEnterpriseAuth(ctx)
   const grants = new WeakMap()
   const auth = {

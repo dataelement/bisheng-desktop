@@ -1,3 +1,4 @@
+import { validCloudId, validCloudRecord } from './cloud-record.mjs'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -13,7 +14,7 @@ const validId = (value) => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9.
 const validWorkbenchId = value => typeof value === 'string'
   && /^[a-z0-9][a-z0-9_.-]*\/[a-z0-9][a-z0-9_.-]*$/.test(value) && value.length <= 255
 const validLegacyWorkbenchId = value => typeof value === 'string' && /^[a-z][a-z0-9-]{0,79}$/.test(value)
-const validStoredWorkbenchId = value => validWorkbenchId(value) || validLegacyWorkbenchId(value)
+const validStoredWorkbenchId = value => validWorkbenchId(value) || validLegacyWorkbenchId(value) || validCloudId(value)
 const legacyReferences = state => new Set([
   ...state.added, ...state.pinned, ...state.favorites,
   ...(state.active === null ? [] : [state.active]),
@@ -21,7 +22,7 @@ const legacyReferences = state => new Set([
   ...Object.keys(state.recentSessions),
   ...Object.keys(state.notes),
   ...Object.keys(state.hiddenWorkspaces)
-].filter(id => !validWorkbenchId(id)))
+].filter(id => !validWorkbenchId(id) && !validCloudId(id)))
 
 export function emptyState() {
   return { version: 1, added: [], pinned: [], favorites: [], active: null, sessionBindings: {}, recentSessions: {}, notes: {}, hiddenWorkspaces: {} }
@@ -29,7 +30,9 @@ export function emptyState() {
 
 export function validateState(value, previous, migrations = {}) {
   if (!isObject(value) || value.version !== 1) fail('Unsupported workbench state version.')
-  if (Object.keys(value).some(key => !Object.hasOwn(emptyState(), key))) fail('Unknown workbench state field.')
+  if (Object.keys(value).some(key => !Object.hasOwn(emptyState(), key) && !['cloudWorkbenches', 'cloudDevelopmentSessions'].includes(key))) fail('Unknown workbench state field.')
+  if (value.cloudDevelopmentSessions !== undefined && (!isObject(value.cloudDevelopmentSessions) || !Object.entries(value.cloudDevelopmentSessions).every(([session, project]) => validId(session) && typeof project === 'string' && /^[a-f0-9-]{36}$/.test(project)))) fail('Invalid cloud development context.')
+  if (value.cloudWorkbenches !== undefined && (!isObject(value.cloudWorkbenches) || !Object.entries(value.cloudWorkbenches).every(([id, item]) => validCloudRecord(id, item)))) fail('Invalid cloud workbench metadata.')
   for (const key of ['added', 'pinned', 'favorites']) {
     if (!Array.isArray(value[key]) || !value[key].every(validStoredWorkbenchId)
       || new Set(value[key]).size !== value[key].length) fail(`Invalid ${key} workbench IDs.`)
@@ -46,6 +49,9 @@ export function validateState(value, previous, migrations = {}) {
     if (value.sessionBindings[session] !== workbench) fail('Recent session must belong to its workbench.')
   }
   if (previous) {
+    for (const [id, item] of Object.entries(previous.cloudWorkbenches || {})) {
+      if (!value.cloudWorkbenches?.[id] || value.cloudWorkbenches[id].appId !== item.appId || value.cloudWorkbenches[id].connectionKey !== item.connectionKey) fail('Removing an entry must preserve its cloud identity.')
+    }
     for (const [session, owner] of Object.entries(previous.sessionBindings)) {
       if (value.sessionBindings[session] !== owner && value.sessionBindings[session] !== migrations[owner]) fail('Existing session ownership cannot be changed or removed.')
     }

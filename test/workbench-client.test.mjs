@@ -20,8 +20,8 @@ const sessionStorage = {
   removeItem: key => sessionValues.delete(key),
   clear: () => sessionValues.clear()
 }
-// The Workbench feature is off by default; these behavior tests run as a user
-// who switched it on. The default itself is covered by its own test.
+// These behavior tests use an explicit enabled preference. Fresh-install and
+// explicit opt-out behavior is covered separately.
 const WORKBENCH_ENABLED = 'dsh-workbench-enabled'
 const enabledStorage = {
   getItem: key => key === WORKBENCH_ENABLED ? 'true' : null,
@@ -94,7 +94,7 @@ function cardButtons(card) {
   return buttons.map(button => button.props.children.flat().filter(child => typeof child === 'string').join(''))
 }
 
-function interactiveMarket(service, tab = 'market', clipboard) {
+function interactiveMarket(service, tab = 'market', clipboard, enterprise) {
   let renderMarket
   let stateIndex = 0
   const state = []
@@ -111,7 +111,7 @@ function interactiveMarket(service, tab = 'market', clipboard) {
       useRef: () => ({ current: null }),
     useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot()
   }
-  vm.runInNewContext(code, { window: { sessionStorage, localStorage: enabledStorage, navigator: clipboard && { clipboard }, __ModuleLoader__: { load({ factory }) {
+  vm.runInNewContext(code, { window: { sessionStorage, __dshEnterpriseWorkbenchSnapshot: enterprise, localStorage: enabledStorage, navigator: clipboard && { clipboard }, __ModuleLoader__: { load({ factory }) {
     renderMarket = factory(name => name === 'react' ? testReact : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null, Toast: function Toast() {} }).Market
   } } }, document, setTimeout, clearTimeout, AbortController })
   const find = (node, predicate) => {
@@ -122,12 +122,12 @@ function interactiveMarket(service, tab = 'market', clipboard) {
   return {
     render: () => { stateIndex = 0; return renderMarket({ service }) },
     find,
-    button: (tree, label) => find(tree, node => node.type?.name === 'Button' && node.props.children.flat().filter(child => typeof child === 'string').join('') === label)[0],
+    button: (tree, label) => find(tree, node => (node.type?.name === 'Button' || node.type === 'button') && node.props.children.flat().filter(child => typeof child === 'string').join('') === label)[0],
     modal: tree => find(tree, node => node.type?.name === 'ConfirmRemoveModal')[0]
   }
 }
 
-function sidebarSwitcher({ pinned = [], active = null, title = '工作台', workbenchId = 'writer' } = {}) {
+function sidebarSwitcher({ pinned = [], active = null, title = '工作台', workbenchId = 'writer', enterprise = { known: false, connected: false } } = {}) {
   let renderSidebar
   let stateIndex = 0
   const state = []
@@ -144,7 +144,7 @@ function sidebarSwitcher({ pinned = [], active = null, title = '工作台', work
       useRef: () => ({ current: null }),
     useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot()
   }
-  const sandbox = { window: { sessionStorage, localStorage: clientWindow.localStorage, __ModuleLoader__: { load({ factory }) {
+  const sandbox = { window: { sessionStorage, __dshEnterpriseWorkbenchSnapshot: enterprise, localStorage: clientWindow.localStorage, __ModuleLoader__: { load({ factory }) {
     factory(name => name === 'react' ? react : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null })
   } } }, document, setTimeout, clearTimeout, AbortController }
   vm.runInNewContext(code.replace('    function MetaItem(', '    globalThis.__testSidebarSwitcher = WorkbenchSidebarSwitcher\n    function MetaItem('), sandbox)
@@ -212,6 +212,7 @@ async function fixture(initial = emptyState()) {
   let service
   const ctx = {
     fiber: { name: 'fixture', entry: { options: { name: 'fixture' } } },
+    locale: { bind: () => key => ({ title: '从你的想法开始', description: '新会话将预填在线规范网址。', starter: '我想做一个【工作台名称或用途】，主要给【谁使用】。', instructionBody: '请访问在线开发规范：{guideUrl}，先梳理需求并判断本地、云端或混合部署。', create: '创建工作台', creating: '正在创建…', copy: '复制指令给其他 AI 助手', remove: '卸载', removeHelp: '仅卸载这台客户端中的工作台入口，云端应用和数据会保留。', cloud: '云端', add: '加载到工作台', open: '打开工作台' })[key] || key },
     sessions: {
       list: { getSnapshot: () => list },
       refresh: vi.fn(async () => {}),
@@ -277,8 +278,64 @@ const boundState = () => ({ ...emptyState(), added: ['writer', 'research'],
   recentSessions: { writer: 'writer-1', research: 'research-1' }, notes: { writer: 'Retained business draft' } })
 
 describe('desktop workbench client navigation', () => {
+  it('renders an installed cloud shortcut with the shared card layout and shortcut-only actions', async () => {
+    const { service } = await fixture()
+    const item = { id: 'b'.repeat(32), name: 'Team board', description: 'Shared enterprise records', version_id: 'c'.repeat(32) }
+    service.syncCloudIdentity('0123456789abcdef')
+    await service.addCloud(item, '0123456789abcdef')
+    const id = `cloud:0123456789abcdef:${item.id}`
+    const ui = interactiveMarket(service, 'mine')
+    const component = ui.find(ui.render(), node => node.type?.name === 'CloudInstalledCard')[0]
+    const card = component.type(component.props)
+    expect(card.props.className).toBe('dshWbCard')
+    expect(ui.find(card, node => node.type?.name === 'Preview')).toHaveLength(1)
+    expect(ui.find(card, node => node.props?.className === 'dshWbCardBody')).toHaveLength(1)
+    expect(ui.find(card, node => node.props?.className === 'dshWbCardTitle')).toHaveLength(1)
+    expect(ui.find(card, node => node.props?.className === 'dshWbCardControls')).toHaveLength(1)
+    expect(ui.find(card, node => node.props?.className === 'dshWbMediaOpen')).toHaveLength(1)
+    expect(ui.find(card, node => node.props?.className === 'dshWbAuthorRow')).toHaveLength(1)
+    expect(ui.find(card, node => node.props?.className === 'dshWbCardVersionActions')).toHaveLength(1)
+    expect(ui.find(card, node => node.props?.role === 'switch')).toHaveLength(0)
+    service.open = vi.fn(async () => {})
+    service.remove = vi.fn(async () => {})
+    const open = ui.find(card, node => node.type?.name === 'Button' && node.props.primary)[0]
+    const remove = ui.find(card, node => node.type === 'button' && node.props.className === 'dshWbUninstall')[0]
+    expect(remove.props.children).toEqual(['卸载'])
+    expect(remove.props.title).toContain('云端应用和数据会保留')
+    open.props.onClick()
+    remove.props.onClick()
+    expect(service.open).toHaveBeenCalledWith(id)
+    expect(service.remove).toHaveBeenCalledWith(id)
+    service.dispose()
+  })
+
+  it('loads a cloud app into native navigation and preserves metadata when removing its shortcut', async () => {
+    const { service, saved } = await fixture()
+    const item = { id: 'a'.repeat(32), name: 'Shared cloud board', description: 'Team data', version_id: 'b'.repeat(32) }
+    const connectionKey = 'c'.repeat(16)
+    const id = `cloud:${connectionKey}:${item.id}`
+    service.syncCloudIdentity(connectionKey)
+    await service.addCloud(item, connectionKey)
+    expect(service.catalog.get(id).customFrame).toBe(true)
+    expect(service.pluginFor(service.catalog.get(id))).toBe(null)
+    await service.open(id)
+    expect(saved().state.active).toBe(id)
+    expect(saved().state.added).toContain(id)
+    const sessionId = await service.ensureCloudDevelopmentSession(id, { folder: '/cloud/development' })
+    expect(service.cloudConversationId).toBe(id)
+    expect(saved().state.sessionBindings[sessionId]).toBe(id)
+    await service.open(id)
+    expect(service.cloudConversationId).toBe(null)
+    await service.open(id, sessionId)
+    expect(service.cloudConversationId).toBe(id)
+    await service.remove(id)
+    expect(saved().state.added).not.toContain(id)
+    expect(saved().state.cloudWorkbenches[id].appId).toBe(item.id)
+  })
+
   it('declares the native plugin manager injection and keeps the market available when access fails', async () => {
     expect(clientInject).toContain('remote.pluginManager')
+    expect(clientInject).not.toContain('conversation')
     const { service, ctx } = await fixture()
     Object.defineProperty(ctx, 'remote', { configurable: true, get() { throw new Error('cannot get property "remote.pluginManager" without inject') } })
     await expect(service.refreshNative()).resolves.toBeUndefined()
@@ -1168,23 +1225,25 @@ describe('desktop workbench client navigation', () => {
     expect(source).toContain("'aria-selected': visibleTab === 'favorites'")
     expect(source).toContain('我的收藏')
     expect(source).toContain('已安装')
-    expect(source).toContain('把开发指令交给 Agent')
-    expect(source).toContain('若你还没说明要做什么，它会先确认业务场景、目标用户和核心流程')
-    expect(source).toContain('装到本机，自测确认能用')
-    expect(source).toContain('需求确认并完成开发后，Agent 会把工作台装到这台 Desktop')
+    expect(source).toContain("createText('title')")
+    expect(source).toContain('service.createWorkbench()')
+    expect(source).toContain('dshWbStartCreate')
+    expect(source).toContain('由 Agent 部署，自测确认能用')
+    expect(source).toContain('云端工作台在对话确认后提交审核和部署，无需另点发布按钮')
     expect(source).toContain('想上架，再按验收规范提交')
     // The website is the only visible document entry point in this flow.
-    expect(source).toContain('href: developmentPageUrl()')
+    expect(source).toContain('href: service.developmentGuideUrl()')
     expect(source).toContain('href: acceptancePageUrl()')
     expect(source).not.toContain('离线查看')
-    expect(source).toContain('复制开发指令')
+    expect(source).toContain("createText('copy')")
+    expect(source).not.toContain("openPrompt === 'development'")
     expect(source).toContain('复制投稿指令')
     // Self-use must not read as a parallel alternative to submitting.
     expect(source).not.toContain('选择交付方式')
     expect(source).not.toContain('提交到工作台广场')
     expect(source).not.toContain('submitMode')
     expect(source).toContain("tab !== 'submit' && h('div', { className: 'dshWbToolbar'")
-    expect(source).toContain("tab !== 'submit' && h('section'")
+    expect(source).toContain("tab !== 'submit' && !collectionBlocked && h('section'")
     expect(source).not.toContain('showSubmit')
     expect(source).not.toContain("'aria-expanded'")
     expect(source).not.toContain('setGuideOpen')
@@ -1196,7 +1255,7 @@ describe('desktop workbench client navigation', () => {
     expect(development).toContain('scripts/check-workbench-package.mjs')
     expect(development).toContain('已安装的工作台')
     expect(development).toContain('左侧入口')
-    expect(development).toContain('不需要上传或投稿')
+    expect(development).toContain('本地、云端或混合部署')
     expect(development).toContain('这条通用指令没有提供业务需求')
     expect(development).toContain('每次只问一个必要问题')
     expect(development).toContain('不重复已提供的信息')
@@ -1209,7 +1268,7 @@ describe('desktop workbench client navigation', () => {
     expect(development).toContain('业务意图或范围仍不清楚时')
     expect(development).toContain('此前不要创建或修改业务代码、界面或包文件，也不要构建、打包、安装或投稿')
     expect(development).toContain('空目录且没有业务目标时，到提问为止')
-    expect(development.indexOf('等待我回答')).toBeLessThan(development.indexOf('再按规范第 3 节'))
+    expect(development.indexOf('等待我回答')).toBeLessThan(development.indexOf('本地方案按规范第 3 节'))
     expect(development).toContain('第 8 节“本地自测清单”')
     expect(development).toContain('不要要求普通用户确认')
     expect(development).toContain('整页展示业务内容，需要时再打开 AI 对话')
@@ -1223,8 +1282,8 @@ describe('desktop workbench client navigation', () => {
     expect(development).toContain('不要声称已加载')
     // Prompts give the website as the one link; the bundled copies are for offline reading.
     expect(development).toContain('https://dshdesktop.com/workbench/docs/development.md')
-    expect(development).not.toContain('/api/desktop-workbenches/')
-    expect(development).toContain('不需要处理市场投稿或发布')
+    expect(development).toContain('cloud_workbench guide')
+    expect(development).toContain('判断采用本地、云端或混合部署')
     expect(development).not.toContain('dataelement/awesome-dsh-workbench')
     expect(development).not.toContain('CONTRIBUTING.md')
     // The preset-package document describes Agent presets, not workbench packages.
@@ -1314,7 +1373,7 @@ describe('desktop workbench client navigation', () => {
     expect(code).toContain('.dshWbMarketHeader :is(button,a,input,select,textarea){-webkit-app-region:no-drag}')
   })
 
-  it.each([['复制开发指令', '本地开发'], ['复制投稿指令', '市场验收']])('shows the same success toast after %s', async (label, promptFragment) => {
+  it.each([['复制指令给其他 AI 助手', 'https://dshdesktop.com/workbench/docs/development.md'], ['复制投稿指令', '市场验收']])('shows the same success toast after %s', async (label, promptFragment) => {
     const { service } = await fixture()
     const writeText = vi.fn(async () => {})
     const ui = interactiveMarket(service, 'submit', { writeText })
@@ -1323,6 +1382,13 @@ describe('desktop workbench client navigation', () => {
     await ui.button(tree, label).props.onClick()
     expect(writeText).toHaveBeenCalledOnce()
     expect(writeText.mock.calls[0][0]).toContain(promptFragment)
+    if (label === '复制指令给其他 AI 助手') {
+      expect(writeText.mock.calls[0][0]).toContain('【工作台名称或用途】')
+      expect(writeText.mock.calls[0][0]).toContain('云端或混合部署')
+      expect(writeText.mock.calls[0][0]).toBe(service.creationPrompt())
+      expect(writeText.mock.calls[0][0]).toContain('scripts/check-workbench-package.mjs')
+      expect(writeText.mock.calls[0][0]).toContain('不要把常驻会话区当作默认产品设计')
+    }
     const toast = ui.find(ui.render(), node => node.type?.name === 'Toast')[0]
     expect(toast.props).toMatchObject({ text: '已复制', tone: 'success' })
     toast.props.onDone()
@@ -1333,7 +1399,7 @@ describe('desktop workbench client navigation', () => {
   it('shows failure feedback when copying a workbench instruction fails', async () => {
     const { service } = await fixture()
     const ui = interactiveMarket(service, 'submit', { writeText: vi.fn(async () => { throw new Error('denied') }) })
-    await ui.button(ui.render(), '复制开发指令').props.onClick()
+    await ui.button(ui.render(), '复制指令给其他 AI 助手').props.onClick()
     const toast = ui.find(ui.render(), node => node.type?.name === 'Toast')[0]
     expect(toast.props.text).toContain('复制失败')
     expect(toast.props.tone).toBeUndefined()
@@ -2581,7 +2647,7 @@ describe('workbench market screenshot and metadata display', () => {
     expect(fullSource).not.toContain('WORKBENCH_DOCK_PREF')
     expect(fullSource).not.toContain('workbenchDockPreference')
     expect(fullSource).not.toContain('显示工作台快捷栏')
-    expect(fullSource).toContain('if (!enabled || !wide || (enterprise.known && !enterprise.connected)) return null')
+    expect(fullSource).toContain('if (!enabled || !wide) return null')
     expect(fullSource).not.toContain('WorkbenchEnableSetting')
     expect(fullSource).not.toContain("label: tr('启用工作台功能')")
     expect(fullSource).toContain('if (!workbenchEnabled) return conversation')
@@ -2591,7 +2657,7 @@ describe('workbench market screenshot and metadata display', () => {
     const source = Market.toString()
     expect(source).toContain("const [search, setSearch] = React.useState('')")
     expect(source).toContain("const [category, setCategory] = React.useState('all')")
-    expect(source).toContain("visibleTab === 'mine' ? service.checkUpdates() : showingEnterprise ? service.refreshEnterpriseCatalog() : service.refreshCatalog()")
+    expect(source).toContain("visibleTab === 'mine' ? service.checkUpdates() : showingEnterprise ? service.refreshEnterpriseCatalog() : showingCloud ? service.refreshCloudCatalog() : service.refreshCatalog()")
     expect(source).toContain("tab === 'mine' ? tr('检查更新') : tr('刷新目录')")
     expect(source).toContain("h(MarketIcon, { name: 'refresh', size: 17 })")
     expect(fullSource).toContain('.dshWbRefresh[aria-busy=true] svg{animation:dshWbSpin .8s linear infinite}')
@@ -3941,6 +4007,7 @@ describe('workbench host localization', () => {
     let snapshot = { active: 'en', revision: 1 }
     const listeners = new Set()
     ctx.locale = {
+      bind: () => key => ({ create: snapshot.active === 'en' ? 'Create workbench' : '创建工作台', copy: snapshot.active === 'en' ? 'Copy instructions' : '复制指令' })[key] || key,
       getSnapshot: () => snapshot,
       subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener) },
       setActive: active => { snapshot = { active, revision: snapshot.revision + 1 }; for (const listener of listeners) listener() }
@@ -3966,7 +4033,7 @@ describe('workbench host localization', () => {
 
   it('localizes the creation workflow and installed-state actions', async () => {
     const { service, ctx } = await fixture({ ...emptyState(), added: ['o/a'] })
-    ctx.locale = { getSnapshot: () => ({ active: 'en', revision: 1 }), subscribe: () => () => {} }
+    ctx.locale = { bind: () => key => ({ create: 'Create workbench', copy: 'Copy instructions' })[key] || key, getSnapshot: () => ({ active: 'en', revision: 1 }), subscribe: () => () => {} }
     service.remoteCatalog = [bilingualEntry()]
     service.publish()
     const ui = interactiveMarket(service)
@@ -3975,7 +4042,8 @@ describe('workbench host localization', () => {
     ui.button(tree, 'Build my workbench').props.onClick()
     tree = ui.render()
     expect(ui.find(tree, node => node.type === 'h1')[0].props.children).toEqual(['Build your own workbench'])
-    expect(ui.button(tree, 'Copy development instructions')).toBeDefined()
+    expect(ui.button(tree, 'Create workbench')).toBeDefined()
+    expect(ui.button(tree, 'Copy instructions')).toBeDefined()
     expect(ui.button(tree, 'Copy submission instructions')).toBeDefined()
     ui.button(tree, 'Back to Workbench Market').props.onClick()
     ui.find(ui.render(), node => node.props?.id === 'dsh-workbench-mine-tab')[0].props.onClick()
@@ -3987,6 +4055,110 @@ describe('workbench host localization', () => {
 
 
 describe('sidebar central panel selection', () => {
+  it('separates cloud apps from enterprise packages and preserves native card actions', async () => {
+    const { service } = await fixture()
+    const connectionKey = 'a'.repeat(16)
+    const item = { id: 'b'.repeat(32), name: 'Team cloud board', description: 'Shared data' }
+    service.enterpriseCatalog = [{ id: 'package-board', displayName: 'Enterprise package', packageName: 'team-package' }]
+    service.cloudCatalog = [item]
+    service.cloudAccountKey = connectionKey
+    service.cloudCatalogStatus = 'ready'
+    service.publish()
+    const ui = interactiveMarket(service, 'enterprise', undefined, { known: true, connected: true, connectionKey, allowThirdPartyWorkbenches: false })
+    let tree = ui.render()
+    expect(ui.find(tree, node => node.props?.role === 'tab')).toHaveLength(5)
+    expect(ui.find(tree, node => node.type?.name === 'CloudInstalledCard')).toHaveLength(0)
+    ui.find(tree, node => node.props?.id === 'dsh-workbench-cloud-tab')[0].props.onClick()
+    tree = ui.render()
+    expect(ui.find(tree, node => node.props?.className === 'dshWbGrid')).toHaveLength(1)
+    expect(ui.find(tree, node => node.type === 'article' && node.props.key === 'package-board')).toHaveLength(0)
+    const component = ui.find(tree, node => node.type?.name === 'CloudInstalledCard')[0]
+    let card = component.type(component.props)
+    expect(ui.find(card, node => node.props?.className === 'dshWbCategory')[0].props.children).toEqual(['云端'])
+    expect(ui.find(card, node => node.props?.className === 'dshWbUninstall')).toHaveLength(0)
+    service.open = vi.fn(async () => {})
+    ui.button(card, '加载到工作台').props.onClick()
+    const id = `cloud:${connectionKey}:${item.id}`
+    await vi.waitFor(() => expect(service.open).toHaveBeenCalledWith(id))
+    expect(service.state.added).toContain(id)
+    tree = ui.render()
+    card = ui.find(tree, node => node.type?.name === 'CloudInstalledCard')[0]
+    expect(ui.button(card.type(card.props), '打开工作台')).toBeDefined()
+    ui.find(tree, node => node.type === 'input' && node.props.type === 'search')[0].props.onChange({ target: { value: 'cloud' } })
+    tree = ui.render()
+    expect(ui.find(tree, node => node.type === 'article')).toHaveLength(0)
+    expect(ui.find(tree, node => node.type?.name === 'CloudInstalledCard')).toHaveLength(1)
+    service.refreshCloudCatalog = vi.fn(async () => {})
+    ui.find(tree, node => node.props?.className === 'dshWbBtn dshWbRefresh')[0].props.onClick()
+    expect(service.refreshCloudCatalog).toHaveBeenCalledOnce()
+    service.dispose()
+  })
+
+  it('keeps enterprise packages usable if the cloud list fails and never shows another account’s cloud apps', async () => {
+    const { service } = await fixture()
+    service.enterpriseCatalog = [{ id: 'package-board', displayName: 'Enterprise package' }]
+    service.cloudCatalog = [{ id: 'b'.repeat(32), name: 'Another account' }]
+    service.cloudAccountKey = 'a'.repeat(16)
+    service.cloudCatalogStatus = 'error'
+    service.cloudCatalogError = 'unavailable'
+    service.publish()
+    const ui = interactiveMarket(service, 'enterprise', undefined, { known: true, connected: true, connectionKey: 'c'.repeat(16), allowThirdPartyWorkbenches: false })
+    const tree = ui.render()
+    expect(ui.find(tree, node => node.type === 'article')).toHaveLength(1)
+    expect(ui.find(tree, node => node.type?.name === 'CloudInstalledCard')).toHaveLength(0)
+    expect(ui.find(tree, node => node.props?.role === 'alert')).toHaveLength(0)
+    ui.find(tree, node => node.props?.id === 'dsh-workbench-cloud-tab')[0].props.onClick()
+    expect(ui.find(ui.render(), node => node.type?.name === 'CloudInstalledCard')).toHaveLength(0)
+    expect(ui.find(ui.render(), node => node.props?.role === 'alert')).toHaveLength(1)
+    service.dispose()
+  })
+
+  it('keeps the separate cloud login panel discoverable', async () => {
+    const { service } = await fixture()
+    service.networkMarketAllowed = false
+    const ui = interactiveMarket(service, 'cloud', undefined, { known: true, connected: false, allowThirdPartyWorkbenches: false })
+    const tree = ui.render()
+    expect(ui.find(tree, node => node.props?.id === 'dsh-workbench-cloud-panel')).toHaveLength(1)
+    expect(ui.find(tree, node => node.props?.id === 'dsh-workbench-market-panel')).toHaveLength(0)
+    expect(ui.find(tree, node => node.props?.className === 'dshWbBrowseTools')).toHaveLength(0)
+    expect(ui.find(tree, node => node.props?.className === 'dshWbSearch')).toHaveLength(0)
+  })
+  it('keeps every collection discoverable before login and shows a login panel on selection', async () => {
+    const { service } = await fixture()
+    const ui = interactiveMarket(service, 'market', undefined, { known: true, connected: false, allowThirdPartyWorkbenches: false })
+    for (const tab of ['market', 'favorites', 'enterprise', 'cloud', 'mine']) {
+      const node = ui.find(ui.render(), node => node.props?.id === `dsh-workbench-${tab}-tab`)[0]
+      expect(node).toBeDefined()
+      node.props.onClick()
+      const tree = ui.render()
+      expect(ui.find(tree, node => node.props?.id === `dsh-workbench-${tab}-panel`)).toHaveLength(1)
+      if (['market', 'favorites', 'enterprise', 'cloud'].includes(tab)) {
+        expect(ui.button(tree, '登录毕昇账号')).toBeDefined()
+        expect(ui.find(tree, node => node.type === 'article')).toHaveLength(0)
+        expect(ui.find(tree, node => node.props?.className === 'dshWbBrowseTools')).toHaveLength(0)
+      }
+    }
+  })
+
+  it('keeps enterprise distribution separate when public installation is blocked', async () => {
+    const { service } = await fixture()
+    service.remoteCatalog = [{ id: 'o/a', owner: 'o', name: 'Cached workbench', description: { zh: '缓存目录', en: 'Cached catalog' }, screenshots: [], url: 'https://github.com/o/a' }]
+    service.publish()
+    const ui = interactiveMarket(service, 'market', undefined, { known: true, connected: true, allowThirdPartyWorkbenches: false })
+    expect(ui.find(ui.render(), node => node.type === 'article')).toHaveLength(0)
+    expect(ui.find(ui.render(), node => node.type === 'strong' && node.props.children.includes('当前企业未开放网络工作台安装'))).toHaveLength(1)
+    ui.find(ui.render(), node => node.props?.id === 'dsh-workbench-enterprise-tab')[0].props.onClick()
+    expect(ui.find(ui.render(), node => node.props?.id === 'dsh-workbench-enterprise-panel')).toHaveLength(1)
+    expect(ui.button(ui.render(), '登录毕昇账号')).toBeUndefined()
+    ui.find(ui.render(), node => node.props?.id === 'dsh-workbench-market-tab')[0].props.onClick()
+    expect(ui.find(ui.render(), node => node.type === 'article')).toHaveLength(0)
+  })
+
+  it('keeps the Workbench entrance visible before enterprise login', () => {
+    const ui = sidebarSwitcher({ enterprise: { known: true, connected: false } })
+    expect(ui.render()).not.toBe(null)
+    expect(ui.find(ui.render(), node => node.props?.['aria-label'] === '打开工作台主页')).toHaveLength(1)
+  })
   it('highlights the entire row for an active workbench frame, but not other panels', () => {
     const ui = sidebarSwitcher({ pinned: ['writer'], active: 'writer', title: '装修工作台' })
     const selected = () => ui.find(ui.render(), node => node.props?.['data-dsh-workbench-switcher'] === '')[0].props['data-selected']
@@ -4043,8 +4215,8 @@ describe('workbench feature default', () => {
     }
   }
 
-  it('keeps workbenches off until the user switches the feature on', async () => {
-    expect(await openError(undefined)).toBe('工作台功能已关闭。')
+  it('shows workbenches on a fresh profile and preserves an explicit opt-out', async () => {
+    expect(await openError(undefined)).not.toBe('工作台功能已关闭。')
     expect(await openError('false')).toBe('工作台功能已关闭。')
     expect(await openError('true')).not.toBe('工作台功能已关闭。')
   })
@@ -4070,4 +4242,54 @@ describe('enterprise workbench Manager outcomes', () => {
     expect(service.pendingRestart.has(id)).toBe(false)
     expect(service.installing).toBeNull()
   })
+})
+describe('enterprise catalog request lifecycle', () => {
+  it('shares an in-flight read and allows another refresh after settlement', async () => {
+    let finish
+    const service = Object.create(Workbenches.prototype)
+    service.readEnterpriseCatalog = vi.fn(() => new Promise(resolve => { finish = resolve }))
+    const first = service.refreshEnterpriseCatalog()
+    expect(service.refreshEnterpriseCatalog()).toBe(first)
+    expect(service.readEnterpriseCatalog).toHaveBeenCalledOnce()
+    finish()
+    await first
+    const second = service.refreshEnterpriseCatalog()
+    expect(second).not.toBe(first)
+    expect(service.readEnterpriseCatalog).toHaveBeenCalledTimes(2)
+    finish()
+    await second
+  })
+})
+
+
+it('keeps the published guide URL in the editable draft instead of a local attachment', async () => {
+  const { service, ctx } = await fixture()
+  ctx.locale.bind = () => key => ({ instructionBody: 'Read {guideUrl} and assess local, cloud or hybrid hosting.', starter: 'My 【idea】' })[key] || key
+  // The market view sees the same bound service used by its create action.
+  expect(service.creationPrompt()).toContain('https://dshdesktop.com/workbench/docs/development.md')
+  expect(service.creationPrompt()).not.toContain('.md 的附件')
+  expect(service.creationInstructions()).toBe(developmentWorkbenchAgentPrompt(false, service.developmentGuideUrl()))
+  expect(service.creationInstructions()).not.toContain('My 【idea】')
+  expect(service.creationPrompt()).toContain('My 【idea】')
+  service.dispose()
+})
+
+
+it.each([false, true])('preserves the full development instructions with an enterprise guide URL (English=%s)', async english => {
+  const { service, ctx } = await fixture()
+  const guideUrl = 'https://enterprise.example/proxy/api/v1/dev-toolkit/workbench-guide' + (english ? '-en' : '') + '.md'
+  service.developmentGuideUrl = () => guideUrl
+  const text = developmentWorkbenchAgentPrompt(english, guideUrl)
+  expect(text).toContain(guideUrl)
+  expect(text).not.toContain('https://dshdesktop.com/workbench/docs/development')
+  expect(text).not.toContain('This task is for local development and installation only')
+  expect(text).toContain('customFrame')
+  expect(text).toContain('scripts/check-workbench-package.mjs')
+  expect(text).toContain('cloud_workbench publish')
+  if (!english) {
+    ctx.locale.bind = () => key => ({ starter: 'My 【idea】' })[key] || key
+    expect(service.creationInstructions()).toBe(text)
+    expect(service.creationPrompt()).toBe(text + '\n\nMy 【idea】')
+  }
+  service.dispose()
 })

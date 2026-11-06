@@ -316,9 +316,14 @@ describe('enterprise service login loop', () => {
       if (String(input).endsWith('/api/v1/dsh/authorizations')) requests.push(JSON.parse(String(init?.body)))
       return globalThis.fetch(input, init)
     }
+    // Observe the login lifecycle directly; filesystem/bootstrap latency is
+    // bounded by the test deadline, not an unrelated five-second polling loop.
+    let notifyActivation: () => void = () => { throw new Error('Activation observer is not initialized') }
+    const activated = new Promise<void>(resolve => { notifyActivation = resolve })
     const activateDesktop = vi.fn(() => {
       expect(service.snapshot().phase).toBe('connected')
     expect(service.snapshot().desktopVersion).toBe('0.1.1-beta.2+build.7')
+      notifyActivation()
       if (failActivation) throw new Error('window unavailable')
     })
     const { service, notes } = await createService(createEnterpriseFetch(fetchImpl), {
@@ -328,7 +333,7 @@ describe('enterprise service login loop', () => {
     expect(requests[0]).toMatchObject({ client_version: '0.1.1-beta.2+build.7', device_name: 'BISHENG' })
     expect(activateDesktop).not.toHaveBeenCalled()
     await completeBrowserLogin(origin, started.authorizationUrl)
-    await waitFor(() => activateDesktop.mock.calls.length === 1)
+    await activated
     expect(service.snapshot().phase).toBe('connected')
     expect(notes).toContain('login_committed')
     expect(notes.includes('desktop_activation_failed')).toBe(failActivation)

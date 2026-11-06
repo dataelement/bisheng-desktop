@@ -663,6 +663,18 @@ contextBridge.exposeInMainWorld('dshEnterpriseChat', Object.freeze({
 contextBridge.exposeInMainWorld(
   'dshDesktopEnterprise',
   Object.freeze({
+    onCloudAccessRequired: (listener: (value: { owner: string; appId: string }) => void): (() => void) => {
+      if (typeof listener !== 'function') throw new TypeError('A cloud access listener is required.')
+      const handler = (_event: Electron.IpcRendererEvent, value: unknown) => {
+        if (value && typeof value === 'object' && typeof (value as { owner?: unknown }).owner === 'string' && typeof (value as { appId?: unknown }).appId === 'string') listener(value as { owner: string; appId: string })
+      }
+      ipcRenderer.on('enterprise-cloud:access-required', handler)
+      return () => ipcRenderer.removeListener('enterprise-cloud:access-required', handler)
+    },
+    cloudRequest: (input: unknown): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:request', input),
+    openCloudWorkbench: (appId: string, bounds: unknown, connectionKey: string, owner: string): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:open', appId, bounds, connectionKey, owner),
+    resizeCloudWorkbench: (bounds: unknown, owner: string): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:bounds', bounds, owner),
+    closeCloudWorkbench: (owner: string): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:close', owner),
     onLoginLink: (listener: (url: string) => void): (() => void) => {
       if (typeof listener !== 'function') {
         throw new TypeError('Enterprise login listener must be a function.')
