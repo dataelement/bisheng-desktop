@@ -17,12 +17,17 @@ vi.mock('electron', async () => {
     shell: { openExternal: vi.fn(async () => {}) },
     WebContentsView: class {
       webContents: any
-      setBounds = vi.fn()
-      setVisible = vi.fn()
+      bounds = { x: 0, y: 0, width: 0, height: 0 }
+      visible = false
+      setBounds = vi.fn((bounds: { x: number; y: number; width: number; height: number }) => { this.bounds = { ...bounds } })
+      setVisible = vi.fn((visible: boolean) => { this.visible = visible })
+      getBounds = () => this.bounds
+      getVisible = () => this.visible
       setBackgroundColor = vi.fn()
       constructor(public options: any) {
         let url = ''
-        this.webContents = Object.assign(new EventEmitter(), { id: fake.views.length + 100, session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), focus: vi.fn(), send: vi.fn(), mainFrame: {}, getURL: () => url, getZoomFactor: () => 1, close: vi.fn(() => { if (fake.emitCloseAsGone) { const contents = this.webContents; setTimeout(() => contents.emit('render-process-gone'), 0) } }), executeJavaScript: vi.fn(async () => {}), insertCSS: vi.fn(async () => 'key'), loadURL: vi.fn(async (next: string) => {
+        let zoom = 1
+        this.webContents = Object.assign(new EventEmitter(), { id: fake.views.length + 100, session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), focus: vi.fn(), send: vi.fn(), mainFrame: {}, getURL: () => url, getZoomFactor: () => zoom, setZoomFactor: vi.fn((value: number) => { zoom = value }), capturePage: vi.fn(async () => ({ isEmpty: () => false, toDataURL: () => 'data:image/png;base64,fixture' })), close: vi.fn(() => { if (fake.emitCloseAsGone) { const contents = this.webContents; setTimeout(() => contents.emit('render-process-gone'), 0) } }), executeJavaScript: vi.fn(async () => {}), insertCSS: vi.fn(async () => 'key'), loadURL: vi.fn(async (next: string) => {
           if (fake.hangLoads) return await new Promise<void>(() => {})
           if (fake.loadFailures > 0) { fake.loadFailures -= 1; throw Object.assign(new Error('load failed'), { code: fake.loadErrorCode }) }
           url = fake.loadLanding ?? next
@@ -43,12 +48,60 @@ function fixture() {
   let state = { connected: true, connectionKey: 'tenant-a' }
   let change: (state: any) => void = () => {}
   const enterprise = { snapshot: () => state, subscribe: (listener: typeof change) => { change = listener; return vi.fn() }, webSession: vi.fn(async () => ({ base: 'https://enterprise.example', cookie: 'test-cookie', cookieName: 'bs_credits_3007', connectionKey: 'tenant-a', expiresAt: Date.now() + 300_000 })) }
-  const owner: any = Object.assign(new EventEmitter(), { isDestroyed: () => false, getContentSize: () => [1100, 800], contentView: { addChildView: vi.fn(), removeChildView: vi.fn() }, webContents: Object.assign(new EventEmitter(), { send: vi.fn(), focus: vi.fn(), getZoomFactor: () => 1 }) })
+  const owner: any = Object.assign(new EventEmitter(), { isDestroyed: () => false, getContentSize: () => [1100, 800], contentView: { addChildView: vi.fn(), removeChildView: vi.fn() }, webContents: Object.assign(new EventEmitter(), { send: vi.fn(), focus: vi.fn(), getZoomFactor: () => 1, isDestroyed: () => false, executeJavaScript: vi.fn(async () => true) }) })
   const host = new EnterpriseChatView(enterprise as any, vi.fn())
   return { host, owner, enterprise, change: (next: typeof state) => { state = next; change(next) } }
 }
 
 describe('enterprise Chat host boundary', () => {
+  it('delivers the viewport to a new module document even when its native bounds are unchanged', async () => {
+    const f = fixture()
+    const url = 'https://enterprise.example/workspace/knowledge?embed=dsh'
+    fake.loadLanding = url
+    try {
+      f.host.present(f.owner, { ...presentation, bounds: { x: 0, y: 48, width: 1100, height: 752 } })
+      await flush()
+      const contents = fake.views[0].webContents
+      contents.emit('did-start-navigation', {}, url, false, true)
+      contents.executeJavaScript.mockClear()
+      contents.emit('did-finish-load')
+      expect(contents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('--dsh-chat-viewport-top: 48px'))
+    } finally { f.host.dispose() }
+  })
+
+  it('inherits host zoom on creation, menu changes, hidden presentation and reconnect', async () => {
+    const f = fixture()
+    let zoom = 0.8
+    f.owner.webContents.getZoomFactor = () => zoom
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      const view = fake.views[0]
+      expect(view.webContents.getZoomFactor()).toBe(0.8)
+      for (const value of [0.7, 1.2, 1]) {
+        zoom = value
+        f.host.syncZoom(f.owner)
+        expect(view.webContents.getZoomFactor()).toBe(value)
+        expect(view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: Math.round(56 * value), width: Math.min(1100, Math.round(1100 * value)), height: Math.min(800 - Math.round(56 * value), Math.round(700 * value)) })
+      }
+      zoom = 1.25
+      f.host.present(f.owner, { ...presentation, visible: false })
+      expect(view.webContents.getZoomFactor()).toBe(1.25)
+      f.host.present(f.owner, presentation)
+      await f.host.open('new')
+      expect(view.webContents.getZoomFactor()).toBe(1.25)
+      f.host.retry()
+      await flush()
+      expect(fake.views[1].webContents.getZoomFactor()).toBe(1.25)
+      zoom = 0.5
+      const other = fixture()
+      try {
+        f.host.syncZoom(other.owner)
+        expect(fake.views[1].webContents.getZoomFactor()).toBe(1.25)
+      } finally { other.host.dispose() }
+    } finally { f.host.dispose() }
+  })
+
   it('reads fixed self-service usage with the isolated session and discards logout races', async () => {
     const f = fixture()
     try {
@@ -162,7 +215,8 @@ it('carries host language on first load and updates a hidden document without re
     expect(view.webContents.loadURL).toHaveBeenLastCalledWith('https://enterprise.example/workspace/c/new?embed=dsh&dshTheme=dark&dshLocale=en')
     const loads = view.webContents.loadURL.mock.calls.length
     await f.host.open('new')
-    expect(view.webContents.loadURL).toHaveBeenCalledTimes(loads)
+    // New conversation is a reset action even if the document URL is unchanged.
+    expect(view.webContents.loadURL).toHaveBeenCalledTimes(loads + 1)
     view.webContents.executeJavaScript.mockClear()
     view.webContents.emit('did-navigate-in-page', {}, 'https://enterprise.example/workspace/c/new', true)
     expect(view.webContents.executeJavaScript).toHaveBeenLastCalledWith(expect.stringContaining('dshHostLocale = "en"'))
@@ -194,6 +248,45 @@ it('reads cloud history through a fixed host endpoint and validates selection ag
   } finally { f.host.dispose() }
 })
 
+it('scopes desktop projects to the enterprise identity and routes only validated project drafts', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    expect(f.host.snapshot().projectScope).toBe('tenant-a')
+    await f.host.open('new', '11111111-1111-4111-8111-111111111111')
+    expect(fake.views[0].webContents.loadURL).toHaveBeenLastCalledWith('https://enterprise.example/workspace/c/new?projectId=11111111-1111-4111-8111-111111111111&embed=dsh&dshTheme=dark')
+    expect(f.host.snapshot()).toMatchObject({ draftProjectId: '11111111-1111-4111-8111-111111111111', conversationId: 'new' })
+    await expect(f.host.open('new', '../admin')).rejects.toThrow('identity')
+    await expect(f.host.open('cloud-a', '11111111-1111-4111-8111-111111111111')).rejects.toThrow('new Chat draft')
+    await f.host.open('new')
+    expect(f.host.snapshot().draftProjectId).toBeUndefined()
+    f.host.retry()
+    await flush()
+    expect(f.host.snapshot().projectScope).toBe('tenant-a')
+    f.change({ connected: false, connectionKey: 'tenant-a' })
+    expect(f.host.snapshot().projectScope).toBeUndefined()
+  } finally { f.host.dispose() }
+})
+
+it('requests a fresh project conversation even when the same draft URL is already open', async () => {
+  const f = fixture()
+  const projectId = '11111111-1111-4111-8111-111111111111'
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    await f.host.open('new', projectId)
+    const view = fake.views[0]
+    const loads = view.webContents.loadURL.mock.calls.length
+    view.webContents.executeJavaScript.mockClear()
+    view.webContents.executeJavaScript.mockResolvedValue(true)
+    await f.host.open('new', projectId)
+    expect(view.webContents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining(`path: "/c/new?projectId=${projectId}"`))
+    expect(view.webContents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('resetDraft: true'))
+    expect(view.webContents.loadURL).toHaveBeenCalledTimes(loads)
+  } finally { f.host.dispose() }
+})
+
 it('uses in-document conversation navigation and preserves view geometry while Work is visible', async () => {
   const f = fixture()
   try {
@@ -210,6 +303,7 @@ it('uses in-document conversation navigation and preserves view geometry while W
     f.host.present(f.owner, presentation)
     await f.host.open('cloud-a')
     expect(view.webContents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining("dsh:navigate"))
+    expect(view.webContents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('resetDraft: false'))
     expect(view.webContents.loadURL).toHaveBeenCalledTimes(1)
     expect(f.host.snapshot().phase).toBe('ready')
     expect(fake.views).toHaveLength(1)
@@ -325,8 +419,9 @@ it('delivers the host palette to module pages, backs the view with it, and rejec
     f.host.present(f.owner, { ...presentation, palette })
     await flush()
     const view = fake.views[0], wc = view.webContents
-    // Chat routes keep their own deployed theme, so their backing is unchanged.
-    expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#141416')
+    // Chat keeps its backing color in the content seat; the native layer stays transparent.
+    expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#00000000')
+    expect(wc.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('background: #141416'))
     f.host.present(f.owner, { ...presentation, palette, settings: 'desktop-usage' })
     await flush()
     expect(wc.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('--bg-page:44 44 46'))
@@ -431,6 +526,24 @@ it('opens content-only settings, waits for the current main frame and restores t
     expect(view.setVisible).toHaveBeenLastCalledWith(true)
     expect(fake.views).toHaveLength(1)
     expect(f.host.snapshot().settingsSection).toBeUndefined()
+  } finally { f.host.dispose() }
+})
+
+it('returns from settings to a project draft without requesting a fresh conversation', async () => {
+  const f = fixture()
+  const projectId = '11111111-1111-4111-8111-111111111111'
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    await f.host.open('new', projectId)
+    f.host.present(f.owner, { ...presentation, settings: 'desktop-usage' })
+    await flush()
+    const wc = fake.views[0].webContents
+    wc.executeJavaScript.mockClear()
+    wc.executeJavaScript.mockResolvedValue(true)
+    f.host.present(f.owner, presentation)
+    await flush()
+    expect(wc.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining(`path: "/c/new?projectId=${projectId}", resetDraft: false`))
   } finally { f.host.dispose() }
 })
 
@@ -550,17 +663,88 @@ it.each(['/workspace/c/new', '/workspace/capabilities', '/workspace/skills', '/w
     report(wc.mainFrame, 'true')
     report(wc.mainFrame, true, '/workspace/c/old')
     expect(view.setBounds).toHaveBeenLastCalledWith(region)
+    const viewportDeliveries = () => wc.executeJavaScript.mock.calls.filter(([script]: [string]) => script.includes('dsh-window-dialog-viewport'))
+    const prepared = viewportDeliveries().length
+    expect(prepared).toBeGreaterThan(0)
     report(wc.mainFrame, true)
+    await flush()
     expect(view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 1100, height: 800 })
     expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#00000000')
     expect(wc.focus).toHaveBeenCalledTimes(1)
-    expect(wc.executeJavaScript.mock.calls.some(([script]: [string]) => script.includes('left: 240px; top: 56px'))).toBe(true)
+    expect(viewportDeliveries()).toHaveLength(prepared)
     report(wc.mainFrame, false)
     expect(view.setBounds).toHaveBeenLastCalledWith(region)
-    expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#141416')
+    expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#00000000')
+    expect(viewportDeliveries()).toHaveLength(prepared)
     report(wc.mainFrame, true)
+    await flush()
     wc.emit('did-navigate-in-page', {}, 'https://enterprise.example/workspace/c/other', true)
     expect(view.setBounds).toHaveBeenLastCalledWith(region)
+  } finally { f.host.dispose() }
+})
+
+it('prepares the owner backing before changing native bounds and avoids resetting unchanged native state', async () => {
+  const f = fixture()
+  try {
+    const region = { x: 240, y: 56, width: 860, height: 744 }
+    f.host.present(f.owner, { ...presentation, bounds: region })
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    view.setBounds.mockClear()
+    view.setVisible.mockClear()
+    view.setBackgroundColor.mockClear()
+    f.host.present(f.owner, { ...presentation, bounds: region })
+    expect(view.setBounds).not.toHaveBeenCalled()
+    expect(view.setVisible).not.toHaveBeenCalled()
+    expect(view.setBackgroundColor).not.toHaveBeenCalled()
+    let painted!: (value: boolean) => void
+    f.owner.webContents.executeJavaScript.mockImplementationOnce(() => new Promise(resolve => { painted = resolve }))
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:modal', { open: true, path: '/workspace/' })
+    await flush()
+    expect(f.owner.webContents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('dsh-chat-dialog-backing'))
+    expect(view.getBounds()).toEqual(region)
+    f.host.present(f.owner, { ...presentation, bounds: region })
+    expect(view.getBounds()).toEqual(region)
+    painted(true)
+    await flush()
+    expect(view.getBounds()).toEqual({ x: 0, y: 0, width: 1100, height: 800 })
+    expect(view.setVisible).not.toHaveBeenCalled()
+    expect(view.setBackgroundColor).not.toHaveBeenCalled()
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:modal', { open: false, path: '/workspace/' })
+    await flush()
+    expect(view.getBounds()).toEqual(region)
+    expect(f.owner.webContents.executeJavaScript).toHaveBeenLastCalledWith(expect.stringContaining('delete window[key]'))
+  } finally { f.host.dispose() }
+})
+
+it('ignores an earlier opening after close and reopen, and drops backing pixels when hidden', async () => {
+  const f = fixture()
+  try {
+    const region = { x: 240, y: 56, width: 860, height: 744 }
+    f.host.present(f.owner, { ...presentation, bounds: region })
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    const report = (open: boolean) => wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:modal', { open, path: '/workspace/' })
+    let first!: (value: boolean) => void
+    let second!: (value: boolean) => void
+    f.owner.webContents.executeJavaScript.mockImplementationOnce(() => new Promise(resolve => { first = resolve }))
+    report(true)
+    await flush()
+    report(false)
+    await flush()
+    f.owner.webContents.executeJavaScript.mockImplementationOnce(() => new Promise(resolve => { second = resolve }))
+    report(true)
+    await flush()
+    first(true)
+    await flush()
+    expect(view.getBounds()).toEqual(region)
+    second(true)
+    await flush()
+    expect(view.getBounds()).toEqual({ x: 0, y: 0, width: 1100, height: 800 })
+    f.host.present(f.owner, { ...presentation, visible: false, bounds: region })
+    await flush()
+    expect(view.getVisible()).toBe(false)
+    expect(f.owner.webContents.executeJavaScript).toHaveBeenLastCalledWith(expect.stringContaining('delete window[key]'))
   } finally { f.host.dispose() }
 })
 
@@ -574,6 +758,38 @@ it('retains host-owned settings bounds when an embedded settings page reports a 
     wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:modal', { open: true, path: '/workspace/settings/desktop-usage' })
     expect(view.setBounds).toHaveBeenLastCalledWith(region)
     expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#141416')
+  } finally { f.host.dispose() }
+})
+
+it('captures only its visible owner surface and converts native bounds to host CSS coordinates', async () => {
+  const f = fixture()
+  try {
+    f.owner.webContents.getZoomFactor = () => 1.25
+    f.host.present(f.owner, { ...presentation, bounds: { x: 240, y: 48, width: 640, height: 560 } })
+    await flush()
+    expect(await f.host.capture({ ...f.owner })).toBeUndefined()
+    expect(await f.host.capture(f.owner)).toEqual({ dataURL: 'data:image/png;base64,fixture', bounds: { x: 240, y: 48, width: 640, height: 560 } })
+    const view = fake.views[0]
+    expect(view.webContents.capturePage).toHaveBeenCalledTimes(1)
+    f.host.present(f.owner, { ...presentation, visible: false })
+    expect(await f.host.capture(f.owner)).toBeUndefined()
+    expect(view.webContents.capturePage).toHaveBeenCalledTimes(1)
+  } finally { f.host.dispose() }
+})
+
+it.each(['logout', 'navigate', 'resize'])('discards native overlay captures invalidated by %s', async change => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation); await flush()
+    const view = fake.views[0]
+    let finish: (value: unknown) => void = () => {}
+    view.webContents.capturePage.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const frame = f.host.capture(f.owner)
+    if (change === 'logout') f.change({ connected: false, connectionKey: 'tenant-a' })
+    if (change === 'navigate') await view.webContents.loadURL('https://enterprise.example/workspace/knowledge')
+    if (change === 'resize') f.host.present(f.owner, { ...presentation, bounds: { ...presentation.bounds, width: 800 } })
+    finish({ isEmpty: () => false, toDataURL: () => 'stale' })
+    expect(await frame).toBeUndefined()
   } finally { f.host.dispose() }
 })
 

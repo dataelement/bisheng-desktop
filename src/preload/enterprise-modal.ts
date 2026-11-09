@@ -37,6 +37,9 @@ export function observeEnterpriseModals(report: (open: boolean) => void): { refr
       ...(element.matches(DIALOG_SELECTOR) ? [element] : []), ...element.querySelectorAll(DIALOG_SELECTOR)
     ])
     const open = dialogs.filter(visibleDialog).length > 0
+    // Set this before IPC and before paint so portals wait for the full native viewport.
+    if (open) document.documentElement.dataset.dshModalOpen = ''
+    else delete document.documentElement.dataset.dshModalOpen
     const key = `${location.pathname}:${open}`
     if (key === previous) return
     previous = key
@@ -57,6 +60,7 @@ export function observeEnterpriseModals(report: (open: boolean) => void): { refr
     refresh: () => { previous = undefined; refresh() },
     dispose: () => {
       disposed = true
+      delete document.documentElement.dataset.dshModalOpen
       cancelAnimationFrame(frame)
       bodyObserver.disconnect()
       rootObserver.disconnect()

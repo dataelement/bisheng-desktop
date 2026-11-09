@@ -622,6 +622,15 @@ ipcRenderer.on('enterprise-chat:settings-focus', (_event, detail) => {
 })
 
 contextBridge.exposeInMainWorld('dshEnterpriseChat', Object.freeze({
+  projectsState: (): Promise<import('../shared/chat-projects').ChatProjectsState | undefined> => ipcRenderer.invoke('enterprise-chat:projects-state'),
+  projectAction: (action: import('../shared/chat-projects').ProjectAction, epoch: number) => ipcRenderer.invoke('enterprise-chat:project-action', action, epoch),
+  projectConversations: (page: import('../shared/chat-projects').ProjectPageInput, epoch: number) => ipcRenderer.invoke('enterprise-chat:project-conversations', page, epoch),
+  onProjectsChanged: (listener: (state: import('../shared/chat-projects').ChatProjectsState) => void): (() => void) => {
+    if (typeof listener !== 'function') throw new TypeError('Project listener must be a function.')
+    const receive = (_event: Electron.IpcRendererEvent, state: import('../shared/chat-projects').ChatProjectsState): void => listener(state)
+    ipcRenderer.on('enterprise-chat:projects-changed', receive)
+    return () => ipcRenderer.removeListener('enterprise-chat:projects-changed', receive)
+  },
   onToolsChanged: (listener: () => void): (() => void) => {
     if (typeof listener !== 'function') throw new TypeError('Tool change listener must be a function.')
     const receive = (): void => listener()
@@ -630,12 +639,13 @@ contextBridge.exposeInMainWorld('dshEnterpriseChat', Object.freeze({
   },
   focusSettings: (): Promise<void> => ipcRenderer.invoke('enterprise-chat:focus-settings'),
   present: (value: EnterpriseChatPresentation): Promise<EnterpriseChatViewState> => ipcRenderer.invoke('enterprise-chat:present', value),
+  capture: (): Promise<import('../shared/enterprise-chat-view').EnterpriseChatFrame | undefined> => ipcRenderer.invoke('enterprise-chat:capture'),
   state: (): Promise<EnterpriseChatViewState> => ipcRenderer.invoke('enterprise-chat:state'),
   retry: (): Promise<void> => ipcRenderer.invoke('enterprise-chat:retry'),
   usage: (): Promise<import('../shared/enterprise-usage').EnterpriseUsage> => ipcRenderer.invoke('enterprise-chat:usage'),
   history: (page: number) => ipcRenderer.invoke('enterprise-chat:history', page),
   openPage: (id: string): Promise<void> => ipcRenderer.invoke('enterprise-chat:open-page', id),
-  open: (id: string): Promise<void> => ipcRenderer.invoke('enterprise-chat:open', id),
+  open: (id: string, projectId?: string): Promise<void> => ipcRenderer.invoke('enterprise-chat:open', id, projectId),
   remove: (id: string, epoch: number): Promise<{ epoch: number }> => ipcRenderer.invoke('enterprise-chat:remove', id, epoch),
   subscribe: (listener: (state: EnterpriseChatViewState) => void): (() => void) => {
     const receive = (_event: Electron.IpcRendererEvent, state: EnterpriseChatViewState): void => listener(state)

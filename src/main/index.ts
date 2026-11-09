@@ -1703,7 +1703,25 @@ function registerHarnessHandlers(): void {
     }
   })
 
-  for (const channel of ['enterprise-chat:present', 'enterprise-chat:state', 'enterprise-chat:retry', 'enterprise-chat:usage', 'enterprise-chat:history', 'enterprise-chat:open', 'enterprise-chat:remove', 'enterprise-chat:open-page', 'enterprise-chat:focus-settings']) ipcMain.removeHandler(channel)
+  for (const channel of ['enterprise-chat:present', 'enterprise-chat:capture', 'enterprise-chat:state', 'enterprise-chat:retry', 'enterprise-chat:usage', 'enterprise-chat:history', 'enterprise-chat:open', 'enterprise-chat:remove', 'enterprise-chat:open-page', 'enterprise-chat:focus-settings', 'enterprise-chat:projects-state', 'enterprise-chat:project-action', 'enterprise-chat:project-conversations']) ipcMain.removeHandler(channel)
+  ipcMain.handle('enterprise-chat:projects-state', (event) => {
+    assertTrustedMainWindowEvent(event)
+    return enterpriseChat?.projectsState()
+  })
+  ipcMain.handle('enterprise-chat:project-action', (event, action: unknown, epoch: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    if (!enterpriseChat) throw new Error('Project sync unavailable.')
+    return enterpriseChat.projectAction(action, epoch)
+  })
+  ipcMain.handle('enterprise-chat:project-conversations', (event, page: unknown, epoch: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    if (!enterpriseChat) throw new Error('Project sync unavailable.')
+    return enterpriseChat.projectConversations(page, epoch)
+  })
+  ipcMain.handle('enterprise-chat:capture', (event) => {
+    assertTrustedMainWindowEvent(event)
+    return enterpriseChat?.capture(mainWindow!)
+  })
   ipcMain.handle('enterprise-chat:focus-settings', (event) => {
     assertTrustedMainWindowEvent(event)
     enterpriseChat?.focusSettings()
@@ -1733,9 +1751,9 @@ function registerHarnessHandlers(): void {
     assertTrustedMainWindowEvent(event)
     return enterpriseChat?.openPage(id)
   })
-  ipcMain.handle('enterprise-chat:open', (event, id: unknown) => {
+  ipcMain.handle('enterprise-chat:open', (event, id: unknown, projectId: unknown) => {
     assertTrustedMainWindowEvent(event)
-    return enterpriseChat?.open(id)
+    return enterpriseChat?.open(id, projectId)
   })
   ipcMain.handle('enterprise-chat:remove', (event, id: unknown, epoch: unknown) => {
     assertTrustedMainWindowEvent(event)
@@ -1989,6 +2007,7 @@ async function executeDesktopMenuCommand(command: DesktopMenuCommand): Promise<n
       break
   }
 
+  if (isZoomMenuCommand(command)) enterpriseChat?.syncZoom(window)
   return isZoomMenuCommand(command) ? contents.getZoomFactor() : undefined
 }
 
@@ -3318,9 +3337,10 @@ function installMenu(): void {
         { role: 'reload' },
         { role: 'toggleDevTools' },
         { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
+        // Native zoom roles target only one webContents, not embedded native views.
+        { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => void executeDesktopMenuCommand('zoom-reset').catch(showUnexpectedError) },
+        { label: 'Zoom In', accelerator: 'CmdOrCtrl+Plus', click: () => void executeDesktopMenuCommand('zoom-in').catch(showUnexpectedError) },
+        { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => void executeDesktopMenuCommand('zoom-out').catch(showUnexpectedError) },
         { type: 'separator' },
         { role: 'togglefullscreen' }
       ]
