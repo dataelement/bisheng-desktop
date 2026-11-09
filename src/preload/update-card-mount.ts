@@ -95,10 +95,22 @@ export function mountUpdateCard(
       // Hiding the card before the main process accepts the skip makes it
       // vanish and then return with the next download event.
       skip.disabled = true
+      // Paint uses the negated predicate. A thrown request did not change the
+      // phase, so restore that same value. Assigning the enabled flag itself
+      // sticks the button in the opposite state.
+      const releaseSkip = (): void => {
+        skip.disabled = !isUpdateSkipEnabled(status.phase, accepting)
+      }
       void ipcRenderer.invoke('updates:skip', version).then((next: UpdateStatus) => {
-        if (next.phase === 'idle') dismissCurrent()
+        if (next.phase === 'idle') {
+          dismissCurrent()
+          return
+        }
+        // The reply is the live phase. Downloading is not skippable, so the
+        // card follows that reply instead of the phase captured at click time.
+        applyStatus(next)
       }).catch((error: unknown) => {
-        skip.disabled = isUpdateSkipEnabled(status.phase, accepting)
+        releaseSkip()
         console.error('[updater] unable to skip update', error)
       })
     })
@@ -231,19 +243,21 @@ export function mountUpdateCard(
     publishLayout()
   }
 
+  const applyStatus = (status: UpdateStatus): void => {
+    if (isNewManualPresentation(status, currentStatus)) {
+      dismissedVersion = null
+      dismissedTransientPhase = null
+    }
+    currentStatus = status
+    host.dataset.updatePhase = status.phase
+    host.dataset.updateManual = String(status.manual)
+    if (status.phase === 'error') installing = false
+    if (status.phase === 'error' || status.phase === 'downloaded') accepting = false
+    render()
+  }
+
   return {
-    applyStatus(status: UpdateStatus): void {
-      if (isNewManualPresentation(status, currentStatus)) {
-        dismissedVersion = null
-        dismissedTransientPhase = null
-      }
-      currentStatus = status
-      host.dataset.updatePhase = status.phase
-      host.dataset.updateManual = String(status.manual)
-      if (status.phase === 'error') installing = false
-      if (status.phase === 'error' || status.phase === 'downloaded') accepting = false
-      render()
-    },
+    applyStatus,
     setLocale(next: UpdateLocale): void {
       if (next === locale) return
       locale = next
