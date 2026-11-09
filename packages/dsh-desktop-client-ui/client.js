@@ -1364,6 +1364,9 @@ active = false; deletion.reset(); projects.setScope(undefined); revision++; hist
       const surfacePresenter = React.useRef(null)
       const [animateWork, setAnimateWork] = React.useState(false)
       const tabs = React.useRef({})
+      React.useEffect(() => {
+        if (mode !== 'work') setAnimateWork(false)
+      }, [mode])
       // Geometry and mode subscriptions can remount without releasing an active backing.
       // Identity changes and final unmount always destroy it, including in-flight captures.
       React.useEffect(() => () => { surfacePresenter.current?.dispose(); surfacePresenter.current = null }, [state.epoch])
@@ -1435,13 +1438,18 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
       const showModePicker = !settingsOpen && (mode === 'chat'
         ? !state.pageId && state.conversationId === 'new' && state.landing !== false
         : state.nativeWork && state.workLanding && !state.panelOpen)
-      const select = navigation.choose
+      const chooseMode = (next) => {
+        if (!navigation.choose(next)) return false
+        if (next !== mode) {
+          setAnimateWork(next === 'work' && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
+        }
+        return true
+      }
       const keyDown = (event) => {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
         event.preventDefault()
-        setAnimateWork(false)
         const next = event.key === 'Home' ? 'chat' : event.key === 'End' ? 'work' : mode === 'chat' ? 'work' : 'chat'
-        if (select(next)) tabs.current[next]?.focus()
+        if (chooseMode(next)) tabs.current[next]?.focus()
       }
       return React.createElement('div', { className: 'dshModes' },
         state.signInPromptOpen && React.createElement(Modal, {
@@ -1452,8 +1460,15 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         }, React.createElement('p', { className: 'dshChatSignInDescription' }, t('signInDescription'))),
         showModePicker && React.createElement('header', { className: 'dshModesHeader' },
           React.createElement('div', { role: 'tablist', 'aria-label': t('label'), className: 'dshModesTabs', onKeyDown: keyDown },
-            ...['chat', 'work'].map((key) => React.createElement('button', { key, id: `dsh-mode-${key}`, type: 'button', role: 'tab', 'aria-selected': mode === key, 'aria-controls': `dsh-panel-${key}`, tabIndex: mode === key ? 0 : -1, ref: (node) => { tabs.current[key] = node }, onClick: (event) => { setAnimateWork(event.detail > 0 && key === 'work'); select(key) } }, t(key))))),
-        React.createElement('section', { id: 'dsh-panel-work', role: 'tabpanel', 'aria-label': t('work'), hidden: mode !== 'work', className: 'dshModeBody dshWorkContent', 'data-reveal-controls': animateWork, onTransitionEnd: event => { if (event.propertyName === 'clip-path') setAnimateWork(false) }, style: { gridTemplateColumns: columns } }, work, resizeHandle),
+            ...['chat', 'work'].map((key) => React.createElement('button', { key, id: `dsh-mode-${key}`, type: 'button', role: 'tab', 'aria-selected': mode === key, 'aria-controls': `dsh-panel-${key}`, tabIndex: mode === key ? 0 : -1, ref: (node) => { tabs.current[key] = node }, onClick: () => chooseMode(key) }, t(key))))),
+        React.createElement('section', {
+          id: 'dsh-panel-work', role: 'tabpanel', 'aria-label': t('work'), hidden: mode !== 'work',
+          className: 'dshModeBody dshWorkContent', 'data-reveal-controls': mode === 'work' && animateWork,
+          onAnimationEnd: event => {
+            if (event.animationName === 'dshWorkControlsRise') setAnimateWork(false)
+          },
+          style: { gridTemplateColumns: columns }
+        }, work, resizeHandle),
         React.createElement('section', { ref: panel, id: 'dsh-panel-chat', 'data-dsh-native-surface': '', role: 'tabpanel', 'aria-label': t('chat'), hidden: mode !== 'chat', className: 'dshModeBody' },
           React.createElement('div', { className: 'dshChatStatus', role: 'status' },
             React.createElement('p', null, state.phase === 'error' ? t('error') : state.phase === 'ready' ? '' : t('loading')),
@@ -1529,17 +1544,31 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           .dshModes{grid-column:2 / -1;min-width:0;min-height:0;width:100%;height:100%;display:flex;flex-direction:column;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary)}
           .dshModesHeader{height:56px;flex:none;display:flex;align-items:center;justify-content:center}
           html[data-platform=darwin] .dshModesHeader{-webkit-app-region:drag}
-          .dshModesTabs{display:flex;padding:3px;border-radius:24px;background:var(--dsw-alias-bg-layer-2);-webkit-app-region:no-drag}
+          .dshModesTabs{position:relative;isolation:isolate;display:grid;grid-template-columns:repeat(2,1fr);padding:3px;border-radius:24px;background:var(--dsw-alias-bg-layer-2);-webkit-app-region:no-drag}
+          /* Keep one indicator mounted so it can slide without delaying the mode change. */
+          .dshModesTabs::before{content:'';position:absolute;inset-block:3px;inset-inline-start:3px;width:calc(50% - 3px);z-index:-1;border-radius:20px;background:var(--dsw-alias-interactive-bg-hover-solid);pointer-events:none;transform:translateX(0);transition:transform 200ms cubic-bezier(.35,0,.25,1)}
+          .dshModesTabs:has(>#dsh-mode-work[aria-selected=true])::before{transform:translateX(100%)}
+          .dshModesTabs:dir(rtl):has(>#dsh-mode-work[aria-selected=true])::before{transform:translateX(-100%)}
           .dshModesTabs button{font:inherit;font-size:13px;min-width:96px;height:30px;padding:0 20px;border:0;border-radius:20px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
-          .dshModesTabs button[aria-selected=true]{background:var(--dsw-alias-interactive-bg-hover-solid);color:var(--dsw-alias-label-primary)}
+          .dshModesTabs button[aria-selected=true]{color:var(--dsw-alias-label-primary)}
           .dshModes button:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
           .dshModeBody{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}.dshModeBody[hidden]{display:none}
           .dshWorkContent{display:grid;grid-template-rows:minmax(0,1fr);isolation:isolate}.dshWorkContent[hidden]{display:none}
           /* Match the borderless Chat surface. The frame owns the resize handle separately. */
           html[data-platform=darwin] .dshWorkContent > [data-dsh-layout-center]{border-left:0}
-          .dshWorkContent[data-reveal-controls=true]:not([hidden]) [data-dsh-hero-controls]{clip-path:inset(-8px -8px -8px -8px);transition:clip-path 180ms cubic-bezier(.23,1,.32,1)}
-          @starting-style{.dshWorkContent[data-reveal-controls=true]:not([hidden]) [data-dsh-hero-controls]{clip-path:inset(-8px 100% -8px -8px)}}
-          @media(prefers-reduced-motion:reduce){.dshWorkContent[data-reveal-controls=true] [data-dsh-hero-controls]{transition:none;clip-path:none}}
+          .dshWorkContent[data-reveal-controls=true] [data-dsh-hero-controls] {
+            animation: dshWorkControlsRise 240ms cubic-bezier(.25,.5,.35,1);
+          }
+          /* Clip the rising row at its lower edge so it emerges above the composer. */
+          @keyframes dshWorkControlsRise {
+            from { opacity: 0; translate: 0 16px; clip-path: inset(-8px -8px 16px); }
+            72% { opacity: 1; translate: 0 -2px; clip-path: inset(-8px); }
+            to { opacity: 1; translate: 0 0; clip-path: inset(-8px); }
+          }
+          @media(prefers-reduced-motion:reduce){
+            .dshModesTabs::before{transition:none}
+            .dshWorkContent[data-reveal-controls=true] [data-dsh-hero-controls]{animation:none}
+          }
           .dshSharedCollection{min-width:0}
           .dshRecentHistory{margin-top:12px;min-width:0}
           .dshRecentHistoryRows{display:flex;flex-direction:column;gap:2px}
