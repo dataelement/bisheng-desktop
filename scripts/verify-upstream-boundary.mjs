@@ -34,22 +34,24 @@ const ALLOWED_PATTERNS = [
   /^docs\/downstream-/,
   /^docs\/architecture-setup-plan\.md$/,
   /^test\/enterprise-/,
+  /^\.tmp/,
   /^package\.json$/,
   /^package-lock\.json$/,
   /^\.gitignore$/
 ]
 
-// 2. 获取比对基准 (Upstream Ref)
+// 2. 获取比对基准 (Upstream Ref or Origin Target)
 function getUpstreamBase() {
   const envBase = process.env.UPSTREAM_BASE
   if (envBase) return envBase
 
-  // 尝试检查 upstream 分支
+  // 优先级: 显式 upstream 分支 > origin 对应主干分支
   const candidateRefs = [
     'upstream/upgrade/dsh-0.2.2-rc.1',
     'origin/upgrade/dsh-0.2.2-rc.1',
     'upstream/main',
-    'origin/main'
+    'origin/main',
+    'main'
   ]
 
   for (const ref of candidateRefs) {
@@ -67,27 +69,40 @@ function getUpstreamBase() {
 
 function run() {
   const baseRef = getUpstreamBase()
-  console.log(`🔍 [Boundary Gatekeeper] 正在检查相对上游 [${baseRef}] 的所有文件修改...`)
+  console.log(`🔍 [Boundary Gatekeeper] 正在检查相对基准 [${baseRef}] 的修改文件...`)
 
-  let diffOutput = ''
+  let changedFiles = []
   try {
-    // 包含已提交、已暂存和工作区未暂存的所有修改
-    diffOutput = execSync(`git diff --name-only ${baseRef}`, { encoding: 'utf8' }).trim()
-  } catch (error) {
-    console.warn(`⚠️ 无法通过 ${baseRef} 获取 diff:`, error.message)
-    diffOutput = execSync(`git status --porcelain`, { encoding: 'utf8' })
+    // 1. 获取当前分支自 baseRef 分叉以来的所有提交文件 (Triple-dot)
+    const committedDiff = execSync(`git diff --name-only ${baseRef}...HEAD`, { encoding: 'utf8' }).trim()
+    // 2. 获取工作区及暂存区的未提交修改
+    const workingDiff = execSync(`git diff --name-only HEAD`, { encoding: 'utf8' }).trim()
+    // 3. 获取所有未跟踪文件
+    const untracked = execSync(`git status --porcelain`, { encoding: 'utf8' })
       .split('\n')
+      .filter(line => line.startsWith('??'))
       .map(line => line.slice(3).trim())
       .filter(Boolean)
-      .join('\n')
+
+    const all = [
+      ...committedDiff.split('\n'),
+      ...workingDiff.split('\n'),
+      ...untracked
+    ].map(f => f.trim()).filter(Boolean)
+
+    changedFiles = Array.from(new Set(all))
+  } catch (error) {
+    console.warn(`⚠️ 无法通过 ${baseRef}...HEAD 获取 diff，回退到工作区直接比较:`, error.message)
+    changedFiles = execSync(`git diff --name-only ${baseRef}`, { encoding: 'utf8' })
+      .split('\n')
+      .map(f => f.trim())
+      .filter(Boolean)
   }
 
-  if (!diffOutput) {
-    console.log('✅ [Boundary Gatekeeper] 无变动文件，门禁通过。')
+  if (changedFiles.length === 0) {
+    console.log('✅ [Boundary Gatekeeper] 无修改文件，门禁通过。')
     process.exit(0)
   }
-
-  const changedFiles = diffOutput.split('\n').map(f => f.trim()).filter(Boolean)
   const illegalFiles = []
 
   for (const file of changedFiles) {
