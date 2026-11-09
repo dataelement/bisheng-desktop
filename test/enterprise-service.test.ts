@@ -233,6 +233,41 @@ describe('enterprise service login loop', () => {
     expect(bodies).toHaveLength(2)
   })
 
+  it('forwards a message rating without broker identity and rejects a stale epoch', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(() => platform.close())
+    const bodies: unknown[] = []
+    let first = true
+    const { service } = await createService(createEnterpriseFetch(async (input, init) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/api/v1/dsh/audit/message-feedback') {
+        bodies.push(JSON.parse(String(init?.body)))
+        if (first) {
+          first = false
+          return Response.json({ error: { message: 'Expired', type: 'authentication_error', code: 'invalid_access_token' } }, { status: 401 })
+        }
+        return Response.json({ status: 'UPDATED', event_seq: 12 })
+      }
+      const response = await fetch(input, init)
+      if (path === '/api/v1/dsh/config') return Response.json({ ...await response.json(), audit_message_feedback: { version: 1 } })
+      return response
+    }))
+    await completeBrowserLogin(origin, (await service.startLogin(origin)).authorizationUrl)
+    await waitFor(() => service.snapshot().phase === 'connected')
+    const state = service.snapshot()
+    const update = {
+      conversation_id: 'e2e-feedback-main', message_id: 'msg-1', event_seq: 12, op: 'put', rating: 'positive', note: 'kept-on-server'
+    }
+    const request = { connectionKey: state.connectionKey, auditFeedbackEpoch: state.auditFeedbackEpoch, update }
+    expect(await service.reportAuditFeedback(request)).toEqual({ status: 'UPDATED', event_seq: 12 })
+    expect(bodies).toEqual([update, update])
+    expect(JSON.stringify(bodies)).not.toContain(String(state.connectionKey))
+    await expect(service.reportAuditFeedback({ ...request, auditFeedbackEpoch: Number(state.auditFeedbackEpoch) - 1 })).rejects.toMatchObject({ status: 409 })
+    await expect(service.reportAuditFeedback({ ...request, update: { ...update, user_id: 1 } })).rejects.toMatchObject({ status: 400 })
+    expect(bodies).toHaveLength(2)
+  })
+
   it('refreshes optional capability independently and clears it across a BASE/account change', async () => {
     const first = createMockEnterpriseServer({ port: 0, auditContext: { fields: ['conversation_id', 'request_kind'] } })
     const second = createMockEnterpriseServer({ port: 0, auditContext: { fields: ['request_kind'] } })

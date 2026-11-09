@@ -171,6 +171,7 @@ import {
   startUpdateManager,
   stopUpdateManager
 } from './update/update-manager'
+import { attachUpdateCardWindowIfEnabled, enableUpdateCardView } from './update/update-card-view'
 import type { RuntimeSnapshot } from '../shared/contracts'
 import { resolveShellLocale } from './application-locale'
 import { darwinApplicationMenuRoles } from './darwin-application-menu'
@@ -1090,6 +1091,7 @@ function createWindow(): BrowserWindow {
     resolveSafeModeAction({ type: 'quit' })
   })
   mainWindow = window
+  attachUpdateCardWindowIfEnabled(window)
   return window
 }
 
@@ -3825,6 +3827,7 @@ async function bootstrap(): Promise<void> {
         stopUpdateManager()
       }
     })
+    if (mainWindow && !mainWindow.isDestroyed()) enableUpdateCardView(mainWindow)
   }
 }
 

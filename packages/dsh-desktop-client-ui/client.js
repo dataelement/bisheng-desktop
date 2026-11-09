@@ -698,6 +698,25 @@ window.__ModuleLoader__.load({
       const projects = createChatProjects()
       let openRequest = 0
       let active = false, revision = 0, historyRequest = 0, historyDirty = false
+      let startupStateRetryTimer, startupStateRetryCount = 0
+      // The page can report navigation after the first snapshot. Retry only while the
+      // account is connected and navigation is still absent. An object, including an
+      // empty entry list, means the report has already landed.
+      const startupStateRetryDelays = [250, 1000, 3000]
+      const cancelStartupStateRetry = () => {
+        if (startupStateRetryTimer === undefined) return
+        window.clearTimeout(startupStateRetryTimer)
+        startupStateRetryTimer = undefined
+      }
+      const scheduleStartupStateRetry = () => {
+        if (!active || startupStateRetryTimer !== undefined || startupStateRetryCount >= startupStateRetryDelays.length) return
+        const delay = startupStateRetryDelays[startupStateRetryCount]
+        startupStateRetryCount += 1
+        startupStateRetryTimer = window.setTimeout(() => {
+          startupStateRetryTimer = undefined
+          void readEnterpriseState(true)
+        }, delay)
+      }
       const publish = (patch) => { value = { ...value, ...patch }; listeners.forEach(fn => fn()) }
       const select = (mode) => {
         if (mode === 'chat' && !value.connected) {
@@ -770,14 +789,28 @@ if (clearHistory) { historyRequest++; openRequest++; historyDirty = false; delet
         if (signedIn) window.dispatchEvent(new CustomEvent('dsh-desktop:close-settings'))
         if (next.connected && next.phase === 'ready' && (refresh || identityChanged || signedIn || conversationChanged || becameReady)) void refreshHistory()
       }
-      const sync = async () => {
+      const readEnterpriseState = async (recover) => {
         const request = ++revision
+        cancelStartupStateRetry()
+        if (!recover) startupStateRetryCount = startupStateRetryDelays.length
         try {
           const next = await window.dshEnterpriseChat?.state()
-          if (!active || request !== revision || !next) return
-          applyState(next, true)
-        } catch { /* A missed focus read must not paint the reconnect page. */ }
+          if (!active || request !== revision) return
+          if (!next) {
+            if (recover) scheduleStartupStateRetry()
+            return
+          }
+          const pendingNavigation = recover && next.connected === true && (next.navigation == null || typeof next.navigation !== 'object')
+          const refreshHistory = !recover || startupStateRetryCount === 0
+          if (!pendingNavigation) startupStateRetryCount = startupStateRetryDelays.length
+          applyState(next, refreshHistory)
+          if (pendingNavigation) scheduleStartupStateRetry()
+        } catch {
+          // A missed focus or account read must not paint the reconnect page.
+          if (active && request === revision && recover) scheduleStartupStateRetry()
+        }
       }
+      const sync = () => { void readEnterpriseState(false) }
       // One guarded read. It does not refresh history; sync() owns that on focus and visibility.
       const readHostState = async () => {
         const request = ++revision
@@ -838,6 +871,8 @@ if (clearHistory) { historyRequest++; openRequest++; historyDirty = false; delet
         },
         start() {
           active = true
+          startupStateRetryCount = 0
+          cancelStartupStateRetry()
           const account = () => { void sync() }
           const visibility = () => { if (!document.hidden) void sync() }
 // Older workspace hosts omit this registration. Failing here used to skip
@@ -892,6 +927,8 @@ if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
           const unsubscribeSessions = ctx.sessions.list.subscribe(workState)
           const unsubscribeChat = window.dshEnterpriseChat?.subscribe?.((next) => {
             revision++
+            startupStateRetryCount = startupStateRetryDelays.length
+            cancelStartupStateRetry()
             applyState(next)
           })
           const unsubscribeProjects = window.dshEnterpriseChat?.onProjectsChanged?.(next => {
@@ -907,9 +944,12 @@ if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
           window.addEventListener('dsh-desktop:settings-surface', settingsSurface)
           window.addEventListener('focus', sync)
           document.addEventListener('visibilitychange', visibility)
-          void sync()
+          void readEnterpriseState(true)
           return () => {
-active = false; deletion.reset(); projects.setScope(undefined); revision++; historyRequest++; unsubscribe(); unsubscribeSessions(); unsubscribeWork(); unsubscribeChat?.(); unsubscribeProjects?.()
+active = false
+startupStateRetryCount = startupStateRetryDelays.length
+cancelStartupStateRetry()
+deletion.reset(); projects.setScope(undefined); revision++; historyRequest++; unsubscribe(); unsubscribeSessions(); unsubscribeWork(); unsubscribeChat?.(); unsubscribeProjects?.()
             window.removeEventListener('dsh-desktop:enterprise-account-changed', account)
             disposeNavigation()
             if (revealWorkSession && ctx.uiWorkspace.openSession === revealWorkSession) ctx.uiWorkspace.openSession = originalOpenSession
@@ -1361,6 +1401,11 @@ active = false; deletion.reset(); projects.setScope(undefined); revision++; hist
       const { mode, settingsOpen, settingsSurface } = state
       const usesModuleFrame = /^\/(?:knowledge|channel)(?:\/|$)|^\/(?:apps|skills|capabilities)\/?$/u.test(state.path ?? '')
       React.useEffect(() => navigation.start(), [navigation])
+      React.useEffect(() => {
+        if (mode !== 'work') return
+        // Start the enterprise tool handshake before the plus menu opens it.
+        fetch('/api/enterprise.work-tools', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operation: 'catalog' }) }).catch(() => {})
+      }, [mode])
       const panel = React.useRef(null)
       const surfacePresenter = React.useRef(null)
       const [animateWork, setAnimateWork] = React.useState(false)

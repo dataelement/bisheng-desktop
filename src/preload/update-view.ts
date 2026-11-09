@@ -7,6 +7,17 @@ export function shouldShowUpdate(status: UpdateStatus, allowManualPresentation =
   return allowManualPresentation && status.manual && ['checking', 'up-to-date', 'error', 'unsupported'].includes(status.phase)
 }
 
+/** About is the only dialog on screen. The corner card returns when it closes. */
+export function shouldPresentUpdateCard(
+  status: UpdateStatus,
+  dismissedVersion: string | null,
+  dismissedTransientPhase: UpdateStatus['phase'] | null,
+  aboutOpen: boolean
+): boolean {
+  if (aboutOpen) return false
+  return shouldShowUpdate(status) && !isUpdateDismissed(status, dismissedVersion, dismissedTransientPhase)
+}
+
 export function isUpdateDismissed(
   status: UpdateStatus,
   dismissedVersion: string | null,
@@ -14,6 +25,16 @@ export function isUpdateDismissed(
 ): boolean {
   if (status.availableVersion) return status.availableVersion === dismissedVersion
   return status.phase === dismissedTransientPhase
+}
+
+/**
+ * Skip is a decision made before the download starts. Once the user accepts,
+ * the same offer must stay locked through the download; it opens again only
+ * when the package is ready to install.
+ */
+export function isUpdateSkipEnabled(phase: UpdateStatus['phase'], accepting: boolean): boolean {
+  if (accepting || phase === 'downloading') return false
+  return phase === 'available' || phase === 'downloaded'
 }
 
 /** A manual request may replay a cached update; progress keeps the same request ID. */
