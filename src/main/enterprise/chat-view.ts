@@ -4,7 +4,7 @@ import { session, shell, WebContentsView, type BrowserWindow, type Session } fro
 import { parseEnterpriseNavigation, parseEnterpriseSettingsSection, parseChatPage, parseChatId, parseChatPresentation, type EnterpriseSettingsSection, type EnterpriseChatFrame, type EnterpriseChatHistory, type EnterpriseChatPresentation, type EnterpriseChatViewState } from '../../shared/enterprise-chat-view'
 import type { EnterpriseDesktopRuntime } from './enterprise-desktop'
 import { MODULE_ROUTE_PATTERN, MODULE_THEME_CSS, moduleThemeScript } from './chat-module-theme'
-import { chatDialogViewportScript } from './chat-dialog-viewport'
+import { chatDialogViewportScript, guardChatDialogViewportScript } from './chat-dialog-viewport'
 import { ChatDialogBacking } from './chat-dialog-backing'
 import { chatLocaleScript } from './chat-locale'
 import { chatLayoutCss } from './chat-layout'
@@ -77,7 +77,8 @@ export class EnterpriseChatView {
   private modalOpening = false
   private modalBacking?: ChatDialogBacking
   private viewBackground?: string
-  private dialogViewport?: string
+  private dialogViewport?: { pathname: string; script: string }
+  private dialogViewportRevision = 0
   private landing?: boolean
   private navigation?: ReturnType<typeof parseEnterpriseNavigation>
   private navigationRequest = 0
@@ -469,21 +470,25 @@ export class EnterpriseChatView {
     const y = Math.max(0, Math.round(bounds.y * zoom))
     const contentBounds = { x, y, width: Math.max(0, Math.min(width - x, Math.round(bounds.width * zoom))), height: Math.max(0, Math.min(height - y, Math.round(bounds.height * zoom))) }
     const windowDialog = this.modalOpen && !this.modalOpening && !this.presentation.settings
-    const surface = new RegExp(MODULE_ROUTE_PATTERN, 'u').test(new URL(this.view.webContents.getURL() || 'about:blank').pathname)
-      ? this.presentation.palette?.surface
-      : undefined
+    const pathname = new URL(this.view.webContents.getURL() || 'about:blank').pathname
+    const modulePage = new RegExp(MODULE_ROUTE_PATTERN, 'u').test(pathname)
+    const surface = modulePage ? this.presentation.palette?.surface : undefined
     const background = surface ? `#${surface.map((channel) => channel.toString(16).padStart(2, '0')).join('')}` : theme === 'dark' ? '#141416' : '#ffffff'
     const viewZoom = this.view.webContents.getZoomFactor()
     // Install the seat before any modal appears. CSS follows native resizing in the same paint;
     // opening/closing a dialog must not asynchronously replace root positioning or transparency.
     const viewportScript = chatDialogViewportScript(!this.presentation.settings ? {
       x: x / viewZoom, y: y / viewZoom, width: contentBounds.width / viewZoom, height: contentBounds.height / viewZoom,
-      windowWidth: width / viewZoom, windowHeight: height / viewZoom, background
+      windowWidth: width / viewZoom, windowHeight: height / viewZoom, background,
+      followNativeView: process.platform === 'darwin' && modulePage
     } : undefined)
-    if (this.state.phase === 'ready' && viewportScript !== this.dialogViewport) {
-      this.dialogViewport = viewportScript
-      void this.view.webContents.executeJavaScript(viewportScript).catch(() => {
-        if (this.dialogViewport === viewportScript) this.dialogViewport = undefined
+    if (this.state.phase === 'ready' &&
+        (this.dialogViewport?.pathname !== pathname || this.dialogViewport.script !== viewportScript)) {
+      const delivery = { pathname, script: viewportScript }
+      this.dialogViewport = delivery
+      const script = guardChatDialogViewportScript(viewportScript, pathname, ++this.dialogViewportRevision)
+      void this.view.webContents.executeJavaScript(script).catch(() => {
+        if (this.dialogViewport === delivery) this.dialogViewport = undefined
         this.note('[enterprise-chat] dialog_viewport_failed')
       })
     }
@@ -685,6 +690,7 @@ export class EnterpriseChatView {
           if (new URL(view.webContents.getURL()).pathname.startsWith('/workspace')) {
             // Host-owned module styles live in this document until the next full load replaces it.
             void view.webContents.insertCSS(`${MODULE_THEME_CSS}\n${chatLayoutCss(process.platform)}`).catch(() => this.note('[enterprise-chat] module_style_failed'))
+            this.dialogViewport = undefined
             this.state = { phase: 'ready' }; void this.syncSettings(); this.layout(); this.notify()
           } else {
             this.noteDocumentLeftWorkspace()

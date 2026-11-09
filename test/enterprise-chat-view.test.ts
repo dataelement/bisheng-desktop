@@ -54,6 +54,21 @@ function fixture() {
 }
 
 describe('enterprise Chat host boundary', () => {
+  it('delivers the viewport to a new module document even when its native bounds are unchanged', async () => {
+    const f = fixture()
+    const url = 'https://enterprise.example/workspace/knowledge?embed=dsh'
+    fake.loadLanding = url
+    try {
+      f.host.present(f.owner, { ...presentation, bounds: { x: 0, y: 48, width: 1100, height: 752 } })
+      await flush()
+      const contents = fake.views[0].webContents
+      contents.emit('did-start-navigation', {}, url, false, true)
+      contents.executeJavaScript.mockClear()
+      contents.emit('did-finish-load')
+      expect(contents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('--dsh-chat-viewport-top: 48px'))
+    } finally { f.host.dispose() }
+  })
+
   it('inherits host zoom on creation, menu changes, hidden presentation and reconnect', async () => {
     const f = fixture()
     let zoom = 0.8

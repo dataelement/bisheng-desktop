@@ -1359,6 +1359,7 @@ active = false; deletion.reset(); projects.setScope(undefined); revision++; hist
       const deletionRequest = React.useSyncExternalStore(navigation.deletion.subscribe, navigation.deletion.getSnapshot)
       const cloudDeleteOpen = deletionRequest !== null
       const { mode, settingsOpen, settingsSurface } = state
+      const usesModuleFrame = /^\/(?:knowledge|channel)(?:\/|$)|^\/(?:apps|skills|capabilities)\/?$/u.test(state.path ?? '')
       React.useEffect(() => navigation.start(), [navigation])
       const panel = React.useRef(null)
       const surfacePresenter = React.useRef(null)
@@ -1374,14 +1375,13 @@ active = false; deletion.reset(); projects.setScope(undefined); revision++; hist
         const bridge = window.dshEnterpriseChat
         if (!bridge) return
         const appRoot = document.getElementById('root')
+        const macModuleFrame = usesModuleFrame && document.documentElement.dataset.platform === 'darwin'
         let observedLeading
         const presenter = surfacePresenter.current || (surfacePresenter.current = createNativeSurfacePresenter(bridge, value => value.settings
           ? document.querySelector(`[data-dsh-native-surface="${value.settings}"]`) : panel.current))
         const present = () => {
           const rect = panel.current?.getBoundingClientRect()
           if (!rect) return
-          const sidebarRight = document.querySelector('[data-dsh-sidebar-root]')?.getBoundingClientRect().right || 0
-          const contentLeft = Math.max(rect.x, sidebarRight)
           // Native WebContentsView paints above DOM chrome regardless of z-index.
           // macOS moves the sidebar opener into this seat when the rail disappears.
           const leading = document.querySelector('[data-shell-leading]')
@@ -1390,11 +1390,18 @@ active = false; deletion.reset(); projects.setScope(undefined); revision++; hist
             observedLeading = leading
             if (leading) resize.observe(leading)
           }
+          // The collapsed sidebar's inner rail still has a rect, but the zero-width
+          // grid column clips it. The content panel tracks the actual grid edge.
+          const sidebarRight = document.querySelector('[data-dsh-sidebar-root]')?.getBoundingClientRect().right || 0
+          const contentLeft = macModuleFrame ? rect.x : Math.max(rect.x, sidebarRight)
           const chrome = leading?.getBoundingClientRect()
-          // Keep the title beside the native controls instead of adding a row.
-          const x = chrome && chrome.bottom > rect.y && chrome.left < rect.right
-            ? Math.max(contentLeft, chrome.right) : contentLeft
-          const y = rect.y
+          const overlapsLeading = chrome && chrome.bottom > rect.y && chrome.left < rect.right && chrome.right > contentLeft
+          // Keep the module's top inset steady as the native buttons move between
+          // sidebar and title bar. The module page subtracts it from its own padding.
+          // Chat uses the inline title row and still needs horizontal clearance.
+          const x = overlapsLeading && !macModuleFrame ? chrome.right : contentLeft
+          const titlebarHeight = macModuleFrame ? parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dsh-frame-top-clearance')) || 48 : 0
+          const y = macModuleFrame ? Math.min(rect.bottom, Math.max(rect.y, titlebarHeight)) : rect.y
           const surfaceOpen = settingsOpen || state.approvalsOpen || state.accountDialogOpen
           const remote = surfaceOpen && state.settingsProtocolVersion === 1 && settingsSurface
 const safeModePageOpen = document.documentElement.hasAttribute('data-dsh-safe-mode-page')
@@ -1418,7 +1425,8 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         // The leading seat mounts/unmounts as a direct frame child on collapse.
         // Observe only that boundary, not streaming conversation descendants.
         const chromeLayout = new MutationObserver(present)
-        const frame = panel.current?.closest('.dshModes')?.parentElement
+        const modeSlot = panel.current?.closest('[data-slot="desktop.mode.content"]')
+        const frame = modeSlot?.parentElement ?? panel.current?.closest('.dshModes')?.parentElement
         if (frame) chromeLayout.observe(frame, { childList: true, attributes: true, attributeFilter: ['data-sidebar-collapsed'] })
         const theme = new MutationObserver(present)
         theme.observe(document.body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] })
@@ -1430,7 +1438,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         return () => {
           stopWarmup(); overlays.dispose(); interaction.disconnect(); resize.disconnect(); chromeLayout.disconnect(); theme.disconnect(); unsubscribeLocale(); window.removeEventListener('resize', present)
         }
-      }, [mode, settingsOpen, state.approvalsOpen, state.accountDialogOpen, settingsSurface, state.connected, state.epoch, state.settingsProtocolVersion, projectDialogOpen, cloudDeleteOpen, locale])
+      }, [mode, usesModuleFrame, settingsOpen, state.approvalsOpen, state.accountDialogOpen, settingsSurface, state.connected, state.epoch, state.settingsProtocolVersion, projectDialogOpen, cloudDeleteOpen, locale])
       React.useEffect(() => { surfacePresenter.current?.invalidate() }, [state.path, state.pageId, state.phase])
       React.useEffect(() => () => {
         void window.dshEnterpriseChat?.present({ visible: false, bounds: { x: 0, y: 48, width: 0, height: 0 }, theme: 'light' }).catch(() => {})
@@ -1572,8 +1580,11 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           .dshSharedCollection{min-width:0}
           .dshRecentHistory{margin-top:12px;min-width:0}
           .dshRecentHistoryRows{display:flex;flex-direction:column;gap:2px}
-          .dshHistoryHeading{display:flex;align-items:center;justify-content:space-between;padding:4px 8px 12px;color:var(--dsw-alias-label-secondary);font-size:13px}
-          .dshChatProjects{margin-top:12px;min-width:0}.dshChatProjects>.dshHistoryHeading{padding-bottom:4px}
+          /* Match the native workspace section's title inset, line height and spacing. */
+          .dshHistoryHeading{box-sizing:border-box;display:flex;align-items:center;justify-content:space-between;height:36px;margin-block-end:4px;padding-inline-start:4px;color:var(--dsw-alias-label-tertiary);line-height:20px}
+          .dshChatProjects{margin-top:12px;min-width:0}
+          /* The native list already accounts for the scrollbar. Match the workspace header's trailing button. */
+          .dshChatProjects>.dshHistoryHeading>.dshChatProjectAction{width:28px;height:28px}
           .dshSidebarItem{position:relative;min-width:0;border-radius:var(--dsw-radius-md)}
           .dshSidebarItem:is(:hover,[data-selected],[data-menu-open],:has(:focus-visible)){background:var(--dsw-alias-interactive-bg-hover)}
           .dshSidebarItemTools{position:absolute;inset-block:0;inset-inline-end:8px;display:flex;align-items:center;gap:10px;pointer-events:none}
@@ -2144,6 +2155,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           :root { --dsh-page-title-top-spacing:56px; }
           /* Top-level page titles align with the sidebar brand row. Keep
              conversation chrome and detail/dialog headers in their own layout. */
+          [data-plugin-panel] { scrollbar-gutter:stable; }
           [data-plugin-panel] > header[data-window-drag] {
             padding-top:var(--dsh-page-title-top-spacing);
           }

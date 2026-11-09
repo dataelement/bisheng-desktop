@@ -68,6 +68,7 @@ try {
       const host=new EnterpriseChatView(enterprise,line=>{if(line.includes('failed'))console.error(line)})
       const results=[]
       const delayed=new WeakSet()
+      const viewportGates=new WeakMap()
       try {
         for(const size of [900,1084])for(const zoom of [0.8,1,1.25])for(const theme of ['light','dark']){
           window.setSize(size,998)
@@ -83,7 +84,9 @@ try {
             const execute=wc.executeJavaScript.bind(wc)
             // Exercise a busy renderer: modal transitions must not depend on this async delivery.
             wc.executeJavaScript=async(script,...args)=>{
-              if(script.includes('dsh-window-dialog-viewport'))await new Promise(resolve=>setTimeout(resolve,50))
+              if(script.includes('dsh-window-dialog-viewport')&&!script.startsWith('document.getElementById')) {
+                await (viewportGates.get(wc) ?? new Promise(resolve=>setTimeout(resolve,50)))
+              }
               return execute(script,...args)
             }
             delayed.add(wc)
@@ -98,6 +101,27 @@ try {
           const region={x:280,y:40,width:width-280,height:height-40}
           assert.deepEqual(view.getBounds(),region)
           await until(()=>wc.executeJavaScript('document.documentElement.dataset.dshChatViewport==="ready"'))
+          if (process.platform === 'darwin') {
+            // On a normal module surface the root follows native resize, even while
+            // the previous pinned seat is still installed for full-window dialogs.
+            for (const resized of [{...bounds,x:0,width:width/zoom},bounds]) {
+              let resumeViewport
+              viewportGates.set(wc,new Promise(resolve=>{resumeViewport=resolve}))
+              try {
+                host.present(window,{...presentation,bounds:resized})
+                await until(async()=>{
+                  const paint=await wc.executeJavaScript('(()=>{const r=document.querySelector("#root").getBoundingClientRect();return {viewport:innerWidth,height:innerHeight,x:r.x,y:r.y,width:r.width,rootHeight:r.height}})()')
+                  if (Math.abs(paint.viewport-resized.width)>1) return false
+                  assert.ok(Math.abs(paint.width-paint.viewport)<1 && Math.abs(paint.rootHeight-paint.height)<1)
+                  assert.equal(paint.x,0)
+                  assert.equal(paint.y,0)
+                  return true
+                })
+              } finally { viewportGates.delete(wc); resumeViewport() }
+              const seat='left: clamp(0px, calc(100vw - '+resized.width+'px), '+resized.x+'px);'
+              await until(()=>wc.executeJavaScript('document.getElementById("dsh-window-dialog-viewport").textContent.includes('+JSON.stringify(seat)+')'))
+            }
+          }
           const before=await wc.executeJavaScript('JSON.stringify(document.querySelector("#root").getBoundingClientRect())')
           const frames=[]
           wc.beginFrameSubscription(image=>frames.push(probes(image)))

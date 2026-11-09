@@ -699,6 +699,43 @@ it('keeps the native sidebar visible when the embedded pane spans the frame', as
   }
 })
 
+it('keeps module pages below the title bar as the macOS sidebar changes width', async () => {
+  let collapsed = true
+  document.documentElement.dataset.platform = 'darwin'
+  const original = HTMLElement.prototype.getBoundingClientRect
+  HTMLElement.prototype.getBoundingClientRect = function () {
+    if (this.hasAttribute('data-shell-leading')) return { left: 80, right: 156, bottom: 47.5 }
+    if (this.hasAttribute('data-dsh-sidebar-root')) return { right: collapsed ? 20 : 280 }
+    const x = !collapsed && this.id === 'dsh-panel-chat' ? 280 : 0
+    return { x, y: 0, right: 960, bottom: 748, width: 960 - x, height: 748 }
+  }
+  try {
+    const ui = await mount(true)
+    const leading = document.createElement('div')
+    leading.dataset.shellLeading = ''
+    const sidebar = document.createElement('aside')
+    sidebar.dataset.dshSidebarRoot = ''
+    await act(async () => container.append(sidebar, leading))
+    const present = window.dshEnterpriseChat.present
+    for (const path of ['/knowledge', '/channel', '/apps', '/capabilities']) {
+      await ui.pushState({ path, conversationId: undefined })
+      expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ bounds: { x: 0, y: 48, width: 960, height: 700 } }))
+    }
+
+    collapsed = false
+    await act(async () => { leading.remove(); container.setAttribute('data-sidebar-collapsed', 'false') })
+    expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ bounds: { x: 280, y: 48, width: 680, height: 700 } }))
+
+    collapsed = true
+    await act(async () => container.append(leading))
+    await ui.pushState({ path: '/c/existing', conversationId: 'existing' })
+    expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ bounds: { x: 156, y: 0, width: 804, height: 748 } }))
+  } finally {
+    delete document.documentElement.dataset.platform
+    HTMLElement.prototype.getBoundingClientRect = original
+  }
+})
+
 
 async function mountOnboarding({ acknowledged = false, save = async () => ({ ok: true, json: async () => ({ acknowledged: true }) }) } = {}) {
   let notice
