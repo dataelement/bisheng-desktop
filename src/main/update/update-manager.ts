@@ -22,11 +22,27 @@ import {
   writeSkippedVersion
 } from './skipped-version'
 
-const { autoUpdater } = electronUpdater
 const TRANSIENT_STATUS_MS = 8_000
 const UPDATES_UNAVAILABLE_MESSAGE = 'Online updates are unavailable in this build.'
 
-let status = initialUpdateStatus(app.getVersion())
+// Enterprise Chat imports the card only to keep this one view above the page.
+// Reading autoUpdater or app.getVersion during that import constructs the
+// platform updater before startUpdateManager, and before Electron app exists.
+let sharedUpdater: typeof electronUpdater.autoUpdater | undefined
+let status: UpdateStatus | undefined
+
+function autoUpdater(): typeof electronUpdater.autoUpdater {
+  // The library getter creates one NsisUpdater or MacUpdater, then returns it.
+  // Later checks, downloads, and installs must keep using that same instance.
+  sharedUpdater ??= electronUpdater.autoUpdater
+  return sharedUpdater
+}
+
+function currentStatus(): UpdateStatus {
+  if (status === undefined) status = initialUpdateStatus(app.getVersion())
+  return status
+}
+
 let prepareToInstall: (() => Promise<void>) | undefined
 let startupTimer: NodeJS.Timeout | undefined
 let intervalTimer: NodeJS.Timeout | undefined
@@ -50,7 +66,7 @@ export function bindUpdateCardPresenter(present: (status: UpdateStatus) => void)
 }
 
 export function getUpdateStatus(): UpdateStatus {
-  return { ...status, locale: updateLocale?.() }
+  return { ...currentStatus(), locale: updateLocale?.() }
 }
 
 export function registerUpdateHandlers(options: { locale?: () => 'en' | 'zh' } = {}): void {
@@ -87,7 +103,8 @@ export function skipUpdate(version: unknown): UpdateStatus {
   // Consent already started the fetch. Skipping here would erase that update
   // and remember the version as permanently declined. The ready-to-install
   // card may appear before downloadUpdate() settles, and skip is allowed then.
-  const downloadInProgress = status.phase === 'downloading' || (downloading && status.phase === 'available')
+  const current = currentStatus()
+  const downloadInProgress = current.phase === 'downloading' || (downloading && current.phase === 'available')
   if (downloadInProgress) return getUpdateStatus()
   // This check has been answered. A repeated available event must not open the
   // card again for the version the user just skipped.
@@ -147,7 +164,8 @@ export async function checkForUpdates(manual = false, source: UpdateStatus['sour
   }
   // An offer, download, or finished package is already the answer. Show that
   // instead of starting another check whose corner card is easy to miss.
-  if (status.phase === 'downloading' || status.phase === 'downloaded' || status.phase === 'available') {
+  const current = currentStatus()
+  if (current.phase === 'downloading' || current.phase === 'downloaded' || current.phase === 'available') {
     if (manual) {
       manualCheck = true
       transition({ type: 'present-manual', presentationId: nextPresentationId() })
@@ -161,7 +179,7 @@ export async function checkForUpdates(manual = false, source: UpdateStatus['sour
   manualCheckRequested = manual
   lastCheckedAt = Date.now()
   checkPromise = (async () => {
-    await autoUpdater.checkForUpdates()
+    await autoUpdater().checkForUpdates()
   })()
   try {
     await checkPromise
@@ -180,8 +198,9 @@ export async function checkForUpdates(manual = false, source: UpdateStatus['sour
  * action — an update sits at `available` until it is taken.
  */
 export async function downloadAvailableUpdate(): Promise<UpdateStatus> {
-  if (status.phase !== 'available' || downloading) return getUpdateStatus()
-  const expectedVersion = status.availableVersion
+  const current = currentStatus()
+  if (current.phase !== 'available' || downloading) return getUpdateStatus()
+  const expectedVersion = current.availableVersion
   // Lock skip before the first await. Progress may not have moved the phase
   // off "available" yet, and that is exactly when the card used to stay clickable.
   downloading = true
@@ -193,7 +212,8 @@ export async function downloadAvailableUpdate(): Promise<UpdateStatus> {
     downloading = false
     throw error
   }
-  if (status.phase !== 'available' || status.availableVersion !== expectedVersion) {
+  const latest = currentStatus()
+  if (latest.phase !== 'available' || latest.availableVersion !== expectedVersion) {
     downloading = false
     return getUpdateStatus()
   }
@@ -202,7 +222,7 @@ export async function downloadAvailableUpdate(): Promise<UpdateStatus> {
   // events, and those used to hide the card and unlock skip.
   transition({ type: 'progress', percent: 0 })
   try {
-    await autoUpdater.downloadUpdate()
+    await autoUpdater().downloadUpdate()
   } catch (error) {
     transition({ type: 'error', message: errorMessage(error) })
   } finally {
@@ -213,12 +233,12 @@ export async function downloadAvailableUpdate(): Promise<UpdateStatus> {
 }
 
 export async function installDownloadedUpdate(): Promise<void> {
-  if (status.phase !== 'downloaded' || installing) return
+  if (currentStatus().phase !== 'downloaded' || installing) return
   installing = true
 
   try {
     await prepareToInstall?.()
-    autoUpdater.quitAndInstall(false, true)
+    autoUpdater().quitAndInstall(false, true)
   } catch (error) {
     installing = false
     transition({ type: 'error', message: errorMessage(error) }, true)
@@ -236,22 +256,23 @@ export function stopUpdateManager(): void {
 function configureUpdater(): void {
   // The download is ours to start: an update the user skipped should not be
   // fetched at all, and update-available is the only place that is known.
-  autoUpdater.autoDownload = false
-  autoUpdater.allowDowngrade = false
-  autoUpdater.autoInstallOnAppQuit = AUTO_INSTALL_ON_APP_QUIT
-  autoUpdater.allowPrerelease = false
-  autoUpdater.logger = {
+  autoUpdater().autoDownload = false
+  autoUpdater().allowDowngrade = false
+  autoUpdater().autoInstallOnAppQuit = AUTO_INSTALL_ON_APP_QUIT
+  autoUpdater().allowPrerelease = false
+  autoUpdater().logger = {
     info: (...args: unknown[]) => console.info('[updater]', ...args),
     warn: (...args: unknown[]) => console.warn('[updater]', ...args),
     error: (...args: unknown[]) => console.error('[updater]', ...args),
     debug: (...args: unknown[]) => console.debug('[updater]', ...args)
   }
 
-  autoUpdater.on('checking-for-update', () => {
+  autoUpdater().on('checking-for-update', () => {
     if (isDownloadOnScreen()) return
-    transition({ type: 'check', manual: status.manual, source: status.source })
+    const current = currentStatus()
+    transition({ type: 'check', manual: current.manual, source: current.source })
   })
-  autoUpdater.on('update-available', (info) => {
+  autoUpdater().on('update-available', (info) => {
     if (isDownloadOnScreen()) return
     const offeredByManualCheck = manualCheck || manualCheckRequested
     manualCheck = false
@@ -265,26 +286,26 @@ function configureUpdater(): void {
     // the update, which is the same click that starts the download.
     transition({ type: 'available', version: info.version, releaseNotes: normalizeReleaseNotes(info.releaseNotes) })
   })
-  autoUpdater.on('download-progress', (progress) =>
+  autoUpdater().on('download-progress', (progress) =>
     transition({ type: 'progress', percent: progress.percent })
   )
-  autoUpdater.on('update-not-available', () => {
+  autoUpdater().on('update-not-available', () => {
     if (isDownloadOnScreen()) return
     manualCheck = false
     manualCheckRequested = false
     transition({ type: 'not-available' })
   })
-  autoUpdater.on('update-downloaded', (info) =>
+  autoUpdater().on('update-downloaded', (info) =>
     transition({ type: 'downloaded', version: info.version })
   )
-  autoUpdater.on('error', (error) => {
+  autoUpdater().on('error', (error) => {
     manualCheckRequested = false
     transition({ type: 'error', message: errorMessage(error) })
   })
 }
 
 function isDownloadOnScreen(): boolean {
-  return downloading || status.phase === 'downloading'
+  return downloading || currentStatus().phase === 'downloading'
 }
 
 function nextPresentationId(): number {
@@ -293,7 +314,7 @@ function nextPresentationId(): number {
 }
 
 function transition(event: UpdateStateEvent, manualOverride?: boolean): void {
-  status = reduceUpdateStatus(status, event)
+  status = reduceUpdateStatus(currentStatus(), event)
   if (manualOverride !== undefined) status.manual = manualOverride
 
   console.info('[updater] status', status.phase, status.percent ?? '')
