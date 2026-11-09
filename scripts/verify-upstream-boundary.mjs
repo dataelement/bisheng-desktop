@@ -37,6 +37,7 @@ const ALLOWED_PATTERNS = [
   /^\.tmp/,
   /^package\.json$/,
   /^package-lock\.json$/,
+  /^AGENTS\.md$/,
   /^\.gitignore$/
 ]
 
