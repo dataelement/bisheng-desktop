@@ -1,27 +1,40 @@
-# DSH Desktop 开发约束
+# DSH Desktop / BiSheng 开发约束
 
 本文件适用于整个仓库；目录级 `AGENTS.md` 只补充该目录的规则。规则放在能覆盖其作用域的最深层，不重复维护。新增约束与现状、工具覆盖的区别见 [规范设计说明](docs/code-standards.md)。
 
-## 1. 项目边界
+## 1. 项目边界与上下游架构
 
-DSH Desktop 是 Electron 宿主，复用 Harness runtime 和 Web UI。保持这一定位，不另建 Agent runtime 或独立业务前端。
+本仓库（BiSheng Desktop / Work）采用 **Downstream Fork 架构**，下游派生自开源/公共底座 `dataelem/dsh-desktop`。
 
-设计与评审优先回答四个问题：能力属于哪个进程；失败后用户数据能否恢复；上游升级后能否继续加载；目标平台的安装包是否包含并能运行这项能力。代码风格服务于这些边界。
+- **底座边界（Upstream：`dsh-desktop`）**：负责 Harness 运行时（0.2.2-rc.1）、桌面薄壳（`src/main/shell/`）、Host 宿主子进程（`src/host/`）、标准化原子补丁（`patches/`）、基础插件（client-ui, workbenches, office, ppt）以及平台/系统差异抹平。
+- **商业层边界（Downstream：`bisheng-work`）**：负责企业专有业务插件（`packages/dsh-desktop-enterprise/`）、BiSheng 品牌资产（`build/bisheng-*`）、企业发布流水线以及 Web 生产独立运行配置。
+- **双运行形态（Dual Runtime）**：应用同时支持桌面客户端（Electron Shell）与服务端独立 Web 运行时（Headless Web Server）。严禁通过物理删除桌面代码来隔离 Web 模式；两端共享相同的内核与插件上下文。
 
-涉及 Harness 定制、宿主插件或第三方补丁时，先阅读 [Patch 与 Plugin 规范](docs/patch-plugin-contract.md)：选型、slot 兼容性和组合验证在此统一定义。
+设计与评审优先回答四个问题：能力属于底座还是企业层；能力属于哪个进程与运行形态；失败后用户数据能否恢复；上游升级后能否继续加载。
+
+### CI 规则门禁（Boundary Gatekeeper）
+
+为避免上下游代码漂移与“人不可靠”带来的底座腐化，仓库强制运行 CI 规则门禁：
+
+- **白名单机制**：下游 PR 仅允许修改 `packages/dsh-desktop-enterprise/`、`build/bisheng-*`、`build/web-runtime/`、`bin/start.*`、企业文档及流水线。
+- **机械阻断**：严禁在下游仓库直接修改底座核心代码（`src/main/`、`src/preload/`、`src/host/`、`patches/` 及公共插件核心）。一旦检测到非白名单文件变动，门禁立即阻断合入。
+- **底座演进与 Bug 回流**：底座能力的任何缺陷修复或新 Slot 扩展，必须切到 `dataelem/dsh-desktop` 提交 PR，在上游补充单测变绿并合入后，通过 `git rebase upstream` 同步至下游。
+- **开发者心智**：普通业务开发者无需在本地配置 `upstream` remote，仅面向 `origin` 提交业务代码；门禁脚本自适应比对 `origin/main` 校验白名单。
 
 | 目录 | 职责 / 专项规则 |
 | --- | --- |
+| `packages/dsh-desktop-enterprise/` | 企业业务专有插件：SSO 登录、企业大模型鉴权代理、积分用量计量、敏感词安全、会话云端同步；下游独占 |
 | `src/main/` | 原生能力、运行时编排、Profile、更新、手机桥接和企业登录；见该目录 `AGENTS.md`。正式主进程在 `src/main/shell/`，规则见该目录 `AGENTS.md` |
-| `src/host/` | Harness 子进程入口，不导入 Electron；见该目录 `AGENTS.md` |
+| `src/host/` | Harness 子进程入口，不导入 Electron；做各端（Mac/Win 路径及 Web/Desktop 形态）抹平适配；见该目录 `AGENTS.md` |
 | `src/preload/` | 窄 IPC 桥和桌面 UI 接缝；见该目录 `AGENTS.md` |
 | `src/shared/` | 跨进程数据契约和纯逻辑；不得依赖 main/preload、Electron 或 Node 特权 API |
-| `packages/` | 宿主插件、运行时包和第三方分发包；见该目录 `AGENTS.md` |
-| `patches/` | 可重放的第三方兼容补丁；见该目录 `AGENTS.md` |
-| `build/` | 打包输入，包括 HTML 页面、Office CLI 和 pnpm 调用；见该目录 `AGENTS.md` |
-| `scripts/`、`test/` | 构建发布工具、行为与契约回归测试 |
+| `packages/` | 宿主插件、运行时包和第三方分发包；见该目录 `AGENTS.md`。公共插件（workbenches, office）保持 Desktop/Web 双模自适应 |
+| `patches/` | 可重放的第三方兼容补丁；必须是标准的 `patch-package` 原子补丁，禁止引入跨 package 的单体 unified diff；见该目录 `AGENTS.md` |
+| `build/` | 打包输入，包括 HTML 页面、运行时入口与 `build/web-runtime/` 独立配置文件；见该目录 `AGENTS.md` |
+| `bin/` | 启动脚本：`start.sh` 与 `start.bat`，驱动无头独立 Web 服务 |
+| `scripts/`、`test/` | 构建发布工具、行为与契约回归测试、门禁校验脚本 `scripts/verify-upstream-boundary.mjs` |
 
-先阅读受影响模块和测试；涉及架构时阅读 `docs/architecture.md`，开发和发布分别参考 `docs/development.md`、`docs/release-runbook.md`。实际依赖与命令以当前 `package.json`、锁文件、构建配置和 workflow 为准；发现文档过期时修正文档，不按旧版本描述修改代码。
+先阅读受影响模块和测试；涉及架构时阅读 `docs/architecture.md`、`docs/downstream-architecture.md`，开发和发布分别参考 `docs/development.md`、`docs/release-runbook.md`。实际依赖与命令以当前 `package.json`、锁文件、构建配置和 workflow 为准；发现文档过期时修正文档，不按旧版本描述修改代码。
 
 ### 移植代码
 
@@ -103,14 +116,19 @@ DSH Desktop 是 Electron 宿主，复用 Harness runtime 和 Web UI。保持这�
 
 ```bash
 npm ci                     # 需要安装依赖时；必须检查 postinstall 是否完整成功
+npm run verify:boundary    # 变更必须先通过下游边界门禁审查，严禁越界修改底座代码
 npm test -- test/<name>.test.ts   # 按实际文件选择相关回归
 npm run typecheck
-npm run build
-npm test                   # 代码变更提交前的完整回归
+npm run build              # 验证桌面端编译构建
+npm run web:pack           # 验证 Web 端独立运行时打包
+npm test                   # 代码变更提交前的完整回归（继承上游 290+ 个全部单测）
 git diff --check
 ```
 
-- 纯文档修改只需检查差异、链接和命令真实性；不要求启动应用或重装依赖。
+### 两级测试与闭环准则
+- **底座层测试（Upstream Contract）**：底座代码必须通过通用 Mock Fixture 保持 100% 独立可测，严禁把商业版特有逻辑与凭据写死在底座测试中。底座 290+ 个核心测试在下游必须保持 100% 无损通过。
+- **商业层测试（Downstream Integration）**：企业 SSO 登录、企业网关配额、用量计量与敏感词安全测试归属商业层（`test/enterprise-*.test.mjs`）。商业版交付必须同时跑通底座契约测试与商业版 E2E 测试。
+- **纯文档修改**只需检查差异、链接和命令真实性；不要求启动应用或重装依赖。
 - 功能开发把相关单元测试纳入同一次改动，不能只改实现。先定位覆盖该模块、输入输出、状态转换或失败路径的测试文件；新行为补能捕获偏差的用例，契约变化则更新对应断言。测试文件的增删改与实现一并评审：断言改动要说明旧契约、新契约，以及失败时会抓住什么。与本次功能无关的测试整理不混入。交付说明列出变动的测试文件和实际运行结果。
 - 行为修复应有能捕获该缺陷的回归，优先验证输入、输出、状态转换和失败路径。字符串/源码契约测试只作为补充，不能替代行为验证。
 - 当前 `typecheck` 覆盖配置及 `src/main`、`src/host`、`src/preload`、`src/shared`、TS 测试；插件 JS、脚本和 HTML 不在其覆盖范围。当前没有 `npm run lint` 或 `npm run format:check`，不得报告它们通过。
