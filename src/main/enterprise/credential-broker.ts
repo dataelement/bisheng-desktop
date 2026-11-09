@@ -21,6 +21,7 @@ const JSON_ROUTES = new Map<string, 'GET' | 'POST'>([
   ['/v1/chat', 'POST'],
   ['/v1/responses', 'POST'],
   ['/v1/audit/conversations/title', 'POST'],
+  ['/v1/audit/message-feedback', 'POST'],
   ['/v1/market', 'POST'],
   ['/v1/workbench/verify', 'POST'],
   ['/v1/workbench/materialize', 'POST'],
@@ -123,13 +124,20 @@ export async function startEnterpriseCredentialBroker(
         }
         return
       }
-      const body = await readJsonBody(request, path === '/v1/audit/conversations/title' ? 8192 : ENTERPRISE_BROKER_JSON_LIMIT)
-      if (path === '/v1/audit/conversations/title') {
+      const bodyLimit = path === '/v1/audit/conversations/title'
+        ? 8192
+        : path === '/v1/audit/message-feedback' ? 16384 : ENTERPRISE_BROKER_JSON_LIMIT
+      const body = await readJsonBody(request, bodyLimit)
+      if (path === '/v1/audit/conversations/title' || path === '/v1/audit/message-feedback') {
         const controller = new AbortController()
         const abort = () => { if (!response.writableFinished) controller.abort() }
         request.on('aborted', abort)
         response.on('close', abort)
-        try { sendJson(response, 200, await service.reportAuditTitle(body, controller.signal)) }
+        try {
+          sendJson(response, 200, await (path === '/v1/audit/message-feedback'
+            ? service.reportAuditFeedback(body, controller.signal)
+            : service.reportAuditTitle(body, controller.signal)))
+        }
         finally { request.off('aborted', abort); response.off('close', abort) }
         return
       }

@@ -104,6 +104,23 @@ describe('restricted enterprise credential broker', () => {
     expect((await brokerFetch(broker, path, { method: 'POST', body: JSON.stringify({ padding: 'x'.repeat(8192) }) })).status).toBe(413)
     expect(title).toHaveBeenCalledTimes(1)
   })
+
+  it('accepts a message rating within its own body limit', async () => {
+    const { service, broker } = await createRuntime()
+    const feedback = vi.spyOn(service, 'reportAuditFeedback').mockResolvedValue({ status: 'UPDATED', event_seq: 12 })
+    const body = {
+      connectionKey: 'test',
+      auditFeedbackEpoch: 1,
+      update: { conversation_id: 'e2e-feedback', message_id: 'msg-1', event_seq: 12, op: 'put', rating: 'negative' }
+    }
+    const path = '/v1/audit/message-feedback'
+    const response = await brokerFetch(broker, path, { method: 'POST', body: JSON.stringify(body) })
+    expect(await response.json()).toEqual({ status: 'UPDATED', event_seq: 12 })
+    expect(feedback).toHaveBeenCalledWith(body, expect.any(AbortSignal))
+    expect((await brokerFetch(broker, path, { method: 'POST', body: JSON.stringify(body), headers: { origin: 'https://evil.example' } })).status).toBe(403)
+    expect((await brokerFetch(broker, path, { method: 'POST', body: JSON.stringify({ padding: 'x'.repeat(16384) }) })).status).toBe(413)
+    expect(feedback).toHaveBeenCalledTimes(1)
+  })
   it('rejects browser, host, and non-JSON requests and never returns CORS or tokens', async () => {
     const { broker } = await createRuntime()
     const withOrigin = await brokerFetch(broker, '/v1/state', {
