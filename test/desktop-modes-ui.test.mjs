@@ -25,6 +25,8 @@ afterEach(async () => {
   container?.remove()
   document.documentElement.removeAttribute('data-dsh-safe-mode-page')
   document.documentElement.removeAttribute('data-dsh-about-open')
+  document.documentElement.removeAttribute('data-dsh-update-card')
+  document.getElementById('dsh-desktop-update-root')?.remove()
   document.body.removeAttribute('data-ds-dark-theme')
   disposers.splice(0).reverse().forEach(dispose => dispose())
   delete window.dshEnterpriseChat
@@ -443,6 +445,31 @@ it('reserves the native opener after collapse on an active Chat and restores ful
     const calls = present.mock.calls.length
     await act(async () => container.append(leading))
     expect(present).toHaveBeenCalledTimes(calls)
+  } finally {
+    HTMLElement.prototype.getBoundingClientRect = original
+  }
+})
+
+it('keeps the chat view full height when an update card is on screen', async () => {
+  const original = HTMLElement.prototype.getBoundingClientRect
+  HTMLElement.prototype.getBoundingClientRect = function () {
+    if (this.id === 'dsh-desktop-update-root') return { x: 560, y: 600, left: 560, right: 940, top: 600, bottom: 740, width: 380, height: 140 }
+    return { x: 0, y: 0, left: 0, right: 960, top: 0, bottom: 748, width: 960, height: 748 }
+  }
+  try {
+    await mount(true)
+    const present = window.dshEnterpriseChat.present
+    expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ bounds: { x: 0, y: 0, width: 960, height: 748 } }))
+    const calls = present.mock.calls.length
+    const card = document.createElement('div')
+    card.id = 'dsh-desktop-update-root'
+    card.style.display = 'block'
+    await act(async () => {
+      document.body.append(card)
+      document.documentElement.setAttribute('data-dsh-update-card', '160')
+    })
+    expect(present).toHaveBeenCalledTimes(calls)
+    expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ bounds: { x: 0, y: 0, width: 960, height: 748 } }))
   } finally {
     HTMLElement.prototype.getBoundingClientRect = original
   }

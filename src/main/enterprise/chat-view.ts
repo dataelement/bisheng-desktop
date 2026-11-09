@@ -9,6 +9,7 @@ import { chatLocaleScript } from './chat-locale'
 import { chatLayoutCss } from './chat-layout'
 import { parseUsageSummary, parseUsageStorage, type EnterpriseUsage, type UsageSection } from '../../shared/enterprise-usage'
 import { EnterprisePlatformError, isEnterprisePlatformError } from './enterprise-request'
+import { raiseUpdateCardViewIfShown } from '../update/update-card-view'
 
 /** Remote Chat gets its own in-memory browser session and a presentation-only preload. */
 const DOCUMENT_LOAD_TIMEOUT_MS = 45_000
@@ -581,6 +582,7 @@ export class EnterpriseChatView {
         this.isolated = isolated
         this.view = view
         this.owner.contentView.addChildView(view)
+        raiseUpdateCardViewIfShown(this.owner)
       }
       const view = this.view
       if (!view) throw new Error('Enterprise page unavailable.')
