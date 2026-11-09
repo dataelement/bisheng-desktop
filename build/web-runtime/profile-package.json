@@ -1,0 +1,18 @@
+{
+  "name": "dsh-profile-web",
+  "private": true,
+  "dependencies": {},
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-web-app",
+        "dsh-desktop-client-ui",
+        "dsh-desktop-enterprise",
+        "dsh-desktop-workbenches",
+        "dsh-desktop-office",
+        "dsh-ppt-composer"
+      ]
+    }
+  }
+}

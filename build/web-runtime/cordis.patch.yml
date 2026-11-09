@@ -1,0 +1,7 @@
+# Web runtime profile defaults. Keep Models enabled for manual configuration.
+- id: ui-brand-official
+  disabled: true
+- id: ui-settings-models
+  name: '@deepseek-ai/dsh-client-ui-settings-models'
+  config:
+    credentialOnboarding: false

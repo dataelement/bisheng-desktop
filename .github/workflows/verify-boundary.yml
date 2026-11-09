@@ -1,0 +1,36 @@
+name: Downstream Boundary Gatekeeper
+
+on:
+  pull_request:
+    branches:
+      - main
+      - upgrade/*
+      - codex/*
+  push:
+    branches:
+      - main
+      - upgrade/*
+      - codex/*
+
+jobs:
+  check-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Add and fetch upstream
+        run: |
+          git remote add upstream https://github.com/dataelement/dsh-desktop.git || true
+          git fetch upstream upgrade/dsh-0.2.2-rc.1 || git fetch upstream main || true
+
+      - name: Verify Downstream Boundary
+        run: |
+          npm run verify:boundary

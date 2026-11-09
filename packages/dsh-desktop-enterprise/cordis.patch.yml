@@ -1,0 +1,5 @@
+- id: ui-settings-account
+  disabled: true
+- insert:
+    - id: dsh-desktop-enterprise
+      name: dsh-desktop-enterprise
