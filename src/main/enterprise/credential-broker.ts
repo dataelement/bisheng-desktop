@@ -105,6 +105,11 @@ export async function startEnterpriseCredentialBroker(
     try {
       if (path === '/v1/cloud') {
         const body = await readJsonBody(request, ENTERPRISE_BROKER_JSON_LIMIT)
+        // Launch tickets are consumed only by the main-process view controller.
+        if ((body as { operation?: unknown }).operation === 'launch') {
+          sendJson(response, 403, { error: 'Use the native cloud workbench view.' })
+          return
+        }
         sendJson(response, 200, await service.cloudRequest(body))
         return
       }
