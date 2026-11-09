@@ -102,7 +102,23 @@ async function mount(connected = false, collection = {}, inert = false, workbenc
   window.__ModuleLoader__ = { load({ factory }) {
     plugin = factory(name => {
       if (name === 'react') return React
-      if (name === '@deepseek-ai/dsh-client-ui-primitives') return { Button: ({ variant, size, ...props }) => React.createElement('button', props), Modal: ({ children, title, description, footer, onClose, closeLabel }) => createPortal(React.createElement('div', { role: 'dialog', 'aria-modal': true, 'aria-label': title }, React.createElement('button', { onClick: onClose, 'aria-label': closeLabel }, closeLabel), description, children, footer), document.body), Menu: ({ anchor, open, items = [], children, onSelect }) => React.createElement('div', null, anchor, open && (children || items.map(item => React.createElement('button', { key: item.id, role: 'menuitem', onClick: () => onSelect(item.id) }, item.label)))), MenuItemButton: ({ children, onSelect, disabled }) => React.createElement('button', { role: 'menuitem', onClick: onSelect, disabled }, children) }
+      if (name === '@deepseek-ai/dsh-client-ui-primitives') return {
+        Button: ({ variant, size, ...props }) => React.createElement('button', props),
+        Modal: ({ children, title, description, footer, onClose, closeLabel }) => createPortal(React.createElement('div', { role: 'dialog', 'aria-modal': true, 'aria-label': title }, React.createElement('button', { onClick: onClose, 'aria-label': closeLabel }, closeLabel), description, children, footer), document.body),
+        Menu: ({ anchor, open, items = [], children, onSelect, listClassName }) => {
+          const [expanded, setExpanded] = React.useState()
+          const rows = children || items.map(item => React.createElement('div', { key: item.id },
+            React.createElement('button', { role: 'menuitem', disabled: item.disabled, 'aria-haspopup': item.submenu ? 'menu' : undefined,
+              onClick: () => item.submenu ? setExpanded(item.id) : onSelect(item.id) }, item.label),
+            expanded === item.id && item.submenu && React.createElement('div', { role: 'menu' },
+              ...item.submenu.map(sub => React.createElement('button', { key: sub.id, role: 'menuitem', onClick: () => onSelect(sub.id) }, sub.label)))))
+          return React.createElement('div', null, anchor, open && React.createElement('div', { role: 'menu', className: listClassName }, rows))
+        },
+        MenuItemButton: ({ children, onSelect, disabled }) => React.createElement('button', { role: 'menuitem', onClick: onSelect, disabled }, children),
+        HoverCard: ({ anchor }) => anchor,
+        relativeTime: () => ({ unit: 'days', n: 1 }),
+        ...Object.fromEntries(['ChevronRightOutline', 'EditOutline', 'EllipsisOutline', 'FolderClose', 'FolderOpen', 'NewChatOutline', 'PlusOutline', 'TrashOutline', 'TriangleRightFill'].map(icon => [`Icon${icon}Regular`, () => null]))
+      }
       throw new Error(name)
     })
   } }
@@ -334,25 +350,89 @@ it('places cloud projects between workspaces and conversations and files each ch
     await ui.projectStore.confirm('Research')
   })
   const id = ui.projectStore.snapshot().projects[0].id
+  await act(async () => ui.projectStore.toggle(id))
   expect([...container.querySelector('.dshSharedCollection').children].map(node => node.className || node.dataset.project)).toEqual(['true', 'dshChatProjects', 'dshRecentHistory'])
-  await act(async () => container.querySelector('.dshCloudHistoryActions').click())
-  await act(async () => [...container.querySelectorAll('[role=menuitem]')].find(node => node.textContent === 'Move to project').click())
-  await act(async () => new Promise(resolve => setTimeout(resolve, 1)))
-  expect(document.querySelector('[role=dialog]').getAttribute('aria-label')).toBe('Move to project')
-  expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
-  await act(async () => document.querySelector('.dshChatProjectForm').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+  const unfiled = container.querySelector('.dshRecentHistory [data-history-kind=chat]')
+  const context = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 })
+  await act(async () => unfiled.dispatchEvent(context))
+  expect(context.defaultPrevented).toBe(true)
+  expect(window.dshEnterpriseChat.open).not.toHaveBeenCalled()
+  const move = () => container.querySelector('[role=menuitem][aria-haspopup=menu]')
+  const choices = () => [...container.querySelectorAll('[role=menu] [role=menu] [role=menuitem]')]
+  const destination = () => choices().find(node => node.textContent === 'Research')
+  expect(move().textContent).toBe('Move to project')
+  await act(async () => move().click())
+  expect(choices().map(node => node.textContent)).toEqual(['New project', 'Research'])
+  expect(window.dshEnterpriseChat.projectAction).toHaveBeenCalledTimes(1)
+  window.dshEnterpriseChat.projectAction.mockRejectedValueOnce(new Error('offline'))
+  await act(async () => destination().click())
+  expect(ui.projectStore.snapshot().assignments).toEqual({})
+  expect(container.querySelector('[role=alert]').textContent).toContain('Could not save projects')
+  await act(async () => unfiled.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })))
+  await act(async () => move().click())
+  await act(async () => destination().click())
+  expect(window.dshEnterpriseChat.projectAction).toHaveBeenLastCalledWith(expect.objectContaining({ operation: 'assign', chat_id: 'cloud-a', project_id: id }), 1)
+  expect(document.querySelector('[role=dialog]')).toBeNull()
   expect(ui.projectStore.snapshot().assignments).toEqual({ 'cloud-a': id })
   expect(container.querySelectorAll('[data-history-kind=chat]')).toHaveLength(1)
   expect(container.querySelector('[data-chat-project]').textContent).toContain('Cloud chat')
   expect(container.querySelector('.dshRecentHistory').textContent).not.toContain('Cloud chat')
   await act(async () => container.querySelector('[data-chat-project] [data-history-kind=chat]').click())
   expect(window.dshEnterpriseChat.open).toHaveBeenLastCalledWith('cloud-a')
+  const filed = container.querySelector('[data-chat-project] [data-history-kind=chat]')
+  expect(filed.getAttribute('aria-current')).toBe('page')
+  await act(async () => {
+    ui.projectStore.edit('create')
+    await ui.projectStore.confirm('Another project')
+  })
+  const shortcut = new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true })
+  await act(async () => filed.dispatchEvent(shortcut))
+  expect(shortcut.defaultPrevented).toBe(true)
+  expect(container.querySelector('[data-chat-project] .dshCloudHistoryActions').getAttribute('aria-expanded')).toBe('true')
+  expect([...container.querySelectorAll('[role=menuitem]')].map(node => node.textContent)).toEqual(['Move to project', 'menu'])
+  await act(async () => move().click())
+  expect(destination()).toBeUndefined()
+  expect(choices().map(node => node.textContent)).toEqual(['New project', 'Another project', 'Move out of project'])
+  expect(window.dshEnterpriseChat.open).toHaveBeenCalledTimes(1)
+  await act(async () => container.querySelector('[data-chat-project] .dshCloudHistoryActions').click())
+  await ui.navigation([{ id: 'knowledge', label: 'Knowledge', active: true }])
+  expect(filed.getAttribute('aria-current')).toBeNull()
   await act(async () => {
     ui.projectStore.edit('remove', id, 'Research')
     await ui.projectStore.confirm('')
   })
   expect(container.querySelector('.dshRecentHistory').textContent).toContain('Cloud chat')
   expect(container.querySelectorAll('[data-history-kind=chat]')).toHaveLength(1)
+})
+
+it('creates and files the conversation in one request when the submenu has no existing projects', async () => {
+  const ui = await mount(true, { mode: 'all' })
+  await act(async () => container.querySelector('.dshCloudHistoryActions').click())
+  await act(async () => container.querySelector('[role=menuitem][aria-haspopup=menu]').click())
+  const choices = [...container.querySelectorAll('[role=menu] [role=menu] [role=menuitem]')]
+  expect(choices.map(choice => choice.textContent)).toEqual(['New project'])
+  await act(async () => { choices[0].click(); await new Promise(resolve => setTimeout(resolve, 1)) })
+  expect(document.querySelector('[role=dialog]').getAttribute('aria-label')).toBe('New project')
+  expect(document.querySelector('[role=dialog] select')).toBeNull()
+  expect(window.dshEnterpriseChat.projectAction).not.toHaveBeenCalled()
+  await act(async () => ui.projectStore.confirm('Filed from all conversations'))
+  expect(window.dshEnterpriseChat.projectAction).toHaveBeenCalledTimes(1)
+  expect(window.dshEnterpriseChat.projectAction).toHaveBeenCalledWith(expect.objectContaining({ operation: 'create', chat_id: 'cloud-a', name: 'Filed from all conversations' }), 1)
+  const { projects, assignments } = ui.projectStore.snapshot()
+  expect(assignments['cloud-a']).toBe(projects[0].id)
+})
+
+it('keeps cloud conversations with missing dates openable without showing a misleading age', async () => {
+  const ui = await mount(true)
+  window.dshEnterpriseChat.history.mockResolvedValueOnce(historyResult([
+    { id: 'cloud-a', title: 'Undated chat', updatedAt: '' }
+  ]))
+  await act(async () => ui.controller.refreshHistory())
+  const row = container.querySelector('.dshRecentHistory [data-history-kind=chat]')
+  expect(row.getAttribute('aria-label')).toBe('Undated chat')
+  expect(row.querySelector('time')).toBeNull()
+  await act(async () => row.click())
+  expect(window.dshEnterpriseChat.open).toHaveBeenLastCalledWith('cloud-a')
 })
 
 it('uses server membership instead of assigning from a delayed project route', async () => {
@@ -910,6 +990,7 @@ function deferredHistory() {
   return { promise, resolve, reject }
 }
 const cloudRows = () => [...container.querySelectorAll('[data-history-kind=chat]')]
+const cloudRowTitles = () => cloudRows().map(row => row.querySelector('.dshHistoryTitle').textContent)
 const historyResult = (items, epoch = 1, hasMore = false) => ({ epoch, items, hasMore })
 const historyItem = (id, title = id) => ({ id, title, updatedAt: '2026-10-18' })
 
@@ -925,7 +1006,7 @@ it('keeps cached rows and scroll position during same-account refresh, then repl
   expect(scroll.scrollTop).toBe(48)
   expect(scroll.textContent).not.toContain('historyLoading')
   await act(async () => pending.resolve(historyResult([historyItem('cloud-a', 'Renamed chat'), historyItem('cloud-b')])))
-  expect(cloudRows().map(item => item.title)).toEqual(['Renamed chat', 'cloud-b'])
+  expect(cloudRowTitles()).toEqual(['Renamed chat', 'cloud-b'])
   expect(cloudRows()[0]).toBe(row)
 })
 
@@ -961,7 +1042,7 @@ it('coalesces repeated account refresh notifications while history is pending', 
   expect(window.dshEnterpriseChat.history).toHaveBeenCalledTimes(1)
   expect(cloudRows()).toHaveLength(1)
   await act(async () => pending.resolve(historyResult([historyItem('fresh')])))
-  expect(cloudRows()[0].title).toBe('fresh')
+  expect(cloudRowTitles()).toEqual(['fresh'])
 })
 
 it.each(['poll', 'push'])('clears account-owned history on %s identity changes and rejects old responses', async source => {
@@ -975,7 +1056,7 @@ it.each(['poll', 'push'])('clears account-owned history on %s identity changes a
   await act(async () => oldRequest.resolve(historyResult([historyItem('old-account')], 1)))
   expect(cloudRows()).toHaveLength(0)
   await act(async () => newRequest.resolve(historyResult([historyItem('new-account')], 2)))
-  expect(cloudRows().map(row => row.title)).toEqual(['new-account'])
+  expect(cloudRowTitles()).toEqual(['new-account'])
 })
 
 it('clears cloud rows immediately on pushed logout and keeps local work rows', async () => {
@@ -999,7 +1080,7 @@ it('keeps loaded pages visible until the entire refresh has completed', async ()
   expect(cloudRows().some(row => row.title === 'updated')).toBe(false)
   await act(async () => secondPage.resolve(historyResult([historyItem('page-2-new')])))
   expect(cloudRows()).toHaveLength(41)
-  expect(cloudRows().some(row => row.title === 'page-2-new')).toBe(true)
+  expect(cloudRowTitles()).toContain('page-2-new')
 })
 
 it('keeps a confirmed empty state visible while refreshing an empty history', async () => {

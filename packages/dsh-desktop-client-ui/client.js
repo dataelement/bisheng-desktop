@@ -6,7 +6,11 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
 
     const React = require('react')
-    const { Menu, MenuItemButton, Modal, Button, ReferenceIconRegular } = require('@deepseek-ai/dsh-client-ui-primitives')
+    const {
+      Menu, MenuItemButton, Modal, Button, HoverCard, relativeTime, ReferenceIconRegular,
+      IconChevronRightOutlineRegular, IconEditOutlineRegular, IconEllipsisOutlineRegular, IconFolderCloseRegular, IconFolderOpenRegular,
+      IconNewChatOutlineRegular, IconPlusOutlineRegular, IconTrashOutlineRegular, IconTriangleRightFillRegular
+    } = require('@deepseek-ai/dsh-client-ui-primitives')
 
     // Paths are copied from build/bisheng-logo-mark.svg. Keeping the browser
     // occupant self-contained makes it replayable when Harness loads plugins
@@ -310,8 +314,8 @@ window.__ModuleLoader__.load({
     }
     const PROJECTS_NS = 'desktop.chatProjects'
     const PROJECTS_COPY = {
-      zh: { title: '项目', create: '新建项目', rename: '重命名项目', remove: '删除项目', actions: '项目操作', startChat: '在此项目新建对话', empty: '暂无对话', name: '项目名称', nameHelp: '请输入 1–30 个字符', cancel: '取消', save: '保存', close: '关闭', move: '移入项目', moveOut: '移出项目', target: '选择项目', deleteHelp: '删除“{name}”后，其中的对话将移回对话列表，聊天记录会保留。', failed: '项目保存失败，请重试。', unavailable: '项目数据无法读取，点击重试。', retry: '重试' },
-      en: { title: 'Projects', create: 'New project', rename: 'Rename project', remove: 'Delete project', actions: 'Project actions', startChat: 'New chat in this project', empty: 'No conversations yet', name: 'Project name', nameHelp: 'Enter 1–30 characters', cancel: 'Cancel', save: 'Save', close: 'Close', move: 'Move to project', moveOut: 'Move out of project', target: 'Choose project', deleteHelp: 'Delete “{name}”? Its conversations will return to the conversation list. Chat history will be kept.', failed: 'Could not save projects. Please try again.', unavailable: 'Could not read projects. Retry.', retry: 'Retry' }
+      zh: { title: '项目', create: '新建项目', rename: '重命名项目', remove: '删除项目', actions: '项目操作', startChat: '在此项目新建对话', empty: '暂无对话', name: '项目名称', nameHelp: '请输入 1–30 个字符', cancel: '取消', save: '保存', close: '关闭', move: '移入项目', moveOut: '移出项目', deleteHelp: '删除“{name}”后，其中的对话将移回对话列表，聊天记录会保留。', failed: '项目保存失败，请重试。', unavailable: '项目数据无法读取，点击重试。', retry: '重试' },
+      en: { title: 'Projects', create: 'New project', rename: 'Rename project', remove: 'Delete project', actions: 'Project actions', startChat: 'New chat in this project', empty: 'No conversations yet', name: 'Project name', nameHelp: 'Enter 1–30 characters', cancel: 'Cancel', save: 'Save', close: 'Close', move: 'Move to project', moveOut: 'Move out of project', deleteHelp: 'Delete “{name}”? Its conversations will return to the conversation list. Chat history will be kept.', failed: 'Could not save projects. Please try again.', unavailable: 'Could not read projects. Retry.', retry: 'Retry' }
     }
     Object.assign(PROJECTS_COPY.zh, { pending: '正在保存或加载…', connecting: '正在连接项目同步…', degraded: '已保存，同步暂有延迟', offline: '项目尚未同步，正在重连…', auth_required: '请重新登录以同步项目', unsupported: '当前服务不支持项目同步，请升级服务端。', import: '旧版项目迁移结果', migrationRunning: '正在自动迁移旧版项目…', migrationRetry: '旧版项目暂未迁移，正在自动重试。原记录已保留。', importDone: '迁移完成，{count} 项未迁移或保留了云端归属。' })
     Object.assign(PROJECTS_COPY.en, { pending: 'Saving or loading…', connecting: 'Connecting project sync…', degraded: 'Saved. Sync is delayed.', offline: 'Projects are not synced. Reconnecting…', auth_required: 'Sign in again to sync projects.', unsupported: 'This server does not support project sync. Update the server.', import: 'Legacy migration results', migrationRunning: 'Migrating legacy projects automatically…', migrationRetry: 'Retrying legacy project migration automatically. Original records are kept.', importDone: 'Migration finished. {count} items were skipped or kept their cloud assignment.' })
@@ -320,7 +324,7 @@ window.__ModuleLoader__.load({
     /** Server projections own project data; local keys remain import-only. */
     function createChatProjects() {
       const empty = () => ({ projects: [], assignments: {} })
-      let state = { scope: undefined, epoch: undefined, ...empty(), expanded: {}, rows: {}, editor: null, phase: 'idle', error: null, busy: false, revision: '0', connection: 'connecting', migrationAvailable: false, migrationPhase: 'idle', migrationResult: null, migrationDetails: [], search: { query: '', items: [], phase: 'idle', nextCursor: null } }
+      let state = { scope: undefined, epoch: undefined, ...empty(), expanded: {}, rows: {}, assigning: new Set(), editor: null, phase: 'idle', error: null, busy: false, revision: '0', connection: 'connecting', migrationAvailable: false, migrationPhase: 'idle', migrationResult: null, migrationDetails: [], search: { query: '', items: [], phase: 'idle', nextCursor: null } }
       const listeners = new Set()
       let readPending, reading = false, disposed = false
       let generation = 0, searchRequest = 0
@@ -455,14 +459,27 @@ window.__ModuleLoader__.load({
           let migrationAvailable = false
           try { migrationAvailable = !!scope && window.localStorage.getItem('desktop.chatProjects.v1:' + scope) !== null && !window.localStorage.getItem('desktop.chatProjects.importDone.v1:' + scope) }
           catch { /* Import availability cannot block server projects. Original keys remain intact. */ }
-          publish({ scope, epoch, ...empty(), expanded: {}, rows: {}, editor: null, busy: false, phase: scope ? 'loading' : 'idle', error: null, revision: '0', connection: 'connecting', migrationAvailable, migrationPhase: 'idle', migrationResult: null, migrationDetails: [], search: { query: '', items: [], phase: 'idle', nextCursor: null } })
+          publish({ scope, epoch, ...empty(), expanded: {}, rows: {}, assigning: new Set(), editor: null, busy: false, phase: scope ? 'loading' : 'idle', error: null, revision: '0', connection: 'connecting', migrationAvailable, migrationPhase: 'idle', migrationResult: null, migrationDetails: [], search: { query: '', items: [], phase: 'idle', nextCursor: null } })
           if (scope) void read()
         },
         async assign(id, projectId) {
-          if (!validId(id) || id === 'new') return false
+          if (!validId(id) || id === 'new' || state.phase !== 'ready' || state.assigning.has(id) ||
+            (projectId && (!state.projects.some(project => project.id === projectId) || state.assignments[id] === projectId))) return false
           const scope = state.scope, epoch = state.epoch
-          try { await action({ operation: 'assign', chat_id: id, project_id: projectId || null }); return true }
-          catch { if (same(scope, epoch)) publish({ error: 'failed' }); return false }
+          publish({ assigning: new Set([...state.assigning, id]), error: null })
+          try {
+            await action({ operation: 'assign', chat_id: id, project_id: projectId || null })
+            return same(scope, epoch)
+          } catch {
+            if (same(scope, epoch)) publish({ error: 'failed' })
+            return false
+          } finally {
+            if (same(scope, epoch)) {
+              const assigning = new Set(state.assigning)
+              assigning.delete(id)
+              publish({ assigning })
+            }
+          }
         },
         toggle(id) {
           const expanded = { ...state.expanded, [id]: !state.expanded[id] }
@@ -480,19 +497,18 @@ window.__ModuleLoader__.load({
         close() { if (!state.busy) publish({ editor: null, error: null }) },
         showImportResults() { publish({ editor: { mode: 'import', done: true, limit: 50 }, error: null }) },
         moreImportResults() { if (state.editor) publish({ editor: { ...state.editor, limit: (state.editor.limit || 50) + 50 } }) },
-        async confirm(name = '', target) {
+        async confirm(name = '') {
           const editor = state.editor, scope = state.scope, epoch = state.epoch
           if (!editor || editor.done || state.busy) return
           const trimmed = name.trim()
-          if ((['create', 'rename'].includes(editor.mode) || (editor.mode === 'move' && target === 'new')) && (!trimmed || trimmed.length > 30)) return
+          if (['create', 'rename'].includes(editor.mode) && (!trimmed || trimmed.length > 30)) return
           publish({ busy: true, error: null })
           try {
             let operation
             {
-              if (editor.mode === 'create' || (editor.mode === 'move' && target === 'new')) operation = { operation: 'create', name: trimmed, ...(editor.mode === 'move' ? { chat_id: editor.id } : {}) }
+              if (editor.mode === 'create') operation = { operation: 'create', name: trimmed, ...(editor.id ? { chat_id: editor.id } : {}) }
               else if (editor.mode === 'rename') operation = { operation: 'rename', project_id: editor.id, name: trimmed }
               else if (editor.mode === 'remove') operation = { operation: 'delete', project_id: editor.id }
-              else if (editor.mode === 'move') operation = { operation: 'assign', chat_id: editor.id, project_id: target }
               if (!operation) return
               const result = await action(operation, editor.requestId)
               if (result.outcome.project_id && operation.operation === 'create') { publish({ expanded: { ...state.expanded, [result.outcome.project_id]: true } }); void load(result.outcome.project_id) }
@@ -507,8 +523,7 @@ window.__ModuleLoader__.load({
     function ChatProjectDialog({ store, state, t }) {
       const request = state.editor
       const [name, setName] = React.useState(request.mode === 'rename' ? request.title : '')
-      const [target, setTarget] = React.useState(state.projects[0]?.id || 'new')
-      const naming = request.mode === 'create' || request.mode === 'rename' || (request.mode === 'move' && target === 'new')
+      const naming = request.mode === 'create' || request.mode === 'rename'
       const valid = !naming || (name.trim().length > 0 && name.trim().length <= 30)
       const formId = React.useId()
       return React.createElement(Modal, {
@@ -517,45 +532,69 @@ window.__ModuleLoader__.load({
         footer: React.createElement(React.Fragment, null,
           React.createElement(Button, { variant: 'outline', disabled: state.busy, onClick: store.close, 'data-modal-autofocus': request.mode === 'remove' || undefined }, t('cancel')),
           !request.done && React.createElement(Button, { variant: 'primary', type: 'submit', form: formId, disabled: !valid || state.busy }, t(state.busy ? 'pending' : request.mode === 'remove' ? 'remove' : request.mode === 'import' ? 'import' : 'save')))
-      }, React.createElement('form', { id: formId, className: 'dshChatProjectForm', onSubmit: event => { event.preventDefault(); if (valid) store.confirm(name, target) } },
-        request.mode === 'move' && React.createElement('label', null, t('target'),
-          React.createElement('select', { value: target, disabled: state.busy, onChange: event => setTarget(event.target.value), 'aria-label': t('target'), 'data-modal-autofocus': true },
-            ...state.projects.map(project => React.createElement('option', { key: project.id, value: project.id }, project.name)),
-            React.createElement('option', { value: 'new' }, t('create')))),
+      }, React.createElement('form', { id: formId, className: 'dshChatProjectForm', onSubmit: event => { event.preventDefault(); if (valid) store.confirm(name) } },
         naming && React.createElement('label', null, t('name'), React.createElement('input', { value: name, disabled: state.busy, maxLength: 30, required: true,
-          placeholder: t('nameHelp'), 'aria-label': t('name'), 'data-modal-autofocus': request.mode !== 'move' || undefined, onChange: event => setName(event.target.value) })),
+          placeholder: t('nameHelp'), 'aria-label': t('name'), 'data-modal-autofocus': true, onChange: event => setName(event.target.value) })),
         state.busy && React.createElement('p', { role: 'status' }, t('pending')),
         request.mode === 'import' && request.done && React.createElement('p', { role: 'status' }, t('importDone', { count: state.migrationResult })),
         request.mode === 'import' && state.migrationDetails.length > 0 && React.createElement('ul', null, ...state.migrationDetails.slice(0, request.limit || 50).map((item, index) => React.createElement('li', { key: index }, item.id + ': ' + t('importReason_' + (['cloud_membership_kept', 'project_unavailable', 'conversation_unavailable', 'invalid_date', 'invalid_local_data'].includes(item.status) ? item.status : 'unknown'))))),
         request.mode === 'import' && state.migrationDetails.length > (request.limit || 50) && React.createElement(Button, { type: 'button', variant: 'outline', onClick: store.moreImportResults }, t('moreResults')),
         state.error && React.createElement('p', { role: 'alert' }, t(state.error))))
     }
-    function ChatProjectRow({ project, chats, state, navigation, t, projectText, deleteText }) {
-      const [menuOpen, setMenuOpen] = React.useState(false)
+    // Use the same Menu for the ellipsis, a secondary click, and the keyboard's context-menu shortcut.
+    function useSidebarRowMenu() {
+      const [source, setSource] = React.useState(null)
+      const open = (event, input) => {
+        if (event.defaultPrevented || event.target.closest('[role="menu"]')) return
+        event.preventDefault()
+        event.stopPropagation()
+        setSource(input)
+      }
+      return {
+        open: source !== null,
+        fromKeyboard: source === 'keyboard',
+        close: () => setSource(null),
+        closeOnPointerLeave: source === 'pointer',
+        toggle: event => setSource(current => current ? null : event.detail ? 'pointer' : 'keyboard'),
+        onContextMenu: event => open(event, 'pointer'),
+        onKeyDown: event => {
+          if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) open(event, 'keyboard')
+        }
+      }
+    }
+    function ChatProjectRow({ project, chats, state, currentChat, navigation, t, projectText, deleteText, now }) {
+      const menu = useSidebarRowMenu()
       const store = navigation.projects
       const open = !!state.expanded[project.id]
       const panelId = React.useId()
+      const current = state.assignments[currentChat] === project.id
       return React.createElement('div', { className: 'dshChatProject', 'data-chat-project': project.id },
-        React.createElement('div', { className: 'dshChatProjectHeading' },
-          React.createElement('button', { type: 'button', className: 'dshChatProjectToggle', 'aria-expanded': open, 'aria-controls': panelId, onClick: () => store.toggle(project.id), title: project.name },
-            React.createElement('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, 'aria-hidden': true },
-              React.createElement('path', { d: open ? 'M3 8V5a2 2 0 0 1 2-2h4l3 3h7a2 2 0 0 1 2 2v2M3 8h18l-3 12H3z' : 'M3 7V5a2 2 0 0 1 2-2h4l3 3h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z' })),
-            React.createElement('span', null, project.name)),
-          React.createElement('button', { type: 'button', className: 'dshChatProjectAction', 'aria-label': `${projectText('startChat')} · ${project.name}`, onClick: () => navigation.startProjectChat(project.id) }, '+'),
-          React.createElement(Menu, { open: menuOpen, onClose: () => setMenuOpen(false), portal: true, align: 'end', autoFocus: true, dense: true,
-            anchor: React.createElement('button', { type: 'button', className: 'dshChatProjectAction', 'aria-label': `${projectText('actions')} · ${project.name}`, 'aria-haspopup': 'menu', 'aria-expanded': menuOpen, onClick: () => setMenuOpen(value => !value) }, '⋯')
-          }, ...['rename', 'remove'].map(mode => React.createElement(MenuItemButton, { key: mode, danger: mode === 'remove', onSelect: () => {
-            setMenuOpen(false)
-            setTimeout(() => { if (store.snapshot().scope === state.scope) store.edit(mode, project.id, project.name) }, 0)
-          } }, projectText(mode))))),
+        React.createElement('div', { className: 'dshSidebarItem dshChatProjectHeading', 'data-menu-open': menu.open || undefined, onContextMenu: menu.onContextMenu, onKeyDown: menu.onKeyDown },
+          React.createElement('button', { type: 'button', className: 'dshChatProjectToggle', 'aria-expanded': open, 'aria-controls': open ? panelId : undefined, onClick: () => store.toggle(project.id), title: project.name },
+            React.createElement(open ? IconFolderOpenRegular : IconFolderCloseRegular, { className: 'dshChatProjectFolder', 'data-current': current || undefined, 'aria-hidden': true }),
+            React.createElement(IconTriangleRightFillRegular, { className: 'dshChatProjectChevron', 'aria-hidden': true }),
+            React.createElement('span', { className: 'dshChatProjectName' }, project.name)),
+          React.createElement('div', { className: 'dshSidebarItemTools' },
+            React.createElement(Menu, { open: menu.open, onClose: menu.close, closeOnPointerLeave: menu.closeOnPointerLeave, portal: true, align: 'end', autoFocus: true, dense: true,
+              anchor: React.createElement('button', { type: 'button', className: 'dshChatProjectAction', 'aria-label': `${projectText('actions')} · ${project.name}`, 'aria-haspopup': 'menu', 'aria-expanded': menu.open, onClick: menu.toggle },
+                React.createElement(IconEllipsisOutlineRegular, { 'aria-hidden': true }))
+            }, ...['rename', 'remove'].map(mode => React.createElement(MenuItemButton, { key: mode, icon: React.createElement(mode === 'rename' ? IconEditOutlineRegular : IconTrashOutlineRegular), danger: mode === 'remove', onSelect: () => {
+              menu.close()
+              setTimeout(() => {
+                const latest = store.snapshot()
+                if (latest.epoch === state.epoch && latest.scope === state.scope) store.edit(mode, project.id, project.name)
+              }, 0)
+            } }, projectText(mode)))),
+            React.createElement('button', { type: 'button', className: 'dshChatProjectAction', 'aria-label': `${projectText('startChat')} · ${project.name}`, title: projectText('startChat'), onClick: () => navigation.startProjectChat(project.id) },
+              React.createElement(IconNewChatOutlineRegular, { 'aria-hidden': true })))),
         open && React.createElement('div', { id: panelId },
-          ...chats.map(item => React.createElement(CloudHistoryRow, { key: item.id, item, selected: navigation.snapshot().mode === 'chat' && navigation.snapshot().conversationId === item.id, navigation, t, projectText, deleteText })),
+          ...chats.map(item => React.createElement(CloudHistoryRow, { key: item.id, item, now, selected: currentChat === item.id, navigation, t, projectText, deleteText })),
           state.rows[project.id]?.phase === 'loading' && React.createElement('div', { role: 'status', className: 'dshChatProjectEmpty' }, projectText('pending')),
           state.rows[project.id]?.phase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => { void store.load(project.id) } }, projectText('unavailable')),
           state.rows[project.id]?.nextCursor && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: state.rows[project.id]?.phase === 'loading', onClick: () => { void store.load(project.id, true) } }, t('more')),
           chats.length === 0 && state.rows[project.id]?.phase === 'ready' && React.createElement('div', { className: 'dshChatProjectEmpty' }, projectText('empty'))))
     }
-    function ChatProjects({ navigation, t, projectText, deleteText }) {
+    function ChatProjects({ navigation, t, projectText, deleteText, now }) {
       const state = React.useSyncExternalStore(navigation.projects.subscribe, navigation.projects.snapshot)
       const host = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
       const grouped = React.useMemo(() => {
@@ -578,21 +617,23 @@ window.__ModuleLoader__.load({
       if (!host.connected || !state.scope) return null
       return React.createElement('section', { className: 'dshChatProjects', 'aria-label': projectText('title') },
         React.createElement('div', { className: 'dshHistoryHeading' }, React.createElement('span', null, projectText('title')),
-          React.createElement('button', { type: 'button', className: 'dshChatProjectAction', disabled: state.phase !== 'ready', 'aria-label': projectText('create'), onClick: () => navigation.projects.edit('create') }, '+')),
+          React.createElement('button', { type: 'button', className: 'dshChatProjectAction', disabled: state.phase !== 'ready', 'aria-label': projectText('create'), onClick: () => navigation.projects.edit('create') },
+            React.createElement(IconPlusOutlineRegular, { 'aria-hidden': true }))),
         state.phase !== 'error' && state.connection !== 'live' && React.createElement('div', { role: 'status', className: 'dshHistoryNotice' }, projectText(state.connection)),
         ['busy', 'error'].includes(state.migrationPhase) && React.createElement('p', { role: 'status', className: 'dshHistoryNotice' }, projectText(state.migrationPhase === 'busy' ? 'migrationRunning' : 'migrationRetry')),
         state.migrationResult > 0 && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: navigation.projects.showImportResults }, projectText('importDone', { count: state.migrationResult })),
         state.projects.length === 0 && state.phase === 'ready' && React.createElement('button', { type: 'button', className: 'dshChatProjectCreate', onClick: () => navigation.projects.edit('create') }, `+ ${projectText('create')}`),
-        ...state.projects.map(project => React.createElement(ChatProjectRow, { key: `${state.scope}:${project.id}`, project, chats: grouped.get(project.id) || [], state, navigation, t, projectText, deleteText })),
+        ...state.projects.map(project => React.createElement(ChatProjectRow, { key: `${state.scope}:${state.epoch}:${project.id}`, project, chats: grouped.get(project.id) || [], state, currentChat: host.mode === 'chat' && !host.pageId ? host.conversationId : undefined, navigation, t, projectText, deleteText, now })),
         state.error && !state.editor && React.createElement('div', { role: 'alert', className: 'dshHistoryNotice' }, projectText(state.error),
-          React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: navigation.projects.reload }, projectText('retry'))),
-        state.editor && React.createElement(ChatProjectDialog, { key: `${state.scope}:${state.editor.mode}:${state.editor.id || ''}`, store: navigation.projects, state, t: projectText }))
+          React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: navigation.projects.reload }, projectText('retry'))))
     }
     const MODES_NS = 'desktop.chatWork'
     const MODES_COPY = {
-      zh: { welcomeMessage: '来一起创造', welcome: '欢迎来到', newConversation: '新建对话', navigation: '导航', moreNavigation: '更多', recent: '对话', projects: '工作区', all: '所有会话', results: '搜索结果', cloud: '云端聊天', local: '本地工作', recentEmpty: '暂无最近会话', recentSearchEmpty: '当前列表没有匹配的会话', chat: '聊天', work: '工作', label: '聊天与工作', loading: '正在连接企业聊天…', error: '企业聊天连接失败，请重试', retry: '重新连接', refresh: '刷新聊天记录', historyLoading: '正在加载聊天记录…', historyError: '加载失败，点击重试', empty: '暂无聊天记录', more: '加载更多', newChat: '新聊天', signIn: '登录企业账号', signInTitle: '登录后使用聊天', signInDescription: '聊天由企业平台提供。登录后，即可使用平台中的模型和对话记录。', continueWork: '继续使用工作', close: '关闭', justNow: '刚刚' },
-      en: { welcomeMessage: "Let's Create Together", welcome: 'Welcome', newConversation: 'New conversation', navigation: 'Navigation', moreNavigation: 'More', recent: 'Conversations', projects: 'Workspaces', all: 'All conversations', results: 'Search results', cloud: 'Cloud chat', local: 'Local work', recentEmpty: 'No recent conversations', recentSearchEmpty: 'No matches in the current list', chat: 'Chat', work: 'Work', label: 'Chat and Work', loading: 'Connecting to enterprise Chat…', error: 'Could not connect to enterprise Chat. Try again.', retry: 'Reconnect', refresh: 'Refresh Chat history', historyLoading: 'Loading history…', historyError: 'Loading failed. Retry', empty: 'No chats yet', more: 'Load more', newChat: 'New chat', signIn: 'Sign in to your enterprise account', signInTitle: 'Sign in to use Chat', signInDescription: 'Chat is provided by your enterprise platform. Sign in to use its models and conversations.', continueWork: 'Continue in Work', close: 'Close', justNow: 'Now' }
+      zh: { welcomeMessage: '来一起创造', welcome: '欢迎来到', newConversation: '新建对话', navigation: '导航', moreNavigation: '更多', recent: '对话', projects: '工作区', all: '所有会话', results: '搜索结果', cloud: '云端聊天', local: '本地工作', recentEmpty: '暂无最近会话', recentSearchEmpty: '当前列表没有匹配的会话', chat: '聊天', work: '工作', label: '聊天与工作', loading: '正在连接企业聊天…', error: '企业聊天连接失败，请重试', retry: '重新连接', refresh: '刷新聊天记录', historyLoading: '正在加载聊天记录…', historyError: '加载失败，点击重试', empty: '暂无聊天记录', more: '加载更多', newChat: '新聊天', signIn: '登录企业账号', signInTitle: '登录后使用聊天', signInDescription: '聊天由企业平台提供。登录后，即可使用平台中的模型和对话记录。', continueWork: '继续使用工作', close: '关闭' },
+      en: { welcomeMessage: "Let's Create Together", welcome: 'Welcome', newConversation: 'New conversation', navigation: 'Navigation', moreNavigation: 'More', recent: 'Conversations', projects: 'Workspaces', all: 'All conversations', results: 'Search results', cloud: 'Cloud chat', local: 'Local work', recentEmpty: 'No recent conversations', recentSearchEmpty: 'No matches in the current list', chat: 'Chat', work: 'Work', label: 'Chat and Work', loading: 'Connecting to enterprise Chat…', error: 'Could not connect to enterprise Chat. Try again.', retry: 'Reconnect', refresh: 'Refresh Chat history', historyLoading: 'Loading history…', historyError: 'Loading failed. Retry', empty: 'No chats yet', more: 'Load more', newChat: 'New chat', signIn: 'Sign in to your enterprise account', signInTitle: 'Sign in to use Chat', signInDescription: 'Chat is provided by your enterprise platform. Sign in to use its models and conversations.', continueWork: 'Continue in Work', close: 'Close' }
     }
+    Object.assign(MODES_COPY.zh, { 'time.now': '刚刚', 'time.minutes': '{n}分钟', 'time.hours': '{n}小时', 'time.days': '{n}天', 'time.months': '{n}个月', 'time.years': '{n}年', 'time.ago': '{t}前' })
+    Object.assign(MODES_COPY.en, { 'time.now': 'now', 'time.minutes': '{n}min', 'time.hours': '{n}h', 'time.days': '{n}d', 'time.months': '{n}mo', 'time.years': '{n}y', 'time.ago': '{t} ago' })
     /**
      * Host tokens the embedded enterprise document reuses. It cannot read the host's CSS, so the
      * presenter resolves them here and sends plain channels with the presentation.
@@ -756,8 +797,12 @@ if (clearHistory) { historyRequest++; openRequest++; historyDirty = false; delet
           ctx.layout.selectPanel(null)
           void open('new', id)
         },
-        requestProjectMove(id, title, epoch) {
-          if (epoch === value.epoch && value.connected && (value.items.some(item => item.id === id) || Object.hasOwn(projects.snapshot().assignments, id))) projects.edit('move', id, title)
+        async moveProjectChat(id, epoch, projectId) {
+          const state = projects.snapshot()
+          if (epoch !== value.epoch || !value.connected || state.phase !== 'ready' || state.assigning.has(id) ||
+            !(value.items.some(item => item.id === id) || Object.hasOwn(state.assignments, id))) return
+          if (projectId === undefined) projects.edit('create', id)
+          else if (await projects.assign(id, projectId) && projectId && value.epoch === epoch) projects.reveal(projectId)
         },
         requestDelete(id, title, epoch) {
           if (value.connected && epoch === value.epoch && (value.items.some(item => item.id === id) || Object.hasOwn(projects.snapshot().assignments, id))) deletion.request(id, title, epoch)
@@ -878,55 +923,116 @@ active = false; deletion.reset(); projects.setScope(undefined); revision++; hist
         }
       }
     }
-    /** Cloud rows use the same title reveal speed and geometry as Harness sessions. */
-    function CloudHistoryRow({ item, selected, navigation, t, projectText, deleteText }) {
-      const [menuOpen, setMenuOpen] = React.useState(false)
-      const title = React.useRef(null)
+    /** Mirror Harness's title reveal without making pointer movement rerender the list. */
+    function useHistoryTitleMarquee(title) {
+      const ref = React.useRef(null)
       const frame = React.useRef(0)
-      const reset = () => {
+      const reset = React.useCallback(() => {
         cancelAnimationFrame(frame.current)
-        if (title.current) title.current.scrollLeft = 0
-      }
-      React.useEffect(() => reset, [item.title])
-      const reveal = () => {
+        const element = ref.current
+        if (!element) return
+        element.scrollLeft = 0
+        element.removeAttribute('data-scrolled')
+        element.removeAttribute('data-clipped')
+      }, [])
+      React.useLayoutEffect(() => reset, [title, reset])
+      const reveal = event => {
+        if (event.pointerType === 'touch') return
         reset()
-        const element = title.current
-        const distance = element.scrollWidth - element.clientWidth
-        if (distance <= 8) return
-        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { element.scrollLeft = distance; return }
-        let start
+        const element = ref.current
+        if (!element) return
+        const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        let start, distance
         const tick = (now) => {
+          // Measure after the timestamp has yielded its space to the menu trigger.
+          distance ??= element.scrollWidth - element.clientWidth
+          if (distance <= 8) return
           start ??= now
-          element.scrollLeft = Math.min(distance, (now - start) * .03)
-          if (element.scrollLeft < distance) frame.current = requestAnimationFrame(tick)
+          const position = reducedMotion ? distance : Math.min(distance, (now - start) * .03)
+          element.scrollLeft = position
+          element.toggleAttribute('data-scrolled', position > 0)
+          element.toggleAttribute('data-clipped', position < distance)
+          if (position < distance) frame.current = requestAnimationFrame(tick)
         }
         frame.current = requestAnimationFrame(tick)
       }
-      return React.createElement('div', { className: 'dshCloudHistoryRow' },
-        React.createElement('button', { type: 'button', 'data-history-kind': 'chat', className: 'dshHistoryRow', 'aria-current': selected ? 'page' : undefined,
-        title: item.title, onClick: () => navigation.open(item.id), onPointerEnter: reveal, onPointerLeave: reset, onFocus: reveal, onBlur: reset },
-        React.createElement('span', { ref: title }, item.title || t('newChat')),
-        React.createElement('time', { dateTime: new Date(item.updatedAt).toISOString() }, historyTime(item.updatedAt, t))),
-        React.createElement(Menu, {
-          open: menuOpen, onClose: () => setMenuOpen(false), portal: true, align: 'end', autoFocus: true, dense: true,
-          anchor: React.createElement('button', { type: 'button', className: 'dshCloudHistoryActions', 'aria-label': deleteText('actions'), 'aria-haspopup': 'menu', 'aria-expanded': menuOpen, onClick: () => setMenuOpen(open => !open) }, '⋯')
-        }, projectText && React.createElement(MenuItemButton, {
-          disabled: navigation.projects.snapshot().phase !== 'ready', onSelect: () => {
-            const epoch = navigation.snapshot().epoch
-            setMenuOpen(false)
-            setTimeout(() => navigation.requestProjectMove(item.id, item.title || t('newChat'), epoch), 0)
-          }
-        }, projectText('move')),
-        projectText && Object.hasOwn(navigation.projects.snapshot().assignments, item.id) && React.createElement(MenuItemButton, {
-          onSelect: () => { setMenuOpen(false); navigation.projects.assign(item.id, undefined) }
-        }, projectText('moveOut')),
-        React.createElement(MenuItemButton, {
-          danger: true, onSelect: () => {
-            const epoch = navigation.snapshot().epoch
-            setMenuOpen(false)
-            setTimeout(() => navigation.requestDelete(item.id, item.title || t('newChat'), epoch), 0)
-          }
-        }, deleteText('menu'))))
+      return { ref, reveal, reset }
+    }
+    function projectMenuKeys(event) {
+      if (event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+        (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft')) return
+      const list = event.target.closest('.dshCloudHistoryMenu')
+      if (!list) return
+      const trigger = list.querySelector('button[aria-haspopup="menu"][aria-expanded="true"]')
+      const submenu = list.querySelector('[role="menu"]')
+      const next = event.key === 'ArrowRight' && event.target === trigger ? submenu?.querySelector('button:not(:disabled)')
+        : event.key === 'ArrowLeft' && submenu?.contains(event.target) ? trigger : null
+      if (next) { event.preventDefault(); next.focus() }
+    }
+    function CloudHistoryRow({ item, selected, navigation, t, projectText, deleteText, now }) {
+      const menu = useSidebarRowMenu()
+      const title = item.title || t('newChat')
+      const marquee = useHistoryTitleMarquee(title)
+      const timeId = React.useId()
+      const date = Date.parse(item.updatedAt)
+      const time = Number.isFinite(date) ? relativeTime(date, now) : null
+      const dateTime = time && new Date(date).toISOString()
+      const age = time && t(`time.${time.unit}`, { n: time.n })
+      const projects = navigation.projects.snapshot()
+      const canMove = projects.phase === 'ready' && !projects.assigning.has(item.id)
+      const currentProject = Object.hasOwn(projects.assignments, item.id) ? projects.assignments[item.id] : undefined
+      const actions = []
+      if (menu.open) {
+        if (projectText) {
+          actions.push({
+            id: 'move', disabled: !canMove,
+            label: React.createElement('span', { className: 'dshChatProjectMenuLabel' }, projectText('move'),
+              React.createElement(IconChevronRightOutlineRegular, { 'aria-hidden': true })),
+            icon: React.createElement(IconFolderOpenRegular),
+            submenu: canMove ? [
+              { id: 'new-project', label: React.createElement('span', { className: 'dshChatProjectMenuCreate' }, projectText('create')), icon: React.createElement(IconPlusOutlineRegular) },
+              ...projects.projects.filter(project => project.id !== currentProject).map(project => ({
+                id: `project:${project.id}`, label: project.name, icon: React.createElement(IconFolderCloseRegular)
+              })),
+              ...(currentProject ? [{ id: 'move-out', label: React.createElement('span', { className: 'dshChatProjectMenuRemove' }, projectText('moveOut')) }] : [])
+            ] : undefined
+          })
+        }
+        actions.push({ id: 'delete', label: deleteText('menu'), icon: React.createElement(IconTrashOutlineRegular), danger: true })
+      }
+      const select = action => {
+        const epoch = navigation.snapshot().epoch
+        menu.close()
+        // Only deletion and creation need a dialog. Let Menu restore focus before it opens.
+        if (action === 'delete') setTimeout(() => navigation.requestDelete(item.id, title, epoch), 0)
+        else if (action === 'new-project') setTimeout(() => { void navigation.moveProjectChat(item.id, epoch) }, 0)
+        else if (action === 'move-out') void navigation.moveProjectChat(item.id, epoch, null)
+        else if (action.startsWith('project:')) void navigation.moveProjectChat(item.id, epoch, action.slice('project:'.length))
+      }
+      return React.createElement(HoverCard, {
+        anchor: React.createElement('div', {
+          className: 'dshSidebarItem dshCloudHistoryRow', 'data-menu-open': menu.open || undefined, 'data-selected': selected || undefined,
+          onContextMenu: menu.onContextMenu, onKeyDown: event => { menu.onKeyDown(event); projectMenuKeys(event) },
+          onPointerEnter: marquee.reveal, onPointerLeave: marquee.reset
+        },
+          React.createElement('button', {
+            type: 'button', 'data-history-kind': 'chat', className: 'dshHistoryRow', 'aria-current': selected ? 'page' : undefined,
+            'aria-label': title, 'aria-describedby': time ? timeId : undefined, onClick: () => navigation.open(item.id)
+          },
+            React.createElement('span', { className: 'dshHistoryTitle', ref: marquee.ref }, title),
+            time && React.createElement('time', { id: timeId, dateTime }, age)),
+          React.createElement('div', { className: 'dshSidebarItemTools' },
+            React.createElement(Menu, {
+              open: menu.open, onClose: menu.close, closeOnPointerLeave: menu.closeOnPointerLeave, portal: true, align: 'end', autoFocus: menu.fromKeyboard, dense: true,
+              items: actions, onSelect: select, listClassName: 'dshCloudHistoryMenu',
+              anchor: React.createElement('button', { type: 'button', className: 'dshCloudHistoryActions', 'aria-label': `${deleteText('actions')} · ${title}`, 'aria-haspopup': 'menu', 'aria-expanded': menu.open, onClick: menu.toggle },
+                React.createElement(IconEllipsisOutlineRegular, { 'aria-hidden': true }))
+            }))),
+        content: React.createElement('div', { className: 'dshCloudHistoryPreview', 'data-dsh-chat-history-preview': '' },
+          React.createElement('div', null, title),
+          time && React.createElement('time', { dateTime }, time.unit === 'now' ? age : t('time.ago', { t: age }))),
+        openDelayMs: 800, grouped: true, disabled: menu.open
+      })
     }
     /** Cloud identities stay namespaced; project ownership is projected by Harness. */
     function SharedCollection({ projects, items, mode, query, archivedOnly, searchPending = false, navigation, t, projectText, deleteText }) {
@@ -935,6 +1041,7 @@ active = false; deletion.reset(); projects.setScope(undefined); revision++; hist
       const initialHistoryLoading = state.historyPhase === 'loading' && state.page === 0
       const resultsPending = initialHistoryLoading || (mode === 'search' && searchPending) || projectState.search.phase === 'loading'
       const search = query.trim().toLocaleLowerCase()
+      const now = Date.now()
       React.useEffect(() => {
         const timer = setTimeout(() => { void navigation.projects.search(archivedOnly || !state.connected ? '' : search) }, search ? 200 : 0)
         return () => clearTimeout(timer)
@@ -943,18 +1050,21 @@ active = false; deletion.reset(); projects.setScope(undefined); revision++; hist
       const local = items.map(item => ({ ...item, key: `work:${item.id}`, kind: 'work' }))
       const cloudItems = [...new Map([...state.items, ...(search && projectState.search.query === search ? projectState.search.items : [])].map(item => [item.id, item])).values()]
       const cloud = archivedOnly ? [] : cloudItems.filter(item => (!showProjects || !Object.hasOwn(projectState.assignments, item.id)) && (item.title || t('newChat')).toLocaleLowerCase().includes(search))
-        .map(item => ({ ...item, key: `chat:${item.id}`, kind: 'chat', updatedAt: Date.parse(item.updatedAt) || 0 }))
+        .map(conversation => ({ key: `chat:${state.epoch}:${conversation.id}`, kind: 'chat', updatedAt: Date.parse(conversation.updatedAt) || 0, conversation }))
       const rows = [...local, ...cloud].sort((a, b) => Number(!!b.blank) - Number(!!a.blank) || Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt || a.key.localeCompare(b.key))
       return React.createElement('div', { className: 'dshSharedCollection', 'data-mode': state.mode },
         projects(state.mode === 'work'),
-        showProjects && React.createElement(ChatProjects, { navigation, t, projectText, deleteText }),
+        showProjects && React.createElement(ChatProjects, { navigation, t, projectText, deleteText, now }),
+        projectState.editor && React.createElement(ChatProjectDialog, { key: `${projectState.scope}:${projectState.editor.mode}:${projectState.editor.id || ''}`, store: navigation.projects, state: projectState, t: projectText }),
         React.createElement('section', { className: 'dshRecentHistory', 'aria-label': t(mode === 'projects' ? 'recent' : mode === 'search' ? 'results' : 'all') },
           React.createElement('div', { className: 'dshHistoryHeading' },
             React.createElement('span', null, t(mode === 'projects' ? 'recent' : mode === 'search' ? 'results' : 'all'))),
-          ...rows.map(item => item.kind === 'work'
-            ? React.createElement('div', { key: item.key, 'data-history-kind': 'work' }, item.render(state.mode === 'work'))
-            : React.createElement(CloudHistoryRow, { key: item.key, item, selected: state.mode === 'chat' && !state.pageId && state.conversationId === item.id, navigation, t, projectText, deleteText })),
+          rows.length > 0 && React.createElement('div', { className: 'dshRecentHistoryRows' },
+            rows.map(row => row.kind === 'work'
+              ? React.createElement('div', { key: row.key, 'data-history-kind': 'work' }, row.render(state.mode === 'work'))
+              : React.createElement(CloudHistoryRow, { key: row.key, item: row.conversation, now, selected: state.mode === 'chat' && !state.pageId && state.conversationId === row.conversation.id, navigation, t, projectText, deleteText }))),
           state.historyPhase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => navigation.refreshHistory() }, t('historyError')),
+          !showProjects && projectState.error === 'failed' && !projectState.editor && React.createElement('div', { role: 'alert', className: 'dshHistoryNotice' }, projectText('failed')),
           initialHistoryLoading && React.createElement('div', { className: 'dshHistoryNotice', role: 'status' }, t('historyLoading')),
           rows.length === 0 && !resultsPending && React.createElement('div', { className: 'dshHistoryNotice' }, t(search ? 'recentSearchEmpty' : 'recentEmpty')),
           search && projectState.search.phase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => { void navigation.projects.search(search) } }, projectText('unavailable')),
@@ -963,16 +1073,11 @@ active = false; deletion.reset(); projects.setScope(undefined); revision++; hist
             if (search && projectState.search.nextCursor) void navigation.projects.search(search, true)
           } }, t('more'))))
     }
-    function historyTime(date, t) {
-      const time = new Date(date).getTime()
-      if (!Number.isFinite(time)) return ''
-      const elapsed = Date.now() - time
-      if (elapsed >= 0 && elapsed < 60000) return t('justNow')
-      return new Date(time).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })
-    }
     /** Track semantic overlays, including inline menus and nested menus, without rescanning streamed content. */
     function observeHostOverlays(report) {
-      const selector = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [role="tooltip"], dialog, [popover], [data-dsh-host-overlay]'
+      // HoverCard exposes its content, not the portal element. Measure the entire card,
+      // including its padding, when a cloud history preview crosses into the native view.
+      const selector = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [role="tooltip"], dialog, [popover], [data-dsh-host-overlay], :has(> [data-dsh-chat-history-preview])'
       const elements = new Set()
       const identities = new WeakMap()
       const pending = new Set()
@@ -1435,27 +1540,76 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           @media(prefers-reduced-motion:reduce){.dshWorkContent[data-reveal-controls=true] [data-dsh-hero-controls]{transition:none;clip-path:none}}
           .dshSharedCollection{min-width:0}
           .dshRecentHistory{margin-top:12px;min-width:0}
+          .dshRecentHistoryRows{display:flex;flex-direction:column;gap:2px}
           .dshHistoryHeading{display:flex;align-items:center;justify-content:space-between;padding:4px 8px 12px;color:var(--dsw-alias-label-secondary);font-size:13px}
           .dshChatProjects{margin-top:12px;min-width:0}.dshChatProjects>.dshHistoryHeading{padding-bottom:4px}
-          .dshChatProjectHeading{display:flex;align-items:center;min-width:0;border-radius:8px;min-height:32px;padding:0 4px 0 8px}
-          .dshChatProjectHeading:hover,.dshChatProjectHeading:focus-within{background:var(--dsw-alias-interactive-bg-hover)}
-          .dshChatProjectToggle,.dshChatProjectCreate{display:flex;align-items:center;gap:8px;min-width:0;border:0;background:transparent;font:inherit;color:var(--dsw-alias-label-primary);text-align:left;cursor:pointer}
-          .dshChatProjectToggle{flex:1;padding:6px 0}.dshChatProjectToggle svg{flex:none}.dshChatProjectToggle span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-          .dshChatProjectAction{flex:none;width:24px;height:24px;padding:0;border:0;border-radius:6px;background:transparent;font:inherit;color:var(--dsw-alias-label-secondary);cursor:pointer}
-          .dshChatProjectAction:hover{background:var(--dsw-alias-interactive-bg-hover)}.dshChatProjectAction:disabled{opacity:.5;cursor:default}
+          .dshSidebarItem{position:relative;min-width:0;border-radius:var(--dsw-radius-md)}
+          .dshSidebarItem:is(:hover,[data-selected],[data-menu-open],:has(:focus-visible)){background:var(--dsw-alias-interactive-bg-hover)}
+          .dshSidebarItemTools{position:absolute;inset-block:0;inset-inline-end:8px;display:flex;align-items:center;gap:10px;pointer-events:none}
+          .dshSidebarItemTools :is(.dshChatProjectAction,.dshCloudHistoryActions){opacity:0;pointer-events:none}
+          /* Hidden tools stay in the Tab order. Focus reveals the tools even without a pointer. */
+          .dshSidebarItem:is(:hover,[data-menu-open],:has(:focus-visible)) .dshSidebarItemTools :is(.dshChatProjectAction,.dshCloudHistoryActions){opacity:1;pointer-events:auto}
+          .dshChatProjectToggle,.dshChatProjectCreate,.dshHistoryRow{box-sizing:border-box;display:flex;align-items:center;gap:6px;min-width:0;width:100%;border:0;border-radius:inherit;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;text-align:start;cursor:pointer}
+          .dshChatProjectToggle{height:34px;padding:0 8px}
+          .dshChatProjectToggle svg{flex:none;width:16px;height:16px}
+          .dshChatProjectName,.dshHistoryTitle{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;line-height:20px}
+          .dshChatProjectFolder[data-current]{color:var(--dsw-alias-state-business-primary)}
+          .dshChatProjectToggle .dshChatProjectChevron{display:none;color:var(--dsw-alias-label-caption)}
+          .dshChatProjectToggle[aria-expanded=true] .dshChatProjectChevron{transform:rotate(90deg)}
+          .dshChatProjectHeading:is(:hover,[data-menu-open],:has(:focus-visible)) .dshChatProjectFolder{display:none}
+          .dshChatProjectHeading:is(:hover,[data-menu-open],:has(:focus-visible)) .dshChatProjectChevron{display:block}
+          .dshChatProjectHeading:is(:hover,[data-menu-open],:has(:focus-visible)) .dshChatProjectToggle{padding-inline-end:64px}
+          .dshChatProjectAction,.dshCloudHistoryActions{display:inline-grid;place-items:center;flex:none;width:22px;height:22px;padding:0;border:0;border-radius:var(--dsw-radius-xs);background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer}
+          :is(.dshChatProjectAction,.dshCloudHistoryActions) svg{width:16px;height:16px}
+          :is(.dshChatProjectAction,.dshCloudHistoryActions):is(:hover,[aria-expanded=true]){color:var(--dsw-alias-label-primary)}
+          .dshChatProjectAction:disabled{opacity:.5;cursor:default}
           .dshChatProjectCreate{width:100%;padding:6px 8px;border-radius:8px;color:var(--dsw-alias-label-secondary)}.dshChatProjectCreate:hover{background:var(--dsw-alias-interactive-bg-hover)}
           .dshChatProjectEmpty{padding:6px 8px 6px 32px;font-size:12px;color:var(--dsw-alias-label-tertiary)}.dshChatProject .dshHistoryRow{padding-left:32px}
           .dshChatProjectForm{display:grid;gap:12px}.dshChatProjectForm label{display:grid;gap:6px;color:var(--dsw-alias-label-primary)}
-          .dshChatProjectForm input,.dshChatProjectForm select{box-sizing:border-box;min-width:0;width:100%;padding:8px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font:inherit}
-          .dshChatProjectForm :is(input,select):focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
-          .dshCloudHistoryRow{display:flex;align-items:center;min-width:0}
-          .dshCloudHistoryRow>.dshHistoryRow{flex:1;min-width:0}
-          .dshCloudHistoryActions{border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);width:28px;height:28px;cursor:pointer;font:inherit}
-          .dshCloudHistoryActions:hover,.dshCloudHistoryActions[aria-expanded=true]{background:var(--dsw-alias-interactive-bg-hover)}
-          .dshHistoryRow{box-sizing:border-box;display:flex;align-items:center;gap:6px;width:100%;height:32px;margin-bottom:2px;padding:0 8px 0 28px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;text-align:left;cursor:pointer}
-          .dshHistoryRow:hover,.dshHistoryRow[aria-current=page]{background:var(--dsw-alias-interactive-bg-hover)}
-          .dshHistoryRow span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dshHistoryRow time{color:var(--dsw-alias-label-tertiary);font-size:10px;white-space:nowrap}
-          .dshHistoryRow:is(:hover,:focus-visible) span{text-overflow:clip}.dshHistoryRow:is(:hover,:focus-visible) time{display:none}
+          .dshChatProjectForm input{box-sizing:border-box;min-width:0;width:100%;padding:8px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font:inherit}
+          .dshChatProjectForm input:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
+          .dshCloudHistoryMenu{anchor-scope:--dsh-chat-project-menu-row}
+          .dshChatProjectMenuLabel{display:flex;align-items:center;justify-content:space-between;gap:8px}
+          .dshChatProjectMenuLabel svg{flex:none;color:var(--dsw-alias-label-tertiary)}
+          .dshCloudHistoryMenu button[aria-haspopup=menu]{anchor-name:--dsh-chat-project-menu-row}
+          .dshCloudHistoryMenu button[aria-haspopup=menu][aria-expanded=true]{background:var(--dsw-alias-interactive-bg-hover)}
+          /* Native submenus are meant for short lists. Fit project lists on screen and
+             bridge the gap from the parent row even when the child menu scrolls. */
+          .dshCloudHistoryMenu [role=menu]{
+            position:fixed;position-anchor:--dsh-chat-project-menu-row;top:anchor(top);bottom:auto;left:calc(anchor(right) + 6px);
+            position-try-fallbacks:flip-block,flip-inline,flip-block flip-inline;margin:0 12px 12px 0;
+            max-width:240px;max-height:min(260px,calc(50dvh - 20px));overflow:auto;overscroll-behavior:contain
+          }
+          .dshCloudHistoryMenu :has(>button[aria-haspopup=menu][aria-expanded=true])::before,
+          .dshCloudHistoryMenu :has(>button[aria-haspopup=menu][aria-expanded=true])::after{content:'';position:absolute;inset-block:0;width:6px}
+          .dshCloudHistoryMenu :has(>button[aria-haspopup=menu][aria-expanded=true])::before{right:100%}
+          .dshCloudHistoryMenu :has(>button[aria-haspopup=menu][aria-expanded=true])::after{left:100%}
+          .dshCloudHistoryMenu [role=menu]>[role=menuitem]{flex:none}
+          /* Menu's submenu accepts only actionable rows. Draw dividers on the
+             following row so there is no extra keyboard stop or duplicate line. */
+          .dshCloudHistoryMenu [role=menu]>button:is(button:has(.dshChatProjectMenuCreate)+button,:has(.dshChatProjectMenuRemove)){
+            position:relative;margin-block-start:7px
+          }
+          .dshCloudHistoryMenu [role=menu]>button:is(button:has(.dshChatProjectMenuCreate)+button,:has(.dshChatProjectMenuRemove))::before{
+            content:'';position:absolute;inset-block-start:-4px;inset-inline:2px;height:1px;
+            background:var(--dsw-alias-border-l2);pointer-events:none
+          }
+          .dshHistoryRow{height:32px;padding:0 8px 0 28px;user-select:none}
+          .dshHistoryTitle{flex:1}
+          .dshHistoryRow time{flex:none;color:var(--dsw-alias-label-tertiary);font-size:10px;white-space:nowrap}
+          .dshCloudHistoryRow:is(:hover,[data-menu-open],:has(:focus-visible)) .dshHistoryRow{padding-inline-end:36px}
+          .dshCloudHistoryRow:is(:hover,[data-menu-open],:has(:focus-visible)) time{display:none}
+          .dshHistoryTitle:is([data-scrolled],[data-clipped]){text-overflow:clip}
+          .dshHistoryTitle[data-scrolled]{mask-image:linear-gradient(90deg,transparent,black 12px)}
+          .dshHistoryTitle[data-clipped]{mask-image:linear-gradient(270deg,transparent,black 12px)}
+          .dshHistoryTitle[data-scrolled][data-clipped]{mask-image:linear-gradient(90deg,transparent,black 12px calc(100% - 12px),transparent)}
+          .dshCloudHistoryPreview{display:grid;gap:4px;overflow-wrap:anywhere;color:var(--dsw-alias-label-primary)}
+          .dshCloudHistoryPreview time{font-size:12px;color:var(--dsw-alias-label-tertiary)}
+          @media(hover:none){
+            .dshSidebarItem .dshSidebarItemTools :is(.dshChatProjectAction,.dshCloudHistoryActions){opacity:1;pointer-events:auto}
+            .dshChatProjectHeading .dshChatProjectToggle{padding-inline-end:64px}
+            .dshCloudHistoryRow .dshHistoryRow{padding-inline-end:36px}
+          }
           .dshHistoryNotice{padding:8px;font:inherit;font-size:12px;color:var(--dsw-alias-label-secondary);background:transparent;border:0;text-align:left}.dshHistoryNotice:is(button){cursor:pointer}
           .dshSharedCollection button:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}
           .dshChatSignInDescription{margin:0;font-size:14px;line-height:1.6;color:var(--dsw-alias-label-secondary)}
