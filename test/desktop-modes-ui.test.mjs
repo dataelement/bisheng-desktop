@@ -548,6 +548,25 @@ it('switches modes without a transient light zero-sized presentation', async () 
   expect(window.dshEnterpriseChat.open).not.toHaveBeenCalled()
 })
 
+it('starts the Work toolbar reveal on tab entry and resets it on return to Chat', async () => {
+  const ui = await mount(true)
+  const work = container.querySelector('#dsh-panel-work')
+  expect(work.dataset.revealControls).toBe('false')
+
+  const chatTab = container.querySelector('#dsh-mode-chat')
+  const key = new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+  await act(async () => chatTab.dispatchEvent(key))
+  expect(ui.selected()).toBe('work')
+  expect(document.activeElement.id).toBe('dsh-mode-work')
+  expect(work.dataset.revealControls).toBe('true')
+
+  await ui.click('chat')
+  expect(work.dataset.revealControls).toBe('false')
+  await ui.click('work')
+  expect(work.dataset.revealControls).toBe('true')
+  await ui.click('chat')
+  expect(work.dataset.revealControls).toBe('false')
+})
 
 it('shows the picker only on the Work landing page and releases the header space on panels and active sessions', async () => {
   const ui = await mount()
