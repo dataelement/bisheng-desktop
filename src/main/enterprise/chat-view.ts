@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { session, shell, WebContentsView, type BrowserWindow, type Session } from 'electron'
-import { parseEnterpriseNavigation, parseEnterpriseSettingsSection, parseChatPage, parseChatId, parseChatPresentation, type EnterpriseSettingsSection, type EnterpriseChatFrame, type EnterpriseChatHistory, type EnterpriseChatPresentation, type EnterpriseChatViewState } from '../../shared/enterprise-chat-view'
+import { parseEnterpriseNavigation, parseEnterpriseSettingsSection, parseChatPage, parseChatId, parseChatName, parseChatPresentation, parseRunningConversations, type EnterpriseSettingsSection, type EnterpriseChatFrame, type EnterpriseChatHistory, type EnterpriseChatPresentation, type EnterpriseChatViewState } from '../../shared/enterprise-chat-view'
 import type { EnterpriseDesktopRuntime } from './enterprise-desktop'
 import { MODULE_ROUTE_PATTERN, MODULE_THEME_CSS, moduleThemeScript } from './chat-module-theme'
 import { chatDialogViewportScript } from './chat-dialog-viewport'
@@ -84,6 +84,8 @@ export class EnterpriseChatView {
   private origin?: string
   private routes = new Map<string, string>()
   private deletedConversations = new Set<string>()
+  /** Reported by the current enterprise document; a new document starts empty and reports again. */
+  private running: string[] = []
   private view?: WebContentsView
   private isolated?: Session
   private owner?: BrowserWindow
@@ -137,7 +139,8 @@ export class EnterpriseChatView {
       conversationId: url?.pathname.match(/\/workspace\/(?:c|chat|linsight)\/([a-zA-Z0-9_-]+)/u)?.[1],
       connected: account.connected,
       projectScope: account.connected ? account.connectionKey : undefined,
-      draftProjectId: projectId && /^[a-zA-Z0-9_-]{1,128}$/u.test(projectId) ? projectId : undefined
+      draftProjectId: projectId && /^[a-zA-Z0-9_-]{1,128}$/u.test(projectId) ? projectId : undefined,
+      ...(this.running.length ? { running: this.running } : {})
     }
   }
 
@@ -343,6 +346,32 @@ export class EnterpriseChatView {
         }
       }
     }
+    return { epoch }
+  }
+
+  /** Same history grant as deletion. The server also stamps the conversation's update time. */
+  async rename(input: unknown, nameInput: unknown, expectedEpoch: unknown): Promise<{ epoch: number }> {
+    const id = parseChatId(input)
+    const name = parseChatName(nameInput)
+    const epoch = this.generation
+    if (expectedEpoch !== epoch || !this.enterprise.snapshot().connected || !this.routes.has(id)) {
+      throw new Error('Select a conversation from current Chat history.')
+    }
+    if (this.state.phase !== 'ready') await this.connect()
+    if (epoch !== this.generation || !this.isolated || !this.origin) throw new Error('Chat identity changed.')
+    const response = await this.isolated.fetch(new URL('/api/v1/chat/conversation/rename', this.origin).href, {
+      method: 'POST', redirect: 'error', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ conversationId: id, name }), signal: AbortSignal.timeout(15_000)
+    })
+    if (!response.ok) throw new Error(`Chat rename failed (${response.status}).`)
+    const result: unknown = await response.json()
+    if (epoch !== this.generation) throw new Error('Chat identity changed.')
+    if (!result || typeof result !== 'object' || !('status_code' in result) || result.status_code !== 200) {
+      throw new Error('Chat rename failed.')
+    }
+    this.note('[enterprise-chat] conversation renamed')
+    // The open document loads a conversation's name once; tell it to read the new one.
+    if (this.view && !this.view.webContents.isDestroyed()) this.view.webContents.send('enterprise-chat:conversation-renamed', { conversationId: id })
     return { epoch }
   }
 
@@ -638,6 +667,15 @@ export class EnterpriseChatView {
             catch { this.note('[enterprise-chat] invalid_navigation_report') }
             return
           }
+          if (channel === 'enterprise-chat:running') {
+            try {
+              const running = parseRunningConversations(report.ids)
+              if (running.join() === this.running.join()) return
+              this.running = running
+              this.notify()
+            } catch { this.note('[enterprise-chat] invalid_running_report') }
+            return
+          }
           if (channel !== 'enterprise-chat:landing' || !/^\/workspace\/c\/[a-zA-Z0-9_-]+$/u.test(url.pathname) || typeof report.landing !== 'boolean') return
           this.landing = url.pathname === '/workspace/c/new' && report.landing
           this.notify()
@@ -647,6 +685,8 @@ export class EnterpriseChatView {
             this.resetModalPresentation()
             this.dialogViewport = undefined
             this.layout()
+            // Streams belong to the outgoing document; the next one reports its own.
+            if (this.running.length) { this.running = []; this.notify() }
           }
           if (isMainFrame && !isInPlace && generation === this.generation && this.view === view && this.settingsSection) {
             this.settingsReady = false
@@ -918,6 +958,7 @@ export class EnterpriseChatView {
     this.origin = undefined
     this.routes.clear()
     this.deletedConversations.clear()
+    this.running = []
     const view = this.view
     const isolated = this.isolated
     this.view = undefined

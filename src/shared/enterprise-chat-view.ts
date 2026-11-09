@@ -80,6 +80,8 @@ export interface EnterpriseChatViewState {
   settingsSection?: EnterpriseSettingsSection
   settingsReady?: boolean
   settingsFailure?: 'load' | 'unsupported'
+  /** Cloud conversations the enterprise document reports as generating; absent until it reports any. */
+  running?: string[]
 }
 
 export function parseChatPresentation(value: unknown): EnterpriseChatPresentation {
@@ -124,6 +126,20 @@ export function parseChatPage(value: unknown): number {
 export function parseChatId(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/u.test(value)) throw new Error('Invalid Chat identity.')
   return value
+}
+/** BiSheng stores conversation names in message_session.name, a VARCHAR(255) column. */
+export const CHAT_NAME_MAX_LENGTH = 255
+export function parseChatName(value: unknown): string {
+  if (typeof value !== 'string') throw new Error('Invalid Chat name.')
+  const name = value.trim()
+  if (!name || [...name].length > CHAT_NAME_MAX_LENGTH || /\p{Cc}/u.test(name)) throw new Error('Invalid Chat name.')
+  return name
+}
+const MAX_RUNNING_CONVERSATIONS = 100
+/** Activity is presentation data from the enterprise document, never an authorization signal. */
+export function parseRunningConversations(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > MAX_RUNNING_CONVERSATIONS) throw new Error('Invalid Chat activity.')
+  return [...new Set(value.map(parseChatId))].sort()
 }
 
 export interface EnterpriseNavigationEntry {

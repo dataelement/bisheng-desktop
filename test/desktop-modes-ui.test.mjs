@@ -290,6 +290,16 @@ it('delivers the active Harness language while settings hides Chat and cleans up
   expect(window.dshEnterpriseChat.present).toHaveBeenCalledTimes(calls)
 })
 
+it('hides Chat while a cloud rename dialog is open and restores it afterwards', async () => {
+  const ui = await mount(true)
+  expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
+  // The dialog renders in the host document, beneath the native Chat view.
+  await act(async () => ui.controller.requestRename('cloud-a', 'Cloud chat', 1))
+  expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
+  await act(async () => ui.controller.renaming.close())
+  expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
+})
+
 it('hides Chat while a sidebar account dialog is open and restores it afterwards', async () => {
   await mount(true)
   expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
@@ -389,7 +399,8 @@ it('places cloud projects between workspaces and conversations and files each ch
   await act(async () => filed.dispatchEvent(shortcut))
   expect(shortcut.defaultPrevented).toBe(true)
   expect(container.querySelector('[data-chat-project] .dshCloudHistoryActions').getAttribute('aria-expanded')).toBe('true')
-  expect([...container.querySelectorAll('[role=menuitem]')].map(node => node.textContent)).toEqual(['Move to project', 'menu'])
+  // Cloud rows lead with Rename, as Work rows do; this harness echoes non-project keys.
+  expect([...container.querySelectorAll('[role=menuitem]')].map(node => node.textContent)).toEqual(['rename', 'Move to project', 'menu'])
   await act(async () => move().click())
   expect(destination()).toBeUndefined()
   expect(choices().map(node => node.textContent)).toEqual(['New project', 'Another project', 'Move out of project'])
