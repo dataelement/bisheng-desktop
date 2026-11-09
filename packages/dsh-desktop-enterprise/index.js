@@ -10,6 +10,7 @@ import { applyEnterpriseWorkbenchMarket } from './workbench-market.js'
 import { applyEnterpriseAuth, createEnterpriseAuthTransport } from './enterprise-auth.js'
 import { parseThirdPartyPolicy } from './contract.js'
 import { createAuditTitleSync } from './audit-title.js'
+import { createAuditFeedbackSync } from './audit-feedback.js'
 import {
   isInsecurePrivateHttpOrigin,
   normalizeEnterpriseServerUrl,
@@ -497,12 +498,30 @@ function startEnterpriseLlm(ctx, llm, broker) {
     },
     note: (reason, details) => console.warn('[enterprise-audit-title]', JSON.stringify({ reason, ...details }))
   })
+  const feedback = createAuditFeedbackSync({
+    ctx,
+    async send(body, signal) {
+      if (!broker) throw new Error('Enterprise broker unavailable.')
+      const response = await fetch(new URL('/v1/audit/message-feedback', broker.origin), {
+        method: 'POST', redirect: 'error', signal,
+        headers: { authorization: `Bearer ${broker.capability}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+      if (!response.ok) {
+        await response.body?.cancel()
+        throw Object.assign(new Error('Audit feedback synchronization failed.'), { status: response.status })
+      }
+      return response.json()
+    },
+    note: (reason, details) => console.warn('[enterprise-audit-feedback]', JSON.stringify({ reason, ...details }))
+  })
   const adapter = new EnterpriseLlmAdapter({
     providerName: () => latest.tenant?.name || latest.user?.display_name || 'BiSheng Enterprise',
     models: () => modelsAvailable ? models : [],
     auditFields: () => latest.connected ? latest.audit_context?.fields ?? [] : [],
     resolveAuditSession: (id) => {
       titles.track(id)
+      feedback.track(id)
       try {
         const header = ctx.get?.('sessions')?.get(id)?.header
         if (!header || header.id !== id) return undefined
@@ -527,6 +546,7 @@ function startEnterpriseLlm(ctx, llm, broker) {
   const ingest = (state) => {
     latest = state
     titles.ingest(state)
+    feedback.ingest(state)
     if (state.revision === revision) return
     const nextRevision = Number.isSafeInteger(state.revision) ? state.revision : revision
     models = Array.isArray(state.models) ? state.models : []
@@ -571,6 +591,7 @@ function startEnterpriseLlm(ctx, llm, broker) {
       safetyLocaleScope.dispose()
       safetyLocale.disable()
       titles.dispose()
+      feedback.dispose()
       if (timer) clearTimeout(timer)
       registration?.()
     }

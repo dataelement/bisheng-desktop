@@ -4,6 +4,7 @@ import {
   CLIENT_ID,
   createPkceTransaction,
   parseAuthorization,
+  parseAuditFeedbackUpdate,
   parseConfig,
   parseThirdPartyPolicy,
   parseModels,
@@ -152,6 +153,31 @@ describe('BiSheng compatible client API mock', () => {
       client_id: 'other-client',
       contract_version: '0.5.0'
     })).toThrow('contract version is incompatible')
+    expect(parseConfig({
+      enabled: true,
+      client_id: 'dsh-desktop',
+      contract_version: '0.5.0',
+      audit_message_feedback: { version: 1, extra: true }
+    })).toEqual({
+      enabled: true,
+      client_id: 'dsh-desktop',
+      contract_version: '0.5.0',
+      audit_message_feedback: { version: 1 }
+    })
+    expect(parseConfig({
+      enabled: true,
+      client_id: 'dsh-desktop',
+      contract_version: '0.5.0',
+      audit_message_feedback: { version: 2 }
+    })).toEqual({ enabled: true, client_id: 'dsh-desktop', contract_version: '0.5.0' })
+    expect(parseAuditFeedbackUpdate({
+      conversation_id: 'session', message_id: 'msg-1', event_seq: 3, op: 'put', rating: 'negative', note: 'kept'
+    })).toEqual({
+      conversation_id: 'session', message_id: 'msg-1', event_seq: 3, op: 'put', rating: 'negative', note: 'kept'
+    })
+    expect(() => parseAuditFeedbackUpdate({
+      conversation_id: 'session', message_id: 'msg-1', event_seq: 3, op: 'delete', rating: 'negative'
+    })).toThrow('Invalid audit feedback update.')
   })
 
   it('serves audit negotiation alongside third-party capabilities and the workbench catalog', async () => {
