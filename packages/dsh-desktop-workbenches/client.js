@@ -229,6 +229,7 @@ window.__ModuleLoader__.load({
     const EMPTY = () => ({ version: 1, added: [], pinned: [], favorites: [], active: null, sessionBindings: {}, recentSessions: {}, notes: {}, hiddenWorkspaces: {} })
     // This controller owns navigation and local state only. It never terminates
     // agents, changes a running session's preset, or registers global tools.
+    const WORKBENCH_REPOSITORY = /^https:\/\/github\.com\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+?)(?:\.git)?\/?$/i
     class Workbenches {
       constructor(ctx, request = (...args) => fetch(...args)) {
         this.networkMarketAllowed = true
@@ -461,7 +462,7 @@ window.__ModuleLoader__.load({
             const evidence = this.packageEvidence?.[provider.sourcePackage]
             const metadata = { ...provider }
             for (const [key, value] of Object.entries(evidence?.metadata || {})) if (value !== undefined) metadata[key] = value
-            remote.push({ ...provider, catalogId: provider.id, installedMetadata: metadata, listed: false, local: evidence?.origin === 'local', installed: true })
+            remote.push({ ...provider, catalogId: provider.id, installedMetadata: metadata, listed: false, local: provider.id.startsWith('local:') || evidence?.origin === 'local', installed: true })
           }
         }
         const visible = new Set(remote.map((entry) => entry.catalogId || entry.id))
@@ -470,7 +471,7 @@ window.__ModuleLoader__.load({
           const bundle = this.native.bundles[remembered.sourcePackage]
           if (!bundle && !this.state.added.includes(id)) continue
           if (this.hasUsablePackageAlias(id, remote)) continue
-          remote.push({ ...remembered, id, catalogId: id, installedMetadata: remembered, listed: false, local: this.packageEvidence?.[remembered.sourcePackage]?.origin === 'local', installed: !!bundle,
+          remote.push({ ...remembered, id, catalogId: id, installedMetadata: remembered, listed: false, local: id.startsWith('local:') || this.packageEvidence?.[remembered.sourcePackage]?.origin === 'local', installed: !!bundle,
             loadFailure: !bundle && this.native.status === NATIVE_STATUS.ready ? '工作台插件当前不可用。' : '' })
         }
         return remote
@@ -485,9 +486,15 @@ window.__ModuleLoader__.load({
       repositoryIdentity(repository) {
         if (repository === undefined) return null
         if (typeof repository !== 'string') throw new Error('Workbench repository must be a GitHub URL.')
-        const match = repository.match(/^https:\/\/github\.com\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+?)(?:\.git)?\/?$/i)
+        const match = repository.match(WORKBENCH_REPOSITORY)
         if (!match) throw new Error('Workbench repository must be a GitHub URL.')
         return `${match[1]}/${match[2]}`.toLowerCase()
+      }
+      referencesWorkbench(id) {
+        return this.state.added.includes(id) || this.state.pinned.includes(id) || this.state.favorites.includes(id)
+          || this.state.active === id || Object.values(this.state.sessionBindings).includes(id)
+          || Object.hasOwn(this.state.recentSessions, id) || Object.hasOwn(this.state.notes, id)
+          || Object.hasOwn(this.state.hiddenWorkspaces, id)
       }
       identityForSource(source, repository, legacyId) {
         const installed = Object.keys(this.installs).filter((id) => this.installRecordFor(id)?.pluginName === source)
@@ -497,8 +504,21 @@ window.__ModuleLoader__.load({
           : []
         const declared = this.repositoryIdentity(repository)
         const identities = [...new Set([...installed, ...listed, ...legacy, ...(declared ? [declared] : [])])]
-        if (identities.length !== 1) throw new Error(identities.length ? `Client package ${source} matches multiple workbenches.` : `Client package ${source} is not attributed to a market repository.`)
-        return identities[0]
+        if (identities.length > 1) throw new Error(`Client package ${source} matches multiple workbenches.`)
+        const localId = `local:${source}`
+        // Discovery of a later public listing must not reassign saved local
+        // conversations. Repository conflicts still fail before this branch.
+        if (this.referencesWorkbench(localId)) return localId
+        if (identities.length) return identities[0]
+        const previous = Object.entries(this.knownProviders).filter(([id, provider]) => provider?.sourcePackage === source && !id.startsWith('local:'))
+        const remembered = previous.filter(([id, provider]) => typeof provider.repository === 'string'
+          && WORKBENCH_REPOSITORY.test(provider.repository) && this.repositoryIdentity(provider.repository) === id)
+        if (remembered.length === 1) return remembered[0][0]
+        // A missing catalog/receipt for a previously attributed market package
+        // is not evidence that it has become a new private workbench.
+        if (previous.length) throw new Error(`Client package ${source} is not attributed to a market repository.`)
+        if (typeof source !== 'string' || source.length > 214 || !/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(source)) throw new Error('Local workbench identity requires a valid client package name.')
+        return localId
       }
       rebuildProviders({ preserveActive = false } = {}) {
         const previous = this.catalog
@@ -510,7 +530,7 @@ window.__ModuleLoader__.load({
           catalog.set(id, { ...provider, id, sourcePackage: source })
           this.knownProviders[id] = { id, sourcePackage: source,
             title: provider.title, description: provider.description, category: provider.category,
-            repository: provider.repository, icon: provider.icon, screenshot: provider.screenshot,
+            repository: provider.repository ?? this.knownProviders[id]?.repository, icon: provider.icon, screenshot: provider.screenshot,
             screenshots: provider.screenshots, author: provider.author, version: provider.version }
         }
         try { window.localStorage?.setItem(KNOWN_PROVIDERS_KEY, JSON.stringify(this.knownProviders)) } catch {}
@@ -572,20 +592,16 @@ window.__ModuleLoader__.load({
       migrateLegacyWorkbenchIds() {
         if (!this.ready || this.blocked || this.disposed) return
         const migrations = {}
-        const referenced = id => this.state.added.includes(id) || this.state.pinned.includes(id) || this.state.favorites.includes(id)
-          || this.state.active === id || Object.values(this.state.sessionBindings).includes(id)
-          || Object.hasOwn(this.state.recentSessions, id) || Object.hasOwn(this.state.notes, id)
-          || Object.hasOwn(this.state.hiddenWorkspaces, id)
         for (const entry of this.remoteCatalog) {
           for (const legacy of [entry.workbenchId, ...(entry.legacyWorkbenchIds || [])]) {
-            if (typeof legacy === 'string' && legacy !== entry.id && referenced(legacy)) migrations[legacy] = entry.id
+            if (typeof legacy === 'string' && legacy !== entry.id && this.referencesWorkbench(legacy)) migrations[legacy] = entry.id
           }
         }
         if (this.native.status === NATIVE_STATUS.ready) {
           for (const [legacy, remembered] of Object.entries(this.knownProviders)) {
             const source = remembered?.sourcePackage
             const bundle = source && this.native.bundles[source]
-            if (!source || !bundle || bundle.installed === false || bundle.error || this.catalog.has(legacy) || !referenced(legacy) || migrations[legacy]) continue
+            if (!source || !bundle || bundle.installed === false || bundle.error || legacy.startsWith('local:') || this.catalog.has(legacy) || !this.referencesWorkbench(legacy) || migrations[legacy]) continue
             const current = [...this.catalog.values()].filter((provider) => provider.sourcePackage === source &&
               this.remoteCatalog.some((entry) => entry.id === provider.id))
             if (current.length === 1 && current[0].id !== legacy) migrations[legacy] = current[0].id
@@ -951,7 +967,7 @@ window.__ModuleLoader__.load({
       register(descriptor, Component) {
         // Older workbench packages declared a local id. Keep accepting those
         // packages during the repository-identity migration, but never use the
-        // legacy value: identityForSource resolves the canonical catalog repo.
+        // legacy value: identityForSource resolves repository or package identity.
         if (!descriptor || !descriptor.title || typeof Component !== 'function') throw new Error('Invalid workbench registration')
         this.repositoryIdentity(descriptor.repository)
         const source = this.sourcePackage()
