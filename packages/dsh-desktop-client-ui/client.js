@@ -375,6 +375,25 @@ window.__ModuleLoader__.load({
       let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, signInPromptOpen: false, approvalsOpen: false, accountDialogOpen: false, settingsSurface: undefined, pageId: undefined, navigation: undefined, workLanding: false, nativeWork: true, panelOpen: false, activePanelId: null }
       const listeners = new Set()
       let active = false, revision = 0, historyRequest = 0, historyDirty = false
+      let startupStateRetryTimer, startupStateRetryCount = 0
+      // The page can report navigation after the first snapshot. Retry only while the
+      // account is connected and navigation is still absent. An object, including an
+      // empty entry list, means the report has already landed.
+      const startupStateRetryDelays = [250, 1000, 3000]
+      const cancelStartupStateRetry = () => {
+        if (startupStateRetryTimer === undefined) return
+        window.clearTimeout(startupStateRetryTimer)
+        startupStateRetryTimer = undefined
+      }
+      const scheduleStartupStateRetry = () => {
+        if (!active || startupStateRetryTimer !== undefined || startupStateRetryCount >= startupStateRetryDelays.length) return
+        const delay = startupStateRetryDelays[startupStateRetryCount]
+        startupStateRetryCount += 1
+        startupStateRetryTimer = window.setTimeout(() => {
+          startupStateRetryTimer = undefined
+          void readEnterpriseState(true)
+        }, delay)
+      }
       const publish = (patch) => { value = { ...value, ...patch }; listeners.forEach(fn => fn()) }
       const select = (mode) => {
         if (mode === 'chat' && !value.connected) {
@@ -441,14 +460,28 @@ if (clearHistory) { historyRequest++; historyDirty = false; deletion.reset() }
         if (signedIn) window.dispatchEvent(new CustomEvent('dsh-desktop:close-settings'))
         if (next.connected && next.phase === 'ready' && (refresh || identityChanged || signedIn || conversationChanged || becameReady)) void refreshHistory()
       }
-      const sync = async () => {
+      const readEnterpriseState = async (recover) => {
         const request = ++revision
+        cancelStartupStateRetry()
+        if (!recover) startupStateRetryCount = startupStateRetryDelays.length
         try {
           const next = await window.dshEnterpriseChat?.state()
-          if (!active || request !== revision || !next) return
-          applyState(next, true)
-        } catch { /* A missed focus read must not paint the reconnect page. */ }
+          if (!active || request !== revision) return
+          if (!next) {
+            if (recover) scheduleStartupStateRetry()
+            return
+          }
+          const pendingNavigation = recover && next.connected === true && (next.navigation == null || typeof next.navigation !== 'object')
+          const refreshHistory = !recover || startupStateRetryCount === 0
+          if (!pendingNavigation) startupStateRetryCount = startupStateRetryDelays.length
+          applyState(next, refreshHistory)
+          if (pendingNavigation) scheduleStartupStateRetry()
+        } catch {
+          // A missed focus or account read must not paint the reconnect page.
+          if (active && request === revision && recover) scheduleStartupStateRetry()
+        }
       }
+      const sync = () => { void readEnterpriseState(false) }
       // One guarded read. It does not refresh history; sync() owns that on focus and visibility.
       const readHostState = async () => {
         const request = ++revision
@@ -495,6 +528,8 @@ if (clearHistory) { historyRequest++; historyDirty = false; deletion.reset() }
         },
         start() {
           active = true
+          startupStateRetryCount = 0
+          cancelStartupStateRetry()
           const account = () => { void sync() }
           const visibility = () => { if (!document.hidden) void sync() }
 // Older workspace hosts omit this registration. Failing here used to skip
@@ -549,6 +584,8 @@ if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
           const unsubscribeSessions = ctx.sessions.list.subscribe(workState)
           const unsubscribeChat = window.dshEnterpriseChat?.subscribe?.((next) => {
             revision++
+            startupStateRetryCount = startupStateRetryDelays.length
+            cancelStartupStateRetry()
             applyState(next)
           })
           workState(); panel()
@@ -559,9 +596,12 @@ if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
           window.addEventListener('dsh-desktop:settings-surface', settingsSurface)
           window.addEventListener('focus', sync)
           document.addEventListener('visibilitychange', visibility)
-          void sync()
+          void readEnterpriseState(true)
           return () => {
-active = false; deletion.reset(); revision++; historyRequest++; unsubscribe(); unsubscribeSessions(); unsubscribeWork(); unsubscribeChat?.()
+            active = false
+            startupStateRetryCount = startupStateRetryDelays.length
+            cancelStartupStateRetry()
+            deletion.reset(); revision++; historyRequest++; unsubscribe(); unsubscribeSessions(); unsubscribeWork(); unsubscribeChat?.()
             window.removeEventListener('dsh-desktop:enterprise-account-changed', account)
             disposeNavigation()
             if (revealWorkSession && ctx.uiWorkspace.openSession === revealWorkSession) ctx.uiWorkspace.openSession = originalOpenSession
