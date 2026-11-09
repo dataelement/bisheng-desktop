@@ -732,6 +732,11 @@ if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
       const { mode, settingsOpen, settingsSurface } = state
       React.useEffect(() => navigation.start(), [navigation])
+      React.useEffect(() => {
+        if (mode !== 'work') return
+        // Start the enterprise tool handshake before the plus menu opens it.
+        fetch('/api/enterprise.work-tools', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operation: 'catalog' }) }).catch(() => {})
+      }, [mode])
       const panel = React.useRef(null)
       const [animateWork, setAnimateWork] = React.useState(false)
       const tabs = React.useRef({})

@@ -219,6 +219,9 @@ export function apply(ctx) {
     }
     if ((!state.connected && account.connected) || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
     account = state
+    // A connected snapshot can arrive before the tool plugin exists. Keep asking
+    // until that plugin is ready; sync itself does nothing once the catalog is warm.
+    if (state.connected) void workCapabilities?.sync?.()?.catch(error => console.warn('[enterprise] tool catalog warmup failed', error))
     if (!state.connected) capabilityPolicy?.reset()
     else void capabilityPolicy?.refresh(state.connectionKey).catch(() => undefined)
     ingestEnterpriseState(state)
@@ -384,6 +387,7 @@ export function apply(ctx) {
     }
     if ((!state.connected && account.connected) || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
     account = state
+    if (state.connected) void workCapabilities?.sync?.()?.catch(error => console.warn('[enterprise] tool catalog warmup failed', error))
     ingestEnterpriseState(state)
     if (state.connected) await capabilityPolicy?.refresh(state.connectionKey).catch(() => undefined)
     return { ...state, ...thirdPartyFlags() }

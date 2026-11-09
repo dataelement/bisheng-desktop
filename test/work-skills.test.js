@@ -80,6 +80,9 @@ it('invalidates skills on explicit catalog and identity changes, not a timer', a
     const response = await route.fetch(new Request('http://localhost/api/enterprise.work-skills', { method: 'POST', body: JSON.stringify({ operation: 'catalog' }) }))
     expect(response.status).toBe(200)
     expect(invalidate).toHaveBeenCalledTimes(1)
+    const callsAfterRefresh = fixture.request.mock.calls.length
+    await provider.list({ signal: abort.signal })
+    expect(fixture.request.mock.calls.length).toBe(callsAfterRefresh)
     api.clear()
     expect(invalidate).toHaveBeenCalledTimes(2)
     abort.abort()
