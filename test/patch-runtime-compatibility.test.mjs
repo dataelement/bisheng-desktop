@@ -1,12 +1,36 @@
-import { readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import ts from 'typescript'
 import { expect, it } from 'vitest'
 
+import { maintainedPatchNames, patchPath } from './patch-path'
+
 const require = createRequire(import.meta.url)
-const patchedJs = [...new Set(readdirSync('patches').filter(name => name.endsWith('.patch')).flatMap(name =>
-  [...readFileSync(`patches/${name}`, 'utf8').matchAll(/^\+\+\+ b\/(.*\.js)$/gm)].map(match => match[1])
+const patches = maintainedPatchNames.map(name => readFileSync(patchPath(name), 'utf8'))
+// Source patches target upstream TypeScript. Check their installed runtime outputs
+// rather than silently accepting an empty list of patched JavaScript files.
+const runtimeTargets = {
+  'packages/boot/app-boot/': 'node_modules/@deepseek-ai/dsh-app-boot/lib/index.js',
+  'packages/client/ui-chat/': 'node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js',
+  'packages/client/ui-conversation/': 'node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js',
+  'packages/client/ui-workspace/': 'node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js'
+}
+const patchedSources = [...new Set(patches.flatMap(patch =>
+  [...patch.matchAll(/^\+\+\+ b\/(.*\/src\/.*\.tsx?)$/gm)].map(match => match[1])
 ))]
+const patchedJs = [...new Set(patchedSources.map(file => {
+  const target = Object.entries(runtimeTargets).find(([prefix]) => file.startsWith(prefix))?.[1]
+  if (!target) throw new Error(`unmapped maintained patch source: ${file}`)
+  return target
+}))]
+
+it('covers every maintained source patch with installed runtime targets', () => {
+  expect(readdirSync('patches').filter(name => name.endsWith('.patch')).sort())
+    .toEqual(maintainedPatchNames.map(name => `${name}.patch`).sort())
+  expect(patchedSources.length).toBeGreaterThan(0)
+  expect(patchedJs.sort()).toEqual(Object.values(runtimeTargets).sort())
+  for (const file of patchedJs) expect(existsSync(file), `missing patched runtime: ${file}`).toBe(true)
+})
 
 it('all patched JavaScript has no unresolved local identifiers', () => {
   // Resolve lexical names without loading the dependency tree. Node globals are
@@ -35,22 +59,20 @@ it('every patched client uses current primitives exports, including non-icon com
   }
 })
 
-it('maintained Desktop clients inject only slots declared by the installed Harness clients', () => {
+it('maintained clients inject only slots declared by installed clients or maintained source patches', () => {
   const clients = readdirSync('node_modules/@deepseek-ai').flatMap(name => {
     try { return [readFileSync(`node_modules/@deepseek-ai/${name}/lib/client.js`, 'utf8')] } catch (error) {
       if (error.code === 'ENOENT') return []
       throw error
     }
   })
-  const upstreamPatches = (() => {
-    try {
-      return readdirSync('docs/upstream-patches').filter(name => name.endsWith('.patch')).map(name => readFileSync(`docs/upstream-patches/${name}`, 'utf8'))
-    } catch {
-      return []
-    }
-  })()
-  const declarations = new Set([...clients, ...upstreamPatches].flatMap(source => [...source.matchAll(/["']([^"']+)["']\s*:\s*\{\s*kind:\s*["'](?:list|single|keyed|chain)["']/g)].map(match => match[1])))
-  for (const file of ['packages/dsh-desktop-client-ui/client.js', 'packages/dsh-image-generation/client.js', 'packages/dsh-desktop-market-installer/client.js', 'packages/ppt-runtime/adapter/lib/client.js']) {
+  // Optional modern slots may be supplied by the maintained source composition.
+  // Added declarations validate that composition; they do not prove installation.
+  const additions = patches.map(patch => patch.split('\n')
+    .filter(line => line.startsWith('+') && !line.startsWith('+++'))
+    .map(line => line.slice(1)).join('\n'))
+  const declarations = new Set([...clients, ...additions].flatMap(source => [...source.matchAll(/["']([^"']+)["']\s*:\s*\{\s*kind:\s*["'](?:list|single|keyed|chain)["']/g)].map(match => match[1])))
+  for (const file of ['packages/dsh-desktop-client-ui/client.js', 'packages/dsh-image-generation/client.js', 'packages/ppt-runtime/adapter/lib/client.js']) {
     for (const match of readFileSync(file, 'utf8').matchAll(/slots\.inject\(["']([^"']+)["']/g)) {
       expect(declarations.has(match[1]), `${file}: undeclared slot ${match[1]}`).toBe(true)
     }

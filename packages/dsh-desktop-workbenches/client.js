@@ -49,7 +49,7 @@ window.__ModuleLoader__.load({
       '刷新目录': 'Refresh catalog', '正在检查更新': 'Checking for updates', '检查更新': 'Check for updates', '正在检查…': 'Checking…',
       '确认更新': 'Confirm update', '本机': 'On device', '市场': 'Market', '查看市场版本': 'View market version', '当前工作台来自本地开发。更新将改用市场发布的代码，本地修改不会带入新版本。请先备份安装目录中的重要文件。': 'This workbench is locally developed. Updating will use the market release code; local changes will not carry over. Back up important files in the installation directory first.', '检测到当前安装内容已被修改。更新将改用市场发布的代码，请先备份需要保留的修改。': 'The installed content has been modified. Updating will use the market release code. Back up any changes you want to keep first.', '需要确认更新本机工作台代码。': 'Confirm updating the installed workbench code.', '工作台集合': 'Workbench collections', '我的收藏': 'Favorites', '已安装': 'Installed', '搜索名称、作者或分类': 'Search name, author, or category', '搜索工作台': 'Search workbenches', '按分类筛选': 'Filter by category',
       '全部': 'All', '其他': 'Other', '本地': 'Local', '排序': 'Sort', '工作台排序方式': 'Workbench sort order', '市场顺序': 'Market order', 'Star 数量': 'Stars', '下载量': 'Downloads', '更新时间': 'Recently updated', '名称': 'Name', '加载更多': 'Show more',
-      '工作台功能已关闭': 'Workbenches are turned off', '可在 设置 → 通用 中重新开启。': 'Turn them on again in Settings → General.',
+      '工作台功能已关闭': 'Workbenches are turned off', '开启工作台': 'Enable workbenches', '可在 设置 → 通用 中重新开启。': 'Turn them on again in Settings → General.',
       '启用工作台功能': 'Enable workbenches', '开启后可使用工作台市场和已安装的工作台；关闭后所有工作台不加载，不影响已保存的会话和数据。': 'Browse the market and use installed workbenches when enabled. Turning this off does not affect saved sessions or data.',
       '工作台安装变更需要重启 Harness 后生效。已有会话和数据不受影响。 ': 'Restart Harness to apply workbench installation changes. Existing sessions and data are preserved. ',
       '正在重启…': 'Restarting…', '立即重启': 'Restart now', '请从菜单 Harness → 重启 Harness。': 'Use Harness → Restart Harness in the menu.',
@@ -179,6 +179,12 @@ window.__ModuleLoader__.load({
       })(),
       subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener) },
       getSnapshot() { return this.enabled },
+      enableForEnterprise() {
+        try {
+          if (window.localStorage.getItem(WORKBENCH_PREF) === 'false' || window.localStorage.getItem('dsh_workbench') === 'false') return
+        } catch { /* Use the in-memory default when browser storage is unavailable. */ }
+        this.set(true)
+      },
       set(value) {
         this.enabled = !!value
         try {
@@ -200,8 +206,12 @@ window.__ModuleLoader__.load({
         verify: '核对原包', verifying: '正在核对…', verified: '原包完整性核对通过。',
         install: '安装', installing: '正在安装…', installed: '已安装', restart: '重启后生效',
         scope: '企业上传的工作台可以安装到本机。安装完成后需要重启才能使用。',
+        imageLoading: '正在加载截图…', imageFailed: '截图暂时无法加载', imageEmpty: '暂无截图',
+        technical: '技术信息', homepage: '项目主页', source: '来源：企业', version: '版本',
+        enabled: '已安装并启用', disabled: '已安装，尚未启用', activationUnknown: '已安装，启用状态待确认',
+        packageName: '包名称', identity: '发布身份', patchEntryId: 'Patch 入口标识', serverEntry: '服务端入口', clientEntry: '客户端入口', bundlePatch: '组合 Patch', license: '许可证', nodeEngine: 'Node.js 版本要求', dependencies: '依赖',
         settingsOpen: '列表来自网络工作台市场，也可以安装本机开发的工作台。企业上传的工作台在「来自企业」中安装。',
-        settingsClosed: '当前企业未开放网络工作台市场。工作台市场展示本企业上传的工作台，可以直接安装；已安装里保留本机已安装和本地开发的工作台。'
+        settingsClosed: '当前企业未开放网络工作台市场。工作台市场展示本企业上传的工作台，可以直接安装；已安装里只展示企业和本地开发的工作台，第三方工作台会隐藏但不会卸载。'
       },
       en: {
         loading: 'Loading enterprise workbenches…', empty: 'Your enterprise has not published a workbench yet.', unavailable: 'The enterprise workbench service is unavailable.',
@@ -210,12 +220,19 @@ window.__ModuleLoader__.load({
         verify: 'Verify package', verifying: 'Verifying…', verified: 'The package integrity check passed.',
         install: 'Install', installing: 'Installing…', installed: 'Installed', restart: 'Restart to use',
         scope: 'Enterprise workbenches can be installed on this computer. Restart after installation to use them.',
+        imageLoading: 'Loading screenshots…', imageFailed: 'Screenshots could not be loaded', imageEmpty: 'No screenshots',
+        technical: 'Technical information', homepage: 'Project homepage', source: 'Source: Enterprise', version: 'Version',
+        enabled: 'Installed and enabled', disabled: 'Installed, not enabled', activationUnknown: 'Installed; activation status unknown',
+        packageName: 'Package name', identity: 'Publication identity', patchEntryId: 'Patch entry ID', serverEntry: 'Server entry', clientEntry: 'Client entry', bundlePatch: 'Bundle patch', license: 'License', nodeEngine: 'Node.js requirement', dependencies: 'Dependencies',
         settingsOpen: 'The list comes from the network workbench market. Locally developed workbenches can also be installed. Enterprise uploads can be installed from From enterprise.',
-        settingsClosed: 'This enterprise has not opened the network workbench market. The workbench market shows workbenches uploaded by your enterprise, and they can be installed directly. Installed keeps local and previously installed workbenches.'
+        settingsClosed: 'This enterprise has not opened the network workbench market. The workbench market shows workbenches uploaded by your enterprise, and they can be installed directly. Installed shows enterprise and locally developed workbenches. Third-party workbenches are hidden without being uninstalled.'
       }
     }
     let workbenchLocaleCtx = null
-    const enterpriseText = (ctx, key) => enterpriseMarketCopy[interfaceLocale(ctx || workbenchLocaleCtx)][key]
+    const enterpriseText = (ctx, key) => {
+      const locale = ctx?.locale || workbenchLocaleCtx?.locale
+      return locale?.bind?.('workbench.enterprise')(key) || enterpriseMarketCopy[interfaceLocale(ctx || workbenchLocaleCtx)][key]
+    }
     const interfaceLocale = (ctx) => {
       const active = ctx?.locale?.getSnapshot?.()?.active
       return typeof active === 'string' && active.toLowerCase().startsWith('en') ? 'en' : 'zh'
@@ -232,7 +249,7 @@ window.__ModuleLoader__.load({
       getSnapshot() { return this.snapshot },
       replace(next) {
         const current = this.snapshot
-        if (current.known === next.known && current.connected === next.connected && current.allowThirdPartyWorkbenches === next.allowThirdPartyWorkbenches) return
+        if (current.known === next.known && current.connected === next.connected && current.allowThirdPartyWorkbenches === next.allowThirdPartyWorkbenches && current.accountKey === next.accountKey) return
         this.snapshot = next
         for (const listener of this.listeners) listener()
       }
@@ -272,8 +289,7 @@ window.__ModuleLoader__.load({
         this.catalogRefresh = null
         this.checkingUpdates = false
         // Workbenches installed from the market, keyed by Awesome repository
-        // identity. A new package only runs after Harness restarts, so
-        // restartNeeded stays set until then.
+        // identity. Only installations awaiting activation enter pendingRestart.
         this.installs = {}
         this.native = { status: NATIVE_STATUS.idle, bundles: {} }
         this.nativeTicket = 0
@@ -290,6 +306,7 @@ window.__ModuleLoader__.load({
         this.enterpriseAccountKey = ''
         this.enterpriseDetail = null
         this.enterpriseTicket = 0
+        this.enterpriseImages = new Map()
         this.enterpriseVerify = { id: '', status: 'idle', error: '' }
         this.draftNotes = new Map()
         this.noteTimers = new Map()
@@ -313,6 +330,17 @@ window.__ModuleLoader__.load({
         const bundle = this.native.bundles[install.pluginName]
         return bundle && bundle.installed !== false ? install : null
       }
+      isWorkbenchVisible(entry) {
+        const policy = enterpriseCapability.getSnapshot()
+        if (!policy.known || policy.allowThirdPartyWorkbenches === true) return true
+        const name = this.pluginFor(entry)
+        if (this.enterpriseCatalog.some(item => item.packageName === name)) return true
+        // Market receipts take precedence: verified Web installs also use link:
+        // directories, which alone do not make a downloaded workbench local.
+        const receipts = Object.values(this.installs).filter(item => item?.pluginName === name)
+        if (receipts.length) return receipts.every(item => item.source === 'local')
+        return this.isLocalEntry(entry)
+      }
       originFor(entry) {
         const id = entry.catalogId || entry.id
         if (this.pendingRestart.has(id)) return 'market'
@@ -324,6 +352,7 @@ window.__ModuleLoader__.load({
         return risk === 'local' || risk === 'modified' ? risk : null
       }
       isLocalEntry(entry) {
+        if (entry.id?.startsWith('local:')) return true
         const origin = this.originFor(entry)
         if (origin !== 'unknown') return origin === 'local'
         const id = entry.catalogId || entry.id
@@ -354,6 +383,7 @@ window.__ModuleLoader__.load({
         return entries.some((entry) => entry.id !== id && this.state.added.includes(entry.id) && entry.installed && this.pluginFor(entry) === source)
       }
       activationFor(entry) {
+        if (!this.isWorkbenchVisible(entry)) return 'off'
         const name = this.pluginFor(entry)
         if (!name || this.native.status !== NATIVE_STATUS.ready) return 'unknown'
         const bundle = this.native.bundles[name]
@@ -429,7 +459,8 @@ window.__ModuleLoader__.load({
           // A recovery removal can leave an old navigation/market record. The
           // native inventory wins once it is available: no package means there
           // is no current load failure to report.
-          const missingProvider = !provider && !pendingRestart && !pluginClosed && !packageMissing && !!bundle
+          const healthyLocalProvider = providers.some(entry => entry.id.startsWith('local:') && entry.sourcePackage === pluginName)
+          const missingProvider = !provider && !healthyLocalProvider && !pendingRestart && !pluginClosed && !packageMissing && !!bundle
           const loadFailure = failedInstall?.message || (!pluginClosed && !packageMissing && !provider && !pendingRestart &&
             ((failedPackage && moduleFailures.get(failedPackage)) || (missingProvider && '工作台插件已安装，但启动后未注册。请重新加载或重试安装。')))
           const evidence = this.packageEvidence?.[pluginName]
@@ -472,7 +503,7 @@ window.__ModuleLoader__.load({
             const evidence = this.packageEvidence?.[provider.sourcePackage]
             const metadata = { ...provider }
             for (const [key, value] of Object.entries(evidence?.metadata || {})) if (value !== undefined) metadata[key] = value
-            remote.push({ ...provider, catalogId: provider.id, installedMetadata: metadata, listed: false, local: evidence?.origin === 'local', installed: true })
+            remote.push({ ...provider, catalogId: provider.id, installedMetadata: metadata, listed: false, local: provider.id.startsWith('local:') || evidence?.origin === 'local', installed: true })
           }
         }
         const visible = new Set(remote.map((entry) => entry.catalogId || entry.id))
@@ -481,8 +512,22 @@ window.__ModuleLoader__.load({
           const bundle = this.native.bundles[remembered.sourcePackage]
           if (!bundle && !this.state.added.includes(id)) continue
           if (this.hasUsablePackageAlias(id, remote)) continue
-          remote.push({ ...remembered, id, catalogId: id, installedMetadata: remembered, listed: false, local: this.packageEvidence?.[remembered.sourcePackage]?.origin === 'local', installed: !!bundle,
+          remote.push({ ...remembered, id, catalogId: id, installedMetadata: remembered, listed: false, local: id.startsWith('local:') || this.packageEvidence?.[remembered.sourcePackage]?.origin === 'local', installed: !!bundle,
             loadFailure: !bundle && this.native.status === NATIVE_STATUS.ready ? '工作台插件当前不可用。' : '' })
+        }
+        // Installed bundles can precede client registration (disabled or awaiting restart).
+        // Only package manifests declaring the workbench dependency qualify here.
+        for (const [source, evidence] of Object.entries(this.packageEvidence || {})) {
+          const bundle = this.native.bundles[source]
+          if (!evidence.workbench || !bundle || bundle.installed === false || remote.some(entry => this.pluginFor(entry) === source)) continue
+          let id
+          try { id = this.identityForSource(source) } catch { continue }
+          if (this.removedWorkbenchIds.has(id)) continue
+          const metadata = evidence.metadata || {}
+          remote.push({ ...metadata, id, catalogId: id, sourcePackage: source, title: metadata.title || source,
+            version: evidence.version || bundle.version, installedMetadata: metadata, listed: false,
+            local: id.startsWith('local:') || evidence.origin === 'local', installed: true,
+            loadFailure: bundle.enabled === false ? '' : moduleFailures.get(source) || '' })
         }
         return remote
       }
@@ -500,7 +545,15 @@ window.__ModuleLoader__.load({
         if (!match) throw new Error('Workbench repository must be a GitHub URL.')
         return `${match[1]}/${match[2]}`.toLowerCase()
       }
+      localIdentity(source) {
+        const unsafe = ['__proto__', 'prototype', 'constructor', 'node_modules', 'favicon.ico']
+        const parts = typeof source === 'string' && source.startsWith('@') ? source.slice(1).split('/') : [source]
+        if (typeof source !== 'string' || !source.length || source.length > 214 || parts.length !== (source.startsWith('@') ? 2 : 1)
+          || !parts.every(part => /^[a-z0-9-][a-z0-9._-]*$/.test(part) && !unsafe.includes(part))) throw new Error('Invalid local workbench package name.')
+        return `local:${source}`
+      }
       identityForSource(source, repository, legacyId) {
+        const local = this.localIdentity(source)
         const installed = Object.keys(this.installs).filter((id) => this.installRecordFor(id)?.pluginName === source)
         const listed = this.remoteCatalog.filter(entry => entry.distribution?.name === source).map(entry => entry.id)
         const legacy = typeof legacyId === 'string'
@@ -508,8 +561,23 @@ window.__ModuleLoader__.load({
           : []
         const declared = this.repositoryIdentity(repository)
         const identities = [...new Set([...installed, ...listed, ...legacy, ...(declared ? [declared] : [])])]
-        if (identities.length !== 1) throw new Error(identities.length ? `Client package ${source} matches multiple workbenches.` : `Client package ${source} is not attributed to a market repository.`)
-        return identities[0]
+        if (identities.length > 1) throw new Error(`Client package ${source} matches multiple workbenches.`)
+        // Once introduced locally, later catalog discovery must not move owned sessions.
+        const referenced = this.state.added.includes(local) || this.state.pinned.includes(local) || this.state.active === local
+          || this.state.favorites.includes(local) || Object.values(this.state.sessionBindings).includes(local)
+          || Object.hasOwn(this.state.notes, local) || Object.hasOwn(this.state.recentSessions, local) || Object.hasOwn(this.state.hiddenWorkspaces, local)
+        if (this.knownProviders[local]?.sourcePackage === source || referenced) return local
+        const remembered = Object.entries(this.knownProviders).filter(([id, entry]) => !id.startsWith('local:') && entry.sourcePackage === source).map(([id]) => id)
+        const historicallyReferenced = listed.some(id => this.state.added.includes(id) || this.state.pinned.includes(id)
+          || this.state.favorites.includes(id) || this.state.active === id || Object.values(this.state.sessionBindings).includes(id)
+          || Object.hasOwn(this.state.notes, id) || Object.hasOwn(this.state.recentSessions, id) || Object.hasOwn(this.state.hiddenWorkspaces, id))
+        // A catalog package-name match is discovery, not a market installation receipt.
+        if (this.packageEvidence?.[source]?.origin === 'local' && !installed.length && !declared && !legacy.length
+          && !remembered.length && !historicallyReferenced) return local
+        if (identities.length) return identities[0]
+        if (remembered.length > 1) throw new Error(`Client package ${source} matches multiple workbenches.`)
+        if (remembered.length) throw new Error(`Client package ${source} is not attributed to its previous market repository.`)
+        return local
       }
       rebuildProviders({ preserveActive = false } = {}) {
         const previous = this.catalog
@@ -519,7 +587,7 @@ window.__ModuleLoader__.load({
           try { id = this.identityForSource(source, provider.repository, provider.id) } catch { continue }
           if (catalog.has(id)) throw new Error(`Duplicate workbench provider: ${id}`)
           catalog.set(id, { ...provider, id, sourcePackage: source })
-          this.knownProviders[id] = { id, sourcePackage: source,
+          if (!id.startsWith('local:') || this.ready) this.knownProviders[id] = { id, sourcePackage: source,
             title: provider.title, description: provider.description, category: provider.category,
             repository: provider.repository, icon: provider.icon, screenshot: provider.screenshot,
             screenshots: provider.screenshots, author: provider.author, version: provider.version }
@@ -596,7 +664,7 @@ window.__ModuleLoader__.load({
           for (const [legacy, remembered] of Object.entries(this.knownProviders)) {
             const source = remembered?.sourcePackage
             const bundle = source && this.native.bundles[source]
-            if (!source || !bundle || bundle.installed === false || bundle.error || this.catalog.has(legacy) || !referenced(legacy) || migrations[legacy]) continue
+            if (legacy.startsWith('local:') || !source || !bundle || bundle.installed === false || bundle.error || this.catalog.has(legacy) || !referenced(legacy) || migrations[legacy]) continue
             const current = [...this.catalog.values()].filter((provider) => provider.sourcePackage === source &&
               this.remoteCatalog.some((entry) => entry.id === provider.id))
             if (current.length === 1 && current[0].id !== legacy) migrations[legacy] = current[0].id
@@ -627,7 +695,7 @@ window.__ModuleLoader__.load({
       publish() {
         this.snapshot = { state: this.state, enabled: workbenchPreference.getSnapshot(), drafts: Object.fromEntries(this.draftNotes), ready: this.ready, error: this.error,
           catalogLoaded: this.catalogLoaded, catalogError: this.catalogError, catalogStale: this.catalogStale, catalogRefreshing: this.catalogRefreshing, checkingUpdates: this.checkingUpdates, pending: this.pending, marketOpen: this.marketOpen,
-          catalog: this.marketCatalog(), categories: this.marketCategories, installs: this.installs, installing: this.installing, native: this.native, togglingPlugin: this.togglingPlugin, removingPlugin: this.removingPlugin, removedWorkbenchIds: [...this.removedWorkbenchIds], restartNeeded: this.restartNeeded, switcherHint: this.switcherHint === true,
+          catalog: this.marketCatalog().filter(entry => this.isWorkbenchVisible(entry)), categories: this.marketCategories, installs: this.installs, installing: this.installing, native: this.native, togglingPlugin: this.togglingPlugin, removingPlugin: this.removingPlugin, removedWorkbenchIds: [...this.removedWorkbenchIds], restartNeeded: this.restartNeeded, switcherHint: this.switcherHint === true,
           enterpriseCatalog: this.enterpriseCatalog, enterpriseCatalogStatus: this.enterpriseCatalogStatus, enterpriseCatalogError: this.enterpriseCatalogError, enterpriseDetail: this.enterpriseDetail, enterpriseVerify: this.enterpriseVerify }
         for (const listener of this.listeners) listener()
       }
@@ -738,7 +806,7 @@ window.__ModuleLoader__.load({
             }
             throw error
           }
-          if (data.restartRequired) this.restartNeeded = true
+          if (data.restartRequired === true) this.restartNeeded = true
           return data
         } finally {
           this.installing = null
@@ -765,7 +833,11 @@ window.__ModuleLoader__.load({
           if (data.install?.catalogId !== catalogId || typeof data.install?.pluginName !== 'string') throw new Error('市场安装记录无效。')
           this.installs = { ...this.installs, [catalogId]: data.install }
           this.removedWorkbenchIds.delete(catalogId)
-          this.pendingRestart.add(catalogId)
+          if (data.restartRequired === true) this.pendingRestart.add(catalogId)
+          else {
+            if (this.pendingRestart.delete(catalogId) && this.pendingRestart.size === 0) this.restartNeeded = false
+            await this.refreshNative()
+          }
           this.installFailures.delete(catalogId)
           this.publish()
           const result = await this.commit((state) => {
@@ -1019,7 +1091,7 @@ window.__ModuleLoader__.load({
       }
       async open(id, sessionId) {
         if (!workbenchPreference.getSnapshot()) throw new Error('工作台功能已关闭。')
-        if (!this.catalog.has(id) || !this.state.added.includes(id)) throw new Error('请先添加可用的工作台。')
+        if (!this.catalog.has(id) || !this.state.added.includes(id) || !this.isWorkbenchVisible(this.catalog.get(id))) throw new Error('请先添加可用的工作台。')
         if (this.activationFor(this.catalog.get(id)) === 'off') throw new Error('工作台插件已关闭，请先开启。')
         if (sessionId && this.state.sessionBindings[sessionId] !== id) throw new Error('会话不属于当前工作台。')
         this.rememberNativeSession(this.currentSession())
@@ -1042,7 +1114,7 @@ window.__ModuleLoader__.load({
       }
       async home(id = this.state.active) {
         if (!workbenchPreference.getSnapshot()) throw new Error('工作台功能已关闭。')
-        if (!id || !this.catalog.has(id) || !this.state.added.includes(id)) throw new Error('请先添加可用的工作台。')
+        if (!id || !this.catalog.has(id) || !this.state.added.includes(id) || !this.isWorkbenchVisible(this.catalog.get(id))) throw new Error('请先添加可用的工作台。')
         if (this.activationFor(this.catalog.get(id)) === 'off') throw new Error('工作台插件已关闭，请先开启。')
         this.rememberNativeSession(this.currentSession())
         this.setMarketOpen(false)
@@ -1073,6 +1145,54 @@ window.__ModuleLoader__.load({
           this.run(this.refreshEnterpriseCatalog())
           this.run(this.refreshNative())
         }
+      }
+      clearEnterpriseImages() {
+        for (const resource of this.enterpriseImages.values()) resource.dispose()
+        this.enterpriseImages.clear()
+      }
+      acquireEnterpriseImage(entry, image) {
+        const accountKey = this.enterpriseAccountKey
+        const versionId = entry.versionId || entry.currentVersion?.id
+        const key = JSON.stringify([accountKey, entry.id, versionId, image.id, image.sha256])
+        let resource = this.enterpriseImages.get(key)
+        if (!resource) {
+          const controller = new AbortController()
+          resource = { refs: 0, url: '', promise: null, dispose: () => {
+            controller.abort()
+            if (resource.url) { window.URL.revokeObjectURL(resource.url); resource.url = '' }
+          } }
+          resource.promise = (async () => {
+            if (!accountKey || this.disposed) throw new Error('Enterprise account unavailable.')
+            const params = new window.URLSearchParams({ id: entry.id, versionId, imageId: image.id })
+            const response = await this.request('/api/enterprise.workbenches/screenshot?' + params, {
+              credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+              headers: { 'x-enterprise-account': accountKey }
+            })
+            if (!response.ok) throw new Error('Workbench screenshot unavailable.')
+            const blob = await response.blob()
+            if (blob.type !== image.media_type || blob.size !== image.bytes) throw new Error('Invalid workbench screenshot.')
+            if (this.disposed || controller.signal.aborted || this.enterpriseAccountKey !== accountKey) throw new Error('Enterprise account changed.')
+            resource.url = window.URL.createObjectURL(blob)
+            return resource.url
+          })().catch(error => {
+            // A failed fetch must not become a permanent negative cache entry.
+            if (this.enterpriseImages.get(key) === resource) this.enterpriseImages.delete(key)
+            resource.dispose()
+            throw error
+          })
+          this.enterpriseImages.set(key, resource)
+        }
+        resource.refs += 1
+        let released = false
+        return { promise: resource.promise, release: () => {
+          if (released) return
+          released = true
+          resource.refs -= 1
+          if (resource.refs === 0) {
+            resource.dispose()
+            if (this.enterpriseImages.get(key) === resource) this.enterpriseImages.delete(key)
+          }
+        } }
       }
       async refreshEnterpriseCatalog() {
         const connected = enterpriseCapability.getSnapshot().connected === true
@@ -1158,7 +1278,10 @@ window.__ModuleLoader__.load({
             this.pendingRestart.add(id)
             this.restartNeeded = true
           }
-          await this.readInstalls()
+          if (data.application === 'applied') {
+            if (this.pendingRestart.delete(id) && this.pendingRestart.size === 0) this.restartNeeded = false
+            await this.refreshNative()
+          } else await this.readInstalls()
         } finally {
           this.installing = null
           this.publish()
@@ -1484,6 +1607,7 @@ window.__ModuleLoader__.load({
       dispose() {
         for (const timer of this.noteTimers.values()) clearTimeout(timer)
         for (const id of this.draftNotes.keys()) this.run(this.saveNote(id))
+        this.clearEnterpriseImages()
         this.disposed = true; ++this.navigation; this.listeners.clear()
       }
     }
@@ -1492,6 +1616,7 @@ window.__ModuleLoader__.load({
       .dshWb{font-family:inherit;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary);box-sizing:border-box}
       /* Only style controls owned by the Workbench UI. The native conversation
          is mounted inside .dshWbFrame and must keep its own composer styles. */
+      body:has([data-dsh-workbench-switcher]) [data-dsh-panel-id="desktop-workbenches"]{display:none}
       :is(.dshWbMarket,.dshWbSidebarSwitcher,.dshWbInit,.dshWbNotice) :is(button,input,select,textarea){font-family:inherit;font-size:13px;line-height:20px;color:inherit;box-sizing:border-box}
       :is(.dshWbMarket,.dshWbSidebarSwitcher,.dshWbInit,.dshWbNotice) button{cursor:pointer;transition:none}
       :is(.dshWbMarket,.dshWbSidebarSwitcher,.dshWbInit,.dshWbNotice) button:disabled{opacity:1;cursor:default;color:var(--dsw-alias-label-secondary)}
@@ -1567,6 +1692,8 @@ window.__ModuleLoader__.load({
       .dshWbPreviewBar{display:flex;align-items:center;gap:4px;padding:0 9px;border-bottom:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1)}.dshWbPreviewDot{width:4px;height:4px;border-radius:50%;background:var(--dsw-alias-border-l2)}
       .dshWbPreviewCanvas{display:grid;min-height:0}.dshWbPreviewPane{padding:13px;min-width:0;font-size:10px;line-height:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dshWbPreviewPane+.dshWbPreviewPane{border-left:1px solid var(--dsw-alias-border-l2)}
       .dshWbPreviewPane i{height:4px;background:var(--dsw-alias-border-l2);display:block;border-radius:2px;margin-top:9px;width:78%}.dshWbPreviewPane i:last-child{width:48%}.dshWbPreviewPane em{display:block;width:28px;height:28px;border-radius:7px;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);margin-bottom:12px}
+      .dshWbImagePlaceholder{display:grid;place-items:center;height:100%;padding:20px;box-sizing:border-box;text-align:center;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-module-platform)}
+      .dshWbTechnical{margin:16px 0;overflow-wrap:anywhere}.dshWbTechnical summary{cursor:pointer}.dshWbTechnical dd{white-space:pre-wrap;margin:4px 0 12px}
       .dshWbCardScreenshot{display:block;width:100%;height:100%;object-fit:cover;background:var(--dsw-alias-bg-module-platform)}
       .dshWbCard .dshWbFavorite,.dshWbCard .dshWbRoundButton{position:relative;display:inline-grid;place-items:center;width:30px;height:30px;min-width:30px;min-height:30px;max-width:30px;max-height:30px;flex:0 0 30px;padding:0;border:1px solid var(--dsw-alias-border-l2);border-radius:50%;corner-shape:round;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);text-decoration:none}
       .dshWbCard :is(.dshWbFavorite,.dshWbRoundButton)::before,.dshWbCard :is(.dshWbFavorite,.dshWbRoundButton)::after{corner-shape:round}
@@ -1715,14 +1842,33 @@ window.__ModuleLoader__.load({
       // Published market images can replace stale runtime descriptor URLs.
       return [...new Set(entry?.listed ? [...images, ...primary] : [...primary, ...images])]
     }
-    function useScreenshots(entry) {
-      const candidates = screenshotsFor(entry)
-      const key = JSON.stringify([entry.id, candidates])
+    function useScreenshots(entry, service) {
+      const accountKey = entry.enterprise ? service?.enterpriseAccountKey : ''
+      const images = entry.enterprise && Array.isArray(entry.screenshots) ? entry.screenshots : []
+      const resourceKey = JSON.stringify([accountKey, entry.id, entry.versionId || entry.currentVersion?.id, images])
+      const [loaded, setLoaded] = React.useState({ key: '', urls: [], pending: false })
+      React.useEffect(() => {
+        if (!entry.enterprise || !service || !images.length) return undefined
+        let active = true
+        const resources = images.map(image => service.acquireEnterpriseImage(entry, image))
+        const urls = Array(images.length).fill('')
+        let pending = resources.length
+        setLoaded({ key: resourceKey, urls: [], pending: true })
+        resources.forEach((resource, index) => {
+          resource.promise.then(url => { urls[index] = url }, () => { /* Keep the localized placeholder when the protected image is unavailable. */ }).finally(() => {
+            pending -= 1
+            if (active) setLoaded({ key: resourceKey, urls: [...urls], pending: pending > 0 })
+          })
+        })
+        return () => { active = false; resources.forEach(resource => resource.release()) }
+      }, [service, resourceKey])
+      const candidates = entry.enterprise ? loaded.key === resourceKey ? loaded.urls.filter(Boolean) : [] : screenshotsFor(entry)
+      const key = JSON.stringify([resourceKey, candidates])
       const [failure, setFailure] = React.useState({ key, urls: [] })
       const failed = failure.key === key ? failure.urls : []
       return [candidates.filter(url => !failed.includes(url)), (url) => setFailure(previous => ({
         key, urls: [...new Set([...(previous.key === key ? previous.urls : []), url])]
-      }))]
+      })), entry.enterprise && loaded.key === resourceKey && loaded.pending, url => entry.enterprise ? images[loaded.urls.indexOf(url)]?.alt || '' : '']
     }
     function compactCount(value) {
       if (!Number.isFinite(value) || value < 0) return tr('暂无')
@@ -1785,14 +1931,13 @@ window.__ModuleLoader__.load({
       const activePanelId = typeof usePanelInfo === 'function' ? usePanelInfo((info) => info?.activePanelId) : (marketOpen ? PANEL : null)
       const marketSelected = activePanelId === PANEL
       const enabled = React.useSyncExternalStore(workbenchPreference.subscribe.bind(workbenchPreference), workbenchPreference.getSnapshot.bind(workbenchPreference))
-      const enterprise = React.useSyncExternalStore(enterpriseCapability.subscribe.bind(enterpriseCapability), enterpriseCapability.getSnapshot.bind(enterpriseCapability))
       const [open, setOpen] = React.useState(false)
       const [draggingId, setDraggingId] = React.useState(null)
       const [dropTarget, setDropTarget] = React.useState(null)
       const [announcement, setAnnouncement] = React.useState('')
       const draggingIdRef = React.useRef(null)
       const dropTargetRef = React.useRef(null)
-      if (!enabled || !wide || (enterprise.known && !enterprise.connected)) return null
+      if (!enabled || !wide) return null
       const disabled = !ready || pending > 0 || service.blocked
       const pinned = state.pinned.map((id) => catalog.find((item) => item.id === id)).filter((item) => item && state.added.includes(item.id) && service.catalog.has(item.id) && service.activationFor(item) !== 'off').map(displayEntry)
       const active = state.active && pinned.find((item) => item.id === state.active)
@@ -1919,11 +2064,12 @@ window.__ModuleLoader__.load({
       const title = h('span', { className: 'dshWbTitleText' }, entry.title)
       return href ? h('a', { className: 'dshWbTitleLink', href, target: '_blank', rel: 'noopener noreferrer', title: both(`在 GitHub 上查看${entry.title || ''}`, `View ${entry.title || ''} on GitHub`) }, icon, title) : h('span', { className: 'dshWbTitleLink' }, icon, title)
     }
-    function Preview({ entry, detail = false }) {
-      const [screenshots, setFailedScreenshot] = useScreenshots(entry)
+    function Preview({ entry, service, detail = false }) {
+      const [screenshots, setFailedScreenshot, loading, screenshotAlt] = useScreenshots(entry, service)
       const screenshot = screenshots[0]
       if (detail) return null
-      if (screenshot) return h('img', { className: 'dshWbCardScreenshot', src: screenshot, alt: both(`${entry.title || tr('工作台')}产品截图`, `${entry.title || tr('工作台')} screenshot`), loading: 'lazy', style: { objectPosition: entry.screenshotPosition || 'center' }, onError: () => setFailedScreenshot(screenshot) })
+      if (screenshot) return h('img', { className: 'dshWbCardScreenshot', src: screenshot, alt: screenshotAlt(screenshot) || both(`${entry.title || tr('工作台')}产品截图`, `${entry.title || tr('工作台')} screenshot`), loading: 'lazy', style: { objectPosition: entry.screenshotPosition || 'center' }, onError: () => setFailedScreenshot(screenshot) })
+      if (entry.enterprise) return h('div', { className: 'dshWbImagePlaceholder', role: 'status' }, enterpriseText(service?.ctx, loading ? 'imageLoading' : entry.screenshots?.length ? 'imageFailed' : 'imageEmpty'))
       const columns = entry.layout?.businessSide === 'left' ? '1fr 1.8fr' : '1.45fr 1fr'
       return h('div', { className: 'dshWbPreview', role: 'img', 'aria-label': both(`${entry.title}界面预览（模拟）`, `${entry.title} simulated preview`) },
         h('div', { className: 'dshWbPreviewBar', 'aria-hidden': true }, h('span', { className: 'dshWbPreviewDot' }), h('span', { className: 'dshWbPreviewDot' }), h('span', { className: 'dshWbPreviewDot' })),
@@ -1931,8 +2077,8 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dshWbPreviewPane', style: { order: entry.layout?.businessSide === 'left' ? 2 : 1 } }, h('em'), tr('会话'), h('i'), h('i')),
           h('div', { className: 'dshWbPreviewPane', style: { order: entry.layout?.businessSide === 'left' ? 1 : 2 } }, h('em'), entry.panelTitle || tr('业务区域'), h('i'), h('i'))))
     }
-    function ScreenshotGallery({ entry }) {
-      const [screenshots, failScreenshot] = useScreenshots(entry)
+    function ScreenshotGallery({ entry, service }) {
+      const [screenshots, failScreenshot, loading, screenshotAlt] = useScreenshots(entry, service)
       const [lightbox, setLightbox] = React.useState(null)
       const [index, setIndex] = React.useState(0)
       const trackRef = React.useRef(null)
@@ -1959,13 +2105,13 @@ window.__ModuleLoader__.load({
         if (track) track.scrollTo({ left: target * track.clientWidth, behavior: 'smooth' })
         setIndex(target)
       }
-      if (screenshots.length === 0) return null
+      if (screenshots.length === 0) return entry.enterprise && entry.screenshots?.length ? h('p', { className: 'dshWbMuted', role: 'status' }, enterpriseText(service?.ctx, loading ? 'imageLoading' : 'imageFailed')) : null
       const many = screenshots.length > 1
       const carousel = h('div', { className: 'dshWbCarousel', role: 'region', 'aria-roledescription': tr('轮播'), 'aria-label': both(`${entry.title || tr('工作台')}产品截图`, `${entry.title || tr('工作台')} screenshots`),
         onKeyDown: (event) => { if (event.key === 'ArrowLeft') { event.preventDefault(); go(index - 1) } else if (event.key === 'ArrowRight') { event.preventDefault(); go(index + 1) } } },
         h('div', { ref: trackRef, className: 'dshWbCarouselTrack', onScroll: (event) => { const track = event.currentTarget; if (track.clientWidth) setIndex(Math.round(track.scrollLeft / track.clientWidth)) } },
           screenshots.map((src, i) => h('button', { key: src, type: 'button', className: 'dshWbCarouselSlide', 'aria-label': both(`放大截图 ${i + 1}/${screenshots.length}`, `Enlarge screenshot ${i + 1} of ${screenshots.length}`), tabIndex: i === index ? 0 : -1, onClick: (event) => openLightbox(event, src) },
-            h('img', { src, alt: '', loading: i === 0 ? 'eager' : 'lazy', onError: () => failScreenshot(src) })))),
+            h('img', { src, alt: screenshotAlt(src), loading: i === 0 ? 'eager' : 'lazy', onError: () => failScreenshot(src) })))),
         many && h('button', { type: 'button', className: 'dshWbCarouselNav', 'data-side': 'prev', 'aria-label': tr('上一张'), disabled: index === 0, onClick: () => go(index - 1) }, h(MarketIcon, { name: 'chevronLeft', size: 18 })),
         many && h('button', { type: 'button', className: 'dshWbCarouselNav', 'data-side': 'next', 'aria-label': tr('下一张'), disabled: index === screenshots.length - 1, onClick: () => go(index + 1) }, h(MarketIcon, { name: 'chevronRight', size: 18 })),
         many && h('div', { className: 'dshWbCarouselDots', 'aria-hidden': true }, screenshots.map((src, i) => h('span', { key: src, 'data-active': i === index }))),
@@ -2005,6 +2151,13 @@ window.__ModuleLoader__.load({
         }
       }, [open, dialogRef])
     }
+    function safeProjectHomepage(value) {
+      if (typeof value !== 'string') return ''
+      try {
+        const url = new window.URL(value)
+        return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url.href : ''
+      } catch { return '' }
+    }
     function DetailModal({ entry, service, onClose }) {
       const dialogRef = React.useRef(null)
       const snapshot = useWorkbench(service || { subscribe: () => () => {}, getSnapshot: () => ({}) })
@@ -2014,6 +2167,9 @@ window.__ModuleLoader__.load({
       const enterpriseBundle = entry?.packageName && snapshot.native?.bundles?.[entry.packageName]
       const enterpriseInstalled = !enterpriseRestart && !!enterpriseBundle && enterpriseBundle.installed !== false && enterpriseBundle.version === entry.version
       const metadata = detail?.packageMetadata
+      const activation = entry?.enterprise && service.activationFor({ id: entry.id, packageName: entry.packageName })
+      const enterpriseStatus = enterpriseRestart ? 'restart' : enterpriseInstalled ? activation === 'on' ? 'enabled' : activation === 'off' ? 'disabled' : 'activationUnknown' : ''
+      const homepage = safeProjectHomepage(metadata?.repositoryUrl)
       useDialogFocus(!!entry, onClose, dialogRef)
       if (!entry) return null
       return require('react-dom').createPortal(
@@ -2026,11 +2182,12 @@ window.__ModuleLoader__.load({
             entry.enterprise ? h(React.Fragment, null,
               !detail && h('p', { role: 'status' }, enterpriseText(service.ctx, 'detailLoading')),
               (detail?.description || entry.description) && h('p', null, detail?.description || entry.description),
-              h('p', { className: 'dshWbMuted' }, `${detail?.packageName || entry.packageName || ''} · ${entry.identityKind === 'legacy' ? `旧格式 ${detail?.legacyId || entry.legacyId || ''}` : detail?.workbenchKey || entry.workbenchKey || ''}`),
-              h('p', { className: 'dshWbMuted' }, enterpriseText(service.ctx, 'scope')),
-              metadata && h('dl', null,
-                ['repositoryUrl', 'patchEntryId', 'serverEntry', 'clientEntry', 'bundlePatch', 'license', 'nodeEngine'].filter(key => metadata[key]).map(key => h('div', { key }, h('dt', null, key), h('dd', null, metadata[key])))),
-              enterpriseRestart ? h('p', { role: 'status' }, enterpriseText(service.ctx, 'restart')) : enterpriseInstalled ? h('p', { role: 'status' }, enterpriseText(service.ctx, 'installed')) : detail?.verifiable && h(Button, { primary: true, disabled: snapshot.installing === entry.id, onClick: () => service.run(service.installEnterpriseWorkbench(entry.id)) }, snapshot.installing === entry.id ? enterpriseText(service.ctx, 'installing') : enterpriseText(service.ctx, 'install')),
+              h('p', { className: 'dshWbMuted' }, enterpriseText(service.ctx, 'source'), ' · ', enterpriseText(service.ctx, 'version'), ' ', detail?.currentVersion.version || entry.version),
+              h(ScreenshotGallery, { entry: detail ? { ...entry, screenshots: detail.screenshots, versionId: detail.currentVersion.id } : entry, service }),
+              homepage && h('p', null, h('a', { href: homepage, target: '_blank', rel: 'noopener noreferrer' }, enterpriseText(service.ctx, 'homepage'))),
+              metadata && h('details', { className: 'dshWbTechnical' }, h('summary', null, enterpriseText(service.ctx, 'technical')), h('dl', null,
+                [['packageName', detail.packageName], ['identity', detail.workbenchKey || detail.legacyId], ...['patchEntryId', 'serverEntry', 'clientEntry', 'bundlePatch', 'license', 'nodeEngine'].map(key => [key, metadata[key]]), ['dependencies', metadata.dependencies?.join('\n')]].filter(([, value]) => value).map(([key, value]) => h('div', { key }, h('dt', null, enterpriseText(service.ctx, key)), h('dd', null, value))))),
+              enterpriseStatus ? h('p', { role: 'status' }, enterpriseText(service.ctx, enterpriseStatus)) : detail?.verifiable && h(Button, { primary: true, disabled: snapshot.installing === entry.id, onClick: () => service.run(service.installEnterpriseWorkbench(entry.id)) }, snapshot.installing === entry.id ? enterpriseText(service.ctx, 'installing') : enterpriseText(service.ctx, 'install')),
               detail?.verifiable && h(Button, { disabled: verification.status === 'busy' && verification.id === entry.id, onClick: () => service.run(service.verifyEnterpriseWorkbench(entry.id)) }, verification.status === 'busy' && verification.id === entry.id ? enterpriseText(service.ctx, 'verifying') : enterpriseText(service.ctx, 'verify')),
               verification.id === entry.id && verification.status === 'ok' && h('p', { role: 'status' }, enterpriseText(service.ctx, 'verified')),
               verification.id === entry.id && verification.status === 'error' && h('p', { role: 'alert' }, verification.error)
@@ -2209,9 +2366,10 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
       const workbenchEnabled = React.useSyncExternalStore(workbenchPreference.subscribe.bind(workbenchPreference), workbenchPreference.getSnapshot.bind(workbenchPreference))
       const enterprise = React.useSyncExternalStore(enterpriseCapability.subscribe.bind(enterpriseCapability), enterpriseCapability.getSnapshot.bind(enterpriseCapability))
       const publicMarket = !enterprise.known || enterprise.allowThirdPartyWorkbenches === true
-      const enterpriseVisible = enterprise.connected === true
-      const enterpriseAsMarket = enterpriseVisible && !publicMarket
-      const [tab, setTab] = React.useState('market')
+      const [tab, setTab] = React.useState('enterprise')
+      React.useEffect?.(() => {
+        if (enterprise.connected) { setTab('enterprise'); setCategory('all'); setSearch(''); setDetail(null) }
+      }, [enterprise.connected, enterprise.accountKey])
       const [search, setSearch] = React.useState('')
       const [category, setCategory] = React.useState('all')
       const [sortBy, setSortBy] = React.useState('stars')
@@ -2237,7 +2395,8 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
         }))
       }
       if (!workbenchEnabled) return h('section', { className: 'dshWb dshWbMarket', 'aria-label': tr('工作台市场') },
-        h('div', { className: 'dshWbDisabledHint' }, h('h1', null, tr('工作台功能已关闭')), null))
+        h('div', { className: 'dshWbDisabledHint' }, h('h1', null, tr('工作台功能已关闭')),
+          h(Button, { primary: true, onClick: () => workbenchPreference.set(true) }, tr('开启工作台'))))
       const developmentPrompt = developmentWorkbenchAgentPrompt()
       const chosenCategory = marketCategories.find((item) => item.id === submitCategory)
       const submissionPrompt = submissionWorkbenchAgentPrompt({ category: chosenCategory, suggestion: categoryIdea })
@@ -2245,19 +2404,20 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
       const added = state.added
       const favorites = state.favorites || []
       const unavailableEntry = (id) => ({ id, title: id, category: tr('其他'), categoryId: 'other', unavailable: true, description: both('提供此工作台的插件当前未加载。', 'The plugin for this workbench is not loaded.'), loadFailure: both('工作台插件当前未加载。', 'The workbench plugin is not loaded.') })
-      const collectionValues = [...(publicMarket ? ['market', 'favorites'] : enterpriseAsMarket ? ['market'] : []), ...(enterpriseVisible && publicMarket ? ['enterprise'] : []), 'mine']
+      const collectionValues = ['enterprise', ...(publicMarket ? ['market', 'favorites'] : []), 'mine']
       const visibleTab = collectionValues.includes(tab) ? tab : collectionValues[0]
-      const showingEnterprise = visibleTab === 'enterprise' || (visibleTab === 'market' && enterpriseAsMarket)
+      const showingEnterprise = visibleTab === 'enterprise'
       const localizedCatalog = catalog.map((entry) => displayEntry(visibleTab === 'mine' ? service.installedEntry(entry) : entry))
       const marketEntries = localizedCatalog.filter((entry) => entry.listed === true)
       const installedEntries = [
-        ...added.filter((id) => !removedWorkbenchIds.includes(id) &&
+        ...added.filter((id) => !removedWorkbenchIds.includes(id) && service.isWorkbenchVisible(service.catalog.get(id) || { id }) &&
           (localizedCatalog.some((entry) => entry.id === id) || !service.hasUsablePackageAlias(id, catalog)))
           .map((id) => localizedCatalog.find((entry) => entry.id === id) || unavailableEntry(id)),
         ...localizedCatalog.filter((entry) => entry.installed && !added.includes(entry.id))
       ]
-      const enterpriseEntries = enterpriseCatalog.map((item) => ({
+      const enterpriseEntries = (enterprise.connected ? enterpriseCatalog : []).map((item) => ({
         id: item.id, catalogId: item.id, title: item.displayName, description: item.description || '', enterprise: true, listed: false, local: false,
+        screenshots: item.screenshots || [], versionId: item.currentVersion?.id,
         packageName: item.packageName, identityKind: item.identityKind, workbenchKey: item.workbenchKey, legacyId: item.legacyId,
         version: item.currentVersion?.version, category: item.identityKind === 'legacy' ? '旧格式' : '企业', author: item.packageName
       }))
@@ -2304,9 +2464,9 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
         h(Notice, { service, showCatalogStatus: true }),
         tab !== 'submit' && h('div', { className: 'dshWbToolbar' },
           h('div', { className: 'dshWbTabs' }, h('div', { role: 'tablist', 'aria-label': tr('工作台集合') },
-            (publicMarket || enterpriseAsMarket) && h(Button, { id: 'dsh-workbench-market-tab', role: 'tab', tabIndex: visibleTab === 'market' ? 0 : -1, 'aria-selected': visibleTab === 'market', 'aria-controls': 'dsh-workbench-market-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('market') }, tr('工作台市场')),
+            h(Button, { id: 'dsh-workbench-enterprise-tab', role: 'tab', tabIndex: visibleTab === 'enterprise' ? 0 : -1, 'aria-selected': visibleTab === 'enterprise', 'aria-controls': 'dsh-workbench-enterprise-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('enterprise') }, service.ctx.locale.bind('workbench.enterprise')('tab')),
+            publicMarket && h(Button, { id: 'dsh-workbench-market-tab', role: 'tab', tabIndex: visibleTab === 'market' ? 0 : -1, 'aria-selected': visibleTab === 'market', 'aria-controls': 'dsh-workbench-market-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('market') }, tr('工作台市场')),
             publicMarket && h(Button, { id: 'dsh-workbench-favorites-tab', role: 'tab', tabIndex: visibleTab === 'favorites' ? 0 : -1, 'aria-selected': visibleTab === 'favorites', 'aria-controls': 'dsh-workbench-favorites-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('favorites') }, `${tr('我的收藏')} (${favorites.length})`),
-            enterpriseVisible && publicMarket && h(Button, { id: 'dsh-workbench-enterprise-tab', role: 'tab', tabIndex: visibleTab === 'enterprise' ? 0 : -1, 'aria-selected': visibleTab === 'enterprise', 'aria-controls': 'dsh-workbench-enterprise-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('enterprise') }, service.ctx.locale.bind('workbench.enterprise')('tab')),
             h(Button, { id: 'dsh-workbench-mine-tab', role: 'tab', tabIndex: visibleTab === 'mine' ? 0 : -1, 'aria-selected': visibleTab === 'mine', 'aria-controls': 'dsh-workbench-mine-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('mine') }, `${tr('已安装')} (${installedEntries.length})`))),
           h('div', { className: 'dshWbBrowseTools' },
             h('span', { className: 'dshWbRefreshHint' }, h(Button, { className: 'dshWbBtn dshWbRefresh', 'aria-describedby': 'dsh-workbench-refresh-tooltip', 'aria-label': checkingUpdates ? tr('正在检查更新') : tab === 'mine' ? tr('检查更新') : tr('刷新目录'), 'aria-busy': catalogRefreshing || checkingUpdates, disabled: catalogRefreshing || checkingUpdates, onClick: () => service.run(visibleTab === 'mine' ? service.checkUpdates() : showingEnterprise ? service.refreshEnterpriseCatalog() : service.refreshCatalog()) }, h(MarketIcon, { name: 'refresh', size: 17 })), h('span', { id: 'dsh-workbench-refresh-tooltip', className: 'dshWbControlTooltip', role: 'tooltip' }, checkingUpdates ? tr('正在检查更新') : tab === 'mine' ? tr('检查更新') : tr('刷新目录'))),
@@ -2348,8 +2508,8 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
               h(SubmissionStatus, { service }))),
           h('p', { className: 'dshWbMuted dshWbSubmitOutcome' }, tr('提交 PR 就是进入审核，进度以 GitHub 上的 PR 为准，本机不保存投稿状态。PR 合并、市场目录更新后，工作台就会出现在工作台市场中。')),
           copyStatus && h(Toast, { key: copyStatus.id, text: copyStatus.text, tone: copyStatus.tone, holdMs: 2000, onDone: () => setCopyStatus((current) => current?.id === copyStatus.id ? null : current) })),
-        tab !== 'submit' && h('section', { id: `dsh-workbench-${tab}-panel`, role: 'tabpanel', 'aria-labelledby': `dsh-workbench-${tab}-tab`, tabIndex: 0 },
-          h('div', { className: 'dshWbGrid', 'data-tab': tab }, displayedEntries.map((entry) => {
+        tab !== 'submit' && h('section', { id: `dsh-workbench-${visibleTab}-panel`, role: 'tabpanel', 'aria-labelledby': `dsh-workbench-${visibleTab}-tab`, tabIndex: 0 },
+          h('div', { className: 'dshWbGrid', 'data-tab': visibleTab }, displayedEntries.map((entry) => {
             const catalogId = entry.catalogId || entry.id
             const isFavorite = favorites.includes(catalogId)
             const pluginName = service.pluginFor(entry)
@@ -2367,7 +2527,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
             // Native inventory describes the package actually on disk. The market
             // record survives a stopped provider; the listing is for uninstalled cards.
             const installedVersion = service.installedVersionFor(entry)
-            const marketVersion = entry.listed && (entry.listedVersion || entry.version)
+            const marketVersion = (entry.listed || entry.enterprise) && (entry.listedVersion || entry.version)
             const deviceVersionText = typeof installedVersion === 'string' && installedVersion.trim()
             const marketVersionText = typeof marketVersion === 'string' && marketVersion.trim()
             const cardVersion = tab === 'mine' ? deviceVersionText : marketVersionText
@@ -2387,7 +2547,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
             const updateLabel = awaitingRestart ? tr('重启后生效') : updating ? tr('更新中…') : tr('更新')
             const updateTitle = awaitingRestart ? both(`${entry.title}安装完成，重启 Harness 后生效`, `${entry.title} installed. Restart Harness to apply.`) : updating ? both(`正在更新${entry.title}`, `Updating ${entry.title}`) : both(`${updateLabel}${entry.title}至 v${entry.listedVersion}`, `Update ${entry.title} to v${entry.listedVersion}`)
             return h('article', { key: catalogId, className: 'dshWbCard' },
-              h('div', { className: 'dshWbMedia' }, h('button', { type: 'button', className: 'dshWbMediaOpen', 'aria-describedby': `dsh-wb-preview-tooltip-${catalogId}`, 'aria-label': both(`查看${entry.title}详情`, `View ${entry.title} details`), onClick: () => { setDetail(catalogId); if (entry.enterprise) service.run(service.openEnterpriseDetail(catalogId)) } }, h(Preview, { entry }), h('span', { className: 'dshWbMediaZoom', 'aria-hidden': true }, h(MarketIcon, { name: 'zoom', size: 18 }))), h('span', { id: `dsh-wb-preview-tooltip-${catalogId}`, className: 'dshWbControlTooltip', role: 'tooltip' }, tr('查看详情'))),
+              h('div', { className: 'dshWbMedia' }, h('button', { type: 'button', className: 'dshWbMediaOpen', 'aria-describedby': `dsh-wb-preview-tooltip-${catalogId}`, 'aria-label': both(`查看${entry.title}详情`, `View ${entry.title} details`), onClick: () => { setDetail(catalogId); if (entry.enterprise) service.run(service.openEnterpriseDetail(catalogId)) } }, h(Preview, { entry, service }), h('span', { className: 'dshWbMediaZoom', 'aria-hidden': true }, h(MarketIcon, { name: 'zoom', size: 18 }))), h('span', { id: `dsh-wb-preview-tooltip-${catalogId}`, className: 'dshWbControlTooltip', role: 'tooltip' }, tr('查看详情'))),
               h('div', { className: 'dshWbCardBody' },
                 h('div', { className: 'dshWbCardTitle' }, h('h2', null, h(EntryTitle, { entry })), tab === 'mine' && service.isLocalEntry(entry) && h('span', { className: 'dshWbCategory' }, tr('本地')), tab === 'mine' && h('span', { className: 'dshWbControlHint dshWbSwitchHint' }, h('button', { type: 'button', className: 'dshWbRunSwitch', role: 'switch', 'aria-checked': activation === 'on', 'aria-label': both(`${entry.title}运行状态`, `${entry.title} running state`), 'aria-describedby': `dsh-wb-switch-tooltip-${catalogId}`, disabled: disabled || !!togglingPlugin || !hasNativeControl || activation === 'unknown', onClick: () => service.run(service.setPluginEnabled(pluginName, activation !== 'on')) }), h('span', { id: `dsh-wb-switch-tooltip-${catalogId}`, className: 'dshWbControlTooltip', role: 'tooltip' }, activation === 'unknown' ? tr('原生插件状态暂不可用') : activation === 'on' ? tr('停用') : tr('启用')))),
                 h('div', { className: 'dshWbAuthorRow' }, h(AuthorItem, { entry, showVersion: false }), versionText && h('span', { className: 'dshWbCardVersion' }, versionText)),
@@ -2411,22 +2571,22 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
                       entry.failureKind === 'install' && !added.includes(entry.id) && !service.installs[catalogId] && h('button', { type: 'button', className: 'dshWbRetry', title: tr('清除失败提示'), 'aria-label': tr('清除失败提示'), onClick: () => service.clearInstallFailure(catalogId) }, h('span', { 'aria-hidden': true }, '×')))
                     : tab === 'mine'
                     ? h('button', { type: 'button', className: !entry.listed ? 'dshWbUninstall dshWbLocalUninstall' : 'dshWbUninstall', title: canUninstall ? both(`${removalLabel}${entry.title}`, `${removalLabel} ${entry.title}`) : tr(localRemoval?.reason) || tr('原生插件状态未知或不可卸载'), 'aria-label': both(`${removalLabel}${entry.title}`, `${removalLabel} ${entry.title}`), 'aria-describedby': !canUninstall ? `dsh-wb-uninstall-reason-${catalogId}` : undefined, disabled: disabled || !!removingPlugin || !canUninstall, onClick: () => setRemoving(entry.id) }, removalLabel)
-                    : installed
+                    : installed && !entry.enterprise
                       ? h('span', { className: 'dshWbInstalled', role: 'status' }, tr('已安装'))
                       : entry.enterprise
                       ? enterpriseRestart
                         ? h('span', { className: 'dshWbInstalled', role: 'status' }, enterpriseText(service.ctx, 'restart'))
                         : enterpriseInstalled
-                          ? h('span', { className: 'dshWbInstalled', role: 'status' }, enterpriseText(service.ctx, 'installed'))
+                          ? h('span', { className: 'dshWbInstalled', role: 'status' }, enterpriseText(service.ctx, activation === 'on' ? 'enabled' : activation === 'off' ? 'disabled' : 'activationUnknown'))
                           : h(React.Fragment, null,
                             h(Button, { onClick: () => { setDetail(catalogId); service.run(service.openEnterpriseDetail(catalogId)) } }, enterpriseText(service.ctx, 'detail')),
                             h(Button, { primary: true, disabled: disabled || !!installing, onClick: () => service.run(service.installEnterpriseWorkbench(catalogId)) }, installing === catalogId ? enterpriseText(service.ctx, 'installing') : enterpriseText(service.ctx, 'install')))
                       : entry.distribution
                         ? h(Button, { primary: true, disabled: disabled || !!installing, onClick: () => installMarket(entry) }, installing === catalogId ? tr('正在安装…') : tr('安装'))
                         : entry.listed === true && entry.repository && h('a', { className: 'dshWbBtn dshWbPrimary', href: entry.repository, target: '_blank', rel: 'noopener noreferrer' }, tr('查看安装说明'))))))
-          }), entries.length === 0 && (tab !== 'market' || (ready && !catalogRefreshing) || catalogLoaded) && h('div', { className: 'dshWbEmpty' }, h('div', null,
-            h('strong', null, showingEnterprise && !search ? (enterpriseCatalogStatus === 'unavailable' ? enterpriseText(service.ctx, 'unavailable') : enterpriseCatalogStatus === 'error' ? enterpriseText(service.ctx, 'failed') : (enterpriseCatalogStatus === 'loading' || enterpriseCatalogStatus === 'idle') ? enterpriseText(service.ctx, 'loading') : enterpriseText(service.ctx, 'empty')) : tab === 'market' && !catalogLoaded && catalogError ? tr('市场目录暂不可用') : tab === 'favorites' && !search ? tr('还没有收藏工作台') : tab === 'mine' && !search ? tr('还没有安装工作台') : tr('没有找到匹配的工作台')),
-            h('p', { className: 'dshWbMuted' }, tab === 'market' && !catalogLoaded && catalogError ? tr('请重试读取目录，或使用已安装的工作台。') : tab === 'favorites' && !search ? tr('把鼠标移到市场卡片上，点击书签即可收藏。') : tab === 'mine' && !search ? tr('到工作台市场选择一个工作台开始。') : tr('试试其他关键词或分类。'))))),
+          }), entries.length === 0 && (visibleTab !== 'market' || (ready && !catalogRefreshing) || catalogLoaded) && h('div', { className: 'dshWbEmpty' }, h('div', null,
+            h('strong', null, showingEnterprise && !enterprise.connected ? service.ctx.locale.bind('workbench.enterprise')('signIn') : showingEnterprise && !search ? (enterpriseCatalogStatus === 'unavailable' ? enterpriseText(service.ctx, 'unavailable') : enterpriseCatalogStatus === 'error' ? enterpriseText(service.ctx, 'failed') : (enterpriseCatalogStatus === 'loading' || enterpriseCatalogStatus === 'idle') ? enterpriseText(service.ctx, 'loading') : enterpriseText(service.ctx, 'empty')) : tab === 'market' && !catalogLoaded && catalogError ? tr('市场目录暂不可用') : tab === 'favorites' && !search ? tr('还没有收藏工作台') : tab === 'mine' && !search ? tr('还没有安装工作台') : tr('没有找到匹配的工作台')),
+            h('p', { className: 'dshWbMuted' }, showingEnterprise && !enterprise.connected ? service.ctx.locale.bind('workbench.enterprise')('signInHint') : showingEnterprise && !search ? (enterpriseCatalogError || enterpriseText(service.ctx, 'emptyHint')) : visibleTab === 'market' && !catalogLoaded && catalogError ? tr('请重试读取目录，或使用已安装的工作台。') : tab === 'favorites' && !search ? tr('把鼠标移到市场卡片上，点击书签即可收藏。') : tab === 'mine' && !search ? tr('到工作台市场选择一个工作台开始。') : tr('试试其他关键词或分类。'))))),
           hasMore && h('div', { className: 'dshWbMoreContainer' },
             h(Button, { className: 'dshWbBtn dshWbMore', onClick: () => setVisibleCount((current) => current + PAGE_SIZE) }, tr('加载更多')),
             h('p', { className: 'dshWbMoreCount' }, isEnglish() ? `Showing ${displayedEntries.length} of ${entries.length}` : `已显示 ${displayedEntries.length} / 共 ${entries.length} 个工作台`))),
@@ -2683,6 +2843,11 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
       ctx.effect(maintainStyles, 'workbenches: styles')
       ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL, inject: () => ({ service }) }, Market))
       ctx.slots.inject('sidebar.quickSwitcher', () => ctx.slots.register({ name: 'sidebar.quickSwitcher', inject: () => ({ service }) }, WorkbenchSidebarSwitcher))
+      if (!window.dshEnterpriseChat) {
+        ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+          name: 'sidebar.panellist', id: PANEL, order: 40, label: () => tr('工作台')
+        }, ({ size }) => h(MarketIcon, { name: 'market', size })))
+      }
       ctx.slots.inject('sidebar.workspaces', () => ctx.slots.inject('sidebar.session.leading', () => ctx.slots.register({ name: 'sidebar.session.leading', inject: () => ({ service }) }, SessionWorkbenchIcon)))
       ctx.slots.inject('desktop.workbench.frame', () => ctx.slots.register({ name: 'desktop.workbench.frame', inject: () => ({ service }) }, Frame))
       ctx.effect(() => {
@@ -2706,10 +2871,13 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           clearTimeout(expiryTimer)
           if (connected && expiresAt > Date.now()) expiryTimer = setTimeout(() => { void sync() }, Math.min(expiresAt - Date.now() + 1, 2_147_483_647))
           const previousConnected = enterpriseCapability.getSnapshot().connected
+          if (connected && !previousConnected) workbenchPreference.enableForEnterprise()
           const previousKey = service.enterpriseAccountKey
           const accountChanged = previousKey !== (account?.connectionKey || '')
           if (!connected || (previousKey && account.connectionKey && account.connectionKey !== previousKey)) {
             service.enterpriseTicket += 1
+            service.clearEnterpriseImages()
+            service.enterpriseVerify = { status: 'idle', id: '', error: '' }
             service.enterpriseCatalog = []
             service.enterpriseDetail = null
             service.enterpriseAccountKey = ''
@@ -2718,6 +2886,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           enterpriseCapability.replace({
             known: true,
             connected,
+            accountKey: connected ? account.connectionKey || '' : '',
             allowThirdPartyWorkbenches: connected && account.allowThirdPartyWorkbenches === true
           })
           if (previousConnected && !connected && (service.state.active || service.marketOpen)) service.run(service.returnToNativeSession())
@@ -2725,12 +2894,11 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           service.networkMarketAllowed = marketAllowed
           if (!marketAllowed) service.closePublicMarket()
           service.publish()
+          if (service.state.active && !service.isWorkbenchVisible(service.catalog.get(service.state.active) || { id: service.state.active })) service.run(service.returnToNativeSession())
           if (connected && (accountChanged || service.enterpriseCatalogStatus === 'idle')) service.run(service.refreshEnterpriseCatalog())
         }
         const syncTab = () => {
-          disposeTab?.()
-          disposeTab = undefined
-          if (!enterpriseCapability.getSnapshot().connected) return
+          if (disposeTab) return
           disposeTab = ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({
             name: 'settings.plugins.tab', id: 'desktop-workbenches', order: 40, label: () => ctx.locale.bind(SETTINGS_NS)('title')
           }, WorkbenchSettingsTab))
@@ -2751,14 +2919,16 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
         return () => { disposed = true; revision++; clearTimeout(expiryTimer); disposeTab?.(); unsubscribe(); unsubscribeNative?.(); window.removeEventListener('focus', onAccountChanged); window.removeEventListener('dsh-desktop:enterprise-account-changed', onAccountChanged) }
       }, 'workbenches: enterprise capability')
       ctx.effect(() => ctx.locale?.register?.('workbench.enterprise', {
-        zh: {
+        zh: { ...enterpriseMarketCopy.zh,
           tab: '来自企业',
+          signIn: '登录后查看企业工作台', signInHint: '请先在企业账号中登录，以查看和安装企业提供的工作台。',
           loading: '正在读取企业工作台…', empty: '企业还没有可展示的工作台', unavailable: '企业工作台服务暂不可用',
           failed: '暂时无法读取企业工作台', verify: '核对原包', verified: '原包完整性核对通过。',
           install: '安装', installing: '正在安装…', installed: '已安装', restart: '重启后生效'
         },
-        en: {
+        en: { ...enterpriseMarketCopy.en,
           tab: 'From enterprise',
+          signIn: 'Sign in to view enterprise workbenches', signInHint: 'Sign in to your enterprise account to view and install workbenches provided by your enterprise.',
           loading: 'Loading enterprise workbenches…', empty: 'Your enterprise has not published a workbench yet.', unavailable: 'The enterprise workbench service is unavailable.',
           failed: 'Enterprise workbenches could not be loaded.', verify: 'Verify package', verified: 'The package integrity check passed.',
           install: 'Install', installing: 'Installing…', installed: 'Installed', restart: 'Restart to use'
@@ -2805,6 +2975,6 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
         return () => { window.removeEventListener('beforeunload', beforeUnload); service.dispose() }
       }, 'workbenches: lifecycle')
     }
-    return { apply, inject: ['slots', 'layout', 'sessions', 'workspaces', 'uiWorkspace', 'modules', 'remote', 'remote.pluginManager', 'locale'], Workbenches, Frame, Market, Notebook, submissionAgentPrompt, developmentWorkbenchAgentPrompt, submissionWorkbenchAgentPrompt, copySubmissionPrompt }
+    return { apply, inject: ['slots', 'layout', 'sessions', 'workspaces', 'uiWorkspace', 'modules', 'remote', 'remote.pluginManager', 'locale'], Workbenches, Frame, Market, Notebook, Preview, DetailModal, ScreenshotGallery, submissionAgentPrompt, developmentWorkbenchAgentPrompt, submissionWorkbenchAgentPrompt, copySubmissionPrompt }
   }
 })

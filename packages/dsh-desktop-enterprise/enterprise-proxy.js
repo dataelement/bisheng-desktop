@@ -76,6 +76,8 @@ export function createEnterpriseProxyHandler({ getSessionAuth, refreshSessionTok
     const forward = async (sessionAuth, isRetry = false) => {
       const targetBase = sessionAuth.base.replace(/\/+$/, '')
       const targetUrl = new URL(req.url, targetBase)
+      const signedObject = req.method === 'GET' && targetUrl.pathname.startsWith('/workspace/bisheng/') &&
+        targetUrl.searchParams.has('X-Amz-Algorithm') && targetUrl.searchParams.has('X-Amz-Credential') && targetUrl.searchParams.has('X-Amz-Signature')
       const isHttps = targetUrl.protocol === 'https:'
       const httpClient = isHttps ? https : http
 
@@ -109,7 +111,9 @@ export function createEnterpriseProxyHandler({ getSessionAuth, refreshSessionTok
       outgoingHeaders.cookie = cookieParts.join('; ')
 
       // Inject Bearer Authorization header if not already present
-      if (!outgoingHeaders.authorization) {
+      if (signedObject) {
+        delete outgoingHeaders.authorization
+      } else if (!outgoingHeaders.authorization) {
         outgoingHeaders.authorization = `Bearer ${activeToken}`
       }
 

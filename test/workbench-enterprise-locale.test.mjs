@@ -12,16 +12,16 @@ const localeSource = await readFile(new URL('../node_modules/@deepseek-ai/dsh-cl
 let cleanup
 afterEach(async () => { await cleanup?.(); cleanup = undefined; vi.unstubAllGlobals() })
 
-async function mountMarket(language) {
+async function mountMarket(language, capability = { known: true, connected: true, allowThirdPartyWorkbenches: true }) {
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/' })
   vi.stubGlobal('window', dom.window)
   vi.stubGlobal('document', dom.window.document)
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   dom.window.localStorage.setItem('dsh-workbench-enabled', 'true')
-  dom.window.__dshEnterpriseWorkbenchSnapshot = { known: true, connected: true, allowThirdPartyWorkbenches: true }
+  dom.window.__dshEnterpriseWorkbenchSnapshot = capability
   const definitions = new Map()
   dom.window.__ModuleLoader__ = { load: definition => definitions.set(definition.id, definition) }
-  vm.runInNewContext(localeSource + '\n' + source, { window: dom.window, document: dom.window.document, setTimeout, clearTimeout, AbortController })
+  vm.runInNewContext(localeSource + '\n' + source, { window: dom.window, document: dom.window.document, requestAnimationFrame: callback => callback(), setTimeout, clearTimeout, AbortController })
   const { LocaleRuntime } = definitions.get('@deepseek-ai/dsh-client-locale').factory(name =>
     name === 'react' ? React : name === 'react/jsx-runtime' ? jsx : {})
   const localeContext = new Context()
@@ -58,8 +58,48 @@ async function mountMarket(language) {
     dom.window.close()
   }
   await act(async () => root.render(React.createElement(client.Market, { service })))
-  return { locale, tab: () => document.getElementById('dsh-workbench-enterprise-tab') }
+  return { locale, service, tab: () => document.getElementById('dsh-workbench-enterprise-tab'), rerender: () => act(async () => { service.publish() }) }
 }
+
+it.each([
+  [false, false], [false, true], [true, false], [true, true]
+])('keeps enterprise first and selected with connected=%s thirdParty=%s', async (connected, allowThirdPartyWorkbenches) => {
+  const ui = await mountMarket('zh-CN', { known: true, connected, allowThirdPartyWorkbenches })
+  const tabs = [...document.querySelectorAll('[role="tab"]')]
+  expect(tabs.map(tab => tab.id)).toEqual([
+    'dsh-workbench-enterprise-tab',
+    ...(allowThirdPartyWorkbenches ? ['dsh-workbench-market-tab', 'dsh-workbench-favorites-tab'] : []),
+    'dsh-workbench-mine-tab'
+  ])
+  expect(ui.tab().getAttribute('aria-selected')).toBe('true')
+  expect(document.querySelector('[role="tabpanel"]').id).toBe('dsh-workbench-enterprise-panel')
+  if (!connected) {
+    expect(document.body.textContent).toContain('登录后查看企业工作台')
+    expect(document.body.textContent).not.toContain('正在读取企业工作台')
+    await act(async () => ui.locale.setLocale('en'))
+    expect(document.body.textContent).toContain('Sign in to view enterprise workbenches')
+  }
+  const last = tabs.at(-1)
+  await act(async () => ui.tab().dispatchEvent(new window.KeyboardEvent('keydown', { key: 'End', bubbles: true })))
+  expect(document.activeElement).toBe(last)
+  expect(last.getAttribute('aria-selected')).toBe('true')
+  await act(async () => last.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })))
+  expect(document.activeElement).toBe(ui.tab())
+  expect(ui.tab().getAttribute('aria-selected')).toBe('true')
+})
+
+it('falls back to the enterprise panel when policy hides the selected public market', async () => {
+  const capability = { known: true, connected: true, allowThirdPartyWorkbenches: true }
+  const ui = await mountMarket('zh-CN', capability)
+  await act(async () => document.getElementById('dsh-workbench-market-tab').click())
+  expect(document.querySelector('[role="tabpanel"]').id).toBe('dsh-workbench-market-panel')
+  capability.allowThirdPartyWorkbenches = false
+  await ui.rerender()
+  expect(document.getElementById('dsh-workbench-market-tab')).toBeNull()
+  expect(ui.tab().getAttribute('aria-selected')).toBe('true')
+  expect(document.querySelector('[role="tabpanel"]').getAttribute('aria-labelledby')).toBe(ui.tab().id)
+  expect(document.querySelector('[role="tabpanel"]').id).toBe(ui.tab().getAttribute('aria-controls'))
+})
 
 it.each(['en-US', 'zh-CN'])('localizes the enterprise workbench tab and preserves selection across language changes from %s', async language => {
   const ui = await mountMarket(language)

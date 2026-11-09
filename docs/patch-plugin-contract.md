@@ -380,6 +380,16 @@ Windows installed-package and real-account acceptance remain separate checks.
 
 行为覆盖在 `test/input-trigger-bounds.test.mjs` 和 `test/input-trigger-scroll.test.mjs`；真实 Electron 入口为 `node scripts/verify-composer-menu-bounds.mjs`。上游菜单提供同等动态裁切布局后移除此兼容段并保留回归，验收证据见 [本轮记录](status/composer-menu-bounds-20261030.md)。
 
+### Web 工作台的校验安装边界（Harness 0.2.2-alpha.3，2026-11-07）
+
+Web 工作台复用 Plugin Manager 的 Profile 锁、公开 `runProfilePnpm` 和安装后的启用/重组流程。目标 alpha.3 没有开发依赖 rc.2 的 verified backend 接缝；权威适配入口为 [web-plugin-manager.mjs](../scripts/web-plugin-manager.mjs)，只接受精确 alpha.3 包与唯一源码锚点，同时维护类型声明。Web build、Windows staging 和依赖式分发启动器均重放该适配，不修改输入运行时；版本、锚点或残缺能力标记不符时停止构建/启动。上游提供等价身份校验与后端接口后删除这一适配，保留行为回归。
+
+自有 [Web 包后端](../packages/dsh-desktop-workbenches/web-package-backend.mjs) 只接管带精确包名和版本的校验请求。在 `$DSH_HOME/workbench-packages` 的唯一目录运行 pnpm，关闭自动 peer 安装与安装脚本；检查实际 manifest 身份、bundle 声明、被跳过的构建及依赖闭包内的外部源码链接后，才投影活动 Profile 的依赖与插件链接。阶段目录位于整个 profiles 树之外，使 Harness 按外部链接插件规则共享所声明的宿主 peer；普通依赖保留在阶段目录内。POSIX 用链接替换，Windows 用旧 junction 备份和失败恢复。失败日志复制到 `$DSH_HOME/workbench-install-logs`，不随准备目录删除。
+
+回滚只承诺准备、校验和 Profile 投影失败恢复旧状态。包接受后的启用失败沿用官方 `failed, stage: enable`：保留已装包和诊断，不返回成功安装记录，不声称运行模块已卸载或原子恢复。仅 `applied` 与 `restart-required` 算安装/卸载成功。真实 alpha.3 验收发现同名替换后 Manager 可能报告 applied 但仍执行旧模块，因此工作台更新统一返回 `restart-required, package-moved`，新装沿用实际启用结果；界面据此刷新已安装清单或标记待重启。旧阶段暂不自动清理，避免删除仍被运行进程引用的文件；回收需后续独立的冷启动引用检查，不能依赖当前 Manager 未调用的 commit 回调。普通 Profile 受此后端管理，Safe Mode 不新增加载路径。
+
+回归入口为 [包后端测试](../test/workbench-web-package-backend.test.mjs)、[目标 Manager 接缝测试](../test/web-plugin-manager.test.mjs)、[Windows 装配测试](../test/stage-windows-web-runtime.test.mjs) 及既有工作台路由、客户端/DOM 测试。分发输入版本检查包含 plugin-manager；真实 alpha.3 子进程的安装、业务接口、冷重启和浏览器业务面板分别验证，macOS 结果不代替 Windows junction 原生验收。
+
 ### 会话搜索空态归属（Harness 0.2.1-rc.2，2026-11-02）
 
 `sidebar.workspaces.collection` 的搜索贡献项拥有合并后列表的空态。搜索组件通过可选 owner 字段 `searchPending` 传递本地历史搜索进度；桌面贡献项按本地与云端结果总数、搜索进度和云端首屏加载状态决定空态。上游原有“无匹配会话”随默认结果行一起放入 slot fallback，保留无贡献项时的独立搜索体验。搜索加载提示、结果数量上限提示与远程搜索生命周期继续由搜索组件管理。

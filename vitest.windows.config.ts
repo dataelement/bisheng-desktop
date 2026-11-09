@@ -1,8 +1,8 @@
 import { defineConfig } from 'vitest/config'
 import baseConfig from './vitest.config'
 
-// macOS release jobs retain the full suite. Keep Windows coverage on native
-// processes, path handling, Profile loading, installation, and updates.
+// Keep Windows coverage focused on the Web runtime, package installation,
+// plugin imports, and workbench navigation. Electron-only suites were removed.
 export default defineConfig({
   ...baseConfig,
   test: {
@@ -11,44 +11,16 @@ export default defineConfig({
     // extraction can contend for locked files even with separate test workers.
     fileParallelism: false,
     include: [
-      'test/windows-*.test.{ts,js,mjs}',
-      'test/about-presentation.test.ts',
-      'test/desktop-modes-ui.test.mjs',
-      'test/work-completion-notifications.test.mjs',
-      'test/desktop-notification.test.ts',
-      'test/session-delete-locale.test.mjs',
-      'test/enterprise-chat-view.test.ts',
-      'test/generation-*.test.{ts,js,mjs}',
-      'test/profile-*.test.{ts,js,mjs}',
-      'test/safe-mode*.test.ts',
-      'test/update*.test.ts',
-      'test/runtime.test.ts',
-      'test/runtime-package-root.test.ts',
-      'test/harness-node-entry.test.ts',
-      'test/launch-root.test.ts',
-      'test/desktop-plugin-closure.test.ts',
-      'test/plugin-startup-failure.test.ts',
-      'test/host-disabled-plugins.test.ts',
-      'test/plugin-recovery.test.ts',
-      'test/market-installer.test.js',
-      'test/migration-failure-paths.test.ts',
-      'test/legacy-preset-migration.test.ts',
-      'test/pnpm-runner.test.js',
-      'test/local-path-links.test.ts',
+      'test/stage-windows-web-runtime.test.mjs',
+      'test/web-*.test.mjs',
+      'test/enterprise-community-package.test.ts',
+      'test/enterprise-proxy.test.mjs',
+      'test/pack-enterprise-plugin.test.ts',
+      'test/pack-office-web.test.mjs',
+      'test/pack-ppt-web.test.mjs',
       'test/local-workbench-path.test.mjs',
-      'test/office-engine-resolution.test.ts',
-      'test/remove-tree.test.ts',
-      'test/shell-environment-encoding.test.ts',
-      'test/directory-picker.test.ts',
-      'test/file-preview.test.ts',
-      'test/desktop-service.test.ts',
-      'test/desktop-storage.test.ts',
-      'test/enterprise-vault.test.ts',
-      'test/enterprise-market.test.ts',
-      'test/gpu-fallback.test.ts',
-      'test/window-raise.test.ts',
-      'test/close-to-tray.test.ts',
-      'test/ppt-fonts.test.mjs'
+      'test/workbench-*.test.mjs',
+      'test/patch-runtime-compatibility.test.mjs'
     ]
   }
 })

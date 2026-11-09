@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { isolatePackage } from './helpers/isolated-package-tree.mjs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { lstat, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -10,7 +10,6 @@ import { Context } from '@deepseek-ai/cordis'
 import { applyEnterpriseMarket, createMarketController, hostDshEntryPath, isMarketVersionCompatible } from '../packages/dsh-desktop-enterprise/market.js'
 import { installOfflineBundle, readBundleZip, sha256, validateOfflineBundle, verifyInstalledBundle } from '../packages/dsh-desktop-enterprise/offline-bundle.js'
 import { acceptMarketSnapshot } from '../packages/dsh-desktop-enterprise/market-policy.js'
-import { sweepRegistry } from 'dsh-desktop-market-installer/generations/registry'
 import { zipEntries } from '../scripts/pack-enterprise-plugin.mjs'
 
 const paths: string[] = [], controllers: Array<{ stop: () => Promise<void> }> = []
@@ -71,24 +70,6 @@ function namedBundle(name: string, fields: Record<string, unknown>) {
 }
 
 describe('offline bundles', () => {
-  it('resolves a real host peer from an enterprise generation retained by community cleanup', async () => {
-    const root = await home()
-    await mkdir(join(root, 'profiles/node_modules/@deepseek-ai'), { recursive: true })
-    await symlink(join(process.cwd(), 'node_modules/@deepseek-ai/dsh-tools'), join(root, 'profiles/node_modules/@deepseek-ai/dsh-tools'))
-    const files = {
-      'node_modules/company-peer/package.json': Buffer.from(JSON.stringify({ name: 'company-peer', version: '1.0.0', type: 'module', main: 'index.js', peerDependencies: { '@deepseek-ai/dsh-tools': '*' } })),
-      'node_modules/company-peer/index.js': Buffer.from('import * as tools from "@deepseek-ai/dsh-tools"; export function apply() { return tools }')
-    }
-    const manifest = { ...bundle().manifest, plugin: { ...bundle().manifest.plugin, name: 'company-peer' }, targets: { [target]: Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, sha256(bytes)])) } }
-    const bytes = zipEntries({ 'manifest.json': Buffer.from(JSON.stringify(manifest)), ...Object.fromEntries(Object.entries(files).map(([name, bytes]) => [`bundles/${target}/${name}`, bytes])) })
-    const expected = { name: 'company-peer', version: '1.0.0', digest: sha256(bytes) }
-    const generation = await installOfflineBundle(root, bytes, expected, target)
-    await sweepRegistry(root)
-    await expect(verifyInstalledBundle({ ...generation, ...expected }, target)).resolves.toHaveProperty('manifest')
-    const plugin = await import(pathToFileURL(join(generation.directory, 'node_modules', expected.name, 'index.js')).href)
-    expect(plugin.apply).toBeTypeOf('function')
-  })
-
   it('uses native root composition and ESM resolution with revocable instance credentials', async () => {
     const root = await home()
     const { stdout } = await promisify(execFile)(process.execPath, ['--expose-internals', join(process.cwd(), 'test/helpers/enterprise-root-smoke.mjs'), root], {

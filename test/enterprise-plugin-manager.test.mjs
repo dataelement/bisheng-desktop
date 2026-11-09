@@ -122,7 +122,7 @@ describe('enterprise workbench lifecycle', () => {
     const manager = {
       verifiedInstallContract: 1,
       listBundles: vi.fn(async () => []),
-      installBundle: vi.fn(async () => ({ application, stage: 'enable', bundle: 'company-workbench', changed: true, ...(application === 'restart-required' ? { restartReason: 'no-hmr' } : {}) }))
+      installBundle: vi.fn(async () => ({ application, stage: 'enable', bundle: 'company-workbench', version: '1.0.0', changed: true, ...(application === 'restart-required' ? { restartReason: 'no-hmr' } : {}) }))
     }
     return { manager, packages, release }
   }
@@ -141,7 +141,7 @@ describe('enterprise workbench lifecycle', () => {
   it('routes an existing enterprise package update through Manager replacement', async () => {
     const { manager, packages, release } = setup()
     manager.listBundles.mockResolvedValue([{ name: 'company-workbench', installed: true }])
-    expect(await installEnterpriseWorkbench(manager, packages, id)).toMatchObject({ status: 200 })
+    expect(await installEnterpriseWorkbench(manager, packages, id)).toMatchObject({ status: 200, body: { application: 'restart-required', restartRequired: true, restartReason: 'package-moved' } })
     expect(manager.installBundle.mock.calls[0][1]).toMatchObject({ replace: true })
     expect(release).toHaveBeenCalledOnce()
   })

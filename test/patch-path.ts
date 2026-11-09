@@ -1,35 +1,27 @@
-import { readdirSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import path from 'node:path'
 
 export const projectRoot = path.resolve(import.meta.dirname, '..')
 
-const patchesDir = path.join(projectRoot, 'patches')
+// These are upstream source patches, not versioned patch-package artifacts.
+export const maintainedPatchNames = [
+  'harness-web-3080-unified',
+  'profile-resolution-directory-specifier',
+  'ui-chat-user-references',
+  'ui-conversation-input-slots',
+  'ui-workspace-collection'
+] as const
 
-/**
- * Patch files are named after the exact version they were captured against, so
- * every Harness upgrade renames all of them. Most of the patched packages are
- * transitive dependencies of `@deepseek-ai/dsh` and carry no pin of their own,
- * so resolve by package name and let the version fall where it may — otherwise
- * a version bump turns into a wall of unrelated test failures.
- */
-export function patchPath(packageName: string): string {
-  const prefix = `${packageName.replace('/', '+')}+`
-  const matches = readdirSync(patchesDir).filter(
-    (name) => name.startsWith(prefix) && name.endsWith('.patch')
-  )
-  const [only] = matches
-  if (only === undefined || matches.length !== 1) {
-    throw new Error(
-      `expected exactly one patch for ${packageName}, found ${matches.length}`
-    )
+export function patchPath(name: string): string {
+  if (!maintainedPatchNames.some(candidate => candidate === name)) {
+    throw new Error(`unknown maintained source patch: ${name}; use a named patch, not a package specifier`)
   }
-  return path.join(patchesDir, only)
+  const file = path.join(projectRoot, 'patches', `${name}.patch`)
+  if (!existsSync(file)) throw new Error(`missing maintained source patch: ${name}`)
+  return file
 }
 
-/** Whether the project still carries any patch against `packageName`. */
-export function hasPatch(packageName: string): boolean {
-  const prefix = `${packageName.replace('/', '+')}+`
-  return readdirSync(patchesDir).some(
-    (name) => name.startsWith(prefix) && name.endsWith('.patch')
-  )
+export function hasPatch(name: string): boolean {
+  return maintainedPatchNames.some(candidate => candidate === name) &&
+    existsSync(path.join(projectRoot, 'patches', `${name}.patch`))
 }

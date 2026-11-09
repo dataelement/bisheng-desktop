@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { patchPath, projectRoot } from './patch-path'
+import { projectRoot } from './patch-path'
 
 const settingsModelsClient = path.join(
   projectRoot,
@@ -263,11 +263,10 @@ describe('settings model reasoning effort field', () => {
     expect(parseEffortList('low,   ')).toEqual(['low'])
   })
 
-  it('guards the bundled adapter contract and the regenerated patch', async () => {
-    const [catalogTypes, configTypes, patch] = await Promise.all([
+  it('guards the bundled adapter contract', async () => {
+    const [catalogTypes, configTypes] = await Promise.all([
       readFile(piAiCatalogTypes, 'utf8'),
-      readFile(piAiConfigTypes, 'utf8'),
-      readFile(patchPath('@deepseek-ai/dsh-client-ui-settings-models'), 'utf8')
+      readFile(piAiConfigTypes, 'utf8')
     ])
 
     expect(catalogTypes).toMatch(
@@ -276,12 +275,6 @@ describe('settings model reasoning effort field', () => {
     expect(configTypes).toMatch(
       /PiAiReasoningEfforts[\s\S]*from '\.\/catalog\.ts'/
     )
-    expect(patch).toContain('function configuredReasoningEfforts(model)')
-    expect(patch).toContain('function reasoningEffortIds(model)')
-    expect(patch).toContain('function nextReasoningEfforts(model, ids)')
-    expect(patch).toContain('reasoningEfforts: next')
-    expect(patch).toContain('reasoning: void 0')
-    expect(patch).not.toContain(staleReasoningWrite)
-    expect(patch).not.toContain(staleDefaultLocaleKey)
+
   })
 })

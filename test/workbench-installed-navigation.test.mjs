@@ -20,7 +20,7 @@ function client() {
 }
 function service({ listed = true, added = true } = {}) {
   const { Workbenches } = client()
-  const ctx = { fiber: { entry: { options: { name: 'animation-package' } } }, layout: { beginNavigation() {} } }
+  const ctx = { locale: { bind: () => key => key }, fiber: { entry: { options: { name: 'animation-package' } } }, layout: { beginNavigation() {} } }
   const value = new Workbenches(ctx)
   value.ready = true
   value.state.added = added ? ['example/animation'] : []

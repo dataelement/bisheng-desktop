@@ -14,6 +14,7 @@ import { applyWorkCapabilities } from './work-capabilities.js'
 import { requestImageDimensions } from '@deepseek-ai/dsh-attachment'
 import { applyEnterpriseMarket } from './market.js'
 import { applyEnterpriseWorkbenchMarket } from './workbench-market.js'
+import { readScreenshotResponse } from './workbench-screenshots.js'
 import { applyEnterpriseAuth, createEnterpriseAuthTransport } from './enterprise-auth.js'
 import {
   API_PATHS,
@@ -509,7 +510,7 @@ export function apply(ctx, config) {
     ingestEnterpriseState(state)
     return { ...state, ...thirdPartyFlags() }
   }
-  const marketRequest = async (path, body, binary = false) => {
+  const marketRequest = async (path, body, binary = false, screenshot = null) => {
     if (!broker) {
       if (!sessionAuth) unavailable()
       const auth = await ensureValidSessionAuth()
@@ -518,6 +519,7 @@ export function apply(ctx, config) {
         const url = new URL(path, auth.base)
         return fetch(url, {
           method: body === undefined ? 'GET' : 'POST',
+          ...(screenshot ? { signal: screenshot.signal, redirect: 'error', cache: 'no-store' } : {}),
           headers: {
             authorization: `Bearer ${token}`,
             ...(body === undefined ? {} : { 'content-type': 'application/json' })
@@ -538,6 +540,7 @@ export function apply(ctx, config) {
         if (typeof payload.errorCode === 'string' && payload.errorCode) failure.code = payload.errorCode
         throw failure
       }
+      if (screenshot) return readScreenshotResponse(response, screenshot.signal, screenshot.image)
       if (binary) return Buffer.from(await response.arrayBuffer())
       const data = await response.json()
       if (data && (data.status_code === 401 || data.status_code === 403)) {
@@ -557,6 +560,7 @@ export function apply(ctx, config) {
     }
     const response = await fetch(new URL('/v1/market', broker.origin), {
       method: 'POST', redirect: 'error',
+      ...(screenshot ? { signal: screenshot.signal, cache: 'no-store' } : {}),
       headers: { authorization: `Bearer ${broker.capability}`, 'content-type': 'application/json' },
       body: JSON.stringify({ path, connectionKey: account.connectionKey, ...(body === undefined ? {} : { body }) })
     })
@@ -566,6 +570,7 @@ export function apply(ctx, config) {
       if (typeof payload.errorCode === 'string' && payload.errorCode) failure.code = payload.errorCode
       throw failure
     }
+    if (screenshot) return readScreenshotResponse(response, screenshot.signal, screenshot.image)
     return binary ? Buffer.from(await response.arrayBuffer()) : response.json()
   }
   let fallbackRefreshPromise = null
@@ -718,9 +723,13 @@ export function apply(ctx, config) {
     marketRequest,
     verifyWorkbenchArtifact,
     materializeWorkbenchArtifact,
+    workbenchScreenshotRequest: (path, signal, image) => marketRequest(path, undefined, true, { signal, image }),
     releaseWorkbenchArtifact
   }
-  market = applyEnterpriseMarket(ctx, accountController, { auth, authorizationAvailable: Boolean(broker) })
+  market = applyEnterpriseMarket(ctx, accountController, {
+    auth,
+    authorizationAvailable: Boolean(broker || sessionAuth || process.env.DSH_WEB_RUNTIME === '1')
+  })
   workbenches = applyEnterpriseWorkbenchMarket(ctx, accountController)
   if (typeof ctx.provide === 'function') {
     ctx.provide('enterpriseWorkbenchPackages', {

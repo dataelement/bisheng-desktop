@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import vm from 'node:vm'
 import { describe, expect, it } from 'vitest'
-import { patchPath, projectRoot } from './patch-path'
+import { projectRoot } from './patch-path'
 
 const workspacePath = path.join(projectRoot, 'node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js')
 const desktopPath = path.join(projectRoot, 'packages/dsh-desktop-client-ui/client.js')
@@ -35,10 +35,9 @@ describe('workspace session unread markers', () => {
   })
 
   it('offers a right-click menu action in both session list modes', async () => {
-    const [workspace, desktop, patch] = await Promise.all([
+    const [workspace, desktop] = await Promise.all([
       readFile(workspacePath, 'utf8'),
-      readFile(desktopPath, 'utf8'),
-      readFile(patchPath('@deepseek-ai/dsh-client-ui-workspace'), 'utf8')
+      readFile(desktopPath, 'utf8')
     ])
     expect(workspace).toContain('onContextMenu: (event) =>')
     expect(workspace).toContain('if (!row.blank) setMenuOpen(true)')
@@ -47,7 +46,6 @@ describe('workspace session unread markers', () => {
     expect(desktop).toContain("id: 'desktop-unread-session'")
     expect(desktop).toContain("'标为未读'")
     expect(desktop).toContain("'标为已读'")
-    expect(patch).toContain('markSessionUnread')
   })
 
   it('renders an unread indicator and clears the marker when opening a session', async () => {

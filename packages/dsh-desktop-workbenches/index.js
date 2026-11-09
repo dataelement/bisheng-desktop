@@ -1,4 +1,7 @@
+import { localWorkbenchInstallTool } from './local-install-tool.mjs'
 import { installEnterpriseWorkbench } from './enterprise-install.mjs'
+import { workbenchInstallOutcome } from './install-outcome.mjs'
+import { registerWebPackageBackend } from './web-package-backend.mjs'
 import { readInstallEvidence } from './install-evidence.mjs'
 import Schema from '@deepseek-ai/schemastery'
 import { CatalogError, createCatalogReader } from './catalog.mjs'
@@ -6,7 +9,7 @@ import { selectMarketFetch } from './market-fetch.mjs'
 import { awaitHandle, createMarketInstallStore, MarketInstallError, resolveInstallTarget } from './market-install.mjs'
 import { readSubmissionStatus, SubmissionStatusError } from './submission-status.mjs'
 import { createStateStore, MAX_STATE_BYTES, StateError } from './state.mjs'
-import { copyFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { consumeLocalWorkbenchCapability, localCapabilityMatches, LOCAL_WORKBENCH_CAPABILITY_HEADER, readLocalWorkbenchPackage } from './local-install.mjs'
 import { dirname, isAbsolute, join } from 'node:path'
 import { homedir } from 'node:os'
@@ -76,6 +79,7 @@ async function readPayload(request, maximum = MAX_STATE_BYTES, tooLarge = 'Workb
 const localWorkbenchCapability = consumeLocalWorkbenchCapability()
 
 async function recordLocalInstall(root, install) {
+  await mkdir(root, { recursive: true })
   const path = join(root, 'local-installs.json')
   let current = {}
   try { current = JSON.parse(await readFile(path, 'utf8')) } catch (error) { if (error?.code !== 'ENOENT') throw error }
@@ -87,6 +91,10 @@ async function recordLocalInstall(root, install) {
 }
 
 export function apply(ctx, config) {
+  registerWebPackageBackend(ctx)
+  ctx.inject(['tools', 'pluginManager', 'sandboxPolicy'], (scoped) => {
+    scoped.tools.register(localWorkbenchInstallTool(scoped))
+  })
   const root = config?.root || defaultWorkbenchRoot()
   const store = createStateStore(root)
   const readCatalog = createCatalogReader({
@@ -260,6 +268,27 @@ export function apply(ctx, config) {
     marketEnterprisePolicy = service
     return () => { if (marketEnterprisePolicy === service) marketEnterprisePolicy = undefined }
   })
+  // Package installation and live activation are separate PluginManager outcomes.
+  const installManagedWorkbench = async (pluginManager, spec, expectedName, expectedVersion) => {
+    let result
+    try {
+      const bundles = await pluginManager.listBundles()
+      const replacement = bundles.some(bundle => bundle.name === expectedName && bundle.installed === true)
+      result = workbenchInstallOutcome(await pluginManager.installBundle(spec, {
+        enabled: true, expectedName, expectedVersion,
+        ...(replacement ? { replace: true } : {})
+      }), replacement)
+    } catch (error) { throw new MarketInstallError(error instanceof Error ? error.message : String(error), 502) }
+    if (!result || !['applied', 'restart-required'].includes(result.application) || result.stage !== 'enable' || result.bundle !== expectedName || result.version !== expectedVersion) {
+      const detail = result?.error?.diagnostic || result?.error?.message || result?.error?.code || 'Workbench installation did not complete for the requested package and version.'
+      throw new MarketInstallError(detail, 409)
+    }
+    return {
+      application: result.application,
+      restartRequired: result.application === 'restart-required',
+      ...(result.restartReason ? { restartReason: result.restartReason } : {})
+    }
+  }
   ctx.connection.fetch.register({
     path: '/api/desktop-workbenches/market-install',
     methods: ['POST'],
@@ -294,6 +323,7 @@ export function apply(ctx, config) {
         // Check known package identities before resolving or downloading the target.
         await requireReplacement([entry.distribution.name, installs[id]?.pluginName].filter(Boolean))
         const target = await resolveInstallTarget(entry)
+        let outcome = { restartRequired: true }
         try {
           await requireReplacement([target.expectedPluginName])
           if (desktopPnpm?.installWorkbenchGeneration) {
@@ -309,28 +339,7 @@ export function apply(ctx, config) {
             } catch (error) { throw new MarketInstallError(error instanceof Error ? error.message : String(error), 409) }
             await awaitHandle(handle)
           } else if (pluginManager?.installBundle) {
-            let spec = target.pluginSpec
-            let persistentFile
-            if (spec.startsWith('file:')) {
-              const tempFile = spec.slice('file:'.length)
-              const packagesDir = join(root, 'packages')
-              await mkdir(packagesDir, { recursive: true })
-              persistentFile = join(packagesDir, `${target.expectedPluginName}-${target.expectedVersion}.tgz`)
-              await copyFile(tempFile, persistentFile)
-              spec = `file:${persistentFile}`
-            }
-            let result
-            try {
-              result = await pluginManager.installBundle(spec, { enabled: true })
-            } catch (error) {
-              if (persistentFile) await rm(persistentFile, { force: true }).catch(() => {})
-              throw new MarketInstallError(error instanceof Error ? error.message : String(error), 502)
-            }
-            if (!result || !['applied', 'restart-required', 'overridden'].includes(result.application)) {
-              if (persistentFile) await rm(persistentFile, { force: true }).catch(() => {})
-              const detail = result?.error?.diagnostic || result?.error?.message || result?.error?.code || 'Plugin installation did not complete.'
-              throw new MarketInstallError(detail, 502)
-            }
+            outcome = await installManagedWorkbench(pluginManager, target.pluginSpec, target.expectedPluginName, target.expectedVersion)
           } else {
             throw new MarketInstallError('Workbench package installation is unavailable in this environment.', 503)
           }
@@ -339,7 +348,7 @@ export function apply(ctx, config) {
         const evidence = (await readInstallEvidence({}, undefined, [install.pluginName]))[install.pluginName]
         if (evidence?.fingerprint) install.fingerprint = evidence.fingerprint
         await marketInstalls.record(id, install)
-        return Response.json({ install, restartRequired: true }, { headers: { 'cache-control': 'no-store' } })
+        return Response.json({ install, ...outcome }, { headers: { 'cache-control': 'no-store' } })
       } catch (error) { return installFailure(error, 'Could not install the workbench.') }
     }
   })
@@ -357,6 +366,7 @@ export function apply(ctx, config) {
         }
         const payload = await readPayload(request, 4096, 'Request is too large.')
         const pkg = await readLocalWorkbenchPackage(payload?.path)
+        let outcome = { restartRequired: true }
         if (desktopPnpm?.installWorkbenchGeneration) {
           let handle
           try {
@@ -370,14 +380,7 @@ export function apply(ctx, config) {
           } catch (error) { throw new MarketInstallError(error instanceof Error ? error.message : String(error), 409) }
           await awaitHandle(handle)
         } else if (pluginManager?.installBundle) {
-          let result
-          try {
-            result = await pluginManager.installBundle(pkg.directory, { enabled: true })
-          } catch (error) { throw new MarketInstallError(error instanceof Error ? error.message : String(error), 502) }
-          if (!result || !['applied', 'restart-required', 'overridden'].includes(result.application)) {
-            const detail = result?.error?.diagnostic || result?.error?.message || result?.error?.code || 'Local workbench install did not complete.'
-            throw new MarketInstallError(detail, 502)
-          }
+          outcome = await installManagedWorkbench(pluginManager, pkg.directory, pkg.name, pkg.version)
         } else {
           throw new MarketInstallError('Local workbench install is unavailable in this environment.', 503)
         }
@@ -389,7 +392,7 @@ export function apply(ctx, config) {
           installedAt: new Date().toISOString()
         }
         await recordLocalInstall(root, install)
-        return Response.json({ install, restartRequired: true }, { headers: { 'cache-control': 'no-store' } })
+        return Response.json({ install, ...outcome }, { headers: { 'cache-control': 'no-store' } })
       } catch (error) { return installFailure(error, 'Could not install the local workbench.') }
     }
   })
@@ -405,6 +408,7 @@ export function apply(ctx, config) {
         const { id } = await catalogPayloadFrom(request)
         const install = (await marketInstalls.read())[id]
         if (!install) throw new MarketInstallError('This workbench was not installed from the workbench market.', 404)
+        let outcome = { restartRequired: true }
         if (desktopPnpm?.removeWorkbenchGeneration) {
           let handle
           try { handle = desktopPnpm.removeWorkbenchGeneration(install.pluginName, root) }
@@ -415,16 +419,17 @@ export function apply(ctx, config) {
           try {
             result = await pluginManager.removeBundle(install.pluginName)
           } catch (error) { throw new MarketInstallError(error instanceof Error ? error.message : String(error), 502) }
-          if (result && !['applied', 'restart-required', 'overridden'].includes(result.application)) {
-            const detail = result?.error?.diagnostic || result?.error?.message || result?.error?.code || 'Plugin uninstallation did not complete.'
-            throw new MarketInstallError(detail, 502)
+          if (!result || !['applied', 'restart-required'].includes(result.application) || result.stage !== 'remove' || result.target !== install.pluginName) {
+            const detail = result?.error?.diagnostic || result?.error?.message || result?.error?.code || 'Plugin uninstallation did not complete for the requested package.'
+            throw new MarketInstallError(detail, 409)
           }
+          outcome = { application: result.application, restartRequired: result.application === 'restart-required', ...(result.restartReason ? { restartReason: result.restartReason } : {}) }
           await rm(join(root, 'packages', `${install.pluginName}-${install.version}.tgz`), { force: true }).catch(() => {})
         } else {
           throw new MarketInstallError('Workbench package uninstallation is unavailable in this environment.', 503)
         }
         await marketInstalls.forget(id)
-        return Response.json({ restartRequired: true }, { headers: { 'cache-control': 'no-store' } })
+        return Response.json(outcome, { headers: { 'cache-control': 'no-store' } })
       } catch (error) { return installFailure(error, 'Could not uninstall the workbench.') }
     }
   })

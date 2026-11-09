@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { lstat, readFile, readdir, realpath, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { isLocalPackageName } from './identity.mjs'
 
 const safeName = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i
 const json = async path => JSON.parse(await readFile(path, 'utf8'))
@@ -74,9 +75,10 @@ export async function readInstallEvidence(installs, home = process.env.DSH_HOME 
     }
   } catch { /* Legacy profiles have no generation registry; inspect their dependency tree. */ }
   const packages = {}
-  const names = new Set([...requestedNames, ...Object.values(installs).map(item => item?.pluginName)])
+  const requested = new Set([...requestedNames, ...Object.values(installs).map(item => item?.pluginName)])
+  const names = new Set([...requested, ...Object.keys(dependencies), ...generations.keys()])
   for (const name of names) {
-    if (typeof name !== 'string' || !safeName.test(name)) continue
+    if (!isLocalPackageName(name)) continue
     const generation = generations.get(name)
     const candidate = generation?.directory || join(profile, 'node_modules', name)
     // Missing evidence must not make an existing or declared install look absent.
@@ -88,11 +90,13 @@ export async function readInstallEvidence(installs, home = process.env.DSH_HOME 
     // known release into local development; directory/link sources stay local.
     const releaseReceipt = archive && !sourceSpec.startsWith('link:') && Object.values(installs).some(item => item?.pluginName === name && ['release', 'github-release'].includes(item.source))
     const fallbackLocal = localSpec && !releaseReceipt
-    if (present) packages[name] = { origin: fallbackLocal ? 'local' : releaseReceipt ? 'market' : 'unknown', contentVerified: false, updateRisk: fallbackLocal ? 'local' : null, metadata: {} }
+    if (present && requested.has(name)) packages[name] = { origin: fallbackLocal ? 'local' : releaseReceipt ? 'market' : 'unknown', contentVerified: false, updateRisk: fallbackLocal ? 'local' : null, metadata: {} }
     try {
       const directory = await realpath(candidate)
       const manifest = await json(join(directory, 'package.json'))
       if (manifest.name !== name || !manifest.dsh?.client) continue
+      const workbench = Array.isArray(manifest.dsh.client.inject) && manifest.dsh.client.inject.includes('dsh-desktop-workbenches')
+      if (!requested.has(name) && !workbench) continue
       const digests = await fingerprint(directory, sourceSpec).catch(() => undefined)
       const records = Object.values(installs).filter(item => item?.pluginName === name && item.version === manifest.version)
       const record = records.find(item => digests && (item.fingerprint === digests.current || item.fingerprint === digests.legacy))
@@ -107,7 +111,7 @@ export async function readInstallEvidence(installs, home = process.env.DSH_HOME 
       const zh = await json(join(directory, 'locale', 'zh.json')).then(value => value.meta || {}, () => ({}))
       const en = await json(join(directory, 'locale', 'en.json')).then(value => value.meta || {}, () => ({}))
       packages[name] = {
-        version: literal(manifest.version), fingerprint: digests?.current,
+        workbench, version: literal(manifest.version), fingerprint: digests?.current,
         origin: local ? 'local' : records.length ? 'market' : 'unknown',
         contentVerified: !local && Boolean(record),
         updateRisk: local ? 'local' : modified ? 'modified' : null,

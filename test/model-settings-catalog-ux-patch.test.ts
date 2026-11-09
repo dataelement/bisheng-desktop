@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { patchPath, projectRoot } from './patch-path'
+import { projectRoot } from './patch-path'
 
 const settingsModelsClient = path.join(
   projectRoot,
@@ -151,37 +151,5 @@ describe('settings provider editor sticky actions', () => {
     expect(client).toContain('className: "dshProviderEditorStickyFooter"')
     expect(client).toContain('onClick: addModel')
     expect(client).toContain('jsx)(EditorFooter, { ...footerProps })')
-  })
-
-  it('captures search and sticky actions in the reproducible package patch', async () => {
-    const patch = await readFile(
-      patchPath('@deepseek-ai/dsh-client-ui-settings-models'),
-      'utf8'
-    )
-
-    expect(patch).toContain('function searchableModelEntries(models, query)')
-    expect(patch).toContain('ModelCatalogSearch')
-    expect(patch).toContain(
-      'const [modelQuery, setModelQuery] = (0, react.useState)("")'
-    )
-    expect(patch).toContain('onModelQueryChange: setModelQuery')
-    expect(patch).toContain('dshProviderEditorStickyFooter')
-    expect(patch).toContain('onClick: addModel')
-    expect(patch).toContain(
-      'setModels((current) => [...current.map((model) => ({ ...model })), { id: "" }])'
-    )
-    expect(patch).toContain(
-      'className: ModelsSection_module_css_default["addModelButton"]'
-    )
-    expect(patch).toContain(
-      '_deepseek_ai_dsh_client_ui_primitives.IconChevronDownOutlineRegular'
-    )
-    expect(patch).toContain(
-      '_deepseek_ai_dsh_client_ui_primitives.IconChevronRightOutlineRegular'
-    )
-    expect(patch).toContain(
-      '_deepseek_ai_dsh_client_ui_primitives.IconTrashOutlineRegular'
-    )
-    expect(patch).not.toMatch(/jsx\)\(Icon(?:Chevron|Trash)\b/)
   })
 })

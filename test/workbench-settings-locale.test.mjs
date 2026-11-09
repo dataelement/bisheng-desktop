@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 const code = await readFile(new URL('../packages/dsh-desktop-workbenches/client.js', import.meta.url), 'utf8')
 
-function setup({ enabled, publicMarket }) {
+function setup({ enabled, publicMarket, connected = true }) {
   let client, tab, snapshot = { active: 'en', revision: 0 }
   const dictionaries = new Map()
   const listeners = new Set()
@@ -25,7 +25,7 @@ function setup({ enabled, publicMarket }) {
   const window = {
     addEventListener: windowEvents.addEventListener.bind(windowEvents),
     removeEventListener: windowEvents.removeEventListener.bind(windowEvents),
-    __dshEnterpriseWorkbenchSnapshot: { known: true, connected: true, allowThirdPartyWorkbenches: publicMarket },
+    __dshEnterpriseWorkbenchSnapshot: { known: true, connected, allowThirdPartyWorkbenches: publicMarket },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
     __ModuleLoader__: { load({ factory }) {
       client = factory(name => {
@@ -67,6 +67,15 @@ function setup({ enabled, publicMarket }) {
 }
 
 describe('workbench settings locale', () => {
+  it('keeps the workbench settings tab available before enterprise sign-in', () => {
+    const ui = setup({ enabled: true, publicMarket: false, connected: false })
+    try {
+      expect(ui.tab.id).toBe('desktop-workbenches')
+      expect(ui.tab.label()).toBe('Workbenches')
+      expect(ui.render()).toContain('Show workbenches in the sidebar')
+    } finally { ui.dispose() }
+  })
+
   it('refreshes capability on account changes and unsubscribes on disposal', () => {
     const ui = setup({ enabled: true, publicMarket: true })
     try {

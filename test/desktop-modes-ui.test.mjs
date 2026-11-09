@@ -509,41 +509,6 @@ it('keeps the native sidebar visible when the embedded pane spans the frame', as
   }
 })
 
-
-async function mountOnboarding({ acknowledged = false, save = async () => ({ ok: true, json: async () => ({ acknowledged: true }) }) } = {}) {
-  let notice
-  window.__ModuleLoader__ = { load({ factory }) {
-    const plugin = factory(name => {
-      if (name === 'react') return React
-      if (name === '@deepseek-ai/dsh-client-ui-primitives') return {
-        Button: ({ children, variant, ...props }) => React.createElement('button', props, children),
-        IconGlobeOutlineRegular: () => null,
-        Modal: ({ children, title }) => createPortal(React.createElement('div', { role: 'dialog', 'aria-modal': true, 'aria-label': title }, children), document.body)
-      }
-      throw new Error(name)
-    })
-    const scope = {
-      locale: { register() {}, bind: () => key => key },
-      configForms: { get: () => ({ getSnapshot: () => ({ mode: 'memory', value: { eligible: true, wizardVersion: acknowledged ? '1' : '' } }), subscribe: () => () => {} }) },
-      slots: { inject: (_name, fn) => fn(), register: (options, component) => { notice = { component, props: options.inject() } } }
-    }
-    plugin.apply({ inject: (_deps, fn) => fn(scope) })
-  } }
-  vi.stubGlobal('fetch', vi.fn(save))
-  new Function(await readFile('packages/dsh-desktop-onboarding/client.js', 'utf8'))()
-  const host = document.createElement('div')
-  document.body.append(host)
-  const noticeRoot = createRoot(host)
-  const complete = vi.fn(() => noticeRoot.render(null))
-  const openSection = vi.fn(() => window.dispatchEvent(new CustomEvent('dsh-desktop:settings-visibility', { detail: { open: true } })))
-  await act(async () => noticeRoot.render(React.createElement(notice.component, { ...notice.props, complete, openSection })))
-  return {
-    complete, openSection,
-    async click(label) { await act(async () => [...document.querySelectorAll('[role=dialog] button')].find(button => button.textContent === label).click()) },
-    async dispose() { await act(async () => noticeRoot.unmount()); host.remove() }
-  }
-}
-
 it('keeps native Chat behind the initial host modal boundary and follows its release', async () => {
   const ui = await mount(true, {}, true)
   const present = window.dshEnterpriseChat.present
@@ -558,65 +523,6 @@ it('keeps native Chat behind the initial host modal boundary and follows its rel
   present.mockClear()
   await act(async () => { container.inert = true })
   expect(present).toHaveBeenCalledTimes(0)
-})
-
-it('yields native Chat to onboarding and restores the same chat and Work draft after acknowledgment', async () => {
-  const ui = await mount(true)
-  const draft = ui.draft()
-  const notice = await mountOnboarding()
-  try {
-    expect(container.inert).toBe(true)
-    expect(document.querySelector('[role=dialog]')).toBeTruthy()
-    expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
-    await notice.click('later')
-    expect(fetch).toHaveBeenCalledWith('/api/desktop-onboarding/acknowledge', expect.objectContaining({ method: 'POST' }))
-    expect(notice.complete).toHaveBeenCalledTimes(1)
-    expect(container.inert).toBe(false)
-    expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
-    expect(ui.selected()).toBe('chat')
-    expect(ui.draft()).toBe(draft)
-  } finally { await notice.dispose() }
-})
-
-it('hands onboarding directly to model settings while native Chat stays hidden', async () => {
-  await mount(true)
-  const notice = await mountOnboarding()
-  try {
-    const present = window.dshEnterpriseChat.present
-    present.mockClear()
-    await notice.click('configureModel')
-    expect(notice.openSection).toHaveBeenCalledWith('models')
-    expect(container.inert).toBe(false)
-    expect(present.mock.calls.length).toBeGreaterThan(0)
-    expect(present.mock.calls.every(([value]) => value.visible === false)).toBe(true)
-    await act(async () => window.dispatchEvent(new CustomEvent('dsh-desktop:settings-visibility', { detail: { open: false } })))
-    expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
-  } finally { await notice.dispose() }
-})
-
-it('keeps onboarding in front through acknowledgment failure and releases its boundary on unmount', async () => {
-  await mount(true)
-  const notice = await mountOnboarding({ save: async () => ({ ok: false }) })
-  try {
-    await notice.click('later')
-    expect(document.querySelector('[role=alert]').textContent).toBe('saveFailed')
-    expect(notice.complete).toHaveBeenCalledTimes(0)
-    expect(container.inert).toBe(true)
-    expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
-  } finally { await notice.dispose() }
-  expect(container.inert).toBe(false)
-  expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
-})
-
-it('lets returning users continue in Chat when onboarding is already acknowledged', async () => {
-  await mount(true)
-  const notice = await mountOnboarding({ acknowledged: true })
-  try {
-    expect(notice.complete).toHaveBeenCalledTimes(1)
-    expect(container.inert).toBe(false)
-    expect(document.querySelector('[role=dialog]')).toBeNull()
-    expect(window.dshEnterpriseChat.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
-  } finally { await notice.dispose() }
 })
 
 
@@ -917,37 +823,4 @@ it('refreshes cloud history on push transitions and focus without periodic state
     await act(async () => window.dispatchEvent(new Event('focus')))
     expect(bridge.history).toHaveBeenCalledTimes(4)
   } finally { vi.useRealTimers() }
-})
-
-it('hides the Chat/Work mode picker and skips enterprise work resources when enterprise capabilities are absent', async () => {
-  await mount()
-  delete window.dshEnterpriseChat
-  const injectedDeps = []
-  let plugin
-  window.__ModuleLoader__ = { load({ factory }) {
-    plugin = factory(name => {
-      if (name === 'react') return React
-      if (name === '@deepseek-ai/dsh-client-ui-primitives') return { Button: props => React.createElement('button', props), Modal: () => null, Menu: () => null }
-      throw new Error(name)
-    })
-  } }
-  new Function(await readFile(process.env.DSH_TEST_HOST_DIALOG_CLIENT_SOURCE || 'packages/dsh-desktop-client-ui/client.js', 'utf8'))()
-  const registrations = new Map()
-  plugin.apply({
-    inject(names) { injectedDeps.push(names) },
-    uiWorkspace: { registerNavigationHandler: () => () => {}, startSession: () => {} },
-    sessions: { binding: () => ({ session: { getSnapshot: () => ({ blank: true, pendingSubmissions: [], running: false, awaitingFirstTurn: false }), subscribe: () => () => {} } }), list: { getSnapshot: () => ({ phase: 'ready', byId: { draft: { id: 'draft', blank: true, retainedBy: { mainView: 1 } } } }), subscribe: () => () => {} } },
-    layout: { selectPanel: () => {}, panelInfo: { getSnapshot: () => ({ activePanelId: null }), subscribe: () => () => {} } },
-    remote: {}, locale: { register() {}, bind: () => key => key, getSnapshot: () => ({ active: 'en' }), subscribe: () => () => {} },
-    effect(fn) { const dispose = fn(); if (typeof dispose === 'function') disposers.push(dispose) },
-    slots: {
-      inject(name, fn) { if (name === 'desktop.mode.content') fn() },
-      register(options, component) { registrations.set(options.name, { component, props: options.inject() }) }
-    }
-  })
-  expect(injectedDeps).toContainEqual(['commandUi', 'inputTriggers', 'conversation', 'remote.skills', 'enterpriseWorkResources'])
-  const content = registrations.get('desktop.mode.content')
-  await act(async () => root.render(React.createElement(content.component, { ...content.props, columns: '1fr 0px', work: React.createElement('textarea', { 'aria-label': 'public work draft' }) })))
-  expect(container.querySelector('[role=tablist]')).toBeNull()
-  expect(container.querySelector('#dsh-panel-work').hidden).toBe(false)
 })

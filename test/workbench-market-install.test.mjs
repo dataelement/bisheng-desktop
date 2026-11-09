@@ -146,7 +146,7 @@ describe('workbench market install routes', () => {
     return { stdout, stderr, done, cancel() {} }
   }
   const KEY = 'o/project-helper'
-  async function host(desktopPnpm, catalog = index, fetchCatalog, pluginManager) {
+  async function host(desktopPnpm, catalog = index, fetchCatalog, pluginManager, applyPlugin = apply) {
     const home = await tempRoot()
     vi.stubEnv('DSH_HOME', home)
     const root = join(home, 'desktop-workbenches')
@@ -158,7 +158,7 @@ describe('workbench market install routes', () => {
       desktopPnpm = { ...desktopPnpm, authorizeWorkbenchMarketInstall: async () => {} }
     }
     const injections = []
-    apply({
+    applyPlugin({
       effect: fn => fn(),
       reflect: { provide() {} },
       connection,
@@ -168,14 +168,14 @@ describe('workbench market install routes', () => {
           if (desktopPnpm) callback({ connection, desktopPnpm })
         }
         if (deps.length === 1 && deps[0] === 'pluginManager') {
-          if (pluginManager) callback({ connection, pluginManager })
+          if (pluginManager) callback({ connection, pluginManager: { listBundles: vi.fn(async () => []), ...pluginManager } })
         }
       }
     }, { root })
-    const call = async (path, body) => {
+    const call = async (path, body, headers = {}) => {
       const route = routes.find(value => value.path === path)
       if (!route) return undefined
-      const response = await route.fetch(new Request(`http://localhost${path}`, body === undefined ? {} : { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' } }))
+      const response = await route.fetch(new Request(`http://localhost${path}`, body === undefined ? {} : { method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json', ...headers } }))
       return { status: response.status, body: await response.json() }
     }
     return { root, home, call, activate: service => injections.map(callback => callback({ connection, desktopPnpm: service })) }
@@ -379,25 +379,25 @@ describe('workbench market install routes', () => {
   })
 
   it('installs and uninstalls via pluginManager when desktopPnpm is absent in web mode', async () => {
-    const installBundle = vi.fn(async () => ({ application: 'applied', stage: 'enable', bundle: 'project-helper' }))
-    const removeBundle = vi.fn(async () => ({ application: 'applied', stage: 'remove' }))
+    const installBundle = vi.fn(async () => ({ application: 'applied', stage: 'enable', bundle: 'project-helper', version: '1.2.0' }))
+    const removeBundle = vi.fn(async name => ({ application: 'applied', stage: 'remove', target: name }))
     const { call, root } = await host(undefined, index, undefined, { installBundle, removeBundle })
     const installResult = await call('/api/desktop-workbenches/market-install', { id: KEY })
     expect(installResult.status).toBe(200)
     expect(installResult.body).toMatchObject({
-      restartRequired: true,
+      application: 'applied', restartRequired: false,
       install: { catalogId: 'o/project-helper', pluginName: 'project-helper', version: '1.2.0', source: 'npm' }
     })
-    expect(installBundle).toHaveBeenCalledWith('project-helper@1.2.0', { enabled: true })
+    expect(installBundle).toHaveBeenCalledWith('project-helper@1.2.0', { enabled: true, expectedName: 'project-helper', expectedVersion: '1.2.0' })
     expect(Object.keys((await call('/api/desktop-workbenches/market-installs')).body.installs)).toEqual([KEY])
 
     const uninstallResult = await call('/api/desktop-workbenches/market-uninstall', { id: KEY })
-    expect(uninstallResult).toEqual({ status: 200, body: { restartRequired: true } })
+    expect(uninstallResult).toEqual({ status: 200, body: { application: 'applied', restartRequired: false } })
     expect(removeBundle).toHaveBeenCalledWith('project-helper')
     expect((await call('/api/desktop-workbenches/market-installs')).body.installs).toEqual({})
   })
 
-  it('persists github-release tarball in packages directory when installing via pluginManager', async () => {
+  it('passes the verified temporary release tarball to the manager and cleans it after staging', async () => {
     const bytes = packed({ name: 'release-wb', version: '1.0.0' }, [tarEntry('package/README.md', 'hello')])
     const releaseCatalog = {
       ...index,
@@ -408,20 +408,143 @@ describe('workbench market install routes', () => {
         screenshots: [{ url: 'https://raw.githubusercontent.com/o/release-wb/main/a.png', alt: 'a', width: 1, height: 1, bytes: 1, sha256: sha }], probe: { status: 'ok' }
       }]
     }
-    const installBundle = vi.fn(async () => ({ application: 'applied', stage: 'enable', bundle: 'release-wb' }))
-    const removeBundle = vi.fn(async () => ({ application: 'applied', stage: 'remove' }))
+    const installBundle = vi.fn(async spec => {
+      expect(await readFile(spec.slice('file:'.length))).toEqual(bytes)
+      return { application: 'applied', stage: 'enable', bundle: 'release-wb', version: '1.0.0' }
+    })
+    const removeBundle = vi.fn(async name => ({ application: 'applied', stage: 'remove', target: name }))
     const fetchCatalog = vi.fn(async url => String(url).endsWith('.tgz') ? new Response(bytes) : Response.json(releaseCatalog))
     const { call, root } = await host(undefined, releaseCatalog, fetchCatalog, { installBundle, removeBundle })
     const result = await call('/api/desktop-workbenches/market-install', { id: 'o/release-wb' })
     expect(result.status).toBe(200)
     const expectedTarball = join(root, 'packages', 'release-wb-1.0.0.tgz')
-    expect(installBundle).toHaveBeenCalledWith(`file:${expectedTarball}`, { enabled: true })
-    expect(existsSync(expectedTarball)).toBe(true)
+    expect(installBundle).toHaveBeenCalledWith(expect.stringMatching(/^file:.*workbench\.tgz$/), { enabled: true, expectedName: 'release-wb', expectedVersion: '1.0.0' })
+    expect(existsSync(installBundle.mock.calls[0][0].slice('file:'.length))).toBe(false)
+    expect(existsSync(expectedTarball)).toBe(false)
 
     const uninstall = await call('/api/desktop-workbenches/market-uninstall', { id: 'o/release-wb' })
     expect(uninstall.status).toBe(200)
     expect(removeBundle).toHaveBeenCalledWith('release-wb')
     expect(existsSync(expectedTarball)).toBe(false)
+  })
+
+  const acceptedInstall = { application: 'applied', stage: 'enable', bundle: 'project-helper', version: '1.2.0' }
+  const invalidInstalls = [
+    ['activation failure', { ...acceptedInstall, application: 'failed', error: { diagnostic: 'apply failed: missing peer', message: 'outer failure' } }],
+    ['overridden', { ...acceptedInstall, application: 'overridden' }],
+    ['cancelled', { ...acceptedInstall, application: 'cancelled' }],
+    ['wrong bundle', { ...acceptedInstall, bundle: 'another-package' }],
+    ['missing bundle', { ...acceptedInstall, bundle: undefined }],
+    ['install stage', { ...acceptedInstall, stage: 'install' }],
+    ['remove stage', { ...acceptedInstall, stage: 'remove' }],
+    ['wrong version', { ...acceptedInstall, version: '1.1.0' }],
+    ['missing version', { ...acceptedInstall, version: undefined }],
+    ['missing result', undefined]
+  ]
+
+  it.each(['applied', 'restart-required'])('reports the actual Web market application outcome (%s)', async application => {
+    const installBundle = vi.fn(async () => ({ ...acceptedInstall, application, ...(application === 'restart-required' ? { restartReason: 'no-hmr' } : {}) }))
+    const { call } = await host(undefined, index, undefined, { installBundle })
+    expect(await call('/api/desktop-workbenches/market-install', { id: KEY })).toMatchObject({
+      status: 200, body: { application, restartRequired: application === 'restart-required', ...(application === 'restart-required' ? { restartReason: 'no-hmr' } : {}) }
+    })
+  })
+
+  it.each(invalidInstalls)('does not record an unsuccessful Web market install: %s', async (_label, result) => {
+    const installBundle = vi.fn(async () => result)
+    const { call, root } = await host(undefined, index, undefined, { installBundle })
+    const store = createMarketInstallStore(root)
+    await store.record(KEY, { pluginName: 'project-helper', version: '1.0.0', source: 'npm' })
+    const before = await readFile(join(root, 'market-installs.json'), 'utf8')
+    const response = await call('/api/desktop-workbenches/market-install', { id: KEY })
+    expect(response.status).toBe(409)
+    expect(response.body).not.toHaveProperty('install')
+    if (result?.error?.diagnostic) expect(response.body.error).toBe(result.error.diagnostic)
+    expect(await readFile(join(root, 'market-installs.json'), 'utf8')).toBe(before)
+  })
+
+  it.each([true, false])('only requests replacement for an installed matching bundle (%s)', async installed => {
+    const installBundle = vi.fn(async () => acceptedInstall)
+    const listBundles = vi.fn(async () => [
+      { name: 'project-helper', installed }, { name: 'unrelated', installed: true }
+    ])
+    const { call } = await host(undefined, index, undefined, { installBundle, listBundles })
+    const response = await call('/api/desktop-workbenches/market-install', { id: KEY })
+    expect(response).toMatchObject({ status: 200, body: { application: installed ? 'restart-required' : 'applied', restartRequired: installed } })
+    if (installed) expect(response.body.restartReason).toBe('package-moved')
+    expect(installBundle).toHaveBeenCalledWith('project-helper@1.2.0', {
+      enabled: true, expectedName: 'project-helper', expectedVersion: '1.2.0', ...(installed ? { replace: true } : {})
+    })
+    expect(listBundles).toHaveBeenCalledOnce()
+  })
+
+  it('passes the pinned git identity and version through to the verified manager backend', async () => {
+    const catalog = structuredClone(index)
+    catalog.workbenches[0].distribution = { type: 'github-source', version: '1.2.0', url: 'https://github.com/o/project-helper', commit }
+    const installBundle = vi.fn(async () => acceptedInstall)
+    const { call } = await host(undefined, catalog, undefined, { installBundle })
+    expect((await call('/api/desktop-workbenches/market-install', { id: KEY })).status).toBe(200)
+    expect(installBundle).toHaveBeenCalledWith('github:o/project-helper#' + commit, { enabled: true, expectedName: 'project-helper', expectedVersion: '1.2.0' })
+  })
+
+  async function localHost(pluginManager, desktopPnpm) {
+    vi.resetModules()
+    const capability = 'test-only-workbench-capability-00000000'
+    vi.stubEnv('DSH_DESKTOP_LOCAL_WORKBENCH_CAPABILITY', capability)
+    const { apply: applyLocal } = await import('../packages/dsh-desktop-workbenches/index.js')
+    const hosted = await host(desktopPnpm, index, undefined, pluginManager, applyLocal)
+    const directory = join(hosted.home, 'source')
+    await mkdir(directory)
+    await writeFile(join(directory, 'package.json'), JSON.stringify({
+      name: 'project-helper', version: '1.2.0', exports: { './client': './client.js' },
+      dsh: { client: { inject: ['dsh-desktop-workbenches'] } }
+    }))
+    await writeFile(join(directory, 'client.js'), 'export {}')
+    return { ...hosted, directory, headers: { 'x-dsh-local-workbench-capability': capability } }
+  }
+
+  it.each([
+    { application: 'applied', installed: false },
+    { application: 'applied', installed: true },
+    { application: 'restart-required', installed: false }
+  ])('reports local activation and replacement accurately (%o)', async ({ application, installed }) => {
+    const installBundle = vi.fn(async () => ({ ...acceptedInstall, application }))
+    const { call, directory, headers, root } = await localHost({ installBundle, listBundles: async () => [{ name: 'project-helper', installed }] })
+    const response = await call('/api/desktop-workbenches/local-install', { path: directory }, headers)
+    const restartRequired = installed || application === 'restart-required'
+    expect(response).toMatchObject({ status: 200, body: { application: restartRequired ? 'restart-required' : 'applied', restartRequired, install: { pluginName: 'project-helper', version: '1.2.0' } } })
+    expect(installBundle).toHaveBeenCalledWith(expect.any(String), { enabled: true, expectedName: 'project-helper', expectedVersion: '1.2.0', ...(installed ? { replace: true } : {}) })
+    expect(JSON.parse(await readFile(join(root, 'local-installs.json'), 'utf8'))['project-helper']).toMatchObject(response.body.install)
+  })
+
+  it.each(invalidInstalls)('preserves local installation records on an unsuccessful manager result: %s', async (_label, result) => {
+    const installBundle = vi.fn(async () => result)
+    const { call, directory, headers, root } = await localHost({ installBundle })
+    await mkdir(root, { recursive: true })
+    const recordPath = join(root, 'local-installs.json')
+    const before = JSON.stringify({ 'project-helper': { pluginName: 'project-helper', version: '1.0.0' } })
+    await writeFile(recordPath, before)
+    const response = await call('/api/desktop-workbenches/local-install', { path: directory }, headers)
+    expect(response.status).toBe(409)
+    expect(response.body).not.toHaveProperty('install')
+    if (result?.error?.diagnostic) expect(response.body.error).toBe(result.error.diagnostic)
+    expect(await readFile(recordPath, 'utf8')).toBe(before)
+  })
+
+  it('keeps local installs capability-gated before invoking the manager', async () => {
+    const installBundle = vi.fn(async () => acceptedInstall)
+    const { call, directory } = await localHost({ installBundle })
+    expect((await call('/api/desktop-workbenches/local-install', { path: directory })).status).toBe(403)
+    expect(installBundle).not.toHaveBeenCalled()
+  })
+
+  it('keeps the desktop local generation path and its restart requirement', async () => {
+    const installWorkbenchGeneration = vi.fn(() => handle())
+    const installBundle = vi.fn()
+    const { call, directory, headers } = await localHost({ installBundle }, { installWorkbenchGeneration })
+    expect(await call('/api/desktop-workbenches/local-install', { path: directory }, headers)).toMatchObject({ status: 200, body: { restartRequired: true } })
+    expect(installWorkbenchGeneration).toHaveBeenCalledWith(expect.objectContaining({ source: 'local', expectedPluginName: 'project-helper', expectedVersion: '1.2.0' }), expect.any(String))
+    expect(installBundle).not.toHaveBeenCalled()
   })
 
   it('handles pluginManager installation failures cleanly', async () => {
@@ -432,12 +555,41 @@ describe('workbench market install routes', () => {
     }))
     const { call } = await host(undefined, index, undefined, { installBundle })
     const result = await call('/api/desktop-workbenches/market-install', { id: KEY })
-    expect(result).toEqual({ status: 502, body: { error: 'Failed to download package from npm.' } })
+    expect(result).toEqual({ status: 409, body: { error: 'Failed to download package from npm.' } })
     expect((await call('/api/desktop-workbenches/market-installs')).body.installs).toEqual({})
   })
 
+  it.each(['applied', 'restart-required'])('reports the actual Web uninstall outcome (%s)', async application => {
+    const removeBundle = vi.fn(async name => ({ application, stage: 'remove', target: name, ...(application === 'restart-required' ? { restartReason: 'no-hmr' } : {}) }))
+    const { call, root } = await host(undefined, index, undefined, { removeBundle })
+    await createMarketInstallStore(root).record(KEY, { pluginName: 'project-helper', version: '1.2.0' })
+    expect(await call('/api/desktop-workbenches/market-uninstall', { id: KEY })).toEqual({
+      status: 200, body: { application, restartRequired: application === 'restart-required', ...(application === 'restart-required' ? { restartReason: 'no-hmr' } : {}) }
+    })
+    expect(await createMarketInstallStore(root).read()).toEqual({})
+  })
+
+  it.each([
+    ['failed', { application: 'failed', stage: 'remove', target: 'project-helper', error: { diagnostic: 'removal apply failed' } }],
+    ['overridden', { application: 'overridden', stage: 'remove', target: 'project-helper' }],
+    ['cancelled', { application: 'cancelled', stage: 'remove', target: 'project-helper' }],
+    ['wrong target', { application: 'applied', stage: 'remove', target: 'another-package' }],
+    ['missing target', { application: 'applied', stage: 'remove' }],
+    ['wrong stage', { application: 'applied', stage: 'enable', target: 'project-helper' }],
+    ['missing result', undefined]
+  ])('retains market install records after unsuccessful removal: %s', async (_label, result) => {
+    const { call, root } = await host(undefined, index, undefined, { removeBundle: vi.fn(async () => result) })
+    const store = createMarketInstallStore(root)
+    await store.record(KEY, { pluginName: 'project-helper', version: '1.2.0' })
+    const before = await readFile(join(root, 'market-installs.json'), 'utf8')
+    const response = await call('/api/desktop-workbenches/market-uninstall', { id: KEY })
+    expect(response.status).toBe(409)
+    if (result?.error?.diagnostic) expect(response.body.error).toBe(result.error.diagnostic)
+    expect(await readFile(join(root, 'market-installs.json'), 'utf8')).toBe(before)
+  })
+
   it('handles pluginManager uninstallation failures cleanly', async () => {
-    const installBundle = vi.fn(async () => ({ application: 'applied', stage: 'enable', bundle: 'project-helper' }))
+    const installBundle = vi.fn(async () => ({ application: 'applied', stage: 'enable', bundle: 'project-helper', version: '1.2.0' }))
     const removeBundle = vi.fn(async () => { throw new Error('Could not modify package.json') })
     const { call } = await host(undefined, index, undefined, { installBundle, removeBundle })
     await call('/api/desktop-workbenches/market-install', { id: KEY })

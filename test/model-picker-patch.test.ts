@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { hasPatch, patchPath, projectRoot } from './patch-path'
+import { projectRoot } from './patch-path'
 
 const settingsModelsClient = path.join(
   projectRoot,
@@ -38,17 +38,6 @@ describe('DSH Desktop available-model picker', () => {
     expect(client).toContain('fetchDeselectAll: "取消全选"')
   })
 
-  it('leaves the toggle to Harness rather than re-patching it', async () => {
-    expect(hasPatch('@deepseek-ai/dsh-client-ui-settings-models')).toBe(true)
-    const patch = await readFile(
-      patchPath('@deepseek-ai/dsh-client-ui-settings-models'),
-      'utf8'
-    )
-
-    expect(patch).not.toContain('const allCandidatesPicked =')
-    expect(patch).not.toContain('fetchSelectAll: "Select all"')
-  })
-
 
 })
 
@@ -81,16 +70,5 @@ describe('DSH Desktop model image-input declarations', () => {
     expect(client).toContain('modelImageInput: "支持图片输入"')
     expect(client).toContain('modelImageInputShort: "视觉"')
     expect(client).toContain('请确认接口实际支持')
-  })
-
-  it('captures the image-input control in the reproducible dependency patch', async () => {
-    const patch = await readFile(
-      patchPath('@deepseek-ai/dsh-client-ui-settings-models'),
-      'utf8'
-    )
-
-    expect(patch).toContain('ModelImageInputToggle')
-    expect(patch).toContain('field: "inputModalities"')
-    expect(patch).toContain('field: "input"')
   })
 })

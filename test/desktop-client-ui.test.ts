@@ -11,7 +11,7 @@ interface Registration {
 }
 
 describe('BISHENG client slot occupants', () => {
-  it('keeps BISHENG artwork in mark seats while removing the wide sidebar wordmark', async () => {
+  it('renders the sidebar brand with account configuration and a BISHENG fallback', async () => {
     const source = await readFile(
       path.join(projectRoot, 'packages', 'dsh-desktop-client-ui', 'client.js'),
       'utf8'
@@ -196,17 +196,18 @@ describe('BISHENG client slot occupants', () => {
     disposeStyle?.()
     expect(removeStyle).toHaveBeenCalledOnce()
 
+    const sidebarNavigation = { subscribe: vi.fn(), snapshot: () => ({}) }
     const sidebarName = registrations.find(
       ({ config }) => config.name === 'sidebar.brand.name'
-    )!.component({})
-    expect(sidebarName).toBeNull()
+    )!.component({ navigation: sidebarNavigation }) as { type: unknown; props: Record<string, unknown> }
+    expect(sidebarName.props.children).toEqual(['Bisheng'])
 
     const sidebarMark = registrations.find(
       ({ config }) => config.name === 'sidebar.brand.mark'
-    )!.component({ size: 24 }) as { type: unknown; props: Record<string, unknown> }
+    )!.component({ size: 24, navigation: sidebarNavigation }) as { type: unknown; props: Record<string, unknown> }
     expect(sidebarMark.type).toBe('svg')
-    expect(sidebarMark.props.width).toBe(17)
-    expect(sidebarMark.props.height).toBe(17)
+    expect(sidebarMark.props.width).toBe(24)
+    expect(sidebarMark.props.height).toBe(24)
     const [markField, ...markPaths] = sidebarMark.props.children as Array<{
       type: unknown
       props: Record<string, unknown>
@@ -215,6 +216,12 @@ describe('BISHENG client slot occupants', () => {
     expect(markField?.props.fill).toBe('#000000')
     expect(markPaths).toHaveLength(8)
     expect(markPaths.every(({ type, props }) => type === 'path' && props.fill === 'white')).toBe(true)
+    const configuredNavigation = { subscribe: vi.fn(), snapshot: () => ({ sidebarBrand: { name: 'Team', image: 'https://files.example/logo.png' } }) }
+    const configuredName = registrations.find(({ config }) => config.name === 'sidebar.brand.name')!.component({ navigation: configuredNavigation }) as { props: Record<string, unknown> }
+    expect(configuredName.props.children).toEqual(['Team'])
+    const configuredSidebarMark = registrations.find(({ config }) => config.name === 'sidebar.brand.mark')!.component({ size: 24, navigation: configuredNavigation }) as { type: unknown; props: Record<string, unknown> }
+    expect(configuredSidebarMark.type).toBe('img')
+    expect(configuredSidebarMark.props.src).toBe('https://files.example/logo.png')
 
     const heroMark = registrations.find(
       ({ config }) => config.name === 'conversation.hero.brand.mark'
@@ -243,7 +250,7 @@ describe('BISHENG client slot occupants', () => {
     const configuredMark = registrations.find(({ config }) => config.name === 'conversation.hero.brand.mark')!.component({ size: 34, navigation }) as { type: unknown; props: Record<string, unknown> }
     expect(configuredMark.type).toBe('img')
     expect(configuredMark.props.src).toBe(branding.assistantIcon.image)
-    const configuredTitle = registrations.find(({ config }) => config.name === 'conversation.hero.brand.title')!.component({ navigation, t: (key: string) => key }) as { props: Record<string, unknown> }
+    const configuredTitle = registrations.find(({ config }) => config.name === 'conversation.hero.brand.title')!.component({ navigation, locale: { subscribe: vi.fn(), snapshot: () => 'en' } }) as { props: Record<string, unknown> }
     expect(configuredTitle.props.children).toEqual(['Team workspace'])
     branding.assistantIcon.enabled = false
     expect(registrations.find(({ config }) => config.name === 'conversation.hero.brand.mark')!.component({ size: 34, navigation })).toBeNull()

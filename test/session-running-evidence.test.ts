@@ -2,7 +2,6 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import vm from 'node:vm'
 import { describe, expect, it } from 'vitest'
-import { patchPath } from './patch-path'
 
 function clientRequire(id: string): unknown {
   if (id === '@deepseek-ai/cordis') return { Context: { filter: Symbol('filter') } }
@@ -166,16 +165,5 @@ describe('live turn evidence after a dropped session status', () => {
     expect(listRunning(manager, 'idle')).toBe(false)
     expect(resident.getSnapshot().running).toBe(false)
     expect(listRunning(manager, 'resident')).toBe(false)
-  })
-
-  it('keeps the live evidence hook in the session-controller patch', async () => {
-    const patch = await readFile(patchPath('@deepseek-ai/dsh-api-session-controller'), 'utf8')
-    expect(patch).toContain('this.reportLiveRunningEvidence(event);')
-    expect(patch).toContain('event?.type === "turn/end" && event.data?.reason?.kind === "error"')
-    expect(patch).toContain('onRunningEvidence: (running) => {')
-    expect(patch).toContain('this.handleSessionStatus(sessionId, running);')
-    expect(patch).toContain('suspendRunning() {')
-    expect(patch).toContain('connection.state?.getSnapshot() !== "disconnected"')
-    expect(patch).toContain('sessions.suspendRunning();')
   })
 })

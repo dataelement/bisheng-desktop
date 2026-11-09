@@ -17,6 +17,29 @@ function startMockUpstream(handler) {
 }
 
 describe('Enterprise Proxy Middleware', () => {
+  it('preserves signed object URLs without adding bearer authorization', async () => {
+    let received
+    const upstream = await startMockUpstream((req, res) => {
+      received = { url: req.url, authorization: req.headers.authorization }
+      res.writeHead(req.headers.authorization ? 400 : 200, { 'content-type': 'image/png' })
+      res.end('image')
+    })
+    const handler = createEnterpriseProxyHandler({
+      enterpriseClient: { _getSessionAuth: async () => ({ base: upstream.base, tokens: { access_token: 'token' } }), getWebSessionCookie: async () => 'cookie' }
+    })
+    const local = http.createServer(handler)
+    await new Promise(resolve => local.listen(0, '127.0.0.1', resolve))
+    try {
+      const url = '/workspace/bisheng/icon/test?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=fixture&X-Amz-Signature=fixture'
+      const response = await fetch(`http://127.0.0.1:${local.address().port}${url}`, { headers: { authorization: 'Bearer caller' } })
+      expect(response.status).toBe(200)
+      expect(received).toEqual({ url, authorization: undefined })
+    } finally {
+      await new Promise(resolve => local.close(resolve))
+      await upstream.close()
+    }
+  })
+
   it('defines the required proxy prefix paths', () => {
     expect(PROXY_ROUTE_PREFIXES).toContain('/workspace')
     expect(PROXY_ROUTE_PREFIXES).toContain('/api/v1')

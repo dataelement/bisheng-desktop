@@ -94,7 +94,7 @@ function cardButtons(card) {
   return buttons.map(button => button.props.children.flat().filter(child => typeof child === 'string').join(''))
 }
 
-function interactiveMarket(service, tab = 'market', clipboard) {
+function interactiveMarket(service, tab = 'market', clipboard, storage = enabledStorage) {
   let renderMarket
   let stateIndex = 0
   const state = []
@@ -111,7 +111,7 @@ function interactiveMarket(service, tab = 'market', clipboard) {
       useRef: () => ({ current: null }),
     useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot()
   }
-  vm.runInNewContext(code, { window: { sessionStorage, localStorage: enabledStorage, navigator: clipboard && { clipboard }, __ModuleLoader__: { load({ factory }) {
+  vm.runInNewContext(code, { window: { sessionStorage, localStorage: storage, navigator: clipboard && { clipboard }, __ModuleLoader__: { load({ factory }) {
     renderMarket = factory(name => name === 'react' ? testReact : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null, Toast: function Toast() {} }).Market
   } } }, document, setTimeout, clearTimeout, AbortController })
   const find = (node, predicate) => {
@@ -127,7 +127,7 @@ function interactiveMarket(service, tab = 'market', clipboard) {
   }
 }
 
-function sidebarSwitcher({ pinned = [], active = null, title = '工作台', workbenchId = 'writer' } = {}) {
+function sidebarSwitcher({ pinned = [], active = null, title = '工作台', workbenchId = 'writer', capability } = {}) {
   let renderSidebar
   let stateIndex = 0
   const state = []
@@ -144,7 +144,7 @@ function sidebarSwitcher({ pinned = [], active = null, title = '工作台', work
       useRef: () => ({ current: null }),
     useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot()
   }
-  const sandbox = { window: { sessionStorage, localStorage: clientWindow.localStorage, __ModuleLoader__: { load({ factory }) {
+  const sandbox = { window: { sessionStorage, localStorage: clientWindow.localStorage, __dshEnterpriseWorkbenchSnapshot: capability, __ModuleLoader__: { load({ factory }) {
     factory(name => name === 'react' ? react : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null })
   } } }, document, setTimeout, clearTimeout, AbortController }
   vm.runInNewContext(code.replace('    function MetaItem(', '    globalThis.__testSidebarSwitcher = WorkbenchSidebarSwitcher\n    function MetaItem('), sandbox)
@@ -212,6 +212,7 @@ async function fixture(initial = emptyState()) {
   let navigation = new AbortController()
   let service
   const ctx = {
+    locale: { bind: () => key => ({ tab: '来自企业', signIn: '登录后查看企业工作台', signInHint: '请先登录企业账号。' })[key] || key },
     fiber: { name: 'fixture', entry: { options: { name: 'fixture' } } },
     sessions: {
       list: { getSnapshot: () => list },
@@ -1061,6 +1062,10 @@ describe('desktop workbench client navigation', () => {
     }
     apply(ctx)
     expect(service).toBeInstanceOf(Workbenches)
+    const webPanel = ctx.slots.register.mock.calls.find(([options]) => options.name === 'sidebar.panellist' && options.id === 'desktop-workbenches')
+    expect(webPanel).toBeDefined()
+    expect(webPanel[0].label()).toBe('工作台')
+    expect(typeof webPanel[1]).toBe('function')
     expect(service.getSnapshot().catalog).toEqual([])
     service.remoteCatalog = [{ id: 'owner/external-workbench', owner: 'owner', repository: 'external-workbench', url: 'https://github.com/owner/external-workbench', name: 'External workbench', categoryName: '其他', description: { zh: 'External workbench' }, screenshots: [], distribution: { name: 'external-package' } }]
     service.register({ title: 'External workbench' }, () => null)
@@ -2574,10 +2579,23 @@ describe('workbench market screenshot and metadata display', () => {
     expect(fullSource).not.toContain("onClick: () => service.run(service.open(entry.id)) }, '打开工作台'")
   })
 
-  it('uses the top switcher as the only Workbench navigation entry', () => {
-    expect(fullSource).not.toContain("ctx.slots.inject('sidebar.panellist'")
+  it('keeps the top switcher and provides a Web panel entry', () => {
+    expect(fullSource).toContain("ctx.slots.inject('sidebar.panellist'")
     expect(fullSource).not.toContain('function WorkbenchPanelIcon(')
     expect(fullSource).toContain("title: tr('工作台主页'), 'aria-label': tr('打开工作台主页')")
+  })
+
+  it('lets a user enable workbenches from the disabled market', async () => {
+    const { service } = await fixture()
+    const values = new Map()
+    const storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) }
+    const ui = interactiveMarket(service, 'market', undefined, storage)
+    const button = ui.button(ui.render(), '开启工作台')
+    expect(button).toBeDefined()
+    button.props.onClick()
+    expect(values.get(WORKBENCH_ENABLED)).toBe('true')
+    expect(ui.button(ui.render(), '开启工作台')).toBeUndefined()
+    service.dispose()
   })
 
   it('does not fail the whole Workbench plugin when an older host lacks session filtering', () => {
@@ -2589,7 +2607,7 @@ describe('workbench market screenshot and metadata display', () => {
     expect(fullSource).not.toContain('WORKBENCH_DOCK_PREF')
     expect(fullSource).not.toContain('workbenchDockPreference')
     expect(fullSource).not.toContain('显示工作台快捷栏')
-    expect(fullSource).toContain('if (!enabled || !wide || (enterprise.known && !enterprise.connected)) return null')
+    expect(fullSource).toContain('if (!enabled || !wide) return null')
     expect(fullSource).not.toContain('WorkbenchEnableSetting')
     expect(fullSource).not.toContain("label: tr('启用工作台功能')")
     expect(fullSource).toContain('if (!workbenchEnabled) return conversation')
@@ -3126,6 +3144,57 @@ describe('workbench market screenshot and metadata display', () => {
     expect(service.getSnapshot().catalog.find(entry => entry.catalogId === 'o/helper')).toMatchObject({ installed: false, pendingRestart: true, loadFailure: '' })
     expect(JSON.stringify(marketCard(service))).toContain('已安装')
     expect(cardButtons(marketCard(service))).not.toContain('打开工作台')
+  })
+
+  it.each([false, undefined])('refreshes applied market installs without retaining restart UI (%s)', async restartRequired => {
+    const { service, ctx, saved } = await fixture()
+    const id = 'o/helper'
+    service.remoteCatalog = [listed()]
+    service.pendingRestart.add(id)
+    service.restartNeeded = true
+    service.installFailures.set(id, { kind: 'install', message: 'previous failure' })
+    const listBundles = vi.fn(async () => ({ ok: true, value: [{ name: 'helper', installed: true, enabled: true, version: '1.0.0', rows: [] }] }))
+    ctx.remote = { pluginManager: { listBundles } }
+    withMarket(service, { '/api/desktop-workbenches/market-install': () => {
+      setFiberPackage(ctx, 'helper')
+      service.register({ title: 'Helper' }, () => null)
+      return Response.json({ application: 'applied', install: { catalogId: id, pluginName: 'helper', version: '1.0.0' }, ...(restartRequired === undefined ? {} : { restartRequired }) })
+    } })
+    await service.installFromMarket(id)
+    expect(listBundles).toHaveBeenCalledOnce()
+    expect(service.pendingRestart.has(id)).toBe(false)
+    expect(service.getSnapshot().restartNeeded).toBe(false)
+    expect(service.installFailures.has(id)).toBe(false)
+    expect(saved().state.pinned).toContain(id)
+    const entry = service.getSnapshot().catalog.find(item => item.catalogId === id)
+    expect(entry).toMatchObject({ installed: true, loadFailure: '' })
+    expect(service.activationFor(entry)).toBe('on')
+    const mine = interactiveMarket(service, 'mine')
+    const card = mine.find(mine.render(), node => node.type === 'article' && node.props.key === id)[0]
+    expect(card).toBeDefined()
+    expect(mine.find(card, node => node.props?.role === 'switch')[0].props).toMatchObject({ disabled: false, 'aria-checked': true })
+    expect(mine.find(card, node => node.props?.className === 'dshWbUpdate')).toHaveLength(0)
+    expect(JSON.stringify(card)).not.toContain('重启后生效')
+    const nav = sidebarSwitcher({ pinned: [id], workbenchId: id })
+    nav.service.getSnapshot = () => service.getSnapshot()
+    nav.service.catalog = service.catalog
+    nav.service.activationFor = item => service.activationFor(item)
+    expect(nav.find(nav.render(), node => node.props?.className === 'dshWbModeSwitch')).toHaveLength(1)
+    await service.open(id)
+    expect(service.state.active).toBe(id)
+  })
+
+  it('keeps other workbenches awaiting restart after an applied market update', async () => {
+    const { service } = await fixture()
+    service.remoteCatalog = [listed()]
+    service.pendingRestart = new Set(['o/helper', 'o/other'])
+    service.restartNeeded = true
+    withMarket(service, { '/api/desktop-workbenches/market-install': () => Response.json({
+      application: 'applied', restartRequired: false, install: { catalogId: 'o/helper', pluginName: 'helper', version: '1.0.0' }
+    }) })
+    await service.installFromMarket('o/helper')
+    expect([...service.pendingRestart]).toEqual(['o/other'])
+    expect(service.restartNeeded).toBe(true)
   })
 
   it('merges the installed provider through its caller package identity', async () => {
@@ -3949,6 +4018,7 @@ describe('workbench host localization', () => {
     let snapshot = { active: 'en', revision: 1 }
     const listeners = new Set()
     ctx.locale = {
+      ...ctx.locale,
       getSnapshot: () => snapshot,
       subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener) },
       setActive: active => { snapshot = { active, revision: snapshot.revision + 1 }; for (const listener of listeners) listener() }
@@ -3974,7 +4044,7 @@ describe('workbench host localization', () => {
 
   it('localizes the creation workflow and installed-state actions', async () => {
     const { service, ctx } = await fixture({ ...emptyState(), added: ['o/a'] })
-    ctx.locale = { getSnapshot: () => ({ active: 'en', revision: 1 }), subscribe: () => () => {} }
+    ctx.locale = { ...ctx.locale, getSnapshot: () => ({ active: 'en', revision: 1 }), subscribe: () => () => {} }
     service.remoteCatalog = [bilingualEntry()]
     service.publish()
     const ui = interactiveMarket(service)
@@ -3995,6 +4065,14 @@ describe('workbench host localization', () => {
 
 
 describe('sidebar central panel selection', () => {
+  it('keeps the workbench home entry available when signed out', () => {
+    const ui = sidebarSwitcher({ capability: { known: true, connected: false, allowThirdPartyWorkbenches: false } })
+    const home = ui.find(ui.render(), node => node.props?.['aria-label'] === '打开工作台主页')[0]
+    expect(home).toBeDefined()
+    home.props.onClick({ stopPropagation() {} })
+    expect(ui.service.showMarket).toHaveBeenCalledOnce()
+  })
+
   it('highlights the entire row for an active workbench frame, but not other panels', () => {
     const ui = sidebarSwitcher({ pinned: ['writer'], active: 'writer', title: '装修工作台' })
     const selected = () => ui.find(ui.render(), node => node.props?.['data-dsh-workbench-switcher'] === '')[0].props['data-selected']
@@ -4070,6 +4148,24 @@ describe('enterprise workbench Manager outcomes', () => {
     expect(Boolean(service.restartNeeded)).toBe(application === 'restart-required')
     expect(service.installing).toBeNull()
   })
+  it('clears a prior enterprise restart and refreshes the actual bundle without inventing an install record', async () => {
+    const { service, ctx, request } = await fixture()
+    const id = 'a'.repeat(32)
+    service.pendingRestart.add(id)
+    service.restartNeeded = true
+    const bundle = { name: 'company-workbench', version: '1.0.0', installed: true, enabled: true, rows: [] }
+    ctx.remote = { pluginManager: { listBundles: vi.fn(async () => ({ ok: true, value: [bundle] })) } }
+    request.mockImplementation(async url => url === '/api/desktop-workbenches/enterprise-install'
+      ? Response.json({ application: 'applied', install: { id }, restartRequired: false })
+      : Response.json({ installs: {}, packages: {} }))
+    await service.installEnterpriseWorkbench(id)
+    expect(service.pendingRestart.has(id)).toBe(false)
+    expect(service.restartNeeded).toBe(false)
+    expect(ctx.remote.pluginManager.listBundles).toHaveBeenCalledOnce()
+    expect(service.native.bundles['company-workbench']).toEqual(bundle)
+    expect(service.installs).toEqual({})
+  })
+
   it('does not accept a failed activation even when package bytes were installed', async () => {
     const { service, request } = await fixture()
     const id = 'a'.repeat(32)

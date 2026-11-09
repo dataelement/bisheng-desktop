@@ -1,6 +1,8 @@
 export interface WorkbenchInstallEvidence {
   origin: 'local' | 'market' | 'unknown'
   contentVerified: boolean
+  /** The installed client declares the workbench host injection. */
+  workbench?: boolean
   /** Only positive evidence of local or changed content requires update confirmation. */
   updateRisk: 'local' | 'modified' | null
   version?: string

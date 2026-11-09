@@ -58,6 +58,22 @@ describe('bundled workbench development guide', () => {
     expect(read(GUIDE_EN_SOURCE)).toContain('customFrame: true')
   })
 
+  it('documents repository-free local authoring and lifecycle-aware tool installation in both languages', () => {
+    for (const path of [GUIDE_SOURCE, GUIDE_EN_SOURCE, QUICKSTART_SOURCE, QUICKSTART_EN_SOURCE]) {
+      const guide = read(path)
+      for (const phrase of ['npm pack', 'install_local_workbench', 'replace: false', 'replace: true', 'installBundle', 'application', 'applied', 'restart-required', 'overridden', 'local:@scope/name']) expect(guide).toContain(phrase)
+      expect(guide).toContain(path.endsWith('.zh.md') ? 'Web 包后端不会执行生命周期脚本' : 'The Web package backend does not execute lifecycle scripts')
+      expect(guide).not.toContain('pnpm pack')
+      expect(guide).not.toContain("repository: 'https://github.com/owner/repository'")
+      expect(guide).toContain(path.endsWith('.zh.md') ? '不需要 GitHub 账号' : 'require no GitHub account')
+    }
+    for (const path of [GUIDE_SOURCE, GUIDE_EN_SOURCE]) {
+      const guide = read(path)
+      for (const phrase of ['pendingBuilds', 'approvedBuilds', 'dsh plugin --help']) expect(guide).toContain(phrase)
+      expect(guide).toContain(path.endsWith('.zh.md') ? '被拒绝时不得用 CLI 绕过' : 'Never bypass a refusal via CLI')
+    }
+  })
+
   it('covers development and the local self-test only', () => {
     const guide = read(GUIDE_TARGET)
     expect(guide).toBe(read(GUIDE_SOURCE))
@@ -107,7 +123,8 @@ describe('bundled workbench development guide', () => {
     try {
       const routes = []
       const connection = { fetch: { register(route) { routes.push(route) } } }
-      apply({ effect: fn => fn(), inject: (_deps, callback) => callback({ connection, desktopPnpm: {} }), reflect: { provide() {} }, connection }, { root })
+      const services = { connection, desktopPnpm: {} }
+      apply({ effect: fn => fn(), inject: (deps, callback) => { if (deps.every(name => name in services)) return callback(services) }, reflect: { provide() {} }, connection }, { root })
       expect(routes.length).toBeGreaterThan(5)
       for (const route of routes) expect([route.path, route.requestBody]).toEqual([route.path, 'buffered'])
     } finally { await rm(root, { recursive: true, force: true }) }

@@ -2,6 +2,29 @@ window.__ModuleLoader__.load({
   id: 'dsh-desktop-client-ui',
   factory: (require) => {
     const module = { exports: {} }
+    if (!globalThis.dshDesktop) {
+      globalThis.dshDesktop = {
+        restartHarness: async () => {
+          try {
+            await fetch("/api/desktop.restart", { method: "POST" });
+          } catch (e) {}
+          // Polling service until back online, then reload page
+          const poll = async () => {
+            try {
+              const res = await fetch("/api/desktop.state");
+              if (res.ok) {
+                location.reload();
+                return;
+              }
+            } catch (err) {}
+            setTimeout(poll, 1000);
+          };
+          setTimeout(poll, 1500);
+          return { ok: true };
+        }
+      };
+    }
+
     const exports = module.exports
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
 
@@ -41,12 +64,22 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function DesktopBrandMark() {
-      return BishengMark({ size: 17 })
+    function DesktopBrandMark({ navigation, size = 24 }) {
+      const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
+      const [failedImage, setFailedImage] = React.useState(null)
+      if (window.dshEnterpriseChat) return BishengMark({ size: 17 })
+      const image = state.sidebarBrand?.image
+      if (image && failedImage !== image) {
+        return React.createElement('img', { src: image, width: size, height: size, alt: '',
+          style: { objectFit: 'contain', flex: 'none' }, referrerPolicy: 'no-referrer', onError: () => setFailedImage(image) })
+      }
+      return BishengMark({ size })
     }
 
-    function DesktopBrandName() {
-      return null
+    function DesktopBrandName({ navigation }) {
+      const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
+      if (window.dshEnterpriseChat) return null
+      return React.createElement('span', { title: state.sidebarBrand?.name || 'Bisheng' }, state.sidebarBrand?.name || 'Bisheng')
     }
 
     function ConversationBrandMark({ navigation, ...props }) {
@@ -62,9 +95,11 @@ window.__ModuleLoader__.load({
       return BishengMark(props)
     }
 
-    function ConversationBrandTitle({ navigation, t }) {
+    function ConversationBrandTitle({ navigation, locale }) {
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
-      return React.createElement('span', { 'data-dsh-welcome-title': true }, state.navigation?.branding?.welcomeMessage || t('welcomeMessage'))
+      const currentLocale = React.useSyncExternalStore(locale.subscribe, locale.snapshot)
+      const welcome = MODES_COPY[currentLocale]?.welcomeMessage || MODES_COPY.zh.welcomeMessage
+      return React.createElement('span', { 'data-dsh-welcome-title': true }, state.navigation?.branding?.welcomeMessage || welcome)
     }
 
     const LOCAL_OPEN_NS = 'desktop.localOpen'
@@ -377,16 +412,33 @@ window.__ModuleLoader__.load({
       return b || t || u ? `dsh:enterprise-navigation:${b}:${t}:${u}` : 'dsh:enterprise-navigation'
     }
 
+    function webNavStorageKey(state) {
+      const user = state?.user
+      const userId = typeof user === 'string' ? user : user?.id || user?.username
+      return state?.base && userId ? getNavStorageKey(state.base, state.tenant, user) : undefined
+    }
+
     function createChatNavigation(ctx) {
       let cachedNav = undefined
       try {
-        const stored = typeof localStorage !== 'undefined' ? localStorage.getItem('dsh:enterprise-navigation') : null
+        const stored = typeof localStorage !== 'undefined' && window.dshEnterpriseChat ? localStorage.getItem('dsh:enterprise-navigation') : null
         if (stored) cachedNav = JSON.parse(stored)
       } catch {}
       let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, signInPromptOpen: false, approvalsOpen: false, accountDialogOpen: false, settingsSurface: undefined, pageId: undefined, navigation: cachedNav, workLanding: false, nativeWork: true, panelOpen: false, activePanelId: null }
       const listeners = new Set()
-      let active = false, revision = 0, historyRequest = 0, historyDirty = false
-      const publish = (patch) => { value = { ...value, ...patch }; listeners.forEach(fn => fn()) }
+      let active = false, revision = 0, historyRequest = 0, historyDirty = false, brandRequest = 0
+      const publish = (patch) => {
+        const workstation = Object.hasOwn(patch, 'workstationBranding') ? patch.workstationBranding : value.workstationBranding
+        const navigation = Object.hasOwn(patch, 'navigation') ? patch.navigation : value.navigation
+        // The authenticated Web configuration owns branding. Navigation reports
+        // update entries without replacing it with an older embedded-page cache.
+        if (workstation) patch = { ...patch, navigation: {
+          ...navigation, homeLabel: workstation.homeLabel || navigation?.homeLabel,
+          branding: { ...navigation?.branding, ...workstation.branding }
+        } }
+        value = { ...value, ...patch }
+        listeners.forEach(fn => fn())
+      }
       const select = (mode) => {
         if (mode === 'chat' && !value.connected) {
           publish({ signInPromptOpen: true })
@@ -482,7 +534,12 @@ window.__ModuleLoader__.load({
       // Account notifications also follow ordinary enterprise reads. The host epoch,
       // shared by history responses and state updates, owns the in-memory history.
       const applyState = (next, refresh = false) => {
-        const identityChanged = value.epoch !== undefined && next.epoch !== undefined && next.epoch !== value.epoch
+        const isWeb = typeof window !== 'undefined' && !window.dshEnterpriseChat
+        const previousKey = webNavStorageKey(value)
+        const nextKey = webNavStorageKey(next)
+        const identityChanged = isWeb
+          ? Boolean((value.connectionKey && next.connectionKey && value.connectionKey !== next.connectionKey) || (previousKey && nextKey && previousKey !== nextKey))
+          : value.epoch !== undefined && next.epoch !== undefined && next.epoch !== value.epoch
         const signedIn = next.connected && !value.connected
         const loggedOut = value.connected && !next.connected
         const conversationChanged = next.conversationId !== value.conversationId
@@ -491,6 +548,7 @@ window.__ModuleLoader__.load({
         const becameReady = nextReady && !prevReady
         const clearHistory = identityChanged || loggedOut
         if (clearHistory) {
+          brandRequest++
           historyRequest++;
           historyDirty = false;
           deletion.reset()
@@ -509,12 +567,24 @@ window.__ModuleLoader__.load({
           ? nextPath.replace(/^\/workspace\//, '').replace(/^\//, '')
           : undefined
         const currentNav = clearHistory ? undefined : value.navigation
-        const nextNav = next.navigation !== undefined ? next.navigation : currentNav
+        let restoredNav
+        if (isWeb && next.connected && !currentNav && nextKey) {
+          try {
+            const stored = localStorage.getItem(nextKey)
+            if (stored) {
+              const parsed = JSON.parse(stored)
+              if (Array.isArray(parsed?.entries) && parsed.entries.length) restoredNav = parsed
+            }
+          } catch {}
+        }
+        const reportedNav = isWeb && (!Array.isArray(next.navigation?.entries) || next.navigation.entries.length === 0) ? undefined : next.navigation
+        const nextNav = reportedNav ?? currentNav ?? restoredNav
         if (nextNav && next.connected) {
           try {
             if (typeof localStorage !== 'undefined') {
-              localStorage.setItem('dsh:enterprise-navigation', JSON.stringify(nextNav))
-              localStorage.setItem(getNavStorageKey(next.base || value.base, next.tenant || value.tenant, next.user || value.user), JSON.stringify(nextNav))
+              if (!isWeb) localStorage.setItem('dsh:enterprise-navigation', JSON.stringify(nextNav))
+              const key = isWeb ? nextKey : getNavStorageKey(next.base || value.base, next.tenant || value.tenant, next.user || value.user)
+              if (key) localStorage.setItem(key, JSON.stringify(nextNav))
             }
           } catch {}
         }
@@ -523,6 +593,7 @@ window.__ModuleLoader__.load({
         const pageId = isExplicitChat ? undefined : (pathPageId || activeNavId || value.pageId)
         publish({
           ...next,
+          ...(clearHistory ? { sidebarBrand: undefined, workstationBranding: undefined } : {}),
           ...(clearHistory ? { items: [], page: 0, hasMore: false, historyPhase: 'idle' } : {}),
           navigation: nextNav,
           signInPromptOpen: next.connected ? false : value.signInPromptOpen,
@@ -536,10 +607,12 @@ window.__ModuleLoader__.load({
         if (typeof window !== 'undefined' && window.dshEnterpriseChat?.state) {
           return window.dshEnterpriseChat.state()
         }
-        try {
+        {
           const res = await fetch('/api/enterprise.state', { credentials: 'same-origin', cache: 'no-store' })
-          if (res.ok) {
+          if (!res.ok) throw new Error(`Enterprise state request failed (${res.status})`)
+          {
             const data = await res.json()
+            if (!data || typeof data.connected !== 'boolean') throw new Error('Invalid enterprise state')
             if (data?.connected) {
               const entries = Array.isArray(data.navigation?.entries) && data.navigation.entries.length > 0
                 ? data.navigation.entries
@@ -552,9 +625,11 @@ window.__ModuleLoader__.load({
                 base: data.base,
                 user: data.user,
                 tenant: data.tenant,
+                connectionKey: data.connectionKey,
                 epoch: data.revision || 1,
                 ...(entries ? {
                   navigation: {
+                    ...data.navigation,
                     entries,
                     homeLabel: data.navigation?.homeLabel || data.homeLabel || '首页'
                   }
@@ -562,7 +637,7 @@ window.__ModuleLoader__.load({
               }
             }
           }
-        } catch {}
+        }
         return { connected: false, phase: 'idle' }
       }
       const sync = async () => {
@@ -571,6 +646,7 @@ window.__ModuleLoader__.load({
           const next = await readState()
           if (!active || request !== revision || !next) return
           applyState(next, true)
+          if (next.connected && !window.dshEnterpriseChat) void refreshSidebarBrand()
           if (next.connected && !value.navigation) {
             if (typeof window !== 'undefined' && window.dshEnterpriseChat?.prewarm) {
               void window.dshEnterpriseChat.prewarm().catch(() => {})
@@ -583,6 +659,39 @@ window.__ModuleLoader__.load({
             }
           }
         } catch { /* A missed focus read must not paint the reconnect page. */ }
+      }
+      const refreshSidebarBrand = async () => {
+        const request = ++brandRequest
+        const connectionKey = value.connectionKey
+        try {
+          const response = await fetch('/api/v1/workstation/config', { credentials: 'same-origin', cache: 'no-store' })
+          if (!response.ok) throw new Error(`Workbench configuration request failed (${response.status})`)
+          const result = await response.json()
+          if (!result || typeof result !== 'object' || !('data' in result)) throw new Error('Invalid workbench configuration')
+          const config = result.data ?? {}
+          if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Invalid workbench configuration')
+          if (!active || request !== brandRequest || !value.connected || value.connectionKey !== connectionKey) return
+          const name = typeof config.homeMenuDisplayName === 'string' ? config.homeMenuDisplayName.trim().slice(0, 100) : ''
+          const imageFor = icon => {
+            if (icon?.enabled !== true || typeof icon.image !== 'string' || !icon.image.trim()) return undefined
+            try {
+              const raw = icon.image.trim()
+              const path = raw.startsWith('/') && !raw.startsWith('//') && !raw.startsWith('/workspace/') && !raw.startsWith('/api/') ? '/workspace' + raw : raw
+              const url = new URL(path, window.location.origin)
+              if ((url.protocol === 'http:' || url.protocol === 'https:') && !url.username && !url.password) return url.href
+            } catch { /* Invalid image URLs use the default mark. */ }
+            return undefined
+          }
+          publish({
+            sidebarBrand: { name, image: imageFor(config.sidebarIcon) },
+            workstationBranding: name || Object.hasOwn(config, 'welcomeMessage') || Object.hasOwn(config, 'assistantIcon') ? { homeLabel: name, branding: {
+              welcomeMessage: typeof config.welcomeMessage === 'string' ? config.welcomeMessage.trim().slice(0, 2000) : '',
+              assistantIcon: { enabled: config.assistantIcon?.enabled === true, image: imageFor(config.assistantIcon) }
+            } } : undefined
+          })
+        } catch (error) {
+          console.warn('[desktop-client-ui] failed to refresh sidebar branding', { error: error?.name || 'Error' })
+        }
       }
       // One guarded read. It does not refresh history; sync() owns that on focus and visibility.
       const readHostState = async () => {
@@ -673,14 +782,17 @@ window.__ModuleLoader__.load({
           } else if (event.data?.hasContent === true || event.data?.channel === 'enterprise-chat:content') {
             publish({ landing: false })
           } else if (event.data?.channel === 'enterprise-chat:navigation' && event.data?.navigation) {
+            if (!value.connected) return
             const nav = event.data.navigation
             if (Array.isArray(nav?.entries)) {
               const validEntries = nav.entries.filter(e => e && typeof e.id === 'string' && typeof e.label === 'string')
               if (validEntries.length > 0) {
                 const validatedNav = { ...nav, entries: validEntries }
                 try {
-                  localStorage.setItem('dsh:enterprise-navigation', JSON.stringify(validatedNav))
-                  localStorage.setItem(getNavStorageKey(value.base, value.tenant, value.user), JSON.stringify(validatedNav))
+                  const isWeb = !window.dshEnterpriseChat
+                  if (!isWeb) localStorage.setItem('dsh:enterprise-navigation', JSON.stringify(validatedNav))
+                  const key = isWeb ? webNavStorageKey(value) : getNavStorageKey(value.base, value.tenant, value.user)
+                  if (key) localStorage.setItem(key, JSON.stringify(validatedNav))
                 } catch {}
                 publish({ navigation: validatedNav })
                 if (typeof document !== 'undefined') {
@@ -704,6 +816,7 @@ window.__ModuleLoader__.load({
         void sync()
         return () => {
           active = false
+          brandRequest++
           deletion.reset()
           revision++
           historyRequest++
@@ -1909,19 +2022,12 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         document.head.appendChild(style)
         return () => style.remove()
       })
-      ctx.slots.inject('sidebar.brand.mark', () =>
-        ctx.slots.inject('sidebar.brand.name', () =>
-          ctx.slots.inject('conversation.hero.brand.mark', function* () {
-            yield ctx.slots.register({ name: 'sidebar.brand.mark' }, DesktopBrandMark)
-            yield ctx.slots.register({ name: 'sidebar.brand.name' }, DesktopBrandName)
-            yield ctx.slots.register(
-              { name: 'conversation.hero.brand.mark', inject: () => ({ navigation }) },
-              ConversationBrandMark
-            )
-          })
-        )
-      )
-      ctx.slots.inject('conversation.hero.brand.title', () => ctx.slots.register({ name: 'conversation.hero.brand.title', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS) }) }, ConversationBrandTitle))
+      ctx.slots.inject('sidebar.brand.mark', () => ctx.slots.register({ name: 'sidebar.brand.mark', inject: () => ({ navigation }) }, DesktopBrandMark))
+      ctx.slots.inject('sidebar.brand.name', () => ctx.slots.register({ name: 'sidebar.brand.name', inject: () => ({ navigation }) }, DesktopBrandName))
+      ctx.slots.inject('conversation.hero.brand.mark', () => ctx.slots.register(
+        { name: 'conversation.hero.brand.mark', inject: () => ({ navigation }) }, ConversationBrandMark
+      ))
+      ctx.slots.inject('conversation.hero.brand.title', () => ctx.slots.register({ name: 'conversation.hero.brand.title', inject: () => ({ navigation, locale: ctx.locale }) }, ConversationBrandTitle))
       ctx.slots.inject('sidebar.right.tab.document.unpreviewable', () =>
         ctx.slots.register({
           name: 'sidebar.right.tab.document.unpreviewable',

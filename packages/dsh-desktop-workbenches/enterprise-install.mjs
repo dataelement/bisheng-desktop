@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path'
+import { workbenchInstallOutcome } from './install-outcome.mjs'
 import { MarketInstallError } from './market-install.mjs'
 
 /**
@@ -18,14 +19,14 @@ export async function installEnterpriseWorkbench(manager, packages, id) {
       throw new MarketInstallError('The enterprise workbench package could not be prepared.')
     }
     const installed = (await manager.listBundles()).some(bundle => bundle.name === opened.packageName && bundle.installed)
-    const result = await manager.installBundle(opened.path, {
+    const result = workbenchInstallOutcome(await manager.installBundle(opened.path, {
       enabled: true, expectedName: opened.packageName, expectedVersion: opened.version, replace: installed
-    })
+    }), installed)
     if (!result || !['applied', 'restart-required', 'overridden', 'failed', 'cancelled'].includes(result.application)) {
       throw new MarketInstallError('Plugin Manager returned no lifecycle outcome.', 502)
     }
     const failed = !['applied', 'restart-required'].includes(result.application)
-    if (!failed && (result.bundle !== opened.packageName || result.stage !== 'enable')) {
+    if (!failed && (result.bundle !== opened.packageName || result.stage !== 'enable' || result.version !== opened.version)) {
       throw new MarketInstallError('Plugin Manager returned an unexpected installation outcome.', 502)
     }
     return {

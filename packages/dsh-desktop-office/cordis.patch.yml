@@ -1,0 +1,5 @@
+- insert:
+    - id: desktop-office-web
+      name: dsh-desktop-office
+      config:
+        root: !!js dshHomePath('office-web')

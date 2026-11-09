@@ -1,3 +1,14 @@
+export interface EnterpriseWorkbenchScreenshot {
+  id: string
+  url: string
+  sha256: string
+  media_type: 'image/png' | 'image/jpeg' | 'image/webp'
+  width: number
+  height: number
+  bytes: number
+  alt: string
+}
+
 export interface EnterpriseWorkbenchListItem {
   id: string
   identityKind: 'repository' | 'legacy'
@@ -8,6 +19,7 @@ export interface EnterpriseWorkbenchListItem {
   description: string
   verificationLevel: string
   updatedAt: string
+  screenshots: EnterpriseWorkbenchScreenshot[]
   currentVersion: { id: string, version: string }
 }
 
@@ -43,6 +55,7 @@ export function parseWorkbenchDetail(value: unknown, expectedId: string): Enterp
 export function createWorkbenchMarketController(accountController: {
   state: () => { connected?: boolean, connectionKey?: string }
   marketRequest: (path: string) => Promise<{ status_code?: number, status_message?: string, data?: unknown }>
+  workbenchScreenshotRequest?: (path: string, signal: AbortSignal | undefined, image: EnterpriseWorkbenchScreenshot) => Promise<Uint8Array>
   verifyWorkbenchArtifact?: (input: unknown) => Promise<{ ok: boolean, stage?: string, error?: string }>
   materializeWorkbenchArtifact?: (input: unknown) => Promise<{ ok: boolean, path?: string, ticket?: string, stage?: string, error?: string }>
   releaseWorkbenchArtifact?: (ticket: string, connectionKey: string) => Promise<unknown>
@@ -51,6 +64,7 @@ export function createWorkbenchMarketController(accountController: {
   stop: () => void
   catalog: () => Promise<EnterpriseWorkbenchCatalogResult>
   detail: (id: string) => Promise<{ status: string, accountKey: string, detail: EnterpriseWorkbenchDetail | null }>
+  screenshot: (id: string, versionId: string, imageId: string, signal: AbortSignal | undefined, accountKey: string) => Promise<{ bytes: Uint8Array, image: EnterpriseWorkbenchScreenshot }>
   verify: (id: string) => Promise<{ ok: boolean, stage?: string, error?: string }>
   packageForInstall: (id: string) => Promise<{ path: string, ticket: string, connectionKey: string, packageName: string, version: string }>
 }

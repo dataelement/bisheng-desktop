@@ -10,26 +10,28 @@ const code = await readFile(new URL('../packages/dsh-desktop-workbenches/client.
 
 // Mount the public Market component and its real controller. Layout dimensions
 // are verified separately in Electron: jsdom only checks DOM/state/accessibility.
-async function mountCard({ state = 'normal', language = 'zh', listed = true, origin = 'market', evidence = {}, favorite = false, request = async () => { throw new Error('Unexpected network request') } } = {}) {
+async function mountCard({ state = 'normal', language = 'zh', listed = true, origin = 'market', evidence = {}, favorite = false, policy, enterprise = false, preference = 'true', collection = 'market', request = async () => { throw new Error('Unexpected network request') } } = {}) {
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' })
   const previous = { window: globalThis.window, document: globalThis.document, act: globalThis.IS_REACT_ACT_ENVIRONMENT }
   globalThis.window = dom.window
   globalThis.document = dom.window.document
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
-  dom.window.localStorage.setItem('dsh-workbench-enabled', 'true')
+  if (preference !== null) dom.window.localStorage.setItem('dsh-workbench-enabled', preference)
+  dom.window.__dshEnterpriseWorkbenchSnapshot = policy
   let client
   dom.window.__ModuleLoader__ = { load({ factory }) {
     client = factory(name => name === 'react' ? React : name === 'react-dom' ? { createPortal } : name === '@deepseek-ai/cordis' ? { Service: { tracker: Symbol('tracker') } } : { Switch: () => null, Toast: () => null })
   } }
-  vm.runInNewContext(code, { window: dom.window, document: dom.window.document, setTimeout, clearTimeout, AbortController })
+  vm.runInNewContext(code.replace('return { apply, inject:', 'return { enterpriseCapability, workbenchPreference, apply, inject:'), { window: dom.window, document: dom.window.document, setTimeout, clearTimeout, AbortController })
   const locale = { active: language }
-  const ctx = { fiber: { entry: { options: { name: 'helper' } } }, locale: { getSnapshot: () => locale, subscribe: () => () => {} } }
+  const ctx = { fiber: { entry: { options: { name: 'helper' } } }, locale: { bind: () => key => key === 'tab' ? (language === 'en' ? 'From enterprise' : '来自企业') : key, getSnapshot: () => locale, subscribe: () => () => {} } }
   const service = new client.Workbenches(ctx, request)
   service.remoteCatalog = listed ? [{ id: 'owner/helper', owner: 'owner', repository: 'helper', name: 'Helper', url: 'https://github.com/owner/helper', category: 'other', categoryName: 'Other', version: state === 'normal' ? '1.0.0' : '1.1.0', distribution: { type: 'npm', name: 'helper', version: '1.1.0' }, description: { zh: 'Description '.repeat(40), en: 'Description '.repeat(40) }, screenshots: [], metrics: { githubStars: { value: 7 }, npmDownloads30d: { value: 12 } } }] : []
   const installed = state !== 'install-failure'
   if (installed) {
     service.native = { status: 'ready', bundles: { helper: { name: 'helper', installed: true, enabled: true, version: '1.0.0', removable: true } } }
-    service.installs = { 'owner/helper': { catalogId: 'owner/helper', pluginName: 'helper', version: '1.0.0' } }
+    service.installs = { 'owner/helper': { catalogId: 'owner/helper', pluginName: 'helper', version: '1.0.0', source: origin === 'local' ? 'local' : 'npm' } }
+    if (enterprise) service.enterpriseCatalog = [{ id: 'a'.repeat(32), packageName: 'helper', version: '1.0.0', name: 'Enterprise Helper' }]
     service.packageEvidence = { helper: { origin, contentVerified: origin === 'market', ...evidence } }
   }
   if (installed) {
@@ -54,7 +56,11 @@ async function mountCard({ state = 'normal', language = 'zh', listed = true, ori
   service.publish()
   const root = createRoot(dom.window.document.getElementById('root'))
   await React.act(async () => root.render(React.createElement(client.Market, { service })))
-  return { document: dom.window.document, service, close: async () => {
+  if (collection) await React.act(async () => dom.window.document.getElementById(collection === 'market' ? 'dsh-workbench-market-tab' : 'dsh-workbench-mine-tab').click())
+  return { document: dom.window.document, service,
+    updatePolicy: async next => React.act(async () => { client.enterpriseCapability.replace(next); service.publish() }),
+    enterpriseDefault: async () => React.act(async () => { client.workbenchPreference.enableForEnterprise(); service.publish() }),
+    close: async () => {
     await React.act(async () => root.unmount())
     service.dispose()
     dom.window.close()
@@ -64,7 +70,99 @@ async function mountCard({ state = 'normal', language = 'zh', listed = true, ori
   } }
 }
 
+describe('enterprise workbench visibility', () => {
+  it('selects enterprise again after login while the market component remains mounted', async () => {
+    const ui = await mountCard({ language: 'en' })
+    try {
+      expect(ui.document.getElementById('dsh-workbench-market-tab').getAttribute('aria-selected')).toBe('true')
+      await ui.updatePolicy({ known: true, connected: true, accountKey: 'account-1', allowThirdPartyWorkbenches: true })
+      expect(ui.document.getElementById('dsh-workbench-enterprise-tab').getAttribute('aria-selected')).toBe('true')
+      await React.act(async () => ui.document.getElementById('dsh-workbench-mine-tab').click())
+      await ui.updatePolicy({ known: true, connected: true, accountKey: 'account-2', allowThirdPartyWorkbenches: true })
+      expect(ui.document.getElementById('dsh-workbench-enterprise-tab').getAttribute('aria-selected')).toBe('true')
+    } finally { await ui.close() }
+  })
+  it.each([
+    { origin: 'market', enterprise: false, visible: false },
+    { origin: 'local', enterprise: false, visible: true },
+    { origin: 'market', enterprise: true, visible: true }
+  ])('filters installed workbenches without deleting their state (%o)', async ({ origin, enterprise, visible }) => {
+    const ui = await mountCard({ origin, enterprise, collection: 'mine', policy: { known: true, connected: true, allowThirdPartyWorkbenches: false } })
+    try {
+      expect(ui.document.querySelectorAll('article').length).toBe(visible ? 1 : 0)
+      expect(ui.service.getSnapshot().catalog.some(entry => entry.id === 'owner/helper')).toBe(visible)
+      expect(ui.service.catalog.has('owner/helper')).toBe(true)
+      expect(ui.service.state.added).toContain('owner/helper')
+      expect(ui.document.getElementById('dsh-workbench-market-tab')).toBeNull()
+      if (!visible) {
+        expect(ui.service.activationFor(ui.service.catalog.get('owner/helper'))).toBe('off')
+        await expect(ui.service.open('owner/helper')).rejects.toThrow()
+      }
+      await ui.updatePolicy({ known: true, connected: true, allowThirdPartyWorkbenches: true })
+      expect(ui.service.getSnapshot().catalog.some(entry => entry.id === 'owner/helper')).toBe(true)
+    } finally { await ui.close() }
+  })
+  it('does not treat a staged market link as a local workbench', async () => {
+    const ui = await mountCard({ origin: 'market', evidence: { origin: 'local' }, collection: 'mine', policy: { known: true, connected: true, allowThirdPartyWorkbenches: false } })
+    try { expect(ui.document.querySelectorAll('article')).toHaveLength(0) } finally { await ui.close() }
+  })
+  it.each([null, 'false'])('enables enterprise defaults only without an explicit opt-out (%s)', async preference => {
+    const ui = await mountCard({ preference, collection: null })
+    try {
+      await ui.enterpriseDefault()
+      expect(ui.service.getSnapshot().enabled).toBe(preference === null)
+    } finally { await ui.close() }
+  })
+})
+
 describe('compact workbench card states', () => {
+  it.each([
+    ['zh', false], ['en', false], ['zh', undefined], ['en', undefined], ['zh', true], ['en', true]
+  ])('renders the actual installation restart lifecycle in %s (%s)', async (language, restartRequired) => {
+    let nativeReads = 0
+    const ui = await mountCard({ language, request: async (path, options = {}) => {
+      if (path === '/api/desktop-workbenches/market-install') return Response.json({
+        application: restartRequired === true ? 'restart-required' : 'applied',
+        install: { catalogId: 'owner/helper', pluginName: 'helper', version: '1.0.0' },
+        ...(restartRequired === undefined ? {} : { restartRequired })
+      })
+      if (path === '/api/desktop-workbenches/state/write') {
+        const payload = JSON.parse(options.body)
+        return Response.json({ revision: payload.revision + 1, state: payload.state })
+      }
+      if (path.startsWith('/api/desktop-workbenches/market-installs')) return Response.json({ installs: {}, packages: {} })
+      throw new Error('Unexpected lifecycle request: ' + path)
+    } })
+    try {
+      ui.service.ctx.remote = { pluginManager: { listBundles: async () => {
+        nativeReads++
+        return { ok: true, value: [{ name: 'helper', version: '1.0.0', enabled: true, installed: true, removable: true, rows: [] }] }
+      } } }
+      await React.act(async () => {
+        if (restartRequired !== true) ui.service.native = { status: 'ready', bundles: {} }
+        ui.service.pendingRestart.add('owner/helper')
+        ui.service.restartNeeded = true
+        ui.service.installFailures.set('owner/helper', { kind: 'install', message: 'previous failure' })
+        ui.service.publish()
+        await ui.service.installFromMarket('owner/helper')
+      })
+      expect(nativeReads).toBe(restartRequired === true ? 0 : 1)
+      expect(ui.service.pendingRestart.has('owner/helper')).toBe(restartRequired === true)
+      expect(ui.service.restartNeeded).toBe(restartRequired === true)
+      expect(ui.document.querySelector('.dshWbFailureHint')).toBeNull()
+      if (restartRequired === true) {
+        expect(ui.document.querySelector('.dshWbUpdate').textContent).toBe(language === 'en' ? 'Restart to apply' : '重启后生效')
+      } else {
+        expect(ui.document.querySelector('.dshWbUpdate')).toBeNull()
+        expect(ui.document.querySelector('.dshWbNotice')).toBeNull()
+        await React.act(async () => ui.document.getElementById('dsh-workbench-mine-tab').click())
+        const toggle = ui.document.querySelector('.dshWbCard [role="switch"]')
+        expect(toggle.disabled).toBe(false)
+        expect(toggle.getAttribute('aria-checked')).toBe('true')
+      }
+    } finally { await ui.close() }
+  })
+
   it.each([
     ['local', {}, 'zh', '本地修改不会带入新版本'],
     ['market', { updateRisk: 'modified', contentVerified: false }, 'zh', '检测到当前安装内容已被修改'],

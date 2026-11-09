@@ -20,7 +20,7 @@ describe('enterprise install route availability', () => {
     expect(unavailable.headers.get('cache-control')).toBe('no-store')
     const release = vi.fn()
     const packages = { open: vi.fn(async () => ({ path: '/tmp/verified.tgz', packageName: 'company-workbench', version: '1.0.0', release })) }
-    const manager = { verifiedInstallContract: 1, listBundles: vi.fn(async () => []), installBundle: vi.fn(async () => ({ application: 'applied', stage: 'enable', bundle: 'company-workbench' })) }
+    const manager = { verifiedInstallContract: 1, listBundles: vi.fn(async () => []), installBundle: vi.fn(async () => ({ application: 'applied', stage: 'enable', bundle: 'company-workbench', version: '1.0.0' })) }
     const dispose = activate({ pluginManager: manager, enterpriseWorkbenchPackages: packages })
     expect((await route.fetch(request())).status).toBe(200)
     expect(packages.open).toHaveBeenCalledWith(id)
@@ -61,4 +61,15 @@ describe('enterprise workbench install outcome', () => {
     await expect(installEnterpriseWorkbench(manager, packages, id)).rejects.toThrow('backend unavailable')
     expect(release).toHaveBeenCalledOnce()
   })
+})
+
+it('reports same-package replacement as restart-required even if the manager reports applied', async () => {
+  const release = vi.fn()
+  const packages = { open: async () => ({ path: '/tmp/verified.tgz', packageName: 'company-workbench', version: '1.1.0', release }) }
+  const manager = { verifiedInstallContract: 1, listBundles: async () => [{ name: 'company-workbench', installed: true }],
+    installBundle: vi.fn(async () => ({ application: 'applied', stage: 'enable', bundle: 'company-workbench', version: '1.1.0' })) }
+  const response = await installEnterpriseWorkbench(manager, packages, id)
+  expect(response).toMatchObject({ status: 200, body: { application: 'restart-required', restartRequired: true, restartReason: 'package-moved', install: { version: '1.1.0' } } })
+  expect(manager.installBundle).toHaveBeenCalledWith('/tmp/verified.tgz', { enabled: true, expectedName: 'company-workbench', expectedVersion: '1.1.0', replace: true })
+  expect(release).toHaveBeenCalledOnce()
 })
