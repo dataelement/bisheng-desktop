@@ -13,7 +13,8 @@ const noDialog = () => null
 const projectSnapshot = { editor: null }
 const modalControllers = () => ({
   projects: { subscribe: () => () => {}, snapshot: () => projectSnapshot },
-  deletion: { subscribe: () => () => {}, getSnapshot: noDialog }
+  deletion: { subscribe: () => () => {}, getSnapshot: noDialog },
+  renaming: { subscribe: () => () => {}, getSnapshot: noDialog }
 })
 
 const HOST_COLORS = {

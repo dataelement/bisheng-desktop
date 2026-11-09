@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({
 
     const React = require('react')
     const {
-      Menu, MenuItemButton, Modal, Button, HoverCard, relativeTime, ReferenceIconRegular,
+      Menu, MenuItemButton, Modal, Button, HoverCard, StateDot, relativeTime, ReferenceIconRegular,
       IconChevronRightOutlineRegular, IconEditOutlineRegular, IconEllipsisOutlineRegular, IconFolderCloseRegular, IconFolderOpenRegular,
       IconNewChatOutlineRegular, IconPlusOutlineRegular, IconTrashOutlineRegular, IconTriangleRightFillRegular
     } = require('@deepseek-ai/dsh-client-ui-primitives')
@@ -214,7 +214,8 @@ window.__ModuleLoader__.load({
     const DELETE_SESSION_NS = 'dsh-desktop-delete-session'
 
     // The shell owns the request: closing a row menu unmounts its occupants.
-    function createSessionDeletion(deleteSession) {
+    // Deletion confirms without input; rename passes the submitted name through.
+    function createSessionRequest(run) {
       let state = null
       let active = true
       const listeners = new Set()
@@ -229,12 +230,12 @@ window.__ModuleLoader__.load({
           if (active && state === null) publish({ sessionId, displayTitle, context, busy: false, error: null })
         },
         close: () => { if (state && state.busy === false) publish(null) },
-        confirm: async () => {
+        confirm: async (input) => {
           if (state === null || state.busy || active === false) return
           const pending = { ...state, busy: true, error: null }
           publish(pending)
           try {
-            await deleteSession(pending.sessionId, pending.context)
+            await run(pending.sessionId, pending.context, input)
             if (active && state === pending) publish(null)
           } catch (reason) {
             if (active && state === pending) {
@@ -273,10 +274,49 @@ window.__ModuleLoader__.load({
             'data-modal-autofocus': true
           }, t('cancel')),
           React.createElement(Button, {
-            variant: 'primary', disabled: request.busy, onClick: deletion.confirm
+            variant: 'primary', disabled: request.busy, onClick: () => { void deletion.confirm() }
           }, t(request.busy ? 'pending' : 'confirm')))
       }, request?.busy && React.createElement('p', { role: 'status' }, t('pending')),
       request && request.error !== null && React.createElement('div', { role: 'alert' },
+        React.createElement('p', null, t('failed')),
+        React.createElement('p', null, request.error)))
+    }
+
+    // Mirrors Work's session rename: one form per request, so each opens with a fresh draft.
+    function RenameChatDialog({ renaming, t }) {
+      const request = React.useSyncExternalStore(renaming.subscribe, renaming.getSnapshot)
+      if (request === null) return null
+      return React.createElement(RenameChatForm, { key: `${request.context}:${request.sessionId}`, request, renaming, t })
+    }
+
+    function RenameChatForm({ request, renaming, t }) {
+      const [draft, setDraft] = React.useState(request.displayTitle)
+      const composing = React.useRef(false)
+      const trimmed = draft.trim()
+      const blocked = request.busy || trimmed === ''
+      const confirm = () => { if (!blocked) void renaming.confirm(trimmed) }
+      return React.createElement(Modal, {
+        open: true,
+        onClose: renaming.close,
+        title: t('title'),
+        closeLabel: t('close'),
+        footer: React.createElement(React.Fragment, null,
+          React.createElement(Button, { variant: 'outline', disabled: request.busy, onClick: renaming.close }, t('cancel')),
+          React.createElement(Button, { variant: 'primary', disabled: blocked, onClick: confirm }, t(request.busy ? 'pending' : 'confirm')))
+      },
+      React.createElement('input', {
+        className: 'dshChatRenameInput', value: draft, maxLength: CHAT_NAME_MAX_LENGTH, 'aria-label': t('name'),
+        'data-modal-autofocus': true, disabled: request.busy,
+        onFocus: event => event.target.select(),
+        onChange: event => setDraft(event.target.value),
+        onCompositionStart: () => { composing.current = true },
+        onCompositionEnd: () => { composing.current = false },
+        onKeyDown: event => {
+          if (event.key === 'Enter' && !composing.current) { event.preventDefault(); confirm() }
+        }
+      }),
+      request.busy && React.createElement('p', { role: 'status', className: 'dshChatRenameStatus' }, t('pending')),
+      request.error !== null && React.createElement('div', { role: 'alert', className: 'dshChatRenameError' },
         React.createElement('p', null, t('failed')),
         React.createElement('p', null, request.error)))
     }
@@ -312,6 +352,13 @@ window.__ModuleLoader__.load({
       zh: { menu: '删除', actions: '会话操作', title: '删除会话', close: '关闭', cancel: '取消', confirm: '删除会话', description: '确定删除“{name}”？会话及其聊天记录将被永久删除。', pending: '正在删除会话…', failed: '删除失败，请重试。' },
       en: { menu: 'Delete', actions: 'Conversation actions', title: 'Delete conversation', close: 'Close', cancel: 'Cancel', confirm: 'Delete conversation', description: 'Permanently delete “{name}” and its chat history?', pending: 'Deleting conversation…', failed: 'Deletion failed. Please try again.' }
     }
+    const CLOUD_RENAME_NS = 'desktop.cloudChatRename'
+    const CLOUD_RENAME_COPY = {
+      zh: { title: '重命名会话', name: '会话名称', close: '关闭', cancel: '取消', confirm: '重命名', pending: '正在重命名…', failed: '重命名失败，请重试。' },
+      en: { title: 'Rename conversation', name: 'Conversation name', close: 'Close', cancel: 'Cancel', confirm: 'Rename', pending: 'Renaming…', failed: 'Rename failed. Please try again.' }
+    }
+    // Matches the server's message_session.name column; the host validates it again.
+    const CHAT_NAME_MAX_LENGTH = 255
     const PROJECTS_NS = 'desktop.chatProjects'
     const PROJECTS_COPY = {
       zh: { title: '对话项目', create: '新建项目', rename: '重命名项目', remove: '删除项目', actions: '项目操作', startChat: '在此项目新建对话', empty: '暂无对话', name: '项目名称', nameHelp: '请输入 1–30 个字符', cancel: '取消', save: '保存', close: '关闭', move: '移入项目', moveOut: '移出项目', deleteHelp: '删除“{name}”后，其中的对话将移回对话列表，聊天记录会保留。', failed: '项目保存失败，请重试。', unavailable: '项目数据无法读取，点击重试。', retry: '重试' },
@@ -635,6 +682,9 @@ window.__ModuleLoader__.load({
     }
     Object.assign(MODES_COPY.zh, { 'time.now': '刚刚', 'time.minutes': '{n}分钟', 'time.hours': '{n}小时', 'time.days': '{n}天', 'time.months': '{n}个月', 'time.years': '{n}年', 'time.ago': '{t}前' })
     Object.assign(MODES_COPY.en, { 'time.now': 'now', 'time.minutes': '{n}min', 'time.hours': '{n}h', 'time.days': '{n}d', 'time.months': '{n}mo', 'time.years': '{n}y', 'time.ago': '{t} ago' })
+    // Same words as Work's session row menu and status.
+    Object.assign(MODES_COPY.zh, { rename: '重命名', running: '进行中' })
+    Object.assign(MODES_COPY.en, { rename: 'Rename', running: 'Running' })
     /**
      * Host tokens the embedded enterprise document reuses. It cannot read the host's CSS, so the
      * presenter resolves them here and sends plain channels with the presentation.
@@ -700,7 +750,7 @@ window.__ModuleLoader__.load({
 
     /** One renderer-owned mode/history controller shared by the content and sidebar slots. */
     function createChatNavigation(ctx) {
-      let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, signInPromptOpen: false, approvalsOpen: false, accountDialogOpen: false, settingsSurface: undefined, pageId: undefined, navigation: undefined, workLanding: false, nativeWork: true, panelOpen: false, activePanelId: null }
+      let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], running: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, signInPromptOpen: false, approvalsOpen: false, accountDialogOpen: false, settingsSurface: undefined, pageId: undefined, navigation: undefined, workLanding: false, nativeWork: true, panelOpen: false, activePanelId: null }
       const listeners = new Set()
       const projects = createChatProjects()
       let openRequest = 0
@@ -757,12 +807,22 @@ publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page
           if (active && request === historyRequest && historyDirty) { historyDirty = false; void refreshHistory() }
         }
       }
-      const deletion = createSessionDeletion(async (id, epoch) => {
+      const deletion = createSessionRequest(async (id, epoch) => {
         if (epoch !== value.epoch || !value.connected) throw new Error('Chat identity changed.')
         const response = await window.dshEnterpriseChat.remove(id, epoch)
         if (!active || epoch !== value.epoch || response.epoch !== epoch) return
         historyRequest++
         publish({ items: value.items.filter(item => item.id !== id), historyPhase: 'idle' })
+        void refreshHistory()
+      })
+      const renaming = createSessionRequest(async (id, epoch, name) => {
+        if (epoch !== value.epoch || !value.connected) throw new Error('Chat identity changed.')
+        const response = await window.dshEnterpriseChat.rename(id, name, epoch)
+        if (!active || epoch !== value.epoch || response.epoch !== epoch) return
+        // The server also moves the conversation's update time. A newer local row
+        // outranks cached project pages until the reread brings the server's own.
+        historyRequest++
+        publish({ items: value.items.map(item => item.id === id ? { ...item, title: name, updatedAt: new Date().toISOString() } : item), historyPhase: 'idle' })
         void refreshHistory()
       })
       const open = async (id, projectId) => {
@@ -784,11 +844,13 @@ publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page
         const conversationChanged = next.conversationId !== value.conversationId
         const becameReady = next.phase === 'ready' && value.phase !== 'ready'
         const clearHistory = identityChanged || !next.connected
-if (clearHistory) { historyRequest++; openRequest++; historyDirty = false; deletion.reset() }
+if (clearHistory) { historyRequest++; openRequest++; historyDirty = false; deletion.reset(); renaming.reset() }
         projects.setScope(next.connected ? next.projectScope : undefined, next.epoch)
         publish({
           ...next,
           ...(clearHistory ? { items: [], page: 0, hasMore: false, historyPhase: 'idle' } : {}),
+          // The host omits an empty activity list, so absence must clear the previous one.
+          running: next.connected && Array.isArray(next.running) ? next.running : [],
           signInPromptOpen: next.connected ? false : value.signInPromptOpen,
           pageId: next.navigation?.entries.find(entry => entry.active)?.id,
           mode: next.connected ? signedIn ? 'chat' : value.mode : 'work'
@@ -830,7 +892,7 @@ if (clearHistory) { historyRequest++; openRequest++; historyDirty = false; delet
       return {
         snapshot: () => value,
         subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn) },
-        select, open, refreshHistory, deletion, projects,
+        select, open, refreshHistory, deletion, renaming, projects,
         startProjectChat(id) {
           if (!value.connected || !projects.snapshot().projects.some(project => project.id === id)) return
           projects.reveal(id)
@@ -843,6 +905,9 @@ if (clearHistory) { historyRequest++; openRequest++; historyDirty = false; delet
             !(value.items.some(item => item.id === id) || Object.hasOwn(state.assignments, id))) return
           if (projectId === undefined) projects.edit('create', id)
           else if (await projects.assign(id, projectId) && projectId && value.epoch === epoch) projects.reveal(projectId)
+        },
+        requestRename(id, title, epoch) {
+          if (value.connected && epoch === value.epoch && (value.items.some(item => item.id === id) || Object.hasOwn(projects.snapshot().assignments, id))) renaming.request(id, title, epoch)
         },
         requestDelete(id, title, epoch) {
           if (value.connected && epoch === value.epoch && (value.items.some(item => item.id === id) || Object.hasOwn(projects.snapshot().assignments, id))) deletion.request(id, title, epoch)
@@ -959,7 +1024,7 @@ if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
 active = false
 startupStateRetryCount = startupStateRetryDelays.length
 cancelStartupStateRetry()
-deletion.reset(); projects.setScope(undefined); revision++; historyRequest++; unsubscribe(); unsubscribeSessions(); unsubscribeWork(); unsubscribeChat?.(); unsubscribeProjects?.()
+deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; historyRequest++; unsubscribe(); unsubscribeSessions(); unsubscribeWork(); unsubscribeChat?.(); unsubscribeProjects?.()
             window.removeEventListener('dsh-desktop:enterprise-account-changed', account)
             disposeNavigation()
             if (revealWorkSession && ctx.uiWorkspace.openSession === revealWorkSession) ctx.uiWorkspace.openSession = originalOpenSession
@@ -1024,6 +1089,9 @@ deletion.reset(); projects.setScope(undefined); revision++; historyRequest++; un
       const title = item.title || t('newChat')
       const marquee = useHistoryTitleMarquee(title)
       const timeId = React.useId()
+      const statusId = React.useId()
+      // Parents subscribe to navigation; the row reads the same snapshot as its project state.
+      const running = navigation.snapshot().running.includes(item.id)
       const date = Date.parse(item.updatedAt)
       const time = Number.isFinite(date) ? relativeTime(date, now) : null
       const dateTime = time && new Date(date).toISOString()
@@ -1033,6 +1101,7 @@ deletion.reset(); projects.setScope(undefined); revision++; historyRequest++; un
       const currentProject = Object.hasOwn(projects.assignments, item.id) ? projects.assignments[item.id] : undefined
       const actions = []
       if (menu.open) {
+        actions.push({ id: 'rename', label: t('rename'), icon: React.createElement(IconEditOutlineRegular) })
         if (projectText) {
           actions.push({
             id: 'move', disabled: !canMove,
@@ -1050,11 +1119,16 @@ deletion.reset(); projects.setScope(undefined); revision++; historyRequest++; un
         }
         actions.push({ id: 'delete', label: deleteText('menu'), icon: React.createElement(IconTrashOutlineRegular), danger: true })
       }
+      const requestRename = () => {
+        const epoch = navigation.snapshot().epoch
+        setTimeout(() => navigation.requestRename(item.id, item.title || '', epoch), 0)
+      }
       const select = action => {
         const epoch = navigation.snapshot().epoch
         menu.close()
-        // Only deletion and creation need a dialog. Let Menu restore focus before it opens.
-        if (action === 'delete') setTimeout(() => navigation.requestDelete(item.id, title, epoch), 0)
+        // Only rename, deletion and creation need a dialog. Let Menu restore focus before it opens.
+        if (action === 'rename') requestRename()
+        else if (action === 'delete') setTimeout(() => navigation.requestDelete(item.id, title, epoch), 0)
         else if (action === 'new-project') setTimeout(() => { void navigation.moveProjectChat(item.id, epoch) }, 0)
         else if (action === 'move-out') void navigation.moveProjectChat(item.id, epoch, null)
         else if (action.startsWith('project:')) void navigation.moveProjectChat(item.id, epoch, action.slice('project:'.length))
@@ -1067,9 +1141,13 @@ deletion.reset(); projects.setScope(undefined); revision++; historyRequest++; un
         },
           React.createElement('button', {
             type: 'button', 'data-history-kind': 'chat', className: 'dshHistoryRow', 'aria-current': selected ? 'page' : undefined,
-            'aria-label': title, 'aria-describedby': time ? timeId : undefined, onClick: () => navigation.open(item.id)
+            'aria-label': title, 'aria-describedby': [running && statusId, time && timeId].filter(Boolean).join(' ') || undefined, onClick: () => navigation.open(item.id)
           },
-            React.createElement('span', { className: 'dshHistoryTitle', ref: marquee.ref }, title),
+            running && React.createElement('span', { className: 'dshHistoryStatus' },
+              React.createElement(StateDot, { state: 'ongoing' }),
+              React.createElement('span', { id: statusId, className: 'dshVisuallyHidden' }, t('running'))),
+            // Work rows rename on a title double-click too.
+            React.createElement('span', { className: 'dshHistoryTitle', ref: marquee.ref, onDoubleClick: event => { event.stopPropagation(); requestRename() } }, title),
             time && React.createElement('time', { id: timeId, dateTime }, age)),
           React.createElement('div', { className: 'dshSidebarItemTools' },
             React.createElement(Menu, {
@@ -1080,7 +1158,8 @@ deletion.reset(); projects.setScope(undefined); revision++; historyRequest++; un
             }))),
         content: React.createElement('div', { className: 'dshCloudHistoryPreview', 'data-dsh-chat-history-preview': '' },
           React.createElement('div', null, title),
-          time && React.createElement('time', { dateTime }, time.unit === 'now' ? age : t('time.ago', { t: age }))),
+          time && React.createElement('time', { dateTime }, time.unit === 'now' ? age : t('time.ago', { t: age })),
+          running && React.createElement('span', { className: 'dshCloudHistoryStatus' }, React.createElement(StateDot, { state: 'ongoing', size: 12 }), t('running'))),
         openDelayMs: 800, grouped: true, disabled: menu.open
       })
     }
@@ -1528,6 +1607,8 @@ deletion.reset(); projects.setScope(undefined); revision++; historyRequest++; un
       const projectDialogOpen = projectState.editor !== null
       const deletionRequest = React.useSyncExternalStore(navigation.deletion.subscribe, navigation.deletion.getSnapshot)
       const cloudDeleteOpen = deletionRequest !== null
+      const renameRequest = React.useSyncExternalStore(navigation.renaming.subscribe, navigation.renaming.getSnapshot)
+      const cloudRenameOpen = renameRequest !== null
       const { mode, settingsOpen, settingsSurface } = state
       const candidate = state.landingMorph
       const morph = candidate?.to === mode && candidate.epoch === state.epoch && hasSharedLanding(state) &&
@@ -1645,7 +1726,7 @@ deletion.reset(); projects.setScope(undefined); revision++; historyRequest++; un
 const safeModePageOpen = document.documentElement.hasAttribute('data-dsh-safe-mode-page')
 const surface = remote ? document.querySelector(`[data-dsh-native-surface="${remote.section}"]`) : panel.current
 // Project dialogs have an explicit lifecycle; yield the native sibling as they open.
-const hostModalOpen = projectDialogOpen || cloudDeleteOpen || overlays.isModal(surface) || appRoot?.inert || document.documentElement.hasAttribute('data-dsh-about-open')
+const hostModalOpen = projectDialogOpen || cloudDeleteOpen || cloudRenameOpen || overlays.isModal(surface) || appRoot?.inert || document.documentElement.hasAttribute('data-dsh-about-open')
 const bounds = remote ? remote.bounds : { x, y, width: Math.max(0, rect.right - x), height: Math.max(0, rect.y + rect.height - y) }
 return presenter.present({ visible: hostModalOpen ? false : (remote ? state.connected && remote.bounds.width > 0 && remote.bounds.height > 0 : mode === 'chat' && (!morph || revealMorph.current === morph) && !surfaceOpen && !safeModePageOpen), ...(remote ? { settings: remote.section } : {}), ...(palette ? { palette } : {}), bounds, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light', locale: locale.getSnapshot().active === 'zh' ? 'zh' : 'en' }, overlays.intersects(bounds, surface), () => overlays.defer(bounds, surface))
         }
@@ -1678,7 +1759,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           if (presentSurface.current === present) presentSurface.current = null
           stopWarmup(); overlays.dispose(); interaction.disconnect(); resize.disconnect(); chromeLayout.disconnect(); theme.disconnect(); unsubscribeLocale(); window.removeEventListener('resize', present)
         }
-      }, [mode, morph, usesModuleFrame, squarePage, settingsOpen, state.approvalsOpen, state.accountDialogOpen, settingsSurface, state.connected, state.epoch, state.settingsProtocolVersion, projectDialogOpen, cloudDeleteOpen, locale])
+      }, [mode, morph, usesModuleFrame, squarePage, settingsOpen, state.approvalsOpen, state.accountDialogOpen, settingsSurface, state.connected, state.epoch, state.settingsProtocolVersion, projectDialogOpen, cloudDeleteOpen, cloudRenameOpen, locale])
       React.useEffect(() => { surfacePresenter.current?.invalidate() }, [state.path, state.pageId, state.phase])
       React.useEffect(() => () => {
         void window.dshEnterpriseChat?.present({ visible: false, bounds: { x: 0, y: 48, width: 0, height: 0 }, theme: 'light' }).catch(() => {})
@@ -1796,14 +1877,19 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
     // their fixed-position containing block attached to the viewport.
     function installDesktopModes(ctx) {
       const navigation = createChatNavigation(ctx)
-      ctx.effect(() => () => navigation.deletion.dispose())
+      ctx.effect(() => () => { navigation.deletion.dispose(); navigation.renaming.dispose() })
       ctx.effect(() => ctx.locale.register(MODES_NS, MODES_COPY), 'desktop: Chat and Work locale')
       ctx.effect(() => ctx.locale.register(CLOUD_DELETE_NS, CLOUD_DELETE_COPY))
+      ctx.effect(() => ctx.locale.register(CLOUD_RENAME_NS, CLOUD_RENAME_COPY))
       ctx.effect(() => ctx.locale.register(PROJECTS_NS, PROJECTS_COPY))
       ctx.slots.inject('shell.overlay', () => ctx.slots.register({
         name: 'shell.overlay', id: 'desktop-cloud-chat-delete-dialog', locale: CLOUD_DELETE_NS,
         inject: () => ({ deletion: navigation.deletion, t: ctx.locale.bind(CLOUD_DELETE_NS) })
       }, DeleteSessionDialog))
+      ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+        name: 'shell.overlay', id: 'desktop-cloud-chat-rename-dialog', locale: CLOUD_RENAME_NS,
+        inject: () => ({ renaming: navigation.renaming, t: ctx.locale.bind(CLOUD_RENAME_NS) })
+      }, RenameChatDialog))
       ctx.effect(() => {
         const style = document.createElement('style')
         style.dataset.plugin = 'dsh-desktop-client-ui'
@@ -1916,6 +2002,14 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           .dshHistoryTitle[data-scrolled][data-clipped]{mask-image:linear-gradient(90deg,transparent,black 12px calc(100% - 12px),transparent)}
           .dshCloudHistoryPreview{display:grid;gap:4px;overflow-wrap:anywhere;color:var(--dsw-alias-label-primary)}
           .dshCloudHistoryPreview time{font-size:12px;color:var(--dsw-alias-label-tertiary)}
+          .dshCloudHistoryStatus{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dsw-alias-label-secondary)}
+          .dshHistoryStatus{position:absolute;inset-block:0;inset-inline-start:8px;width:16px;display:inline-flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary);pointer-events:none}
+          .dshChatProject .dshHistoryStatus{inset-inline-start:12px}
+          .dshVisuallyHidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+          .dshChatRenameInput{box-sizing:border-box;width:100%;height:44px;padding:7px 14px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-lg);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:14px;line-height:22px;outline:none}
+          .dshChatRenameInput:disabled{color:var(--dsw-alias-label-dimmed)}
+          .dshChatRenameStatus{margin:8px 0 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+          .dshChatRenameError{margin-top:8px;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary)}.dshChatRenameError p{margin:0}
           @media(hover:none){
             .dshSidebarItem .dshSidebarItemTools :is(.dshChatProjectAction,.dshCloudHistoryActions){opacity:1;pointer-events:auto}
             .dshChatProjectHeading .dshChatProjectToggle{padding-inline-end:64px}
@@ -2388,7 +2482,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           pending: 'Deleting session…', failed: 'Deletion failed. Please try again.'
         }
       }))
-      const deletion = createSessionDeletion((sessionId) => {
+      const deletion = createSessionRequest((sessionId) => {
         const workspace = ctx.get('uiWorkspace')
         if (!workspace) throw new Error('Workspace navigation is unavailable')
         return workspace.deleteSession(sessionId)
