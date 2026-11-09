@@ -1,5 +1,12 @@
 /** Shared content layout for the isolated enterprise document. */
 export const CHAT_LAYOUT_CSS = `
+/* The cached Apps panel sits inside auto-height KeepAlive wrappers.
+   Use the desktop seat height so a short list cannot expose the backing. */
+html[data-dsh-chat-viewport][data-dsh-page="apps"] .dsh-web-chat [data-workbench-panel] {
+  height: var(--dsh-chat-viewport-height);
+  max-height: var(--dsh-chat-viewport-height);
+}
+
 .dsh-chat-surface .dsh-chat-header .dsh-chat-section-row { display: none !important; }
 .dsh-chat-surface .dsh-chat-header {
   grid-template-rows: 30px !important;

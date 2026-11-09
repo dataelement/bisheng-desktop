@@ -26,6 +26,7 @@ try {
   await build({ stdin: { contents: `
     import assert from 'node:assert/strict'
     import { app, BrowserWindow, WebContentsView } from 'electron'
+    import { chatDialogViewportScript } from './src/main/enterprise/chat-dialog-viewport'
     import { chatLayoutCss } from './src/main/enterprise/chat-layout'
     app.setPath('userData', ${JSON.stringify(join(temporary, 'profile'))})
     app.whenReady().then(async () => {
@@ -34,6 +35,56 @@ try {
       await win.loadFile(${JSON.stringify(join(temporary, 'host.html'))})
       const view = new WebContentsView({webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}})
       win.contentView.addChildView(view)
+      // Mirror the deployed Apps panel, where KeepAlive inserts auto-height wrappers
+      // between main and the panel and the later desktop rule sets height:100%.
+      await view.webContents.loadURL('data:text/html,' + encodeURIComponent(\`<!doctype html>
+        <style>
+          body { margin:0; }
+          .desktop-surface { height:var(--dsh-chat-viewport-height); }
+          .desktop-surface > main { height:100%; }
+          body[data-dsh-chat-theme=dark] .dsh-web-chat > main { --bg-page:20 20 22; }
+          body[data-dsh-chat-theme=light] .dsh-web-chat > main { --bg-page:255 255 255; }
+          .dsh-web-chat [data-workbench-panel] {
+            height:var(--dsh-chat-viewport-height,100dvh);
+            max-height:var(--dsh-chat-viewport-height,100dvh);
+            background:rgb(var(--bg-page));
+          }
+          .desktop-surface .desktop-viewport { height:100%; min-height:0; max-height:100%; }
+          .empty { height:300px; }
+        </style>
+        <div id="root">
+          <div class="desktop-surface dsh-web-chat">
+            <main><div class="ka-wrapper"><div class="ka-content">
+              <div class="desktop-viewport" data-workbench-panel>
+                <div class="empty"><a href="#explore">探索更多应用</a></div>
+              </div>
+            </div></div></main>
+          </div>
+        </div>\`))
+      const run = code => view.webContents.executeJavaScript(code)
+      await view.webContents.insertCSS(chatLayoutCss(process.platform))
+      await run('document.documentElement.dataset.dshPage = "apps"')
+      let appCases = 0
+      for (const height of [480, 660]) for (const theme of ['dark', 'light']) {
+        await run('document.body.dataset.dshChatTheme = ' + JSON.stringify(theme))
+        await run(chatDialogViewportScript({x:280,y:40,width:800,height,windowWidth:1080,windowHeight:700,background:'#2c2c2e'}))
+        for (const expanded of [false, true]) {
+          view.setBounds(expanded ? {x:0,y:0,width:1080,height:700} : {x:280,y:40,width:800,height})
+          await run('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+          const layout = await run(\`(() => {
+            const panel = document.querySelector('[data-workbench-panel]')
+            const rect = panel.getBoundingClientRect()
+            const bottom = document.getElementById('root').getBoundingClientRect().bottom
+            const hit = document.elementFromPoint(rect.left+10,bottom-10)
+            return {
+              height:rect.height,
+              color:hit && getComputedStyle(hit).backgroundColor
+            }
+          })()\`)
+          assert.deepEqual(layout, {height,color:theme === 'dark' ? 'rgb(20, 20, 22)' : 'rgb(255, 255, 255)'}, 'Apps background reaches the bottom of the seat')
+          appCases++
+        }
+      }
       let cases = 0
       for (const platform of ['win32','darwin']) {
         await win.webContents.executeJavaScript('document.documentElement.dataset.platform = ' + JSON.stringify(platform))
@@ -74,7 +125,7 @@ try {
           cases++
         }
       }
-      console.log(JSON.stringify({cases,hostPlatform:process.platform,electron:process.versions.electron,windowsAcceptance:process.platform==='win32'}))
+      console.log(JSON.stringify({cases,appCases,hostPlatform:process.platform,electron:process.versions.electron,windowsAcceptance:process.platform==='win32'}))
       view.webContents.close(); win.destroy(); app.exit(0)
     }).catch(error=>{console.error(error);app.exit(1)})
   `, resolveDir: root, loader: 'ts' }, outfile: entry, bundle: true, platform: 'node', format: 'cjs', external: ['electron'] })
