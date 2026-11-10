@@ -287,6 +287,7 @@
     "@deepseek-ai/dsh-workspace": "0.2.2-rc.1",
     "@deepseek-ai/schemastery": "3.19.0",
     "dsh-desktop-client-ui": "file:packages/dsh-desktop-client-ui",
+    "dsh-desktop-enterprise": "file:packages/dsh-desktop-enterprise",
     "dsh-desktop-hmr-fallback": "file:packages/dsh-desktop-hmr-fallback",
     "dsh-desktop-log-bridge": "file:packages/dsh-desktop-log-bridge",
     "dsh-desktop-market-installer": "file:packages/dsh-desktop-market-installer",

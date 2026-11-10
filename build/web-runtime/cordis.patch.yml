@@ -5,3 +5,23 @@
   name: '@deepseek-ai/dsh-client-ui-settings-models'
   config:
     credentialOnboarding: false
+
+- insert:
+    - id: dsh-desktop-client-ui
+      name: dsh-desktop-client-ui
+
+    - id: dsh-desktop-enterprise
+      name: dsh-desktop-enterprise
+
+    - id: dsh-desktop-workbenches
+      name: dsh-desktop-workbenches
+      config:
+        root: !!js dshHomePath('desktop-workbenches')
+
+    - id: dsh-desktop-office
+      name: dsh-desktop-office
+
+    - id: dsh-ppt-composer
+      name: 'dsh-ppt-composer'
+      config:
+        root: !!js dshHomePath('kimi-ppt')

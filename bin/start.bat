@@ -4,7 +4,7 @@ setlocal enabledelayedexpansion
 set "DIR=%~dp0.."
 set "DSH_HOME=%DIR%\data"
 if "%PORT%"=="" set "PORT=3080"
-if "%HOST%"=="" set "HOST=0.0.0.0"
+if "%HOST%"=="" set "HOST=127.0.0.1"
 set "NODE_ENV=production"
 
 echo ========================================================
@@ -29,13 +29,25 @@ if not exist "%DSH_HOME%" mkdir "%DSH_HOME%"
 if not exist "%DSH_HOME%\profiles\web" (
     echo [INFO] 正在初始化 Web Profile 配置...
     mkdir "%DSH_HOME%\profiles\web"
-    if exist "%DIR%\profile\package.json" copy /y "%DIR%\profile\package.json" "%DSH_HOME%\profiles\web\package.json" >nul
-    if exist "%DIR%\profile\cordis.yml" copy /y "%DIR%\profile\cordis.yml" "%DSH_HOME%\profiles\web\cordis.yml" >nul
+    if exist "%DIR%\build\web-runtime\profile-package.json" (
+        copy /y "%DIR%\build\web-runtime\profile-package.json" "%DSH_HOME%\profiles\web\package.json" >nul
+    ) else if exist "%DIR%\profile\package.json" (
+        copy /y "%DIR%\profile\package.json" "%DSH_HOME%\profiles\web\package.json" >nul
+    )
+    if exist "%DIR%\build\web-runtime\cordis.patch.yml" (
+        copy /y "%DIR%\build\web-runtime\cordis.patch.yml" "%DSH_HOME%\profiles\web\cordis.patch.yml" >nul
+    )
+    if not exist "%DSH_HOME%\profiles\web\cordis.yml" (
+        echo [] > "%DSH_HOME%\profiles\web\cordis.yml"
+    )
 )
 
 :: 3. 寻找 Harness 启动入口
 set "HARNESS_ENTRY="
-if exist "%DIR%\core\apps\cli\lib\bin.js" (
+if exist "%DIR%\node_modules\@deepseek-ai\dsh\lib\bin.js" (
+    set "HARNESS_ENTRY=%DIR%\node_modules\@deepseek-ai\dsh\lib\bin.js"
+    node "!HARNESS_ENTRY!" web --port %PORT% --host %HOST% --no-open
+) else if exist "%DIR%\core\apps\cli\lib\bin.js" (
     set "HARNESS_ENTRY=%DIR%\core\apps\cli\lib\bin.js"
     cd /d "%DIR%\core"
     node "!HARNESS_ENTRY!" web --port %PORT% --host %HOST% --no-open
