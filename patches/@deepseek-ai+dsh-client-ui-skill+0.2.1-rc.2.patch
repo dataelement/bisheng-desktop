@@ -1,0 +1,18 @@
+diff --git a/node_modules/@deepseek-ai/dsh-client-ui-skill/lib/client.js b/node_modules/@deepseek-ai/dsh-client-ui-skill/lib/client.js
+index 46579d03..d8f383ec 100644
+--- a/node_modules/@deepseek-ai/dsh-client-ui-skill/lib/client.js
++++ b/node_modules/@deepseek-ai/dsh-client-ui-skill/lib/client.js
+@@ -424,9 +424,11 @@ window.__ModuleLoader__.load({
+ 					if (sessions.subagentAddress(session.sessionId) !== void 0) return [];
+ 					const skills = await fetchCatalog(session.sessionId).promise;
+ 					if (signal.aborted) return [];
+-					return (0, _deepseek_ai_dsh_client_ui_primitives.rankByName)(skills, query).map((skill) => ({
++					return (0, _deepseek_ai_dsh_client_ui_primitives.rankByName)(skills.map((skill) => skill.displayName ? { ...skill, label: skill.displayName } : skill), query).map((skill) => ({
+ 						name: skill.name,
+-						description: skill.modelInvocable ? skill.description : `${t("menu.userOnly")} · ${skill.description}`
++						// Keep the pick payload stable; only the title hides provider isolation IDs.
++						...skill.displayName ? { label: skill.displayName, hideAlias: true } : {},
++						description: skill.displayName ? void 0 : skill.modelInvocable ? skill.description : `${t("menu.userOnly")} · ${skill.description}`
+ 					}));
+ 				},
+ 				warm(session) {

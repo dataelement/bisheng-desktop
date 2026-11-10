@@ -39,7 +39,7 @@ const { menuReduce, MenuView } = vm.runInNewContext(`(() => {
 })
 
 describe('input trigger menu scroll ownership', () => {
-  let root, host, state, listeners, dispatch, scrollIntoView
+  let root, host, state, listeners, dispatch, scrollIntoView, onPick
   const headers = { subscribe: () => () => {}, getSnapshot: () => emptyHeaders }
   const emptyHeaders = new Map()
   beforeEach(async () => {
@@ -57,6 +57,7 @@ describe('input trigger menu scroll ownership', () => {
       highlight: { source: 'command', index: 0 }
     }
     scrollIntoView = vi.fn()
+    onPick = vi.fn()
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
       if (this.getAttribute('role') === 'listbox') return { top: 100, bottom: 492 }
@@ -75,7 +76,7 @@ describe('input trigger menu scroll ownership', () => {
     }
     await act(async () => root.render(React.createElement(MenuView, {
       menu: { subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn) }, getSnapshot: () => state },
-      headers, t: key => key, onDismiss() {}, onPick() {}, onCrumb() {},
+      headers, t: key => key, onDismiss() {}, onPick, onCrumb() {},
       onHover: (source, index) => dispatch({ type: 'hover', source, index })
     })))
   })
@@ -88,6 +89,26 @@ describe('input trigger menu scroll ownership', () => {
   })
   const hoverLast = async host => act(async () => {
     host.querySelectorAll('[role=option]')[9].dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
+  })
+
+  it('shows only the provider name when the internal alias is hidden', async () => {
+    const internal = 'bisheng-docx-bisheng-123456789012345678901234-22'
+    state.groups[0].items = [{ name: internal, label: 'bisheng-docx', hideAlias: true }]
+    state = { ...state, groups: [...state.groups] }
+    await act(async () => listeners.forEach(fn => fn()))
+    const option = host.querySelector('[role=option]')
+    expect(option.textContent).toBe('bisheng-docx')
+    expect(option.textContent).not.toContain(internal)
+    expect(state.groups[0].items[0].name).toBe(internal)
+    await act(async () => option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })))
+    expect(onPick).toHaveBeenCalledWith('command', 0)
+  })
+
+  it('preserves aliases for existing command sources by default', async () => {
+    state.groups[0].items = [{ name: 'command-id', label: 'Command title' }]
+    state = { ...state, groups: [...state.groups] }
+    await act(async () => listeners.forEach(fn => fn()))
+    expect(host.querySelector('[role=option]').textContent).toContain('command-id')
   })
 
   it('opens at the top and preserves the menu height when hovering a clipped last row', async () => {

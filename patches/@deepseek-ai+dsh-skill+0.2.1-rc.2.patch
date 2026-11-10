@@ -1,7 +1,8 @@
 diff --git a/node_modules/@deepseek-ai/dsh-skill/lib/index.js b/node_modules/@deepseek-ai/dsh-skill/lib/index.js
+index 7d9c3656..ca739ae8 100644
 --- a/node_modules/@deepseek-ai/dsh-skill/lib/index.js
 +++ b/node_modules/@deepseek-ai/dsh-skill/lib/index.js
-@@ -1,7 +1,7 @@
+@@ -1,6 +1,6 @@
  import { Service } from "@deepseek-ai/cordis";
  import { assertNever } from "@deepseek-ai/dsh-util-values";
 -import { NamedEntries, ScopedLayers, scopeChainOf, scopeOf } from "@deepseek-ai/dsh-scope";
@@ -9,9 +10,7 @@ diff --git a/node_modules/@deepseek-ai/dsh-skill/lib/index.js b/node_modules/@de
  import z from "@deepseek-ai/schemastery";
  //#region lib/types/index.js
  /**
- * Agent skill provider registry.
-@@ -233,9 +233,9 @@
- 	*/
+@@ -234,7 +234,7 @@ var SkillRegistry = class extends Service {
  	async snapshot(options = {}) {
  		const collected = await this.collect(options);
  		return {
@@ -20,31 +19,44 @@ diff --git a/node_modules/@deepseek-ai/dsh-skill/lib/index.js b/node_modules/@de
  			complete: collected.cacheable
  		};
  	}
- 	/**
-@@ -259,10 +259,17 @@
- 		if (definition.name !== match.candidate.name) {
+@@ -260,7 +260,14 @@ var SkillRegistry = class extends Service {
  			this.invalidateEntry(match);
  			return;
  		}
 -		return definition;
 +		return this.invocationView(definition, options);
- 	}
++	}
 +	/** Resolve view-time policy after discovery caching, for both catalogs and loaders. */
 +	async invocationView(skill, options) {
 +		const invocation = await this.ctx.waterfall(scopeTarget(this, options.scope), "skills/invocation", skill.invocation, toSummary(skill), options, () => Promise.resolve(skill.invocation));
 +		throwIfAborted(options.signal);
 +		validateInvocation(invocation, `skill "${skill.name}" invocation view`);
 +		return { ...skill, invocation };
-+	}
+ 	}
  	async collect(options) {
  		throwIfAborted(options.signal);
- 		let attempt = 1;
- 		while (true) {
+@@ -493,6 +500,7 @@ function toSummary(skill) {
+ 	return {
+ 		name,
+ 		...skill.path === void 0 ? {} : { path: skill.path },
++		...typeof skill.displayName === "string" && skill.displayName.trim() ? { displayName: skill.displayName } : {},
+ 		description,
+ 		...whenToUse !== void 0 ? { whenToUse } : {},
+ 		invocation,
 diff --git a/node_modules/@deepseek-ai/dsh-skill/lib/types/index.d.ts b/node_modules/@deepseek-ai/dsh-skill/lib/types/index.d.ts
+index b809c1b7..f6cf8e0d 100644
 --- a/node_modules/@deepseek-ai/dsh-skill/lib/types/index.d.ts
 +++ b/node_modules/@deepseek-ai/dsh-skill/lib/types/index.d.ts
-@@ -95,8 +95,10 @@
-  * borrowed options object and read only their {@link SkillLookupOptions}
+@@ -42,6 +42,8 @@ export interface SkillInvocationPolicy {
+ }
+ /** Invocation-neutral skill metadata returned by `ctx.skills.list()`. */
+ export interface SkillSummary {
++    /** Optional provider title for UI; never used as the invocation identifier. */
++    readonly displayName?: string;
+     /** Absolute instruction file path when supplied by the provider; absent for virtual skills. */
+     readonly path?: string;
+     /** Kebab-case identifier used to address the skill. */
+@@ -96,6 +98,8 @@ export interface SkillLookupOptions {
   * contract from it.
   */
  export interface SkillViewOptions extends SkillLookupOptions {
@@ -53,9 +65,7 @@ diff --git a/node_modules/@deepseek-ai/dsh-skill/lib/types/index.d.ts b/node_mod
      /** Viewing scope (the calling agent); omitted reads the global layer alone. */
      readonly scope?: ScopeKey | undefined;
  }
- /**
-@@ -208,8 +210,12 @@
-          * contained and cannot veto the registry mutation.
+@@ -209,6 +213,10 @@ declare module '@deepseek-ai/cordis' {
           * @mode emit
           */
          'skills/change'(): void;
@@ -66,9 +76,7 @@ diff --git a/node_modules/@deepseek-ai/dsh-skill/lib/types/index.d.ts b/node_mod
      }
  }
  /**
-  * Layered registry of skill providers, the host+per-scope shape the tools
-@@ -281,8 +287,9 @@
-      *   `cwd` selects workspace-sensitive skills, and `signal` cancels work.
+@@ -282,6 +290,7 @@ export declare class SkillRegistry extends Service {
       * @returns the full skill, including body content, or `undefined`.
       */
      get(name: string, options?: SkillViewOptions): Promise<SkillDefinition | undefined>;
@@ -76,4 +84,3 @@ diff --git a/node_modules/@deepseek-ai/dsh-skill/lib/types/index.d.ts b/node_mod
      private collect;
      private collectFresh;
      private collectLayer;
-     private listLayerCandidates;
