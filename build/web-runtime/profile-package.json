@@ -6,12 +6,7 @@
     "profile": {
       "bundles": [
         "@deepseek-ai/dsh-base",
-        "@deepseek-ai/dsh-web-app",
-        "dsh-desktop-client-ui",
-        "dsh-desktop-enterprise",
-        "dsh-desktop-workbenches",
-        "dsh-desktop-office",
-        "dsh-ppt-composer"
+        "@deepseek-ai/dsh-web-app"
       ]
     }
   }

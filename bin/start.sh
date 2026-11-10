@@ -4,7 +4,7 @@ set -e
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export DSH_HOME="${DIR}/data"
 export PORT="${PORT:-3080}"
-export HOST="${HOST:-0.0.0.0}"
+export HOST="${HOST:-127.0.0.1}"
 export NODE_ENV="production"
 
 # 1. 检查 Node.js 环境
@@ -18,8 +18,17 @@ mkdir -p "${DSH_HOME}"
 if [ ! -d "${DSH_HOME}/profiles/web" ]; then
   echo "ℹ️ [INFO] 正在初始化 Web Profile 配置..."
   mkdir -p "${DSH_HOME}/profiles/web"
-  [ -f "${DIR}/profile/package.json" ] && cp "${DIR}/profile/package.json" "${DSH_HOME}/profiles/web/package.json"
-  [ -f "${DIR}/profile/cordis.yml" ] && cp "${DIR}/profile/cordis.yml" "${DSH_HOME}/profiles/web/cordis.yml"
+  if [ -f "${DIR}/build/web-runtime/profile-package.json" ]; then
+    cp "${DIR}/build/web-runtime/profile-package.json" "${DSH_HOME}/profiles/web/package.json"
+  elif [ -f "${DIR}/profile/package.json" ]; then
+    cp "${DIR}/profile/package.json" "${DSH_HOME}/profiles/web/package.json"
+  fi
+  if [ -f "${DIR}/build/web-runtime/cordis.patch.yml" ]; then
+    cp "${DIR}/build/web-runtime/cordis.patch.yml" "${DSH_HOME}/profiles/web/cordis.patch.yml"
+  fi
+  if [ ! -f "${DSH_HOME}/profiles/web/cordis.yml" ]; then
+    echo "[]" > "${DSH_HOME}/profiles/web/cordis.yml"
+  fi
 fi
 
 echo "========================================================"
@@ -31,7 +40,9 @@ echo "  访问地址:    http://${HOST}:${PORT}"
 echo "========================================================"
 
 # 3. 寻找并执行启动入口
-if [ -f "${DIR}/core/apps/cli/lib/bin.js" ]; then
+if [ -f "${DIR}/node_modules/@deepseek-ai/dsh/lib/bin.js" ]; then
+  exec node "${DIR}/node_modules/@deepseek-ai/dsh/lib/bin.js" web --port "${PORT}" --host "${HOST}" --no-open
+elif [ -f "${DIR}/core/apps/cli/lib/bin.js" ]; then
   cd "${DIR}/core"
   exec node apps/cli/lib/bin.js web --port "${PORT}" --host "${HOST}" --no-open
 elif [ -f "${DIR}/core/apps/cli/src/bin.ts" ]; then

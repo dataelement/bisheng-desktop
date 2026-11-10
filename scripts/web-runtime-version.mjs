@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 
-export const WEB_HARNESS_VERSION = '0.2.2-alpha.3'
+export const WEB_HARNESS_VERSION = '0.2.2-rc.1'
 
 export async function checkWebHarnessVersion(modules) {
   for (const name of ['dsh', 'dsh-app-boot', 'dsh-base', 'dsh-web-app', 'dsh-plugin-manager']) {

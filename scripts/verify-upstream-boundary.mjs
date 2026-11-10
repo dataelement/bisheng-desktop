@@ -33,7 +33,7 @@ const ALLOWED_PATTERNS = [
   /^scripts\/web-/,
   /^docs\/downstream-/,
   /^docs\/architecture-setup-plan\.md$/,
-  /^test\/enterprise-/,
+  /^test\/(enterprise-|web-runtime-)/,
   /^\.tmp/,
   /^package\.json$/,
   /^package-lock\.json$/,
