@@ -24,3 +24,4 @@ describe('enterprise product patch injection', () => {
     }
   })
 })
+
