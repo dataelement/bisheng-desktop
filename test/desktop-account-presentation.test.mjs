@@ -54,6 +54,7 @@ async function presenter({ computedStyle } = {}) {
   const plugin = definition.factory(id => { if (id === 'react') return React; if (id === '@deepseek-ai/dsh-client-ui-primitives') return {}; throw new Error(id) })
   const locale = { register() {}, bind: () => key => key, getSnapshot: () => ({ active: 'en' }), subscribe: () => () => {} }
   plugin.apply({
+    reflect: { provide: () => () => {} },
     locale, remote: { session: {} },
     effect: setup => { const dispose = setup(); if (dispose) effects.push(dispose) },
     slots: {
@@ -107,6 +108,7 @@ it('presents approvals independently while preserving native Settings presentati
   const plugin = definition.factory(id => { if (id === 'react') return React; if (id === '@deepseek-ai/dsh-client-ui-primitives') return {}; throw new Error(id) })
   const locale = { register() {}, bind: () => key => key, getSnapshot: () => ({ active: 'en' }), subscribe: () => () => {} }
   plugin.apply({
+    reflect: { provide: () => () => {} },
     locale, remote: { session: {} },
     effect: setup => { const dispose = setup(); if (dispose) effects.push(dispose) },
     slots: {

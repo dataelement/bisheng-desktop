@@ -1579,6 +1579,12 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
     // their fixed-position containing block attached to the viewport.
     function installDesktopModes(ctx) {
       const navigation = createChatNavigation(ctx)
+      ctx.effect(() => ctx.reflect.provide('desktopWorkNavigation', {
+        startSession(workspaceId, options) {
+          navigation.select('work')
+          ctx.uiWorkspace.startSession(workspaceId, options)
+        }
+      }), 'desktop: work session navigation')
       ctx.effect(() => () => navigation.deletion.dispose())
       ctx.effect(() => ctx.locale.register(MODES_NS, MODES_COPY), 'desktop: Chat and Work locale')
       ctx.effect(() => ctx.locale.register(CLOUD_DELETE_NS, CLOUD_DELETE_COPY))

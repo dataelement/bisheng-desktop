@@ -94,6 +94,7 @@ describe('BISHENG client slot occupants', () => {
       }
     }
     plugin.apply({
+      reflect: { provide: () => () => undefined },
       slots,
       locale: {
         register: () => () => undefined,

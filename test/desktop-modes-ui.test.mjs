@@ -90,6 +90,7 @@ async function mount(connected = false, collection = {}, inert = false, workbenc
   prepare?.()
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   let plugin, navigate
+  const services = new Map()
   let sessionList = { phase: 'ready', byId: { draft: { id: 'draft', blank: true, retainedBy: { mainView: 1 } } } }
   let liveState = { blank: true, pendingSubmissions: [], running: false, awaitingFirstTurn: false }
   const liveListeners = new Set()
@@ -127,6 +128,7 @@ async function mount(connected = false, collection = {}, inert = false, workbenc
   } }
   new Function(await readFile(process.env.DSH_TEST_HOST_DIALOG_CLIENT_SOURCE || 'packages/dsh-desktop-client-ui/client.js', 'utf8'))()
   plugin.apply({
+    reflect: { provide: (name, value) => { services.set(name, value); return () => services.delete(name) } },
     inject(names, callback) {
       if (names.includes('desktopWorkbenches')) {
         bindWorkbench = callback
@@ -171,6 +173,7 @@ async function mount(connected = false, collection = {}, inert = false, workbenc
     localeListenerCount: () => localeListeners.size,
     async navigation(entries, path = '/skills') { snapshot = { ...snapshot, navigation: { entries, homeLabel: 'Welcome' }, path, conversationId: undefined }; await act(async () => chatListener(snapshot)) },
     navigate: (...args) => navigate(...args),
+    startWorkSession: (...args) => services.get('desktopWorkNavigation').startSession(...args),
     async click(mode) { await act(async () => container.querySelector(`#dsh-mode-${mode}`).click()) },
     async account(next, epoch = 1) {
       snapshot = { connected: next, phase: 'ready', epoch, conversationId: 'new', settingsProtocolVersion: 1, projectScope: 'account-a' }
@@ -1432,4 +1435,13 @@ it('project title freshness retains members outside the loaded ordinary-history 
   expect(section().textContent).toContain('Earlier project conversation')
   expect(section().querySelectorAll('[data-history-kind=chat]')).toHaveLength(1)
   expect(container.querySelector('.dshRecentHistory').querySelectorAll('[data-history-kind=chat]')).toHaveLength(40)
+})
+
+it('opens an installation conversation in Work while enterprise chat is selected', async () => {
+  const ui = await mount(true)
+  await ui.click('chat')
+  const previousOpens = window.dshEnterpriseChat.open.mock.calls.length
+  await act(async () => ui.startWorkSession())
+  expect(ui.selected()).toBe('work')
+  expect(window.dshEnterpriseChat.open).toHaveBeenCalledTimes(previousOpens)
 })
