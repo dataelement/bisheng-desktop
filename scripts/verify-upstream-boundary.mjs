@@ -49,6 +49,8 @@ function getUpstreamBase() {
 
   // 优先级: 显式 upstream 分支 > origin 对应主干分支
   const candidateRefs = [
+    'upstream/bisheng-adaptor',
+    'origin/bisheng-adaptor',
     'upstream/upgrade/dsh-0.2.2-rc.1',
     'origin/upgrade/dsh-0.2.2-rc.1',
     'upstream/main',
