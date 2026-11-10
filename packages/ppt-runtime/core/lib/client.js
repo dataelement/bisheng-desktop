@@ -144,10 +144,7 @@ window.__ModuleLoader__.load({
 					error: loading ? "" : current.error
 				}));
 			}
-			setNotice(sessionId, notice) {
-                this.update(sessionId, current => ({ ...current, notice }));
-            }
-            setError(sessionId, error) {
+			setError(sessionId, error) {
 				this.update(sessionId, (current) => ({
 					...current,
 					loading: false,
@@ -328,20 +325,22 @@ window.__ModuleLoader__.load({
 					return true;
 				}
 				if (!client?.bound || activeMode === null) return true;
-				this.setMode(sessionId, activeMode);
-				this.setNotice(sessionId, next?.templateMigration?.reason ?? null);
+				// Hydration retains compatible selections without advancing the user-action
+				// revision, which would restart loads for a legitimately empty catalog.
 				const templates = next?.templates ?? [];
-				const selectedId = pptTemplateId(templates, next.selectedTemplateId);
-				if (selectedId !== null) {
-					this.select(sessionId, templates.find((template) => template.id === selectedId), activeMode);
-					return true;
-				}
-				const keptId = pptTemplateId(templates, this.snapshot(sessionId).selectedId);
-				if (typeof next?.selectedTemplateId === "string" && keptId !== null) {
-					this.select(sessionId, templates.find((template) => template.id === keptId), activeMode);
-					return true;
-				}
-				this.deselect(sessionId, activeMode);
+				this.update(sessionId, (current) => {
+					const remoteId = pptTemplateId(templates, next?.selectedTemplateId);
+					const selectedId = remoteId ?? (typeof next?.selectedTemplateId === "string" ? current.selectedId : null);
+					return {
+						...current,
+						activeMode,
+						selectedId,
+						engaged: true,
+						notice: selectedId === null ? next?.templateMigration?.reason ?? null : false,
+						loading: false,
+						error: ""
+					};
+				});
 				return true;
 			}
 		};

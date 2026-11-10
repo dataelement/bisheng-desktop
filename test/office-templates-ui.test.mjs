@@ -44,7 +44,7 @@ async function fixture({ bound = true, remote = {}, english = false, deferState 
     return { ok: true, value: { ...state, templates: examples } }
   } } }
   const ctx = { get: () => connection, effect(run) { cleanup.push(run()) }, on(name, hook) { hooks.set(name, hook) }, locale: { register(_ns, value) { dictionaries = value; return () => {} } },
-    slots: { inject(_seat, run) { run() }, register(meta, component) { store = meta.inject().store; seats.set(meta.name, component) } } }
+    slots: { registerFactory() {}, inject(_seat, run) { run() }, register(meta, component) { store = meta.inject().store; seats.set(meta.name, component) } } }
   plugin.apply(ctx)
   container = document.createElement('div'); document.body.append(container); root = createRoot(container)
   const t = key => dictionaries[english ? 'en' : 'zh'][key] ?? key
