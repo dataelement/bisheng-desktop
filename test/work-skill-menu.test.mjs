@@ -16,7 +16,7 @@ const project = vm.runInNewContext(
   client.slice(start, end) + '})'
 )
 
-it('searches original API names without adding prefixes and preserves enterprise descriptions', () => {
+it('searches enterprise display labels and preserves descriptions independently of invocation keys', () => {
   const internal = 'bisheng-123456789012345678901234-22'
   const result = project([
     { name: internal, displayName: '合同审核', description: '审核合同条款', modelInvocable: false },

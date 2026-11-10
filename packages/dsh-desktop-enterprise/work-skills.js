@@ -46,7 +46,7 @@ export function createEnterpriseSkills({ state, request, home = process.env.DSH_
       if (!Number.isSafeInteger(row.id) || row.id <= 0 || ids.has(row.id) || typeof row.name !== 'string' ||
           !/^[a-f0-9]{64}$/.test(row.content_hash) || typeof row.description !== 'string' || typeof row.display_name !== 'string') throw new Error('Invalid enterprise skill metadata.')
       ids.add(row.id)
-      return { name: enterpriseSkillName(key, row.id, row.name), displayName: row.name, description: row.description || row.display_name,
+      return { name: enterpriseSkillName(key, row.id, row.name), displayName: row.display_name || row.name, description: row.description || row.display_name,
         invocation: { modelInvocable: true, userInvocable: true }, source: 'bisheng', provider: PROVIDER, rank: 500,
         locator: { id: row.id, key, connectionKey: account.connectionKey, version: row.content_hash, originalName: row.name, displayName: row.display_name } }
     })

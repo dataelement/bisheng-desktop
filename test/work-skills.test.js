@@ -17,7 +17,7 @@ async function setup() {
   return { skills, request, setState: value => { state = value }, state, disable: () => { enabled = false }, update: () => { files = { ...files, 'SKILL.md': Buffer.from('Updated instructions') } } }
 }
 describe('enterprise Work skill provider', () => {
-  it('uses the API name for discovery without conflating it with the display label', async () => {
+  it('uses the enterprise display label for discovery while keeping isolated invocation keys', async () => {
     const { skills, request } = await setup()
     request.mockResolvedValue([
       { id: 35, name: 'gov-doc-writing', display_name: '公文写作', description: 'Draft official documents', content_hash: 'a'.repeat(64) },
@@ -26,7 +26,7 @@ describe('enterprise Work skill provider', () => {
     const rows = await skills.catalog()
     expect(rows[0].name).toMatch(/^gov-doc-writing-bisheng-[a-f0-9]{24}-35$/)
     expect(rows[1].name).toMatch(/^gov-doc-writing-bisheng-[a-f0-9]{24}-36$/)
-    expect(rows.map(row => row.displayName)).toEqual(['gov-doc-writing', 'gov-doc-writing'])
+    expect(rows.map(row => row.displayName)).toEqual(['公文写作', '公文写作副本'])
     expect(rows[1].description).toBe('公文写作副本')
     expect(rows[0].name).not.toBe(rows[1].name)
   })
@@ -125,7 +125,7 @@ it('coexists with a same-named local skill in the actual Harness registry', asyn
     expect(catalog).toHaveLength(2)
     const enterprise = catalog.find(row => row.provider === 'bisheng-enterprise')
     expect(enterprise.name).toMatch(/^office-bisheng-[a-f0-9]{24}-7$/)
-    expect(enterprise.displayName).toBe('office')
+    expect(enterprise.displayName).toBe('Office')
     expect((await ctx.skills.get('office')).content).toBe('Local instructions')
     const loaded = await ctx.skills.get(enterprise.name)
     expect(renderSkillContent(loaded)).toContain('Enterprise instructions')

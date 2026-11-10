@@ -93,11 +93,11 @@ describe('input trigger menu scroll ownership', () => {
 
   it('shows the original provider name and description without the internal alias', async () => {
     const internal = 'bisheng-docx-bisheng-123456789012345678901234-22'
-    state.groups[0].items = [{ name: internal, label: 'docx', description: '生成 Word 文档', hideAlias: true }]
+    state.groups[0].items = [{ name: internal, label: 'Word 文档制作', description: '生成 Word 文档', hideAlias: true }]
     state = { ...state, groups: [...state.groups] }
     await act(async () => listeners.forEach(fn => fn()))
     const option = host.querySelector('[role=option]')
-    expect(option.textContent).toBe('docx生成 Word 文档')
+    expect(option.textContent).toBe('Word 文档制作生成 Word 文档')
     expect(option.textContent).not.toContain(internal)
     expect(state.groups[0].items[0].name).toBe(internal)
     await act(async () => option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })))
