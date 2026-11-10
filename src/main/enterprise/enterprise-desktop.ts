@@ -54,6 +54,7 @@ export async function startEnterpriseDesktop(options: {
     note: (entry) => {
       const parts = [`[enterprise] ${entry.event}`]
       if (entry.status) parts.push(`status=${entry.status}`)
+      if (entry.code) parts.push(`code=${entry.code}`)
       if (entry.requestId) parts.push(`requestId=${entry.requestId}`)
       if (entry.originHash) parts.push(`origin=${entry.originHash}`)
       if (entry.pluginId) parts.push(`plugin=${JSON.stringify(entry.pluginId)}`)
