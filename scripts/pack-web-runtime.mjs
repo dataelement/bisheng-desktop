@@ -29,18 +29,49 @@ async function packWebRuntime() {
   // 1. Pack modified upstream packages and local plugins into tgz
   console.log('  -> Packing pre-compiled upstream packages from harness...')
   const packagesToPack = [
-    { name: 'app-boot', dir: path.join(harnessRoot, 'packages/boot/app-boot') },
-    { name: 'ui-chat', dir: path.join(harnessRoot, 'packages/client/ui-chat') },
-    { name: 'ui-conversation', dir: path.join(harnessRoot, 'packages/client/ui-conversation') },
-    { name: 'ui-workspace', dir: path.join(harnessRoot, 'packages/client/ui-workspace') },
-    { name: 'enterprise', dir: path.join(projectRoot, 'packages/dsh-desktop-enterprise') },
-    { name: 'workbenches', dir: path.join(projectRoot, 'packages/dsh-desktop-workbenches') },
-    { name: 'client-ui', dir: path.join(projectRoot, 'packages/dsh-desktop-client-ui') }
+    {
+      name: 'app-boot',
+      dirs: [path.join(harnessRoot, 'packages/boot/app-boot'), path.join(projectRoot, 'node_modules/@deepseek-ai/dsh-app-boot')]
+    },
+    {
+      name: 'ui-chat',
+      dirs: [path.join(harnessRoot, 'packages/client/ui-chat'), path.join(projectRoot, 'node_modules/@deepseek-ai/dsh-client-ui-chat')]
+    },
+    {
+      name: 'ui-conversation',
+      dirs: [path.join(harnessRoot, 'packages/client/ui-conversation'), path.join(projectRoot, 'node_modules/@deepseek-ai/dsh-client-ui-conversation')]
+    },
+    {
+      name: 'ui-workspace',
+      dirs: [path.join(harnessRoot, 'packages/client/ui-workspace'), path.join(projectRoot, 'node_modules/@deepseek-ai/dsh-client-ui-workspace')]
+    },
+    {
+      name: 'enterprise',
+      dirs: [path.join(projectRoot, 'packages/dsh-desktop-enterprise'), path.join(projectRoot, 'node_modules/dsh-desktop-enterprise')]
+    },
+    {
+      name: 'workbenches',
+      dirs: [path.join(projectRoot, 'packages/dsh-desktop-workbenches'), path.join(projectRoot, 'node_modules/dsh-desktop-workbenches')]
+    },
+    {
+      name: 'client-ui',
+      dirs: [path.join(projectRoot, 'packages/dsh-desktop-client-ui'), path.join(projectRoot, 'node_modules/dsh-desktop-client-ui')]
+    }
   ]
 
   for (const pkg of packagesToPack) {
-    console.log(`     Packing ${pkg.name}...`)
-    const res = spawnSync('pnpm', ['--dir', pkg.dir, 'pack', '--pack-destination', depsDir], {
+    let resolvedDir = null
+    for (const d of pkg.dirs) {
+      if (await fs.stat(d).catch(() => null)) {
+        resolvedDir = d
+        break
+      }
+    }
+    if (!resolvedDir) {
+      throw new Error(`Package directory for ${pkg.name} not found in candidates: ${pkg.dirs.join(', ')}`)
+    }
+    console.log(`     Packing ${pkg.name} from ${resolvedDir}...`)
+    const res = spawnSync('pnpm', ['--dir', resolvedDir, 'pack', '--pack-destination', depsDir], {
       stdio: 'inherit'
     })
     if (res.status !== 0) throw new Error(`Failed to pack ${pkg.name}`)
