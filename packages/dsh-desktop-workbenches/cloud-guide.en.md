@@ -10,7 +10,9 @@ Determine the users, smallest business flow, whether processing must continue af
 
 Normal use loads the hosted production URL inside the native workbench and checks the visitor's use permission. Do not fetch a source project or run a local business backend. Business queries, record edits and existing settings use business APIs. Fetch source only for an explicit request to change style, layout or application functionality.
 
-First call `cloud_workbench` with `operation: "guide"`; the protocol is bundled and needs no loopback token. Use the tool for the operations below. The authenticated local Harness transport is `POST /api/desktop-workbenches/cloud` with JSON:
+This guide is served by the enterprise platform and is shared by cloud workbenches and hosted applications. Do not ask for a local Markdown attachment.
+
+First call `cloud_workbench` with `operation: "guide"`; the tool returns this enterprise server’s guideUrl; visit that URL instead of reading a local Markdown attachment. Use the tool for the operations below. The authenticated local Harness transport is `POST /api/desktop-workbenches/cloud` with JSON:
 
 - `{"operation":"list"}` lists usable online apps; follow next_cursor.
 - `{"operation":"list","managed":true}` lists editable apps.
@@ -44,7 +46,7 @@ Account and server binding: reuse the current desktop account, tenant and config
 
 ## Agent-led publishing conversation
 
-“From enterprise” lists enterprise workbenches together, with a “Cloud” label on hosted workbenches. This page only discovers and opens workbenches; it has no manual publishing form. Users start with “Make my workbench” or a development conversation. The Agent completes the flow in that conversation without sending users to a publish button:
+“Cloud workbenches” lists hosted enterprise applications separately. Both the client Apps page and the admin Build → Apps page link to the same catalog. This page only discovers and opens workbenches; it has no manual publishing form. Users start with “Make my workbench” or a development conversation. The Agent completes the flow in that conversation without sending users to a publish button:
 
 1. Reuse confirmed requirements, explain the local/cloud/hybrid deployment rationale in business language, and confirm the smallest scope.
 2. After implementation and verification, show the change summary, target, schema effects and proposed team visibility. Proceed when release authorization already exists; otherwise confirm in the conversation. Permission to develop does not imply permission to release or broaden access.
