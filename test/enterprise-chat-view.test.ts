@@ -27,7 +27,7 @@ vi.mock('electron', async () => {
       constructor(public options: any) {
         let url = ''
         let zoom = 1
-        this.webContents = Object.assign(new EventEmitter(), { id: fake.views.length + 100, session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), focus: vi.fn(), send: vi.fn(), mainFrame: {}, getURL: () => url, getZoomFactor: () => zoom, setZoomFactor: vi.fn((value: number) => { zoom = value }), capturePage: vi.fn(async () => ({ isEmpty: () => false, toDataURL: () => 'data:image/png;base64,fixture' })), close: vi.fn(() => { if (fake.emitCloseAsGone) { const contents = this.webContents; setTimeout(() => contents.emit('render-process-gone'), 0) } }), executeJavaScript: vi.fn(async () => {}), insertCSS: vi.fn(async () => 'key'), loadURL: vi.fn(async (next: string) => {
+        this.webContents = Object.assign(new EventEmitter(), { id: fake.views.length + 100, session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), focus: vi.fn(), send: vi.fn(), mainFrame: {}, getURL: () => url, getZoomFactor: () => zoom, setZoomFactor: vi.fn((value: number) => { zoom = value }), capturePage: vi.fn(async () => ({ isEmpty: () => false, toDataURL: () => 'data:image/png;base64,fixture' })), close: vi.fn(() => { if (fake.emitCloseAsGone) { const contents = this.webContents; setTimeout(() => contents.emit('render-process-gone'), 0) } }), executeJavaScript: vi.fn(async () => {}), executeJavaScriptInIsolatedWorld: vi.fn(async () => {}), insertCSS: vi.fn(async () => 'key'), loadURL: vi.fn(async (next: string) => {
           if (fake.hangLoads) return await new Promise<void>(() => {})
           if (fake.loadFailures > 0) { fake.loadFailures -= 1; throw Object.assign(new Error('load failed'), { code: fake.loadErrorCode }) }
           url = fake.loadLanding ?? next
@@ -357,8 +357,16 @@ it('pushes landing state from the current remote main frame and rejects stale or
     report(wc.mainFrame, { landing: true, path: '/workspace/c/old' })
     report(wc.mainFrame, { landing: 'true', path: '/workspace/c/new' })
     expect(f.host.snapshot().landing).toBe(false)
+    expect(wc.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
     report(wc.mainFrame, { landing: true, path: '/workspace/c/new' })
     expect(f.host.snapshot().landing).toBe(true)
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(1001, [{ code: expect.stringContaining('"active":true') }])
+    f.host.present(f.owner, { ...presentation, visible: false })
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(1001, [{ code: expect.stringContaining('"active":false') }])
+    f.host.present(f.owner, presentation)
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(1001, [{ code: expect.stringContaining('"active":true') }])
+    report(wc.mainFrame, { landing: false, path: '/workspace/c/new' })
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(1001, [{ code: expect.stringContaining('"active":false') }])
     f.change({ connected: false, connectionKey: 'tenant-a' })
     report(wc.mainFrame, { landing: false, path: '/workspace/c/new' })
     expect(f.host.snapshot().landing).toBeUndefined()

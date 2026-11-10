@@ -8,6 +8,7 @@ import { chatDialogViewportScript, guardChatDialogViewportScript } from './chat-
 import { ChatDialogBacking } from './chat-dialog-backing'
 import { chatLocaleScript } from './chat-locale'
 import { chatLayoutCss } from './chat-layout'
+import { CHAT_WELCOME_CSS, CHAT_WELCOME_WORLD, chatWelcomeCasesScript } from './chat-welcome-cases'
 import { parseUsageSummary, parseUsageStorage, type EnterpriseUsage, type UsageSection } from '../../shared/enterprise-usage'
 import { EnterprisePlatformError, isEnterprisePlatformError } from './enterprise-request'
 import { EnterpriseChatProjects } from './chat-projects'
@@ -110,6 +111,8 @@ export class EnterpriseChatView {
   private settingsFailure?: 'load' | 'unsupported'
   private settingsTimer?: NodeJS.Timeout
   private appearance?: string
+  private welcomeCases?: { active: boolean; locale: 'zh' | 'en'; revision: number }
+  private welcomeRevision = 0
 
   constructor(private enterprise: EnterpriseDesktopRuntime, private note: (line: string) => void, private notificationWindow?: () => BrowserWindow | undefined) {
     this.unsubscribe = enterprise.subscribe((state) => {
@@ -462,6 +465,7 @@ export class EnterpriseChatView {
     const shown = visible && this.state.phase === 'ready' && surfaceReady
     if (!shown || this.presentation.settings) this.discardDialogBacking()
     if (this.view.getVisible() !== shown) this.view.setVisible(shown)
+    this.syncWelcomeCases(shown && !this.presentation.settings)
     // Settings hides the view while changing locale; its navigation labels still need updates.
     if (this.state.phase === 'ready') this.applyLocale()
     if (!visible) return
@@ -527,6 +531,24 @@ export class EnterpriseChatView {
     const locale = this.presentation?.locale
     if (!this.view || !locale) return
     void this.view.webContents.executeJavaScript(chatLocaleScript(locale)).catch(() => this.note('[enterprise-chat] locale_delivery_failed'))
+  }
+
+  /** Only the visible, identity-owned blank Chat document receives the case surface. */
+  private syncWelcomeCases(visible: boolean): void {
+    const view = this.view, origin = this.origin
+    if (!view || !origin || this.state.phase !== 'ready') return
+    const url = new URL(view.webContents.getURL() || 'about:blank')
+    if (url.origin !== origin) return
+    const active = visible && !this.modalOpen && url.pathname === '/workspace/c/new' && this.landing === true
+    const locale = this.presentation?.locale ?? 'zh'
+    if (!active && !this.welcomeCases?.active) return
+    if (active === this.welcomeCases?.active && locale === this.welcomeCases.locale) return
+    const next = { active, locale, revision: ++this.welcomeRevision }
+    this.welcomeCases = next
+    void view.webContents.executeJavaScriptInIsolatedWorld(CHAT_WELCOME_WORLD, [{ code: chatWelcomeCasesScript({ ...next, origin }) }]).catch(() => {
+      if (this.welcomeCases === next) this.welcomeCases = undefined
+      this.note('[enterprise-chat] welcome_cases_delivery_failed')
+    })
   }
 
   private connect(): Promise<void> {
@@ -645,12 +667,15 @@ export class EnterpriseChatView {
           }
           if (channel !== 'enterprise-chat:landing' || !/^\/workspace\/c\/[a-zA-Z0-9_-]+$/u.test(url.pathname) || typeof report.landing !== 'boolean') return
           this.landing = url.pathname === '/workspace/c/new' && report.landing
+          this.syncWelcomeCases(Boolean(this.presentation?.visible && !this.presentation.settings))
           this.notify()
         })
         view.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
           if (isMainFrame && !isInPlace && generation === this.generation && this.view === view) {
             this.resetModalPresentation()
             this.dialogViewport = undefined
+            this.landing = undefined
+            this.welcomeCases = undefined
             this.layout()
           }
           if (isMainFrame && !isInPlace && generation === this.generation && this.view === view && this.settingsSection) {
@@ -689,7 +714,7 @@ export class EnterpriseChatView {
           if (generation !== this.generation) return
           if (new URL(view.webContents.getURL()).pathname.startsWith('/workspace')) {
             // Host-owned module styles live in this document until the next full load replaces it.
-            void view.webContents.insertCSS(`${MODULE_THEME_CSS}\n${chatLayoutCss(process.platform)}`).catch(() => this.note('[enterprise-chat] module_style_failed'))
+            void view.webContents.insertCSS(`${MODULE_THEME_CSS}\n${chatLayoutCss(process.platform)}\n${CHAT_WELCOME_CSS}`).catch(() => this.note('[enterprise-chat] module_style_failed'))
             this.dialogViewport = undefined
             this.state = { phase: 'ready' }; void this.syncSettings(); this.layout(); this.notify()
           } else {
@@ -908,6 +933,7 @@ export class EnterpriseChatView {
     this.settingsReady = false
     this.settingsFailure = undefined
     this.landing = undefined
+    this.welcomeCases = undefined
     this.navigation = undefined
     this.navigationRequest++
     this.generation += 1
