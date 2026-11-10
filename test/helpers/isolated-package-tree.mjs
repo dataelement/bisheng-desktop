@@ -1,7 +1,34 @@
-import { cp, mkdir, readFile, realpath, symlink, stat } from 'node:fs/promises'
+import { copyFile, mkdir, readdir, readFile, realpath, symlink, stat } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { createHash } from 'node:crypto'
+
+/** Copy files with bounded concurrency; fs.cp serializes large vendored trees. */
+async function copyPackageFiles(source, destination) {
+  const files = []
+  const collect = async (from, to) => {
+    await mkdir(to, { recursive: true })
+    for (const entry of await readdir(from, { withFileTypes: true })) {
+      const input = join(from, entry.name)
+      if (input === join(source, 'node_modules')) continue
+      const output = join(to, entry.name)
+      const info = entry.isSymbolicLink() ? await stat(input) : entry
+      if (info.isDirectory()) await collect(input, output)
+      else if (info.isFile()) files.push([input, output])
+      else throw new Error(`Unsupported package fixture entry: ${input}`)
+    }
+  }
+  await collect(source, destination)
+  let next = 0
+  // All workers finish before cleanup, even if one copy fails.
+  const results = await Promise.allSettled(Array.from({ length: 8 }, async () => {
+    while (next < files.length) {
+      const [from, to] = files[next++]
+      await copyFile(from, to, constants.COPYFILE_FICLONE)
+    }
+  }))
+  for (const result of results) if (result.status === 'rejected') throw result.reason
+}
 
 /** Copy declared dependency/peer closures; every link stays inside the test installation. */
 export async function isolatePackage(source, destination) {
@@ -19,9 +46,8 @@ export async function isolatePackage(source, destination) {
     if (copied.has(canonical)) return copied.get(canonical)
     const target = join(destination, 'packages', createHash('sha256').update(canonical).digest('hex').slice(0, 16))
     copied.set(canonical, target)
-    // Reflinks keep large vendored trees fast without sharing mutable files with the checkout.
-    await cp(canonical, target, { recursive: true, dereference: true, mode: constants.COPYFILE_FICLONE,
-      filter: file => file !== join(canonical, 'node_modules') })
+    // Reflinks keep separate files; Windows falls back to ordinary file copies.
+    await copyPackageFiles(canonical, target)
     const manifest = JSON.parse(await readFile(join(canonical, 'package.json'), 'utf8'))
     for (const name of new Set([...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.peerDependencies ?? {})])) {
       let dependency
