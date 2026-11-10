@@ -16,14 +16,14 @@ const project = vm.runInNewContext(
   client.slice(start, end) + '})'
 )
 
-it('searches API names independently of opaque invocation keys and hides all extra enterprise text', () => {
+it('searches original API names without adding prefixes and preserves enterprise descriptions', () => {
   const internal = 'bisheng-123456789012345678901234-22'
   const result = project([
-    { name: internal, displayName: '合同审核', description: 'not menu text', modelInvocable: false },
+    { name: internal, displayName: '合同审核', description: '审核合同条款', modelInvocable: false },
     { name: 'local-skill', description: 'local description', modelInvocable: true }
   ], '合同')
   expect(result).toHaveLength(1)
-  expect(result[0]).toEqual({ name: internal, label: '合同审核', hideAlias: true, description: undefined })
+  expect(result[0]).toEqual({ name: internal, label: '合同审核', hideAlias: true, description: '审核合同条款' })
 })
 
 it('preserves local skill descriptions and existing invocation keys', () => {

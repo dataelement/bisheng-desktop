@@ -12,7 +12,7 @@ index 46579d03..d8f383ec 100644
 -						description: skill.modelInvocable ? skill.description : `${t("menu.userOnly")} · ${skill.description}`
 +						// Keep the pick payload stable; only the title hides provider isolation IDs.
 +						...skill.displayName ? { label: skill.displayName, hideAlias: true } : {},
-+						description: skill.displayName ? void 0 : skill.modelInvocable ? skill.description : `${t("menu.userOnly")} · ${skill.description}`
++						description: skill.displayName || skill.modelInvocable ? skill.description : `${t("menu.userOnly")} · ${skill.description}`
  					}));
  				},
  				warm(session) {

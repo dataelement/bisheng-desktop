@@ -91,13 +91,13 @@ describe('input trigger menu scroll ownership', () => {
     host.querySelectorAll('[role=option]')[9].dispatchEvent(new MouseEvent('mousemove', { bubbles: true }))
   })
 
-  it('shows only the provider name when the internal alias is hidden', async () => {
+  it('shows the original provider name and description without the internal alias', async () => {
     const internal = 'bisheng-docx-bisheng-123456789012345678901234-22'
-    state.groups[0].items = [{ name: internal, label: 'bisheng-docx', hideAlias: true }]
+    state.groups[0].items = [{ name: internal, label: 'docx', description: '生成 Word 文档', hideAlias: true }]
     state = { ...state, groups: [...state.groups] }
     await act(async () => listeners.forEach(fn => fn()))
     const option = host.querySelector('[role=option]')
-    expect(option.textContent).toBe('bisheng-docx')
+    expect(option.textContent).toBe('docx生成 Word 文档')
     expect(option.textContent).not.toContain(internal)
     expect(state.groups[0].items[0].name).toBe(internal)
     await act(async () => option.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })))
