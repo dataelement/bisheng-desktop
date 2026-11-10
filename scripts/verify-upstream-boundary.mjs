@@ -37,6 +37,7 @@ const ALLOWED_PATTERNS = [
   /^\.tmp/,
   /^package\.json$/,
   /^package-lock\.json$/,
+  /^electron-builder(\..+)?\.cjs$/,
   /^AGENTS\.md$/,
   /^\.gitignore$/
 ]

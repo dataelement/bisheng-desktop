@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop",
-  "version": "0.12.1",
+  "version": "1.0.1",
   "description": "A cross-platform desktop shell for DeepSeek Harness.",
   "private": true,
   "type": "module",
@@ -331,8 +331,8 @@
     "koffi": "3.1.5"
   },
   "build": {
-    "appId": "io.dsh.desktop",
-    "productName": "DSH Desktop",
+    "appId": "io.bisheng",
+    "productName": "BISHENG",
     "asar": true,
     "asarUnpack": [
       "**/*.{node,dylib,dll,so,exe}",
@@ -482,11 +482,11 @@
     "publish": [
       {
         "provider": "generic",
-        "url": "https://dshdesktop.com/updates/latest/"
+        "url": "https://dshdesktop.com/work/updates/latest/"
       }
     ],
     "detectUpdateChannel": false,
-    "artifactName": "dsh-desktop-${os}-${arch}.${ext}",
+    "artifactName": "bisheng-${os}-${arch}.${ext}",
     "mac": {
       "notarize": false,
       "category": "public.app-category.developer-tools",
@@ -547,7 +547,7 @@
       ]
     },
     "nsis": {
-      "artifactName": "dsh-desktop-windows-${arch}-setup.${ext}",
+      "artifactName": "bisheng-windows-${arch}-setup.${ext}",
       "include": "build/installer.nsh",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
@@ -555,6 +555,14 @@
       "createStartMenuShortcut": true,
       "runAfterFinish": true
     },
+    "protocols": [
+      {
+        "name": "BISHENG Enterprise Login",
+        "schemes": [
+          "bisheng"
+        ]
+      }
+    ],
     "beforePack": "scripts/release/prepare-dmg-background.cjs",
     "afterPack": "scripts/release/after-pack.cjs",
     "afterSign": "scripts/release/notarize-macos.mjs"
