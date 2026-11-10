@@ -328,6 +328,9 @@
   "build": {
     "appId": "io.bisheng",
     "productName": "BISHENG",
+    "extraMetadata": {
+      "productName": "BISHENG"
+    },
     "asar": true,
     "asarUnpack": [
       "**/*.{node,dylib,dll,so,exe}",
