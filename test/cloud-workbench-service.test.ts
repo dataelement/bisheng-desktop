@@ -86,6 +86,8 @@ it('restores managed project identity after restart and filters private files fr
   const first = new CloudWorkbenchService(fetch, join(root, 'projects'))
   const project = await first.request({ operation: 'create' }) as { path: string; projectId: string }
   await writeFile(join(project.path, 'main.py'), 'print("ready")')
+  await mkdir(join(project.path, 'assets'))
+  await writeFile(join(project.path, 'assets', 'app.css'), 'body { margin: 0 }')
   await writeFile(join(project.path, '.npmrc'), 'private registry token')
   await writeFile(join(project.path, '.bishengignore'), 'selftest.py\nscratch/\n*.log\n!keep.log\n!.env\n!.npmrc\n')
   await writeFile(join(project.path, 'selftest.py'), 'local verification only')
@@ -105,8 +107,11 @@ it('restores managed project identity after restart and filters private files fr
   const names: string[] = []
   const { t: list } = await import('tar')
   await list({ file: archive, onReadEntry: entry => { names.push(entry.path) } })
-  expect(names).toContain('./main.py')
-  expect(names).toContain('./keep.log')
+  expect(names).toContain('main.py')
+  expect(names).toContain('assets/app.css')
+  expect(names).toContain('keep.log')
+  // Runtime v2 rejects root markers, dot segments and empty path components.
+  expect(names.every(name => name.replace(/\/$/u, '').split('/').every(part => part && part !== '.' && part !== '..'))).toBe(true)
   expect(names.some(name => /selftest|scratch|debug\.log|\.env/u.test(name))).toBe(false)
   expect(names.some(name => name.includes('.npmrc') || name.includes('app.db-wal'))).toBe(false)
 })
@@ -120,7 +125,8 @@ it('retries a failed first build against its existing draft after a Desktop rest
       response: envelope({ app_id: appId, deployment_id: 'd'.repeat(32), version_id: versionId }) }
   }
   const first = new CloudWorkbenchService(fetch, root)
-  const project = await first.request({ operation: 'create' }) as { projectId: string }
+  const project = await first.request({ operation: 'create' }) as { projectId: string; path: string }
+  await writeFile(join(project.path, 'main.py'), 'print("ready")')
   await first.request({ operation: 'publish', projectId: project.projectId })
   expect(uploads[0]?.get('app_id')).toBe(null)
   const restarted = new CloudWorkbenchService(fetch, root)
@@ -165,14 +171,23 @@ it('does not label an authentication or upstream failure as an unsupported serve
 })
 
 
-it('resolves the online guide on the current enterprise without creating source', async () => {
+it('restores the complete current enterprise toolkit in a new conversation without creating source', async () => {
   const root = await fixture()
   const calls: string[] = []
   const service = new CloudWorkbenchService(async path => {
     calls.push(path)
     return { base: 'https://enterprise.test/bisheng/', connectionKey: key, response: envelope({}) }
   }, root)
-  expect(await service.request({ operation: 'guide' })).toEqual({ guideUrl: 'https://enterprise.test/bisheng/api/v1/dev-toolkit/workbench-guide.md' })
+  expect(await service.request({ operation: 'guide' })).toEqual({
+    guideUrl: 'https://enterprise.test/bisheng/api/v1/dev-toolkit/workbench-guide.md',
+    toolkit: {
+      workbenchGuideUrl: 'https://enterprise.test/bisheng/api/v1/dev-toolkit/workbench-guide.md',
+      versionsUrl: 'https://enterprise.test/bisheng/api/v1/dev-toolkit/versions',
+      sdkGuideUrl: 'https://enterprise.test/bisheng/api/v1/dev-toolkit/sdk-guide.md',
+      sdkIndexUrl: 'https://enterprise.test/bisheng/api/v1/dev-toolkit/simple/',
+      platformWiringUrl: 'https://enterprise.test/bisheng/api/v1/dev-toolkit/skills/platform-wiring'
+    }
+  })
   expect(calls).toEqual(['/api/v1/dev-toolkit/versions'])
   expect(await readdir(root)).toEqual([])
 })
@@ -186,8 +201,21 @@ it.each([undefined, false, true, 'true'])('sends schema-change confirmation only
     return { base: 'https://enterprise.test', connectionKey: key,
       response: envelope({ app_id: appId, deployment_id: versionId }) }
   }, root)
-  const project = await service.request({ operation: 'create' }) as { projectId: string }
+  const project = await service.request({ operation: 'create' }) as { projectId: string; path: string }
+  await writeFile(join(project.path, 'main.py'), 'print("ready")')
   await service.request({ operation: 'publish', projectId: project.projectId,
     ...(confirmation === undefined ? {} : { confirmSchemaChange: confirmation }) })
   expect(uploaded?.get('confirm_schema_change')).toBe(confirmation === true ? 'true' : null)
+})
+
+it('rejects an empty project before uploading or creating an application', async () => {
+  const root = await fixture()
+  const uploads: string[] = []
+  const service = new CloudWorkbenchService(async path => {
+    if (path.endsWith('/deploy')) uploads.push(path)
+    return { base: 'https://enterprise.test', connectionKey: key, response: envelope({}) }
+  }, root)
+  const project = await service.request({ operation: 'create' }) as { projectId: string }
+  await expect(service.request({ operation: 'publish', projectId: project.projectId })).rejects.toThrow('project is empty')
+  expect(uploads).toEqual([])
 })

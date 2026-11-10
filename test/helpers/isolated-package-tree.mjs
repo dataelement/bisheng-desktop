@@ -1,4 +1,5 @@
 import { cp, mkdir, readFile, realpath, symlink, stat } from 'node:fs/promises'
+import { constants } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { createHash } from 'node:crypto'
 
@@ -18,7 +19,9 @@ export async function isolatePackage(source, destination) {
     if (copied.has(canonical)) return copied.get(canonical)
     const target = join(destination, 'packages', createHash('sha256').update(canonical).digest('hex').slice(0, 16))
     copied.set(canonical, target)
-    await cp(canonical, target, { recursive: true, dereference: true, filter: file => file !== join(canonical, 'node_modules') })
+    // Reflinks keep large vendored trees fast without sharing mutable files with the checkout.
+    await cp(canonical, target, { recursive: true, dereference: true, mode: constants.COPYFILE_FICLONE,
+      filter: file => file !== join(canonical, 'node_modules') })
     const manifest = JSON.parse(await readFile(join(canonical, 'package.json'), 'utf8'))
     for (const name of new Set([...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.peerDependencies ?? {})])) {
       let dependency

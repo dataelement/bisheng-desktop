@@ -29,7 +29,7 @@ export function enterpriseLoginProtocol(): string {
 }
 
 export function allowInsecureEnterpriseLoopback(): boolean {
-  return !app.isPackaged
+  return !app.isPackaged || packagedDevelopmentChannel()
 }
 
 export function registerEnterpriseLoginProtocol(): void {

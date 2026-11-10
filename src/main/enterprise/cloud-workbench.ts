@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { c as createTar, t as listTar, x as extractTar } from 'tar'
 import ignore from 'ignore'
@@ -56,7 +56,8 @@ export class CloudWorkbenchService {
     if (request.operation === 'guide') {
       const result = await this.fetch('/api/v1/dev-toolkit/versions')
       await json(result.response)
-      return { guideUrl: developmentToolkit(result.base).workbenchGuideUrl }
+      const toolkit = developmentToolkit(result.base)
+      return { guideUrl: toolkit.workbenchGuideUrl, toolkit }
     }
     if (request.operation === 'list') {
       const query = new URLSearchParams()
@@ -187,6 +188,8 @@ export class CloudWorkbenchService {
     const path = project.path
     const archive = join(this.root, `${randomUUID()}.tar.gz`)
     const exclusions = await projectExclusions(path)
+    const entries = (await readdir(path)).sort()
+    if (!entries.length) throw new Error('The development project is empty. Create application source before publishing.')
     try {
       await createTar({ file: archive, cwd: path, gzip: true, portable: true, strict: true,
         filter: (name, stat) => {
@@ -195,7 +198,7 @@ export class CloudWorkbenchService {
           if (!relativeName || relativeName === '.') return true
           const directory = 'isDirectory' in stat ? stat.isDirectory() : stat.type === 'Directory'
           return !exclusions.ignores(relativeName + (directory ? '/' : ''))
-        } }, ['.'])
+        } }, entries)
       const bytes = await readFile(archive)
       if (bytes.length > 64 * 1024 * 1024) throw new Error('Application package exceeds the allowed size.')
       const body = new FormData()
