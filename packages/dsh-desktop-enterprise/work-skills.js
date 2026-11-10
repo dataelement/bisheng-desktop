@@ -7,7 +7,13 @@ const PROVIDER = 'bisheng-enterprise'
 const hash = value => createHash('sha256').update(value).digest('hex')
 const identity = state => state.connected && state.connectionKey && state.base && state.tenant?.id != null && state.user?.id != null
   ? hash(JSON.stringify([state.base, String(state.tenant.id), String(state.user.id)])) : null
-export const enterpriseSkillName = (account, id) => `bisheng-${account.slice(0, 24)}-${id}`
+// The public name is also the picker's label/search key. Lead with the bundle
+// name, but retain account/id isolation for local and duplicate enterprise names.
+// Invalid legacy names keep their safe identifier rather than hiding the catalog.
+export const enterpriseSkillName = (account, id, name) => {
+  const identifier = `bisheng-${account.slice(0, 24)}-${id}`
+  return typeof name === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name) ? `${name}-${identifier}` : identifier
+}
 
 // Matches the platform's content-addressed file mapping, including binary assets.
 export function skillContentHash(files) {
@@ -40,7 +46,7 @@ export function createEnterpriseSkills({ state, request, home = process.env.DSH_
       if (!Number.isSafeInteger(row.id) || row.id <= 0 || ids.has(row.id) || typeof row.name !== 'string' ||
           !/^[a-f0-9]{64}$/.test(row.content_hash) || typeof row.description !== 'string' || typeof row.display_name !== 'string') throw new Error('Invalid enterprise skill metadata.')
       ids.add(row.id)
-      return { name: enterpriseSkillName(key, row.id), description: row.description || row.display_name,
+      return { name: enterpriseSkillName(key, row.id, row.name), description: row.description || row.display_name,
         invocation: { modelInvocable: true, userInvocable: true }, source: 'bisheng', provider: PROVIDER, rank: 500,
         locator: { id: row.id, key, connectionKey: account.connectionKey, version: row.content_hash, originalName: row.name, displayName: row.display_name } }
     })
