@@ -123,3 +123,57 @@ it('exchanges a ticket without redirect before navigating to the business entry'
   expect(host.contentView.addChildView).toHaveBeenCalledOnce()
   expect(view(0).webContents.loadURL).toHaveBeenCalledOnce()
 })
+
+
+it('rejects an opening superseded by another workbench without hiding the newer view', async () => {
+  const host = parent()
+  await controller.open(host, launch('a'), bounds, 'first', () => 'one')
+  let finishExchange: ((response: Response) => void) | undefined
+  partition(0).fetch.mockImplementationOnce(() => new Promise<Response>(resolve => { finishExchange = resolve }))
+  const pending = controller.open(host, launch('a'), bounds, 'stale', () => 'one')
+  const rejected = expect(pending).rejects.toThrow('cancelled')
+  await controller.open(host, launch('b'), bounds, 'current', () => 'one')
+  if (!finishExchange) throw new Error('Missing pending exchange')
+  finishExchange(new Response(null, { status: 204 }))
+  await rejected
+  expect(host.contentView.addChildView).toHaveBeenLastCalledWith(view(1))
+  expect(host.contentView.removeChildView).not.toHaveBeenCalledWith(view(1))
+  expect(view(1).webContents.close).not.toHaveBeenCalled()
+})
+
+it('rejects opening when the enterprise account changes during the exchange and clears scoped storage', async () => {
+  const host = parent()
+  let account = 'one'
+  const pending = controller.open(host, launch('a'), bounds, 'first', () => account)
+  account = 'two'
+  await expect(pending).rejects.toThrow('Enterprise account changed')
+  expect(host.contentView.addChildView).not.toHaveBeenCalled()
+  expect(view(0).webContents.close).toHaveBeenCalledOnce()
+  expect(partition(0).clearStorageData).toHaveBeenCalledOnce()
+})
+
+it('rejects opening cancelled by a closed controller', async () => {
+  const host = parent()
+  await controller.open(host, launch('a'), bounds, 'first', () => 'one')
+  let finishExchange: ((response: Response) => void) | undefined
+  partition(0).fetch.mockImplementationOnce(() => new Promise<Response>(resolve => { finishExchange = resolve }))
+  const pending = controller.open(host, launch('a'), bounds, 'stale', () => 'one')
+  const rejected = expect(pending).rejects.toThrow('cancelled')
+  controller.close()
+  finishExchange?.(new Response(null, { status: 204 }))
+  await rejected
+  expect(host.contentView.addChildView).toHaveBeenCalledOnce()
+})
+
+
+it('keeps a shared initial page when a newer opening supersedes its creator', async () => {
+  const host = parent()
+  const first = controller.open(host, launch('a'), bounds, 'first', () => 'one')
+  const rejected = expect(first).rejects.toThrow('cancelled')
+  await controller.open(host, launch('a'), bounds, 'second', () => 'one')
+  await rejected
+  expect(views).toHaveLength(1)
+  expect(host.contentView.addChildView).toHaveBeenCalledExactlyOnceWith(view(0))
+  expect(view(0).webContents.close).not.toHaveBeenCalled()
+  expect(partition(0).clearStorageData).not.toHaveBeenCalled()
+})

@@ -57,6 +57,7 @@ export class CloudWorkbenchView {
     const cacheKey = `${launch.connectionKey}:${launch.appId}`
     let item = this.retained.get(cacheKey)
     let created = false
+    let superseded = false
     try {
       if (item) {
         await this.refreshCookie(item, launch)
@@ -93,13 +94,21 @@ export class CloudWorkbenchView {
         await this.refreshCookie(item, launch)
         await view.webContents.loadURL(launch.entryUrl)
       }
-      if (generation !== this.generation || currentKey() !== launch.connectionKey) return
+      if (generation !== this.generation) {
+        superseded = true
+        throw new Error('Cloud workbench opening was cancelled.')
+      }
+      if (currentKey() !== launch.connectionKey) {
+        this.close()
+        throw new Error('Enterprise account changed.')
+      }
       this.active = item
       this.owner = owner
       parent.contentView.addChildView(item.view)
       this.resize(bounds)
     } catch (error) {
-      if (created && item && this.retained.get(cacheKey) === item) {
+      // Superseded opens may share a retained page with the newer open.
+      if (!superseded && created && item && this.retained.get(cacheKey) === item) {
         this.retained.delete(cacheKey)
         if (!item.view.webContents.isDestroyed()) item.view.webContents.close()
         void item.partition.clearStorageData()

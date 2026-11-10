@@ -1327,6 +1327,8 @@ describe('desktop workbench client navigation', () => {
     expect(development).toContain('business intent or scope is unclear')
     expect(development).toContain('wait for my answer')
     expect(development).not.toContain('工作台开发规范')
+    expect(development).not.toContain('local development and installation only')
+    expect(development).toContain('cloud_workbench publish')
     const submission = submissionWorkbenchAgentPrompt({ english: true, category: { id: 'other', name: '其他', names: { en: 'Other' } }, suggestion: 'Legal' })
     expect(submission).toContain('https://dshdesktop.com/workbench/docs/market-acceptance-en.md')
     expect(submission).toContain('category to other (Other)')
@@ -4215,8 +4217,9 @@ describe('workbench feature default', () => {
     }
   }
 
-  it('shows workbenches on a fresh profile and preserves an explicit opt-out', async () => {
-    expect(await openError(undefined)).not.toBe('工作台功能已关闭。')
+  it('enables workbenches only with an explicit stored true preference', async () => {
+    expect(await openError(undefined)).toBe('工作台功能已关闭。')
+    expect(await openError('invalid')).toBe('工作台功能已关闭。')
     expect(await openError('false')).toBe('工作台功能已关闭。')
     expect(await openError('true')).not.toBe('工作台功能已关闭。')
   })

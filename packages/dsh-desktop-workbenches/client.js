@@ -176,7 +176,7 @@ window.__ModuleLoader__.load({
     const GUIDE_READING = `先阅读并遵循工作台开发规范：${DEVELOPMENT_DOC_URL} 。它包含包格式、运行规则和本地自测清单。`
     const DEVELOPMENT_GUIDE_READING = GUIDE_READING
     const ACCEPTANCE_READING = `先阅读并遵循工作台市场验收规范：${ACCEPTANCE_DOC_URL} 。它包含上传 GitHub、安装来源、上架资料、收录 PR 和验收清单。`
-    const DEVELOPMENT_EN_READING = `First read and follow the Workbench Development Standard: ${DEVELOPMENT_EN_DOC_URL}. It covers package format, runtime rules, and the local self-test checklist. This task is for local development and installation only, without market submission or publication.`
+    const DEVELOPMENT_EN_READING = `First read and follow the Workbench Development Standard: ${DEVELOPMENT_EN_DOC_URL}. It covers package format, runtime rules, and the local self-test checklist.`
     const ACCEPTANCE_EN_READING = `First read and follow the Workbench Market Acceptance Standard: ${ACCEPTANCE_EN_DOC_URL}. It covers GitHub publication, installation sources, listing materials, the listing PR, and the acceptance checklist.`
     const WORKBENCH_PREF = 'dsh-workbench-enabled'
     const MARKET_OPEN_SESSION = 'dsh-desktop-workbenches.market-open.v1'
@@ -191,8 +191,8 @@ window.__ModuleLoader__.load({
     }
     const workbenchPreference = {
       listeners: new Set(),
-      // Keep the entry discoverable on a fresh install; preserve an explicit opt-out.
-      enabled: (() => { try { return window.localStorage.getItem(WORKBENCH_PREF) !== 'false' } catch { return true } })(),
+      // Preserve the V1.3.0 opt-in until the user explicitly enables workbenches.
+      enabled: (() => { try { return window.localStorage.getItem(WORKBENCH_PREF) === 'true' } catch { return false } })(),
       subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener) },
       getSnapshot() { return this.enabled },
       set(value) { this.enabled = !!value; try { window.localStorage.setItem(WORKBENCH_PREF, String(this.enabled)) } catch {} ; for (const listener of this.listeners) listener() }

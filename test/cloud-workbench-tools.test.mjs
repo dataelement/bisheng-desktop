@@ -102,3 +102,21 @@ it('reports the actual writable workspace boundary when preparing source', async
     expect(request.mock.calls.map(([input]) => input.operation)).toEqual(['create', 'checkout'])
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
+
+
+it('exposes schema-change confirmation and forwards only the explicitly supplied value', async () => {
+  const { tool, request } = fixture('danger-full-access')
+  expect(tool.parameters.properties.confirmSchemaChange).toMatchObject({ type: 'boolean' })
+  expect(tool.description).toContain('explicit confirmation')
+  const release = { operation: 'publish', projectId: 'prepared-project', confirmSchemaChange: true }
+  await tool.execute(release, { agent: { session: {} } })
+  expect(request).toHaveBeenCalledExactlyOnceWith(release)
+  request.mockClear()
+  const unconfirmed = { operation: 'publish', projectId: 'prepared-project' }
+  await tool.execute(unconfirmed, { agent: { session: {} } })
+  expect(request).toHaveBeenCalledExactlyOnceWith(unconfirmed)
+  expect(request.mock.calls[0][0]).not.toHaveProperty('confirmSchemaChange')
+  request.mockClear()
+  await expect(tool.execute({ ...release, confirmSchemaChange: 'true' }, { agent: { session: {} } })).rejects.toThrow()
+  expect(request).not.toHaveBeenCalled()
+})

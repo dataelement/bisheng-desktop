@@ -176,3 +176,18 @@ it('resolves the online guide on the current enterprise without creating source'
   expect(calls).toEqual(['/api/v1/dev-toolkit/versions'])
   expect(await readdir(root)).toEqual([])
 })
+
+
+it.each([undefined, false, true, 'true'])('sends schema-change confirmation only for explicit boolean true (%s)', async confirmation => {
+  const root = await fixture()
+  let uploaded: FormData | undefined
+  const service = new CloudWorkbenchService(async (path, init) => {
+    if (path.endsWith('/deploy')) uploaded = init?.body as FormData
+    return { base: 'https://enterprise.test', connectionKey: key,
+      response: envelope({ app_id: appId, deployment_id: versionId }) }
+  }, root)
+  const project = await service.request({ operation: 'create' }) as { projectId: string }
+  await service.request({ operation: 'publish', projectId: project.projectId,
+    ...(confirmation === undefined ? {} : { confirmSchemaChange: confirmation }) })
+  expect(uploaded?.get('confirm_schema_change')).toBe(confirmation === true ? 'true' : null)
+})

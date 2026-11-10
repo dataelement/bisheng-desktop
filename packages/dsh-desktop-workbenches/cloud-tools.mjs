@@ -12,11 +12,12 @@ export function registerCloudTools(ctx, store) {
   ctx.inject(['desktopCloud', 'tools', 'sandboxPolicy'], scoped => {
     scoped.tools.register(defineTool({
       name: 'cloud_workbench',
-      description: 'Call guide first, then visit the returned guideUrl for this enterprise server’s workbench requirements, deployment and publishing protocol. Use the current BiSheng identity to discover hosted workbenches, fetch editable source only for an explicit code/style/layout change, create a cloud project, submit it through the existing approval pipeline, or read release progress. Ordinary business use opens the hosted URL and must not fetch source. Publishing is Agent-led: explain the release scope and obtain user authorization in the conversation before submitting; check actual progress and never ask the user to click a publishing button. Never request a publishing key.',
+      description: 'Call guide first, then visit the returned guideUrl for this enterprise server’s workbench requirements, deployment and publishing protocol. Use the current BiSheng identity to discover hosted workbenches, fetch editable source only for an explicit code/style/layout change, create a cloud project, submit it through the existing approval pipeline, or read release progress. Ordinary business use opens the hosted URL and must not fetch source. Publishing is Agent-led: explain the release scope and obtain user authorization in the conversation before submitting; check actual progress and never ask the user to click a publishing button. Set confirmSchemaChange to true only after explaining the schema migration and data impact and receiving the user’s explicit confirmation. General development or publication approval does not confirm schema changes. Never request a publishing key.',
       parameters: {
         operation: { type: 'string', enum: ['guide', 'list', 'create', 'checkout', 'publish', 'progress', 'limits'], required: true },
         appId: { type: 'string' }, versionId: { type: 'string' }, projectId: { type: 'string' },
-        deploymentId: { type: 'string' }, releaseNotes: { type: 'string' }, cursor: { type: 'string' }, managed: { type: 'boolean' }
+        deploymentId: { type: 'string' }, releaseNotes: { type: 'string' }, cursor: { type: 'string' }, managed: { type: 'boolean' },
+        confirmSchemaChange: { type: 'boolean', description: 'Publish only. True only after the user explicitly confirms the explained schema migration and data impact. Omit otherwise.' }
       },
       output: { schema: { type: 'object', additionalProperties: true, properties: {} },
         render: (_args, result) => [{ type: 'text', text: JSON.stringify(result) }] },
