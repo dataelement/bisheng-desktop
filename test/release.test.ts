@@ -522,6 +522,7 @@ describe('GitHub release contract', () => {
     expect(workflow).toContain("runs-on: ${{ matrix.runner }}")
     expect(workflow).toContain("runner: [self-hosted, macOS, ARM64]")
     expect(workflow).toContain("runner: [self-hosted, macOS, bisheng-intel]")
+    expect(workflow).toContain('npm_config_cpu: ${' + '{ matrix.arch }}')
     expect(workflow).toMatch(
       /windows-x64:\r?\n\s+name: Windows x64\r?\n(?:[\s\S]*?)runs-on: windows-2022\r?\n\s+steps:/
     )

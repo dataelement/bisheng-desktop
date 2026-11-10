@@ -269,6 +269,20 @@ it('routes bounded, versioned choices through the authenticated Connection owner
   expect((await rpc('preview', { ...payload, page: 2 }, signal)).value.page).toBe(2)
   expect((await rpc('preview', { ...payload, page: 0 }, signal)).ok).toBe(false)
   expect((await rpc('mode', { sessionId: payload.sessionId, mode: 'shell' }, signal)).ok).toBe(false)
+
+  const catalogue = await rpc('welcome-cases', {}, signal)
+  expect(catalogue.value.cases.find(item => item.id === 'event-minutes')).toMatchObject({ officeMode: 'word', template: '会议纪要 · 发布会筹备' })
+  expect(catalogue.value).not.toHaveProperty('chat')
+  expect((await rpc('case-mode', { sessionId: payload.sessionId, caseId: 'unknown' }, signal)).ok).toBe(false)
+  const selection = await rpc('case-mode', { sessionId: payload.sessionId, caseId: 'event-minutes', mode: 'ppt', templateId: 'coffee-market' }, signal)
+  expect(selection.value).toMatchObject({ mode: 'word', presentationMode: null, selectedTemplateId: 'meeting-minutes' })
+  expect((await f.modes.state(payload.sessionId)).selectedDocumentTemplate.revision).toBe(library.entry('meeting-minutes').revision)
+  const notice = await rpc('case-mode', { sessionId: payload.sessionId, caseId: 'security-notice' }, signal)
+  expect(notice.value.selectedTemplateId).toBe('government-notice')
+  const ppt = await rpc('case-mode', { sessionId: payload.sessionId, caseId: 'customer-success-review' }, signal)
+  expect(ppt.value).toMatchObject({ mode: null, presentationMode: 'ppt', selectedTemplateId: null, selectedPptTemplateId: null })
+  const normal = await rpc('case-mode', { sessionId: payload.sessionId, caseId: 'emergency-design' }, signal)
+  expect(normal.value).toMatchObject({ mode: null, presentationMode: null, selectedTemplateId: null })
 })
 
 it('keeps business providers separate from the official Office provider', async () => {

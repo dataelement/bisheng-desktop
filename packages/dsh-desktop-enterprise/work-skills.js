@@ -20,16 +20,23 @@ export function skillContentHash(files) {
 
 export function createEnterpriseSkills({ state, request, home = process.env.DSH_HOME }) {
   let revision = 0
+  let snapshot
   const pending = new Map()
-  const catalog = async signal => {
+  // `load()` must recheck authorization. The skill list can reuse the snapshot just
+  // fetched for the picker, so opening the menu does not download the catalog twice.
+  const catalog = async (signal, reuse = false) => {
     const account = state(), key = identity(account), started = revision
     if (!key) return []
+    if (reuse && snapshot?.key === key && snapshot.revision === started) {
+      signal?.throwIfAborted()
+      return snapshot.rows
+    }
     const rows = await request({ operation: 'list', connectionKey: account.connectionKey }, signal)
     signal?.throwIfAborted()
     if (revision !== started || identity(state()) !== key || state().connectionKey !== account.connectionKey) throw new Error('Enterprise account changed.')
     if (!Array.isArray(rows) || rows.length > 10000) throw new Error('Invalid enterprise skill catalog.')
     const ids = new Set()
-    return rows.map(row => {
+    const mapped = rows.map(row => {
       if (!Number.isSafeInteger(row.id) || row.id <= 0 || ids.has(row.id) || typeof row.name !== 'string' ||
           !/^[a-f0-9]{64}$/.test(row.content_hash) || typeof row.description !== 'string' || typeof row.display_name !== 'string') throw new Error('Invalid enterprise skill metadata.')
       ids.add(row.id)
@@ -37,6 +44,8 @@ export function createEnterpriseSkills({ state, request, home = process.env.DSH_
         invocation: { modelInvocable: true, userInvocable: true }, source: 'bisheng', provider: PROVIDER, rank: 500,
         locator: { id: row.id, key, connectionKey: account.connectionKey, version: row.content_hash, originalName: row.name, displayName: row.display_name } }
     })
+    if (started === revision && identity(state()) === key && state().connectionKey === account.connectionKey) snapshot = { key, revision: started, rows: mapped }
+    return mapped
   }
   const materialize = async (candidate, signal) => {
     if (!home) throw new Error('Desktop skill storage is unavailable.')
@@ -98,7 +107,7 @@ export function createEnterpriseSkills({ state, request, home = process.env.DSH_
     pending.set(key, loading)
     try { return await loading } finally { if (pending.get(key) === loading) pending.delete(key) }
   }
-  return { catalog, load, clear: () => { revision++ } }
+  return { catalog, load, clear: () => { revision++; snapshot = undefined } }
 }
 
 export function applyEnterpriseSkills(ctx, options) {
@@ -107,7 +116,7 @@ export function applyEnterpriseSkills(ctx, options) {
   ctx.skills.registerProvider(control => {
     invalidate = control.invalidate
     control.signal.addEventListener('abort', () => { skills.clear() }, { once: true })
-    return { name: PROVIDER, list: async ({ signal }) => { await options.refreshState(); return skills.catalog(signal) },
+    return { name: PROVIDER, list: async ({ signal }) => { await options.refreshState(); return skills.catalog(signal, true) },
       get: async (candidate, { signal }) => { await options.refreshState(); return skills.load(candidate.name, signal) } }
   })
   ctx.connection.fetch.register({ path: '/api/enterprise.work-skills', methods: ['POST'], requestBody: 'buffered',

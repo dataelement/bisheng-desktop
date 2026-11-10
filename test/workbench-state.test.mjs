@@ -68,6 +68,34 @@ describe('desktop workbench state', () => {
     expect((await store.read()).state.notes[WRITER]).toBe('An unsaved business draft')
   })
 
+  it.each(['private-workbench', '@private/workbench'])('persists all references for the local package %s and retains them after removal', async name => {
+    const { root, store } = await fixture()
+    const id = `local:${name}`
+    const state = { ...emptyState(), added: [id], pinned: [id], favorites: [id], active: id,
+      sessionBindings: { 'local-session': id }, recentSessions: { [id]: 'local-session' },
+      notes: { [id]: 'Keep local notes' }, hiddenWorkspaces: { [id]: ['workspace-a'] } }
+    await store.write({ revision: 0, state })
+    expect((await createStateStore(root).read()).state).toEqual(state)
+    const removed = { ...state, added: [], pinned: [], active: null }
+    await store.write({ revision: 1, state: removed })
+    expect((await createStateStore(root).read()).state).toEqual(removed)
+    await expect(store.write({ revision: 2, state: { ...removed, added: [RESEARCH], recentSessions: {}, sessionBindings: { 'local-session': RESEARCH } } })).rejects.toThrow('ownership')
+  })
+
+  it.each(['local:', 'local:@scope', 'local:plain/nested', 'local:@scope/name/extra', 'local:../escape', 'local:name:extra', 'local:has space', `local:${'a'.repeat(215)}`])('rejects malformed local identity %s without saving it', async id => {
+    const { root, store } = await fixture()
+    await expect(store.write({ revision: 0, state: { ...emptyState(), added: [id] } })).rejects.toHaveProperty('status', 400)
+    expect(await readdir(root)).toEqual([])
+  })
+
+  it('does not accept repository-to-local reassignment or local-to-repository migration', async () => {
+    const { store } = await fixture()
+    await store.write({ revision: 0, state: populated() })
+    await expect(store.write({ revision: 1, state: { ...populated(), added: [WRITER, RESEARCH, 'local:private-workbench'], recentSessions: {}, sessionBindings: { 'session-1': 'local:private-workbench' } } })).rejects.toThrow('ownership')
+    await expect(store.migrate({ revision: 1, state: populated() }, { 'local:private-workbench': WRITER })).rejects.toThrow('migration')
+    expect((await store.read()).state).toEqual(populated())
+  })
+
 
   it('loads and atomically migrates pre-canonical workbench identities without losing user data', async () => {
     const { root, store } = await fixture()

@@ -65,6 +65,15 @@ it('preserves startup source and release notes through download completion', () 
   expect(reduceUpdateStatus(status, { type: 'present-manual' })).toMatchObject({ phase: 'downloaded', source: 'manual', manual: true, releaseNotes: 'Fixes' })
 })
 
+it('keeps a manual presentation id from the check through the result', () => {
+  let status = reduceUpdateStatus(initialUpdateStatus('1.0.0'), { type: 'check', manual: true, presentationId: 3 })
+  status = reduceUpdateStatus(status, { type: 'available', version: '1.1.0' })
+  expect(status.presentationId).toBe(3)
+  expect(status.manual).toBe(true)
+  status = reduceUpdateStatus(status, { type: 'present-manual', presentationId: 4 })
+  expect(status).toMatchObject({ phase: 'available', manual: true, source: 'manual', presentationId: 4, availableVersion: '1.1.0' })
+})
+
 it('normalizes only supported release notes and bounds external text', () => {
   expect(normalizeReleaseNotes([{ note: 'first' }, { note: 4 }, null, { note: 'second' }])).toBe('first\n\nsecond')
   expect(normalizeReleaseNotes(' A\r\nB ')).toBe('A\nB')

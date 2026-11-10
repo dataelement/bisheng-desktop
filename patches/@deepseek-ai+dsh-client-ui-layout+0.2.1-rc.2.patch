@@ -1,8 +1,16 @@
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-layout/lib/client.js b/node_modules/@deepseek-ai/dsh-client-ui-layout/lib/client.js
-index a5096f4..45ad121 100644
+index a5096f4..d8973bc 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-layout/lib/client.js
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-layout/lib/client.js
-@@ -313,6 +313,26 @@ window.__ModuleLoader__.load({
+@@ -111,6 +111,7 @@ window.__ModuleLoader__.load({
+ 		function CenterColumn(props) {
+ 			return (0, react_jsx_runtime.jsx)("div", {
+ 				className: AppFrame_module_css_default.centerCol,
++				"data-dsh-layout-center": "",
+ 				children: props.children
+ 			});
+ 		}
+@@ -313,6 +314,26 @@ window.__ModuleLoader__.load({
  			const overlays = (0, react.useMemo)(() => renderSlot("shell.overlay", {}), [renderSlot]);
  			const leading = (0, react.useMemo)(() => renderSlot("shell.leading", {}), [renderSlot]);
  			const leadingMounted = darwin && sidebarCollapsed;
@@ -29,7 +37,7 @@ index a5096f4..45ad121 100644
  			return (0, react_jsx_runtime.jsxs)("div", {
  				ref: frameRef,
  				className: AppFrame_module_css_default.frame,
-@@ -336,11 +356,7 @@ window.__ModuleLoader__.load({
+@@ -336,11 +357,7 @@ window.__ModuleLoader__.load({
  						className: AppFrame_module_css_default.sidebarCol,
  						children: sidebar
  					}),
@@ -42,7 +50,7 @@ index a5096f4..45ad121 100644
  					(0, react_jsx_runtime.jsx)("div", {
  						className: AppFrame_module_css_default.bottomRow,
  						"data-shell-bottom": true,
-@@ -362,13 +378,6 @@ window.__ModuleLoader__.load({
+@@ -362,13 +379,6 @@ window.__ModuleLoader__.load({
  						onStart: onSidebarStart,
  						onDrag: onSidebarDrag,
  						onEnd: onDragEnd
@@ -56,7 +64,7 @@ index a5096f4..45ad121 100644
  					})
  				]
  			});
-@@ -624,6 +633,7 @@ window.__ModuleLoader__.load({
+@@ -624,6 +634,7 @@ window.__ModuleLoader__.load({
  					name: "root",
  					locale: "common",
  					children: {

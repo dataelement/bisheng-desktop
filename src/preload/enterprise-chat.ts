@@ -14,6 +14,12 @@ window.addEventListener('pagehide', () => {
 
 /** Presentation-only channel. Remote Chat receives no local execution or account APIs. */
 contextBridge.exposeInMainWorld('dshChatPresentation', Object.freeze({
+  onProjectsChanged(listener: unknown): () => void {
+    if (typeof listener !== 'function') throw new TypeError('Project listener must be a function.')
+    const receive = (): void => { listener() }
+    ipcRenderer.on('enterprise-chat:projects-changed', receive)
+    return () => ipcRenderer.removeListener('enterprise-chat:projects-changed', receive)
+  },
   reportNavigation(navigation: unknown): void {
     ipcRenderer.send('enterprise-chat:navigation', { navigation, path: window.location.pathname })
   },

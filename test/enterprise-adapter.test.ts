@@ -250,7 +250,8 @@ describe('enterprise adapter with a Broker', () => {
     const loaded = await provider.get(skill, { signal: controller.signal })
     expect(loaded.content).toContain('Enterprise instructions')
     expect(await readFile(join(loaded.resourceBase.path, 'templates/file.bin'))).toEqual(files['templates/file.bin'])
-    expect(calls.map(call => call.operation)).toEqual(['list', 'list', 'list', 'bundle', 'dependencies'])
+    // The second list() reuses the catalog snapshot. get() lists again, then downloads the bundle.
+    expect(calls.map(call => call.operation)).toEqual(['list', 'list', 'bundle', 'dependencies'])
     expect(calls.every(call => call.authorization === `Bearer ${capability}`)).toBe(true)
   })
 
