@@ -699,9 +699,26 @@ it('keeps the native sidebar visible when the embedded pane spans the frame', as
   }
 })
 
-it('keeps module pages below the title bar as the macOS sidebar changes width', async () => {
+it('keeps the tinted Square below the macOS title bar across sidebar toggles', async () => {
   let collapsed = true
   document.documentElement.dataset.platform = 'darwin'
+  const tokens = document.createElement('style')
+  tokens.textContent = `:root {
+    --dsw-alias-bg-base: rgb(255,255,255);
+    --dsw-alias-bg-layer-2: rgb(255,255,255); --dsw-alias-bg-layer-3: rgb(238,238,238);
+    --dsw-alias-bg-overlay: rgb(225,225,225); --dsw-alias-label-primary: rgb(15,15,15);
+    --dsw-alias-label-secondary: rgb(70,70,70); --dsw-alias-label-tertiary: rgb(100,100,100);
+    --dsw-alias-border-l2: rgb(200,200,200); --dsw-alias-border-l3: rgb(210,210,210);
+    --dsw-specific-input-major: rgb(244,244,244); --dsw-alias-link: rgb(55,115,235);
+  } body[data-ds-dark-theme] { --dsw-alias-bg-base: rgb(20,20,22); --dsw-alias-bg-layer-2: rgb(44,44,46); }`
+  document.head.append(tokens)
+  const getStyle = window.getComputedStyle
+  vi.stubGlobal('getComputedStyle', element => {
+    const computed = getStyle(element)
+    // jsdom leaves var() unresolved in color even though it inherits the token values.
+    const token = computed.color.match(/^var\((--dsw-[\w-]+),/u)?.[1]
+    return token ? { color: computed.getPropertyValue(token) } : computed
+  })
   const original = HTMLElement.prototype.getBoundingClientRect
   HTMLElement.prototype.getBoundingClientRect = function () {
     if (this.hasAttribute('data-shell-leading')) return { left: 80, right: 156, bottom: 47.5 }
@@ -724,15 +741,38 @@ it('keeps module pages below the title bar as the macOS sidebar changes width', 
 
     collapsed = false
     await act(async () => { leading.remove(); container.setAttribute('data-sidebar-collapsed', 'false') })
+    expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ bounds: { x: 280, y: 0, width: 680, height: 748 } }))
+    await ui.pushState({ path: '/square', conversationId: undefined })
     expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ bounds: { x: 280, y: 48, width: 680, height: 700 } }))
+    const chromeStyle = container.querySelector('#dsh-panel-chat').style
+    expect(chromeStyle.getPropertyValue('--dsh-square-chrome-height')).toBe('48px')
+    expect(chromeStyle.getPropertyValue('--dsh-square-chrome-fill')).toBe('rgb(245 248 254)')
+
+    collapsed = true
+    await act(async () => container.append(leading))
+    expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ bounds: { x: 0, y: 48, width: 960, height: 700 } }))
+    expect(chromeStyle.getPropertyValue('--dsh-square-chrome-height')).toBe('48px')
+    expect(chromeStyle.getPropertyValue('--dsh-square-chrome-fill')).toBe('rgb(245 248 254)')
+    expect(present.mock.lastCall[0].palette.squareBanner).toEqual([245, 248, 254])
+    await act(async () => document.body.setAttribute('data-ds-dark-theme', ''))
+    expect(chromeStyle.getPropertyValue('--dsh-square-chrome-fill')).toBe('rgb(22 25 33)')
+    expect(present.mock.lastCall[0].palette.squareBanner).toEqual([22, 25, 33])
+
+    collapsed = false
+    await act(async () => leading.remove())
+    expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ bounds: { x: 280, y: 48, width: 680, height: 700 } }))
+    expect(chromeStyle.getPropertyValue('--dsh-square-chrome-height')).toBe('48px')
+    expect(chromeStyle.getPropertyValue('--dsh-square-chrome-fill')).toBe('rgb(22 25 33)')
 
     collapsed = true
     await act(async () => container.append(leading))
     await ui.pushState({ path: '/c/existing', conversationId: 'existing' })
     expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ bounds: { x: 156, y: 0, width: 804, height: 748 } }))
+    expect(chromeStyle.getPropertyValue('--dsh-square-chrome-fill')).toBe('')
   } finally {
     delete document.documentElement.dataset.platform
     HTMLElement.prototype.getBoundingClientRect = original
+    tokens.remove()
   }
 })
 

@@ -414,7 +414,7 @@ it('delivers the host palette to module pages, backs the view with it, and rejec
     const palette = {
       surface: [44, 44, 46], raised: [53, 54, 56], strong: [97, 102, 107],
       labelPrimary: [249, 250, 251], labelSecondary: [207, 211, 214], labelTertiary: [173, 178, 184],
-      borderBase: [69, 69, 71], borderDeep: [78, 78, 79]
+      borderBase: [69, 69, 71], borderDeep: [78, 78, 79], squareBanner: [48, 50, 54]
     }
     f.host.present(f.owner, { ...presentation, palette })
     await flush()
@@ -426,6 +426,7 @@ it('delivers the host palette to module pages, backs the view with it, and rejec
     await flush()
     expect(wc.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('--bg-page:44 44 46'))
     expect(wc.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('--text-1:249 250 251'))
+    expect(wc.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('background-color:rgb(48 50 54)'))
     // The module page paints the host surface, so the view backs it with the same color.
     expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#2c2c2e')
     // Approvals open in a Modal on the same layer-2 surface; its pages take the same backing.
@@ -435,7 +436,7 @@ it('delivers the host palette to module pages, backs the view with it, and rejec
       expect(wc.loadURL).toHaveBeenLastCalledWith(`https://enterprise.example/workspace/settings/${section}?dshSettings=1&embed=dsh&dshTheme=dark`)
       expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#2c2c2e')
     }
-    for (const invalid of [{ ...palette, surface: [44, 44] }, { ...palette, surface: [44, 44, 256] }, { ...palette, raised: ['53', 54, 56] }, { ...palette, strong: undefined }, { ...palette, composer: [1, 2] }, { ...palette, composer: [0, 0, 256] }, { ...palette, composer: ['40', 41, 45] }, 'dark']) {
+    for (const invalid of [{ ...palette, surface: [44, 44] }, { ...palette, surface: [44, 44, 256] }, { ...palette, raised: ['53', 54, 56] }, { ...palette, strong: undefined }, { ...palette, composer: [1, 2] }, { ...palette, composer: [0, 0, 256] }, { ...palette, composer: ['40', 41, 45] }, { ...palette, squareBanner: [48, 50, -1] }, 'dark']) {
       expect(() => f.host.present(f.owner, { ...presentation, palette: invalid })).toThrow('Invalid Chat palette.')
     }
   } finally { f.host.dispose() }

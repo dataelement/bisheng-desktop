@@ -672,6 +672,12 @@ window.__ModuleLoader__.load({
         }
         const mask = read('--dsw-alias-bg-mask-1')
         if (mask) palette.mask = [...mask.slice(0, 3), mask[3] ?? 1]
+        if (document.documentElement.dataset.platform === 'darwin') {
+          const base = read('--dsw-alias-bg-base')
+          const accent = read('--dsw-alias-link')
+          // Share one opaque 5% tint across the native chrome and the embedded banner.
+          if (base && accent) palette.squareBanner = base.slice(0, 3).map((channel, index) => Math.round(channel * 0.95 + accent[index] * 0.05))
+        }
         return palette
       } catch { return undefined } finally { probe.remove() }
     }
@@ -1359,7 +1365,8 @@ active = false; deletion.reset(); projects.setScope(undefined); revision++; hist
       const deletionRequest = React.useSyncExternalStore(navigation.deletion.subscribe, navigation.deletion.getSnapshot)
       const cloudDeleteOpen = deletionRequest !== null
       const { mode, settingsOpen, settingsSurface } = state
-      const usesModuleFrame = /^\/(?:knowledge|channel)(?:\/|$)|^\/(?:apps|skills|capabilities)\/?$/u.test(state.path ?? '')
+      const squarePage = /^\/square\/?$/u.test(state.path ?? '')
+      const usesModuleFrame = squarePage || /^\/(?:knowledge|channel)(?:\/|$)|^\/(?:apps|skills|capabilities)\/?$/u.test(state.path ?? '')
       React.useEffect(() => navigation.start(), [navigation])
       const panel = React.useRef(null)
       const surfacePresenter = React.useRef(null)
@@ -1396,19 +1403,24 @@ active = false; deletion.reset(); projects.setScope(undefined); revision++; hist
           const contentLeft = macModuleFrame ? rect.x : Math.max(rect.x, sidebarRight)
           const chrome = leading?.getBoundingClientRect()
           const overlapsLeading = chrome && chrome.bottom > rect.y && chrome.left < rect.right && chrome.right > contentLeft
-          // Keep the module's top inset steady as the native buttons move between
-          // sidebar and title bar. The module page subtracts it from its own padding.
+          // Square keeps its tab height while the buttons move. Its banner paints the
+          // reserved strip in both states. Other module pages only reserve it on overlap.
           // Chat uses the inline title row and still needs horizontal clearance.
           const x = overlapsLeading && !macModuleFrame ? chrome.right : contentLeft
-          const titlebarHeight = macModuleFrame ? parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dsh-frame-top-clearance')) || 48 : 0
-          const y = macModuleFrame ? Math.min(rect.bottom, Math.max(rect.y, titlebarHeight)) : rect.y
+          const reserveTitlebar = macModuleFrame && (squarePage || overlapsLeading)
+          const titlebarHeight = reserveTitlebar ? parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dsh-frame-top-clearance')) || 48 : 0
+          const y = reserveTitlebar ? Math.min(rect.bottom, Math.max(rect.y, titlebarHeight, overlapsLeading ? chrome.bottom : 0)) : rect.y
+          const palette = hostPalette()
+          // Paint behind the original native controls. The web view stays below them for input.
+          const squareBanner = squarePage && reserveTitlebar ? palette?.squareBanner : undefined
+          panel.current.style.setProperty('--dsh-square-chrome-height', squareBanner ? `${y - rect.y}px` : '')
+          panel.current.style.setProperty('--dsh-square-chrome-fill', squareBanner ? `rgb(${squareBanner.join(' ')})` : '')
           const surfaceOpen = settingsOpen || state.approvalsOpen || state.accountDialogOpen
           const remote = surfaceOpen && state.settingsProtocolVersion === 1 && settingsSurface
 const safeModePageOpen = document.documentElement.hasAttribute('data-dsh-safe-mode-page')
 const surface = remote ? document.querySelector(`[data-dsh-native-surface="${remote.section}"]`) : panel.current
 // Project dialogs have an explicit lifecycle; yield the native sibling as they open.
 const hostModalOpen = projectDialogOpen || cloudDeleteOpen || overlays.isModal(surface) || appRoot?.inert || document.documentElement.hasAttribute('data-dsh-about-open')
-const palette = hostPalette()
 const bounds = remote ? remote.bounds : { x, y, width: Math.max(0, rect.right - x), height: Math.max(0, rect.y + rect.height - y) }
 presenter.present({ visible: hostModalOpen ? false : (remote ? state.connected && remote.bounds.width > 0 && remote.bounds.height > 0 : mode === 'chat' && !surfaceOpen && !safeModePageOpen), ...(remote ? { settings: remote.section } : {}), ...(palette ? { palette } : {}), bounds, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light', locale: locale.getSnapshot().active === 'zh' ? 'zh' : 'en' }, overlays.intersects(bounds, surface), () => overlays.defer(bounds, surface))
         }
@@ -1438,7 +1450,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         return () => {
           stopWarmup(); overlays.dispose(); interaction.disconnect(); resize.disconnect(); chromeLayout.disconnect(); theme.disconnect(); unsubscribeLocale(); window.removeEventListener('resize', present)
         }
-      }, [mode, usesModuleFrame, settingsOpen, state.approvalsOpen, state.accountDialogOpen, settingsSurface, state.connected, state.epoch, state.settingsProtocolVersion, projectDialogOpen, cloudDeleteOpen, locale])
+      }, [mode, usesModuleFrame, squarePage, settingsOpen, state.approvalsOpen, state.accountDialogOpen, settingsSurface, state.connected, state.epoch, state.settingsProtocolVersion, projectDialogOpen, cloudDeleteOpen, locale])
       React.useEffect(() => { surfacePresenter.current?.invalidate() }, [state.path, state.pageId, state.phase])
       React.useEffect(() => () => {
         void window.dshEnterpriseChat?.present({ visible: false, bounds: { x: 0, y: 48, width: 0, height: 0 }, theme: 'light' }).catch(() => {})
@@ -1561,6 +1573,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           .dshModesTabs button[aria-selected=true]{color:var(--dsw-alias-label-primary)}
           .dshModes button:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
           .dshModeBody{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}.dshModeBody[hidden]{display:none}
+          #dsh-panel-chat::before{content:'';position:absolute;inset:0 0 auto;height:var(--dsh-square-chrome-height,0px);background:var(--dsh-square-chrome-fill,transparent);pointer-events:none}
           .dshWorkContent{display:grid;grid-template-rows:minmax(0,1fr);isolation:isolate}.dshWorkContent[hidden]{display:none}
           /* Match the borderless Chat surface. The frame owns the resize handle separately. */
           html[data-platform=darwin] .dshWorkContent > [data-dsh-layout-center]{border-left:0}

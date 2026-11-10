@@ -85,6 +85,44 @@ try {
           appCases++
         }
       }
+      // The Square tabs and title share a center line while the native view changes width.
+      await view.webContents.loadURL('data:text/html,' + encodeURIComponent(\`<!doctype html>
+        <style>
+          body { margin:0; font:14px sans-serif; }
+          .square-tabs { box-sizing:border-box; display:flex; justify-content:center; padding:18px 12px 14px; }
+          .column { display:flex; justify-content:center; width:100%; max-width:1000px; }
+          [role=radiogroup] { display:grid; grid-auto-flow:column; grid-auto-columns:1fr; width:100%; max-width:fit-content; height:36px; }
+          [role=radio] { display:flex; align-items:center; justify-content:center; white-space:nowrap; padding:0 20px; }
+          [role=radio] span { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+          h1 { text-align:center; }
+        </style>
+        <div id="root" class="dsh-web-chat">
+          <div class="square-tabs bg-blue-500/[0.05]"><div class="column"><div role="radiogroup">
+            <button role="radio"><span>Knowledge Space</span></button><button role="radio"><span>Subscriptions</span></button>
+            <button role="radio"><span>Apps</span></button><button role="radio"><span>Skill Center</span></button>
+          </div></div></div>
+          <h1>Explore Square</h1>
+        </div>\`))
+      await view.webContents.insertCSS(chatLayoutCss('darwin'))
+      await run('document.documentElement.dataset.dshPage = "square"')
+      let squareCases = 0
+      for (const [windowWidth, zoom] of [[900, 1], [1080, 1], [900, 1.25]]) {
+        view.webContents.setZoomFactor(zoom)
+        for (const sidebar of [280, 0, 420, 0]) {
+          const x = sidebar * zoom, y = 48 * zoom
+          view.setBounds({x, y, width:windowWidth-x, height:700-y})
+          await run(chatDialogViewportScript({x:sidebar,y:48,width:(windowWidth-x)/zoom,height:(700-y)/zoom,windowWidth:windowWidth/zoom,windowHeight:700/zoom,background:'#141416',followNativeView:true}))
+          await run('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+          const layout = await run(\`(() => {
+            const tabs = document.querySelector('[role=radiogroup]').getBoundingClientRect()
+            const title = document.querySelector('h1').getBoundingClientRect()
+            return {top:tabs.y, tabsCenter:tabs.x+tabs.width/2, titleCenter:title.x+title.width/2, width:tabs.width}
+          })()\`)
+          assert.ok(layout.width > 0 && Math.abs(layout.tabsCenter-layout.titleCenter) < 1, 'Square tabs align with the title')
+          assert.ok(Math.abs(layout.top*zoom+y-66*zoom) < 1, 'Square tabs keep their distance from the window top')
+          squareCases++
+        }
+      }
       let cases = 0
       for (const platform of ['win32','darwin']) {
         await win.webContents.executeJavaScript('document.documentElement.dataset.platform = ' + JSON.stringify(platform))
@@ -125,7 +163,7 @@ try {
           cases++
         }
       }
-      console.log(JSON.stringify({cases,appCases,hostPlatform:process.platform,electron:process.versions.electron,windowsAcceptance:process.platform==='win32'}))
+      console.log(JSON.stringify({cases,appCases,squareCases,hostPlatform:process.platform,electron:process.versions.electron,windowsAcceptance:process.platform==='win32'}))
       view.webContents.close(); win.destroy(); app.exit(0)
     }).catch(error=>{console.error(error);app.exit(1)})
   `, resolveDir: root, loader: 'ts' }, outfile: entry, bundle: true, platform: 'node', format: 'cjs', external: ['electron'] })
