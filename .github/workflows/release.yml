@@ -883,7 +883,7 @@ jobs:
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.MODELS_TOKEN }}
           MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
-          MODELSCOPE_REPO_ID: alexyaojin/dsh-desktop
+          MODELSCOPE_REPO_ID: alexyaojin/bisheng-work
           FEISHU_RELEASE_WEBHOOK: ${{ secrets.FEISHU_RELEASE_WEBHOOK }}
           SIGNED_VERSION: ${{ inputs.version }}
           TEST_TARGET: ${{ inputs.target }}
@@ -1068,7 +1068,7 @@ jobs:
       - name: Mirror release assets to ModelScope
         env:
           MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
-          MODELSCOPE_REPO_ID: alexyaojin/dsh-desktop
+          MODELSCOPE_REPO_ID: alexyaojin/bisheng-work
         run: |
           set -euo pipefail
           test -n "$MODELSCOPE_TOKEN" || { echo "::error::Missing secret MODELSCOPE_TOKEN"; exit 1; }
@@ -1246,7 +1246,7 @@ jobs:
       - name: Mirror pre-release assets to ModelScope
         env:
           MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
-          MODELSCOPE_REPO_ID: alexyaojin/dsh-desktop
+          MODELSCOPE_REPO_ID: alexyaojin/bisheng-work
           PRERELEASE_TAG: ${{ inputs.version }}
         run: |
           set -euo pipefail
