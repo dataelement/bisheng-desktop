@@ -36,7 +36,7 @@ afterEach(async () => {
   delete window.__ModuleLoader__
   vi.unstubAllGlobals()
 })
-async function mount(connected = false, collection = {}, inert = false, workbench, prepare) {
+async function mount(connected = false, collection = {}, inert = false, workbench, prepare, work = React.createElement('textarea', { 'aria-label': 'work draft', defaultValue: 'retained draft' })) {
   let workbenchSnapshot = workbench
   let bindWorkbench, disposeWorkbench
   const workbenchListeners = new Set()
@@ -153,7 +153,7 @@ async function mount(connected = false, collection = {}, inert = false, workbenc
   const content = registrations.get('desktop.mode.content'), history = registrations.get('sidebar.workspaces.collection'), primary = registrations.get('sidebar.primaryNavigation')
   await act(async () => root.render(React.createElement(React.Fragment, null,
     React.createElement('aside', null, React.createElement('button', { 'data-navigation-id': 'new', onClick: () => navigate('new') }, 'New session'), React.createElement(primary.component, { ...primary.props, wide: true, renderAction: ({ id, label, onClick, expanded, active }) => React.createElement('button', { 'data-navigation-id': id, 'aria-expanded': expanded, 'aria-current': active ? 'page' : undefined, onClick }, label), panels: [{ id: 'plugins', label: 'Plugins' }], startSession: (...args) => { expect(args).toHaveLength(0); navigate('new') }, selectPanel: setPanel, renderPanelIcon: () => null }), React.createElement(history.component, { ...history.props, mode: 'projects', query: '', archivedOnly: false, projects: () => React.createElement('div', { 'data-project': true }, 'Project task'), items: [{ id: 'local-a', updatedAt: Date.parse('2026-10-17'), render: active => React.createElement('button', { 'data-local-row': true, 'aria-current': active ? 'page' : undefined, onClick: () => navigate('open') }, 'Local task') }], ...collection })),
-    React.createElement(content.component, { ...content.props, columns: '1fr 0px', work: React.createElement('textarea', { 'aria-label': 'work draft', defaultValue: 'retained draft' }) })
+    React.createElement(content.component, { ...content.props, columns: '1fr 0px', work })
   )))
   return {
     projectStore: history.props.navigation.projects,
@@ -560,6 +560,256 @@ it('starts the Work toolbar reveal on tab entry and resets it on return to Chat'
   expect(work.dataset.revealControls).toBe('false')
 })
 
+async function mountLandingMorph({ footer = false, textMotion = false } = {}) {
+  const draft = React.createElement('textarea', { defaultValue: footer ? 'retained draft\nsecond line\nthird line' : 'retained draft' })
+  const work = React.createElement('div', { 'data-content-phase': 'hero' },
+    React.createElement('div', { 'data-landing-fixture-title': '' },
+      React.createElement('span', { 'data-slot': 'conversation.hero.brand.mark' }),
+      React.createElement('span', null, React.createElement('span', { 'data-slot': 'conversation.hero.brand.title' }, 'Welcome'))),
+    React.createElement('div', { 'data-dsh-hero-controls': '' }, 'Workspace controls'),
+    React.createElement('div', { 'data-composer-card': '', style: footer ? { rowGap: '12px' } : undefined },
+      footer || textMotion ? React.createElement('div', {
+        'data-input-scroll': textMotion ? '' : undefined, style: { height: '118px' }
+      }, draft) : draft,
+      footer && React.createElement('div', { 'data-landing-fixture-footer': '' },
+        React.createElement('div', null,
+          React.createElement('button', { 'aria-haspopup': 'listbox' }, '+'),
+          React.createElement('span', { 'data-slot': 'conversation.input.permission' }, React.createElement('button', null, 'Work permission'))),
+        React.createElement('div', null,
+          React.createElement('span', { 'data-slot': 'conversation.input.model' },
+            React.createElement('button', { 'aria-haspopup': 'menu' }, React.createElement('span', null, 'Work model'), React.createElement('svg'))),
+          React.createElement('button', { 'aria-label': 'Send', style: { opacity: 1 } }, 'Send')))))
+  const ui = await mount(true, {}, false, undefined, undefined, work)
+  const workPanel = container.querySelector('#dsh-panel-work')
+  const chatPanel = container.querySelector('#dsh-panel-chat')
+  const seat = new DOMRect(240, 56, 800, 640)
+  workPanel.getBoundingClientRect = chatPanel.getBoundingClientRect = () => seat
+  const elements = {
+    card: workPanel.querySelector('[data-composer-card]'),
+    title: workPanel.querySelector('[data-landing-fixture-title]'),
+    controls: workPanel.querySelector('[data-dsh-hero-controls]')
+  }
+  const rects = {
+    card: new DOMRect(340, 310, 600, 172),
+    title: new DOMRect(530, 220, 220, 32),
+    controls: new DOMRect(340, 270, 600, 32)
+  }
+  const motions = []
+  const recordMotion = (name, frames) => {
+    const { promise: finished, resolve, reject } = Promise.withResolvers()
+    const cancel = vi.fn(() => reject(new DOMException('Animation cancelled', 'AbortError')))
+    motions.push({ name, frames, resolve, cancel })
+    return { finished, cancel }
+  }
+  for (const [name, element] of Object.entries(elements)) {
+    element.getBoundingClientRect = () => rects[name]
+    element.animate = frames => recordMotion(name, frames)
+  }
+  if (textMotion) {
+    elements.writing = elements.card.querySelector('[data-input-scroll]')
+    elements.writing.animate = frames => recordMotion('writing', frames)
+  }
+  if (footer) {
+    elements.footer = elements.card.lastElementChild
+    elements.add = elements.footer.querySelector('button[aria-haspopup="listbox"]')
+    elements.model = elements.footer.querySelector('button[aria-haspopup="menu"]')
+    elements.workModelLabel = elements.model.firstElementChild
+    elements.workOnly = elements.footer.querySelector('[data-slot="conversation.input.permission"] > button')
+    elements.send = elements.footer.querySelector('[aria-label="Send"]')
+    elements.footer.getBoundingClientRect = () => new DOMRect(340, 440, 600, 42)
+    elements.model.getBoundingClientRect = () => new DOMRect(750, 445, 110, 28)
+    for (const name of ['add', 'send', 'workOnly', 'model', 'workModelLabel']) {
+      elements[name].animate = frames => recordMotion(name, frames)
+    }
+    const animate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')
+    Object.defineProperty(Element.prototype, 'animate', {
+      configurable: true,
+      value(frames) {
+        if (this.hasAttribute('data-dsh-landing-morph-model-label')) return recordMotion('chatModelLabel', frames)
+        return animate?.value?.call(this, frames)
+      }
+    })
+    disposers.push(() => {
+      if (animate) Object.defineProperty(Element.prototype, 'animate', animate)
+      else delete Element.prototype.animate
+    })
+  }
+  const bridge = window.dshEnterpriseChat
+  bridge.landingGeometry = vi.fn(async () => ({
+    seat: { x: 240, y: 56, width: 800, height: 640 },
+    composer: { x: 345, y: 326, width: 590, height: 108 },
+    title: { x: 534, y: 248, width: 216, height: 30 },
+    ...(footer ? { model: { label: 'Chat model', width: 84 }, sendOpacity: 0.4 } : {})
+  }))
+  await ui.cloudLanding(true)
+  return { ui, bridge, workPanel, chatPanel, elements, motions }
+}
+
+it('fades the current editor text before the native handoff and introduces the destination text after it starts', async () => {
+  const { ui, bridge, chatPanel, elements, motions } = await mountLandingMorph({ textMotion: true })
+  const draft = ui.draft()
+  const fadeOut = Promise.withResolvers(), prepareIn = Promise.withResolvers()
+  bridge.landingTextMotion = vi.fn(phase => phase === 'out' ? fadeOut.promise : prepareIn.promise)
+  bridge.present.mockClear()
+  await ui.click('work')
+  expect(bridge.landingTextMotion).toHaveBeenLastCalledWith('out')
+  expect(chatPanel.hidden).toBe(false)
+  expect(bridge.present).not.toHaveBeenCalledWith(expect.objectContaining({ visible: false }))
+  expect(motions).toHaveLength(0)
+
+  await act(async () => fadeOut.resolve())
+  const entering = motions.find(motion => motion.name === 'writing')
+  expect(entering.frames[0]).toEqual({ opacity: 0 })
+  expect(entering.frames[1]).toMatchObject({ opacity: 0, offset: expect.any(Number) })
+  expect(entering.frames.at(-1)).toEqual({ opacity: 1 })
+  expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
+  const boundary = motions.length
+  await act(async () => motions.forEach(motion => motion.resolve()))
+  expect(elements.writing.contains(draft)).toBe(true)
+
+  bridge.present.mockClear()
+  await ui.click('chat')
+  const leaving = motions.slice(boundary).find(motion => motion.name === 'writing')
+  expect(leaving.frames[0]).toMatchObject({ opacity: 1 })
+  expect(leaving.frames.at(-1)).toEqual({ opacity: 0 })
+  await act(async () => motions.slice(boundary).forEach(motion => motion.resolve()))
+  expect(bridge.landingTextMotion.mock.calls).toEqual([['out'], ['in']])
+  expect(bridge.present).not.toHaveBeenCalledWith(expect.objectContaining({ visible: true }))
+  await act(async () => prepareIn.resolve())
+  expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
+  expect(chatPanel.hidden).toBe(false)
+  expect(ui.draft()).toBe(draft)
+  expect(draft.value).toBe('retained draft')
+})
+
+it('morphs the same Work card and title in both directions while revealing and collapsing its toolbar', async () => {
+  const { ui, bridge, workPanel, chatPanel, elements, motions } = await mountLandingMorph()
+  const draft = ui.draft()
+  const placeholder = () => workPanel.querySelector('[data-dsh-landing-morph-placeholder]')
+  bridge.present.mockClear()
+  await ui.click('work')
+
+  expect(motions.map(motion => motion.name)).toEqual(['card', 'title', 'controls'])
+  expect(motions[0].frames).toEqual([
+    { left: '345px', top: '326px', width: '590px', height: '108px' },
+    { left: '340px', top: '310px', width: '600px', height: '172px' }
+  ])
+  expect(motions[1].frames).toEqual([{ translate: '2px 27px' }, { translate: '0px 0px' }])
+  expect(motions[2].frames).toEqual([
+    { translate: '5px 56px', clipPath: 'inset(0px -8px 100%)', opacity: 0 },
+    { translate: '0px 0px', clipPath: 'inset(0px -8px 0px)', opacity: 1 }
+  ])
+  expect(placeholder()).not.toBeNull()
+  expect(elements.card.hasAttribute('data-dsh-landing-morph-card')).toBe(true)
+  expect(workPanel.hasAttribute('inert')).toBe(true)
+  expect(chatPanel.hidden).toBe(true)
+  expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
+  await act(async () => motions.slice(0, 3).forEach(motion => motion.resolve()))
+  expect(placeholder()).toBeNull()
+  expect(workPanel.hasAttribute('inert')).toBe(false)
+  expect(ui.draft()).toBe(draft)
+
+  const reveal = Promise.withResolvers()
+  bridge.present.mockClear().mockImplementation(value => value.visible ? reveal.promise : Promise.resolve())
+  await ui.click('chat')
+  expect(motions.slice(3).map(motion => motion.frames)).toEqual(motions.slice(0, 3).map(motion => [...motion.frames].reverse()))
+  expect(bridge.present.mock.calls.map(([value]) => value.visible)).toEqual([false])
+  expect(workPanel.hidden).toBe(false)
+  expect(chatPanel.hidden).toBe(true)
+  await act(async () => motions.slice(3).forEach(motion => motion.resolve()))
+  expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
+  expect(placeholder()).not.toBeNull()
+  expect(workPanel.hidden).toBe(false)
+  await act(async () => reveal.resolve())
+  expect(placeholder()).toBeNull()
+  expect(elements.card.hasAttribute('data-dsh-landing-morph-card')).toBe(false)
+  expect(workPanel.hidden).toBe(true)
+  expect(chatPanel.hidden).toBe(false)
+  expect(ui.draft()).toBe(draft)
+  expect(draft.value).toBe('retained draft')
+})
+
+it('pins the same composer footer during height changes and transitions the model label and send state both ways', async () => {
+  const { ui, elements, motions } = await mountLandingMorph({ footer: true })
+  const { card, footer, add, send, model, workModelLabel, workOnly } = elements
+  const draft = ui.draft()
+  const chatLabel = () => model.querySelector('[data-dsh-landing-morph-model-label]')
+  const checkFooter = () => {
+    expect(card.lastElementChild).toBe(footer)
+    expect(footer.hasAttribute('data-dsh-landing-morph-footer')).toBe(true)
+    expect(getComputedStyle(footer).position).toBe('absolute')
+    expect(getComputedStyle(footer).insetBlockEnd).toMatch(/^0(px)?$/)
+    expect(card.style.getPropertyValue('--dsh-morph-footer-clearance')).toBe('54px')
+    expect(footer.contains(add) && footer.contains(send) && footer.contains(model)).toBe(true)
+    expect(chatLabel().textContent).toBe('Chat model')
+    expect(chatLabel().getAttribute('aria-hidden')).toBe('true')
+    expect(workModelLabel.textContent).toBe('Work model')
+  }
+  const checkCleanup = () => {
+    expect(card.lastElementChild).toBe(footer)
+    expect(footer.hasAttribute('data-dsh-landing-morph-footer')).toBe(false)
+    expect(card.style.getPropertyValue('--dsh-morph-footer-clearance')).toBe('')
+    expect(footer.contains(add) && footer.contains(send) && footer.contains(model) && footer.contains(workOnly)).toBe(true)
+    expect(chatLabel()).toBeNull()
+    expect(model.firstElementChild).toBe(workModelLabel)
+    expect(ui.draft()).toBe(draft)
+    expect(draft.value).toBe('retained draft\nsecond line\nthird line')
+  }
+  await ui.click('work')
+  checkFooter()
+  const frames = Object.fromEntries(motions.map(motion => [motion.name, motion.frames]))
+  expect(frames.add).toBeUndefined()
+  expect(frames.send).toEqual([{ opacity: 0.4 }, { opacity: '1' }])
+  expect(frames.model).toEqual([{ width: '84px' }, { width: '110px' }])
+  expect(frames.workModelLabel).toEqual([{ opacity: 0 }, { opacity: 1 }])
+  expect(frames.chatModelLabel).toEqual([{ opacity: 1 }, { opacity: 0 }])
+  expect(frames.workOnly).toEqual([{ opacity: 0 }, { opacity: 1 }])
+  const first = motions.length
+  await act(async () => motions.forEach(motion => motion.resolve()))
+  checkCleanup()
+
+  await ui.click('chat')
+  checkFooter()
+  for (const { name, frames: reverse } of motions.slice(first)) {
+    expect(reverse).toEqual([...frames[name]].reverse())
+  }
+  await act(async () => motions.slice(first).forEach(motion => motion.resolve()))
+  checkCleanup()
+})
+
+it('skips geometry and animations when the user prefers reduced motion', async () => {
+  vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })))
+  const { ui, bridge, chatPanel, motions } = await mountLandingMorph()
+  await ui.click('work')
+  expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
+  await ui.click('chat')
+  expect(chatPanel.hidden).toBe(false)
+  expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
+  expect(bridge.landingGeometry).not.toHaveBeenCalled()
+  expect(motions).toHaveLength(0)
+})
+
+it('discards a stale measurement and cleans up an animation when the user switches back', async () => {
+  const { ui, bridge, workPanel, chatPanel, elements, motions } = await mountLandingMorph()
+  const pending = Promise.withResolvers()
+  const geometry = await bridge.landingGeometry()
+  bridge.landingGeometry.mockReturnValueOnce(pending.promise)
+  await ui.click('work')
+  await ui.click('chat')
+  await act(async () => pending.resolve(geometry))
+  expect(chatPanel.hidden).toBe(false)
+  expect(motions).toHaveLength(0)
+
+  await ui.click('work')
+  expect(motions).toHaveLength(3)
+  await ui.click('chat')
+  expect(motions.every(motion => motion.cancel.mock.calls.length === 1)).toBe(true)
+  expect(workPanel.querySelector('[data-dsh-landing-morph-placeholder]')).toBeNull()
+  expect(elements.card.hasAttribute('data-dsh-landing-morph-card')).toBe(false)
+  expect(chatPanel.hidden).toBe(false)
+  expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
+})
+
 it('shows the picker only on the Work landing page and releases the header space on panels and active sessions', async () => {
   const ui = await mount()
   expect(ui.picker()).not.toBeNull()
@@ -727,9 +977,26 @@ it('keeps the native sidebar visible when the embedded pane spans the frame', as
   }
 })
 
-it('keeps module pages below the title bar as the macOS sidebar changes width', async () => {
+it('keeps the tinted Square below the macOS title bar across sidebar toggles', async () => {
   let collapsed = true
   document.documentElement.dataset.platform = 'darwin'
+  const tokens = document.createElement('style')
+  tokens.textContent = `:root {
+    --dsw-alias-bg-base: rgb(255,255,255);
+    --dsw-alias-bg-layer-2: rgb(255,255,255); --dsw-alias-bg-layer-3: rgb(238,238,238);
+    --dsw-alias-bg-overlay: rgb(225,225,225); --dsw-alias-label-primary: rgb(15,15,15);
+    --dsw-alias-label-secondary: rgb(70,70,70); --dsw-alias-label-tertiary: rgb(100,100,100);
+    --dsw-alias-border-l2: rgb(200,200,200); --dsw-alias-border-l3: rgb(210,210,210);
+    --dsw-specific-input-major: rgb(244,244,244); --dsw-alias-link: rgb(55,115,235);
+  } body[data-ds-dark-theme] { --dsw-alias-bg-base: rgb(20,20,22); --dsw-alias-bg-layer-2: rgb(44,44,46); }`
+  document.head.append(tokens)
+  const getStyle = window.getComputedStyle
+  vi.stubGlobal('getComputedStyle', element => {
+    const computed = getStyle(element)
+    // jsdom leaves var() unresolved in color even though it inherits the token values.
+    const token = computed.color.match(/^var\((--dsw-[\w-]+),/u)?.[1]
+    return token ? { color: computed.getPropertyValue(token) } : computed
+  })
   const original = HTMLElement.prototype.getBoundingClientRect
   HTMLElement.prototype.getBoundingClientRect = function () {
     if (this.hasAttribute('data-shell-leading')) return { left: 80, right: 156, bottom: 47.5 }
@@ -752,15 +1019,38 @@ it('keeps module pages below the title bar as the macOS sidebar changes width', 
 
     collapsed = false
     await act(async () => { leading.remove(); container.setAttribute('data-sidebar-collapsed', 'false') })
+    expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ bounds: { x: 280, y: 0, width: 680, height: 748 } }))
+    await ui.pushState({ path: '/square', conversationId: undefined })
     expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ bounds: { x: 280, y: 48, width: 680, height: 700 } }))
+    const chromeStyle = container.querySelector('#dsh-panel-chat').style
+    expect(chromeStyle.getPropertyValue('--dsh-square-chrome-height')).toBe('48px')
+    expect(chromeStyle.getPropertyValue('--dsh-square-chrome-fill')).toBe('rgb(245 248 254)')
+
+    collapsed = true
+    await act(async () => container.append(leading))
+    expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ bounds: { x: 0, y: 48, width: 960, height: 700 } }))
+    expect(chromeStyle.getPropertyValue('--dsh-square-chrome-height')).toBe('48px')
+    expect(chromeStyle.getPropertyValue('--dsh-square-chrome-fill')).toBe('rgb(245 248 254)')
+    expect(present.mock.lastCall[0].palette.squareBanner).toEqual([245, 248, 254])
+    await act(async () => document.body.setAttribute('data-ds-dark-theme', ''))
+    expect(chromeStyle.getPropertyValue('--dsh-square-chrome-fill')).toBe('rgb(22 25 33)')
+    expect(present.mock.lastCall[0].palette.squareBanner).toEqual([22, 25, 33])
+
+    collapsed = false
+    await act(async () => leading.remove())
+    expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ bounds: { x: 280, y: 48, width: 680, height: 700 } }))
+    expect(chromeStyle.getPropertyValue('--dsh-square-chrome-height')).toBe('48px')
+    expect(chromeStyle.getPropertyValue('--dsh-square-chrome-fill')).toBe('rgb(22 25 33)')
 
     collapsed = true
     await act(async () => container.append(leading))
     await ui.pushState({ path: '/c/existing', conversationId: 'existing' })
     expect(present).toHaveBeenLastCalledWith(expect.objectContaining({ bounds: { x: 156, y: 0, width: 804, height: 748 } }))
+    expect(chromeStyle.getPropertyValue('--dsh-square-chrome-fill')).toBe('')
   } finally {
     delete document.documentElement.dataset.platform
     HTMLElement.prototype.getBoundingClientRect = original
+    tokens.remove()
   }
 })
 

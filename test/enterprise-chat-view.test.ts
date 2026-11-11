@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EnterpriseChatView } from '../src/main/enterprise/chat-view'
+import { chatLandingTextMotionScript } from '../src/main/enterprise/chat-landing-text-motion'
 import { EnterprisePlatformError } from '../src/main/enterprise/enterprise-request'
 import { parseChatPresentation } from '../src/shared/enterprise-chat-view'
 import { parseWebSession } from '../src/main/enterprise/web-session'
@@ -29,7 +30,7 @@ vi.mock('electron', async () => {
       constructor(public options: any) {
         let url = ''
         let zoom = 1
-        this.webContents = Object.assign(new EventEmitter(), { id: fake.views.length + 100, session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), focus: vi.fn(), send: vi.fn(), mainFrame: {}, getURL: () => url, getZoomFactor: () => zoom, setZoomFactor: vi.fn((value: number) => { zoom = value }), capturePage: vi.fn(async () => ({ isEmpty: () => false, toDataURL: () => 'data:image/png;base64,fixture' })), close: vi.fn(() => { if (fake.emitCloseAsGone) { const contents = this.webContents; setTimeout(() => contents.emit('render-process-gone'), 0) } }), executeJavaScript: vi.fn(async () => {}), executeJavaScriptInIsolatedWorld: vi.fn(async () => {}), insertCSS: vi.fn(async () => 'key'), loadURL: vi.fn(async (next: string) => {
+        this.webContents = Object.assign(new EventEmitter(), { id: fake.views.length + 100, session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), focus: vi.fn(), send: vi.fn(), mainFrame: {}, getURL: () => url, setURL: (next: string) => { url = next }, getZoomFactor: () => zoom, setZoomFactor: vi.fn((value: number) => { zoom = value }), capturePage: vi.fn(async () => ({ isEmpty: () => false, toDataURL: () => 'data:image/png;base64,fixture' })), close: vi.fn(() => { if (fake.emitCloseAsGone) { const contents = this.webContents; setTimeout(() => contents.emit('render-process-gone'), 0) } }), executeJavaScript: vi.fn(async () => {}), executeJavaScriptInIsolatedWorld: vi.fn(async () => {}), insertCSS: vi.fn(async () => 'key'), loadURL: vi.fn(async (next: string) => {
           if (fake.hangLoads) return await new Promise<void>(() => {})
           if (fake.loadFailures > 0) { fake.loadFailures -= 1; throw Object.assign(new Error('load failed'), { code: fake.loadErrorCode }) }
           url = fake.loadLanding ?? next
@@ -375,6 +376,61 @@ it('pushes landing state from the current remote main frame and rejects stale or
   } finally { f.host.dispose() }
 })
 
+it('keeps verified welcome cases when New Chat navigates to the same blank page without another landing report', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    const wc = fake.views[0].webContents
+    await wc.loadURL('https://enterprise.example/workspace/c/new')
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:landing', { landing: true, path: '/workspace/c/new' })
+    wc.executeJavaScript.mockResolvedValueOnce(true)
+    await f.host.open('new')
+    expect(wc.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('resetDraft: true'))
+    wc.emit('did-navigate-in-page', {}, wc.getURL(), true)
+    expect(f.host.snapshot().landing).toBe(true)
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(1)
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(1001, [{ code: expect.stringContaining('"active":true') }])
+  } finally { f.host.dispose() }
+})
+
+it.each(['before', 'after'])('keeps a current-path landing report delivered %s the in-page navigation event and clears it on other routes', async order => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    const wc = fake.views[0].webContents
+    const report = (landing: boolean, path = '/workspace/c/new') => wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:landing', { landing, path })
+    wc.setURL('https://enterprise.example/workspace/c/old')
+    wc.emit('did-navigate-in-page', {}, wc.getURL(), true)
+    report(false, '/workspace/c/old')
+    wc.setURL('https://enterprise.example/workspace/c/new')
+    if (order === 'before') report(true)
+    wc.emit('did-navigate-in-page', {}, wc.getURL(), true)
+    if (order === 'after') report(true)
+    expect(f.host.snapshot().landing).toBe(true)
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(1)
+    report(false)
+    wc.emit('did-navigate-in-page', {}, wc.getURL(), true)
+    expect(f.host.snapshot().landing).toBe(false)
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(1001, [{ code: expect.stringContaining('"active":false') }])
+    report(true)
+    wc.setURL('https://enterprise.example/workspace/c/old')
+    wc.emit('did-navigate-in-page', {}, wc.getURL(), true)
+    expect(f.host.snapshot().landing).toBeUndefined()
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(1001, [{ code: expect.stringContaining('"active":false') }])
+    report(true)
+    expect(f.host.snapshot().landing).toBeUndefined()
+    wc.setURL('https://enterprise.example/workspace/c/new')
+    wc.emit('did-navigate-in-page', {}, wc.getURL(), true)
+    expect(f.host.snapshot().landing).toBeUndefined()
+    report(true)
+    expect(f.host.snapshot().landing).toBe(true)
+    wc.emit('did-start-navigation', {}, wc.getURL(), false, true)
+    expect(f.host.snapshot().landing).toBeUndefined()
+  } finally { f.host.dispose() }
+})
+
 it('opens only account-published module entries and clears them with the identity', async () => {
   const f = fixture()
   try {
@@ -424,7 +480,7 @@ it('delivers the host palette to module pages, backs the view with it, and rejec
     const palette = {
       surface: [44, 44, 46], raised: [53, 54, 56], strong: [97, 102, 107],
       labelPrimary: [249, 250, 251], labelSecondary: [207, 211, 214], labelTertiary: [173, 178, 184],
-      borderBase: [69, 69, 71], borderDeep: [78, 78, 79]
+      borderBase: [69, 69, 71], borderDeep: [78, 78, 79], squareBanner: [48, 50, 54]
     }
     f.host.present(f.owner, { ...presentation, palette })
     await flush()
@@ -436,6 +492,7 @@ it('delivers the host palette to module pages, backs the view with it, and rejec
     await flush()
     expect(wc.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('--bg-page:44 44 46'))
     expect(wc.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('--text-1:249 250 251'))
+    expect(wc.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('background-color:rgb(48 50 54)'))
     // The module page paints the host surface, so the view backs it with the same color.
     expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#2c2c2e')
     // Approvals open in a Modal on the same layer-2 surface; its pages take the same backing.
@@ -445,7 +502,7 @@ it('delivers the host palette to module pages, backs the view with it, and rejec
       expect(wc.loadURL).toHaveBeenLastCalledWith(`https://enterprise.example/workspace/settings/${section}?dshSettings=1&embed=dsh&dshTheme=dark`)
       expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#2c2c2e')
     }
-    for (const invalid of [{ ...palette, surface: [44, 44] }, { ...palette, surface: [44, 44, 256] }, { ...palette, raised: ['53', 54, 56] }, { ...palette, strong: undefined }, { ...palette, composer: [1, 2] }, { ...palette, composer: [0, 0, 256] }, { ...palette, composer: ['40', 41, 45] }, 'dark']) {
+    for (const invalid of [{ ...palette, surface: [44, 44] }, { ...palette, surface: [44, 44, 256] }, { ...palette, raised: ['53', 54, 56] }, { ...palette, strong: undefined }, { ...palette, composer: [1, 2] }, { ...palette, composer: [0, 0, 256] }, { ...palette, composer: ['40', 41, 45] }, { ...palette, squareBanner: [48, 50, -1] }, 'dark']) {
       expect(() => f.host.present(f.owner, { ...presentation, palette: invalid })).toThrow('Invalid Chat palette.')
     }
   } finally { f.host.dispose() }
@@ -784,6 +841,132 @@ it('captures only its visible owner surface and converts native bounds to host C
     f.host.present(f.owner, { ...presentation, visible: false })
     expect(await f.host.capture(f.owner)).toBeUndefined()
     expect(view.webContents.capturePage).toHaveBeenCalledTimes(1)
+  } finally { f.host.dispose() }
+})
+
+it('measures only a confirmed blank Chat, updating a hidden seat without showing it', async () => {
+  const f = fixture()
+  try {
+    f.owner.webContents.getZoomFactor = () => 1.25
+    fake.loadLanding = 'https://enterprise.example/workspace/c/new?embed=dsh'
+    f.host.present(f.owner, { ...presentation, bounds: { x: 240, y: 48, width: 640, height: 560 } })
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    expect(await f.host.landingGeometry(f.owner)).toBeUndefined()
+    expect(wc.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:landing', { landing: true, path: '/workspace/c/new' })
+    const seat = { x: 200, y: 64, width: 620, height: 500 }
+    f.host.present(f.owner, { ...presentation, visible: false, bounds: seat })
+    view.setVisible.mockClear()
+    wc.executeJavaScriptInIsolatedWorld.mockClear()
+    wc.executeJavaScriptInIsolatedWorld.mockResolvedValueOnce({
+      title: { x: 200, y: 50, width: 220, height: 32 },
+      composer: { x: 10, y: 140, width: 600, height: 140 },
+      model: { label: '  DeepSeek   V3  ', width: 108 },
+      sendOpacity: 0.4
+    })
+    expect(await f.host.landingGeometry({ ...f.owner })).toBeUndefined()
+    expect(await f.host.landingGeometry(f.owner)).toEqual({
+      title: { x: 400, y: 114, width: 220, height: 32 },
+      composer: { x: 210, y: 204, width: 600, height: 140 },
+      seat,
+      model: { label: 'DeepSeek V3', width: 108 },
+      sendOpacity: 0.4
+    })
+    expect(view.setBounds).toHaveBeenLastCalledWith({ x: 250, y: 80, width: 775, height: 625 })
+    expect(view.getVisible()).toBe(false)
+    expect(view.setVisible).not.toHaveBeenCalled()
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenCalledOnce()
+    expect(wc.capturePage).not.toHaveBeenCalled()
+  } finally { f.host.dispose() }
+})
+
+it('prepares Chat text only in the owned landing view, without changing native visibility', async () => {
+  const f = fixture()
+  try {
+    fake.loadLanding = 'https://enterprise.example/workspace/c/new?embed=dsh'
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    await expect(f.host.landingTextMotion(f.owner, 'invalid')).rejects.toThrow('Invalid Chat landing text motion.')
+    await f.host.landingTextMotion(f.owner, 'out')
+    expect(wc.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:landing', { landing: true, path: '/workspace/c/new' })
+    wc.executeJavaScriptInIsolatedWorld.mockClear()
+    view.setVisible.mockClear()
+    await f.host.landingTextMotion({ ...f.owner }, 'out')
+    await f.host.landingTextMotion(f.owner, 'in')
+    expect(wc.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+    await f.host.landingTextMotion(f.owner, 'out')
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenCalledOnce()
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenCalledWith(1001, [{ code: expect.stringContaining(fake.loadLanding) }])
+    expect(view.setVisible).not.toHaveBeenCalled()
+
+    f.host.present(f.owner, { ...presentation, visible: false })
+    wc.executeJavaScriptInIsolatedWorld.mockClear()
+    view.setVisible.mockClear()
+    await f.host.landingTextMotion(f.owner, 'out')
+    expect(wc.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+    await f.host.landingTextMotion(f.owner, 'in')
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenCalledOnce()
+    expect(view.getVisible()).toBe(false)
+    expect(view.setVisible).not.toHaveBeenCalled()
+    wc.setURL('https://enterprise.example/workspace/c/another')
+    await f.host.landingTextMotion(f.owner, 'in')
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenCalledOnce()
+  } finally { f.host.dispose() }
+})
+
+it('holds outgoing Chat text for the handoff, restores it on interruption, and primes incoming text before reveal', async () => {
+  const url = 'https://enterprise.example/workspace/c/new?embed=dsh'
+  const cancel = vi.fn()
+  const animate = vi.fn((_frames: Keyframe[], _options: KeyframeAnimationOptions) => ({
+    cancel, ready: Promise.resolve(), finished: new Promise<void>(() => {})
+  }))
+  const query = vi.fn(() => ({ animate }))
+  const timer = vi.fn((done: () => void) => done())
+  const scope = {}
+  const run = (phase: 'out' | 'in', revision: number, pathname = '/workspace/c/new', reduce = false): unknown => {
+    const code = chatLandingTextMotionScript(url, phase, revision, Date.now() + 10_000)
+    return Function('window', 'document', 'location', 'matchMedia', 'setTimeout', `return ${code}`)(
+      scope, { querySelector: query }, { href: url, pathname }, () => ({ matches: reduce }), timer
+    )
+  }
+  expect(run('out', 1, '/workspace/c/another')).toBeUndefined()
+  expect(run('out', 2, '/workspace/c/new', true)).toBeUndefined()
+  expect(query).not.toHaveBeenCalled()
+  await run('out', 3)
+  expect(query).toHaveBeenLastCalledWith('.dsh-chat-surface .dsh-chat-landing .dsh-chat-composer .dsh-composer-writing')
+  expect(timer).toHaveBeenCalledOnce()
+  const outgoing = animate.mock.calls[0]
+  expect(outgoing?.[0].map(frame => frame.opacity)).toEqual([1, 0, 0, 1])
+  expect(outgoing?.[1].fill).toBeUndefined()
+  expect(run('in', 4)).toBeUndefined()
+  expect(cancel).toHaveBeenCalledOnce()
+  expect(animate).toHaveBeenLastCalledWith([{ opacity: 0 }, { opacity: 1 }], expect.objectContaining({ fill: 'backwards', delay: expect.any(Number) }))
+  expect(run('out', 3)).toBeUndefined()
+  expect(animate).toHaveBeenCalledTimes(2)
+})
+
+it.each(['logout', 'navigation', 'resize', 'malformed geometry'])('discards a blank Chat measurement invalidated by %s', async change => {
+  const f = fixture()
+  try {
+    fake.loadLanding = 'https://enterprise.example/workspace/c/new?embed=dsh'
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:landing', { landing: true, path: '/workspace/c/new' })
+    let finish: (value: unknown) => void = () => {}
+    wc.executeJavaScriptInIsolatedWorld.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const result = f.host.landingGeometry(f.owner)
+    if (change === 'logout') f.change({ connected: false, connectionKey: 'tenant-a' })
+    if (change === 'navigation') wc.setURL('https://enterprise.example/workspace/c/another')
+    if (change === 'resize') f.host.present(f.owner, { ...presentation, bounds: { ...presentation.bounds, width: 800 } })
+    finish({
+      title: { x: 200, y: 50, width: 220, height: 32 },
+      composer: { x: 10, y: 140, width: change === 'malformed geometry' ? 2_000 : 600, height: 140 }
+    })
+    expect(await result).toBeUndefined()
   } finally { f.host.dispose() }
 })
 

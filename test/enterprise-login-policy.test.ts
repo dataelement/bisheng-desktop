@@ -24,27 +24,28 @@ it('allows local development without claiming the production login scheme', () =
   expect(enterpriseLoginProtocol()).toBe('bisheng-dev')
 })
 
-it('connects an explicitly branded development package to loopback only', () => {
+it('uses the development scheme and requires confirmation for non-loopback HTTP', () => {
   writeFileSync(join(application.directory, 'package.json'), JSON.stringify({ dshDesktopChannel: 'development' }))
   const options = { allowInsecureLoopback: allowInsecureEnterpriseLoopback() }
   expect(normalizeEnterpriseServerUrl('http://127.0.0.1:54130', options)).toBe('http://127.0.0.1:54130')
   expect(normalizeEnterpriseServerUrl('http://[::1]:54130', options)).toBe('http://[::1]:54130')
-  expect(() => normalizeEnterpriseServerUrl('http://enterprise.example', options)).toThrow()
+  expect(() => normalizeEnterpriseServerUrl('http://enterprise.example', options)).toThrow('explicit confirmation')
   expect(() => normalizeEnterpriseServerUrl('http://192.168.1.1', options)).toThrow('explicit confirmation')
   expect(enterpriseLoginProtocol()).toBe('bisheng-dev')
 })
 
 it.each(['{}', '{"dshDesktopChannel":"production"}', '{"dshDesktopChannel":"unknown"}', 'invalid'])
-('keeps packaged production or unrecognized metadata fail-closed (%s)', metadata => {
+('uses the production scheme and permits loopback HTTP with packaged metadata %s', metadata => {
   writeFileSync(join(application.directory, 'package.json'), metadata)
   expect(allowInsecureEnterpriseLoopback()).toBe(false)
-  expect(() => normalizeEnterpriseServerUrl('http://127.0.0.1:54130', {
-    allowInsecureLoopback: allowInsecureEnterpriseLoopback()
-  })).toThrow('HTTPS')
+  const options = { allowInsecureLoopback: allowInsecureEnterpriseLoopback() }
+  expect(normalizeEnterpriseServerUrl('http://127.0.0.1:54130', options)).toBe('http://127.0.0.1:54130')
+  expect(normalizeEnterpriseServerUrl('http://[::1]:54130', options)).toBe('http://[::1]:54130')
+  expect(() => normalizeEnterpriseServerUrl('http://192.168.1.1', options)).toThrow('explicit confirmation')
   expect(enterpriseLoginProtocol()).toBe('bisheng')
 })
 
-it('keeps missing packaged metadata fail-closed', () => {
+it('uses the production scheme when packaged metadata is missing', () => {
   expect(allowInsecureEnterpriseLoopback()).toBe(false)
   expect(enterpriseLoginProtocol()).toBe('bisheng')
 })

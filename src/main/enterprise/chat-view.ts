@@ -1,13 +1,15 @@
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { app, session, shell, WebContentsView, type BrowserWindow, type Session } from 'electron'
-import { parseEnterpriseNavigation, parseEnterpriseSettingsSection, parseChatPage, parseChatId, parseChatPresentation, type EnterpriseSettingsSection, type EnterpriseChatFrame, type EnterpriseChatHistory, type EnterpriseChatPresentation, type EnterpriseChatViewState } from '../../shared/enterprise-chat-view'
+import { parseEnterpriseNavigation, parseEnterpriseSettingsSection, parseChatPage, parseChatId, parseChatPresentation, type EnterpriseSettingsSection, type EnterpriseChatFrame, type EnterpriseChatHistory, type EnterpriseChatLandingGeometry, type EnterpriseChatPresentation, type EnterpriseChatViewState } from '../../shared/enterprise-chat-view'
 import type { EnterpriseDesktopRuntime } from './enterprise-desktop'
 import { MODULE_ROUTE_PATTERN, MODULE_THEME_CSS, moduleThemeScript } from './chat-module-theme'
 import { chatDialogViewportScript, guardChatDialogViewportScript } from './chat-dialog-viewport'
 import { ChatDialogBacking } from './chat-dialog-backing'
 import { chatLocaleScript } from './chat-locale'
 import { chatLayoutCss } from './chat-layout'
+import { chatLandingGeometryScript, parseChatLandingGeometry } from './chat-landing-geometry'
+import { chatLandingTextMotionScript } from './chat-landing-text-motion'
 import { CHAT_WELCOME_CSS, CHAT_WELCOME_WORLD, chatWelcomeCasesScript } from './chat-welcome-cases'
 import { parseUsageSummary, parseUsageStorage, type EnterpriseUsage, type UsageSection } from '../../shared/enterprise-usage'
 import { EnterprisePlatformError, isEnterprisePlatformError } from './enterprise-request'
@@ -17,6 +19,8 @@ import { raiseUpdateCardViewIfShown } from '../update/update-card-view'
 
 /** Remote Chat gets its own in-memory browser session and a presentation-only preload. */
 const DOCUMENT_LOAD_TIMEOUT_MS = 45_000
+const LANDING_GEOMETRY_TIMEOUT_MS = 120
+const LANDING_TEXT_MOTION_TIMEOUT_MS = 155
 const INITIAL_BACKOFF_MS = [2_000, 5_000, 10_000]
 const RENEWAL_BACKOFF_MS = [2_000, 5_000, 10_000, 30_000]
 const RETRYABLE_NETWORK_CODES = new Set([
@@ -85,6 +89,7 @@ export class EnterpriseChatView {
   private dialogViewport?: { pathname: string; script: string }
   private dialogViewportRevision = 0
   private landing?: boolean
+  private landingPath?: string
   private navigation?: ReturnType<typeof parseEnterpriseNavigation>
   private navigationRequest = 0
   private origin?: string
@@ -117,6 +122,7 @@ export class EnterpriseChatView {
   private appearance?: string
   private welcomeCases?: { active: boolean; locale: 'zh' | 'en'; revision: number }
   private welcomeRevision = 0
+  private landingTextMotionRevision = 0
 
   constructor(private enterprise: EnterpriseDesktopRuntime, private note: (line: string) => void, private notificationWindow?: () => BrowserWindow | undefined) {
     this.unsubscribe = enterprise.subscribe((state) => {
@@ -187,6 +193,80 @@ export class EnterpriseChatView {
       // A failed backing must not prevent the host menu from receiving input.
       this.note(`[enterprise-chat] overlay_capture_failed: ${error instanceof Error ? error.message : 'unknown capture error'}`)
       return undefined
+    }
+  }
+
+  /** Measure the landing and its bottom controls without capturing or exposing draft content. */
+  async landingGeometry(window: BrowserWindow): Promise<EnterpriseChatLandingGeometry | undefined> {
+    const view = this.view, presentation = this.presentation, epoch = this.generation
+    if (!view || !presentation || presentation.bounds.width <= 0 || presentation.bounds.height <= 0) return
+    const ready = () => this.view === view && epoch === this.generation && this.owner === window && !window.isDestroyed() &&
+      !window.webContents.isDestroyed() && !view.webContents.isDestroyed() && this.state.phase === 'ready' &&
+      this.landing === true && this.landingPath === '/workspace/c/new' && !this.modalOpen && !this.settingsSection && !this.presentation?.settings
+    if (!ready()) return
+    const url = view.webContents.getURL(), page = new URL(url || 'about:blank')
+    if (page.origin !== this.origin || page.pathname !== '/workspace/c/new') return
+    // A cached Chat can be measured from Work. Keep it hidden but put its current seat in place.
+    if (!presentation.visible) this.layout(true)
+    const bounds = view.getBounds(), hostZoom = window.webContents.getZoomFactor(), viewZoom = view.webContents.getZoomFactor()
+    if (bounds.width <= 0 || bounds.height <= 0) return
+    const seatWidth = bounds.width / viewZoom, seatHeight = bounds.height / viewZoom
+    const frame = view.webContents.mainFrame, contentSize = window.getContentSize().join(',')
+    const current = () => ready() && view.webContents.mainFrame === frame && view.webContents.getURL() === url &&
+      window.webContents.getZoomFactor() === hostZoom && view.webContents.getZoomFactor() === viewZoom &&
+      window.getContentSize().join(',') === contentSize && JSON.stringify(view.getBounds()) === JSON.stringify(bounds) &&
+      this.presentation?.visible === presentation.visible && this.presentation.theme === presentation.theme &&
+      this.presentation.locale === presentation.locale && JSON.stringify(this.presentation.bounds) === JSON.stringify(presentation.bounds)
+    const code = chatLandingGeometryScript(url, seatWidth, seatHeight)
+    const deadline = Date.now() + LANDING_GEOMETRY_TIMEOUT_MS
+    const sample = async (): Promise<unknown> => {
+      for (let attempt = 0; attempt < 4 && Date.now() < deadline && current(); attempt++) {
+        const value: unknown = await view.webContents.executeJavaScriptInIsolatedWorld(CHAT_WELCOME_WORLD, [{ code }])
+        if (value !== null) return value
+        // Native resize lands asynchronously. Wait in main so a hidden Chromium timer cannot stall the retry.
+        if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 16))
+      }
+    }
+    try {
+      const measured = parseChatLandingGeometry(await loadWithin(sample(), LANDING_GEOMETRY_TIMEOUT_MS), seatWidth, seatHeight)
+      if (!measured || !current()) return
+      const inHost = ({ x, y, width, height }: EnterpriseChatPresentation['bounds']) => ({
+        x: (bounds.x + x * viewZoom) / hostZoom, y: (bounds.y + y * viewZoom) / hostZoom,
+        width: width * viewZoom / hostZoom, height: height * viewZoom / hostZoom
+      })
+      return {
+        title: inHost(measured.title), composer: inHost(measured.composer),
+        seat: inHost({ x: 0, y: 0, width: seatWidth, height: seatHeight }),
+        ...(measured.model ? { model: { label: measured.model.label, width: measured.model.width * viewZoom / hostZoom } } : {}),
+        ...(measured.sendOpacity !== undefined ? { sendOpacity: measured.sendOpacity } : {})
+      }
+    } catch {
+      // Geometry is optional for the visual transition; the normal mode switch remains available.
+      this.note('[enterprise-chat] landing_geometry_unavailable')
+      return undefined
+    }
+  }
+
+  /** Fade the real writing region around a mode handoff, without changing view visibility. */
+  async landingTextMotion(window: BrowserWindow, phase: unknown): Promise<void> {
+    if (phase !== 'out' && phase !== 'in') throw new Error('Invalid Chat landing text motion.')
+    const view = this.view, epoch = this.generation, visible = phase === 'out'
+    if (!view || this.owner !== window || window.isDestroyed() || window.webContents.isDestroyed() || view.webContents.isDestroyed() ||
+        view.getVisible() !== visible || this.presentation?.visible !== visible || this.state.phase !== 'ready' ||
+        this.landing !== true || this.landingPath !== '/workspace/c/new' || this.modalOpen || this.settingsSection || this.presentation.settings) return
+    const frame = view.webContents.mainFrame
+    const url = view.webContents.getURL(), page = new URL(url || 'about:blank')
+    if (page.origin !== this.origin || page.pathname !== '/workspace/c/new') return
+    const revision = ++this.landingTextMotionRevision
+    const code = chatLandingTextMotionScript(url, phase, revision, Date.now() + LANDING_TEXT_MOTION_TIMEOUT_MS)
+    try {
+      await loadWithin(view.webContents.executeJavaScriptInIsolatedWorld(CHAT_WELCOME_WORLD, [{ code }]), LANDING_TEXT_MOTION_TIMEOUT_MS)
+    } catch {
+      // The animation is optional. Navigation and late renderer responses must not block the switch.
+      if (epoch === this.generation && view === this.view && !view.webContents.isDestroyed() &&
+          frame === view.webContents.mainFrame && url === view.webContents.getURL() && revision === this.landingTextMotionRevision) {
+        this.note('[enterprise-chat] landing_text_motion_unavailable')
+      }
     }
   }
 
@@ -462,7 +542,7 @@ export class EnterpriseChatView {
     if (window === this.owner) this.layout()
   }
 
-  private layout(): void {
+  private layout(measureHiddenLanding = false): void {
     if (!this.view || !this.owner || this.owner.isDestroyed() || !this.presentation) return
     // A WebContentsView has independent Chromium zoom. Resize alone only changes
     // its native bounds, leaving remote text and controls at their original size.
@@ -477,7 +557,7 @@ export class EnterpriseChatView {
     this.syncWelcomeCases(shown && !this.presentation.settings)
     // Settings hides the view while changing locale; its navigation labels still need updates.
     if (this.state.phase === 'ready') this.applyLocale()
-    if (!visible) return
+    if (!visible && !measureHiddenLanding) return
     const [width = 0, height = 0] = this.owner.getContentSize()
     const x = Math.max(0, Math.round(bounds.x * zoom))
     const y = Math.max(0, Math.round(bounds.y * zoom))
@@ -676,6 +756,7 @@ export class EnterpriseChatView {
           }
           if (channel !== 'enterprise-chat:landing' || !/^\/workspace\/c\/[a-zA-Z0-9_-]+$/u.test(url.pathname) || typeof report.landing !== 'boolean') return
           this.landing = url.pathname === '/workspace/c/new' && report.landing
+          this.landingPath = url.pathname
           this.syncWelcomeCases(Boolean(this.presentation?.visible && !this.presentation.settings))
           this.notify()
         })
@@ -684,6 +765,7 @@ export class EnterpriseChatView {
             this.resetModalPresentation()
             this.dialogViewport = undefined
             this.landing = undefined
+            this.landingPath = undefined
             this.welcomeCases = undefined
             this.layout()
           }
@@ -700,7 +782,14 @@ export class EnterpriseChatView {
             }
             this.resetModalPresentation()
             view.webContents.send('enterprise-chat:sync-modal')
-            this.landing = undefined
+            // New Chat can navigate to the same blank route without changing
+            // React's landing value, so the page may not report it a second time.
+            // A report already delivered for the current path also survives the
+            // navigation event; other routes must establish their own state.
+            if (this.landingPath !== new URL(view.webContents.getURL()).pathname) {
+              this.landing = undefined
+              this.landingPath = undefined
+            }
             if (this.settingsSection) {
               const url = new URL(view.webContents.getURL())
               this.note(`[enterprise-settings] navigated section_match=${url.pathname === `/workspace/settings/${this.settingsSection}`} content_mode=${url.searchParams.get('dshSettings') === '1'}`)
@@ -945,6 +1034,7 @@ export class EnterpriseChatView {
     this.settingsReady = false
     this.settingsFailure = undefined
     this.landing = undefined
+    this.landingPath = undefined
     this.welcomeCases = undefined
     this.navigation = undefined
     this.navigationRequest++
