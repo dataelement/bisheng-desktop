@@ -5,7 +5,7 @@ const PREFIX = 'mcp__bisheng__'
 
 /** Account-bound enterprise tools; no credential reaches Agent context. */
 export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
-  let generation = 0, connectionKey, stopped = false, syncing
+  let generation = 0, connectionKey, stopped = false, syncing, ready = false
   let signature = '', disposeTools = [], pickerTools = []
   let lifetime = new AbortController()
   const assertAccount = key => {
@@ -21,7 +21,7 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
     lifetime.abort()
     lifetime = new AbortController()
     for (const dispose of disposeTools) dispose()
-    disposeTools = []; pickerTools = []; signature = ''; connectionKey = undefined
+    disposeTools = []; pickerTools = []; signature = ''; connectionKey = undefined; ready = false
   }
   const rpc = async (key, signal, use) => {
     assertAccount(key)
@@ -41,7 +41,7 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
     const catalog = await rpc(key, undefined, async client => ({ tools: await readMcpPages(params => client.listTools(params), 'tools') }))
     if (generation !== epoch || stopped) throw new Error('Enterprise capability synchronization expired.')
     const nextSignature = JSON.stringify([key, catalog])
-    if (signature === nextSignature) return
+    if (signature === nextSignature) { ready = true; return }
     const names = new Set()
     const definitions = catalog.tools.map(tool => {
       if (!/^bisheng_tool_[1-9][0-9]*$/.test(tool.name) || names.has(tool.name)) throw new Error('Invalid enterprise tool name.')
@@ -62,9 +62,12 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
     try { for (const definition of definitions) disposeTools.push(ctx.tools.register(definition)) }
     catch (error) { clear(); throw error }
     pickerTools = catalog.tools.map(tool => ({ name: PREFIX + tool.name, label: tool.title || tool.name, description: tool.description || '' }))
-    connectionKey = key; signature = nextSignature
+    connectionKey = key; signature = nextSignature; ready = true
   }
-  const sync = () => {
+  const sync = ({ force = false } = {}) => {
+    // State reads and the Work screen can ask repeatedly. Only an explicit refresh
+    // downloads the catalog again after the current account is ready.
+    if (!force && ready && connectionKey === state().connectionKey) return Promise.resolve()
     if (syncing) return syncing
     const attempt = { generation }
     syncing = synchronize(attempt).catch(error => {
@@ -78,7 +81,7 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
   // Join it, then start a fresh read shared by callers at this boundary.
   const refresh = async () => {
     if (syncing) await syncing
-    await sync()
+    await sync({ force: true })
   }
   ctx.on('system-prompt/prepare', async ({ agent, signal }) => {
     if (mainSession({ agent }) && state().connected) {
@@ -104,7 +107,15 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
         const body = JSON.parse(text)
         if (!body || typeof body !== 'object' || Object.keys(body).some(key => !['operation', 'names', 'connectionKey'].includes(key))) throw new Error('Invalid tool request.')
         if (!['catalog', 'validate', 'refresh'].includes(body.operation)) throw new Error('Unknown tool operation.')
-        await refresh()
+        // Opening the picker repeats the full MCP handshake. Reuse the catalog warmed
+        // at sign-in; validation and explicit refresh still read the server again.
+        if (body.operation === 'catalog') {
+          const current = ready && connectionKey === state().connectionKey
+          if (!current) {
+            if (syncing) await syncing
+            if (!(ready && connectionKey === state().connectionKey)) await sync()
+          }
+        } else await refresh()
         if (body.operation === 'refresh') return Response.json({ ok: true }, { headers: { 'cache-control': 'no-store' } })
         assertAccount(connectionKey)
         if (!connectionKey) throw new Error('Connect your enterprise account in Settings.')

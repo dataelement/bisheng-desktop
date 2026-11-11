@@ -2,15 +2,9 @@ import { createAboutPresentation } from './about-presentation'
 import { renderSafeModeBannerLocale, type SafeModeBannerElements } from './safe-mode-locale'
 import type { EnterpriseChatPresentation, EnterpriseChatViewState } from '../shared/enterprise-chat-view'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { UpdateStatus } from '../shared/contracts'
 import { setupDesktopStoragePersistence } from './desktop-storage'
 import { setupDesktopNotificationBridge } from './desktop-notification'
-import {
-  isUpdateDismissed,
-  shouldShowUpdate,
-  updateHeadline,
-  type UpdateLocale
-} from './update-view'
+import { type UpdateLocale } from './update-view'
 import { isPluginLoadError } from './plugin-error-view'
 import { mountPluginErrorToast } from './plugin-error-toast'
 import { findBootFailureText } from './boot-failure'
@@ -47,15 +41,6 @@ function navigatorLocale(): UpdateLocale {
 
 let locale: UpdateLocale = localeFromHtmlLang(document.documentElement?.lang) ?? navigatorLocale()
 
-let host: HTMLDivElement | undefined
-let content: HTMLDivElement | undefined
-let currentStatus: UpdateStatus | undefined
-let dismissedVersion: string | null = null
-let dismissedTransientPhase: UpdateStatus['phase'] | null = null
-let installing = false
-let accepting = false
-
-const ROOT_ID = 'dsh-desktop-update-root'
 const ABOUT_ROOT_ID = 'dsh-desktop-about-root'
 interface AboutInfo {
   desktopVersion: string
@@ -68,7 +53,6 @@ const aboutPresentation = createAboutPresentation(document, window)
 window.addEventListener('unload', () => aboutPresentation.dispose(), { once: true })
 let aboutOpen = false
 let aboutInfo: AboutInfo | null = null
-let receivedStatusEvent = false
 let phoneConnected = false
 let sidebarSettingsArea: HTMLElement | undefined
 let sidebarRoot: HTMLElement | undefined
@@ -208,7 +192,6 @@ function applyLiveLocale(next: UpdateLocale, publish: boolean): void {
   const frame = safeModeFrameHost?.querySelector('iframe')
   if (frame) frame.title = locale === 'zh' ? '安全模式' : 'Safe Mode'
   renderMobileButton()
-  render()
   renderAbout()
   if (publish) publishLocale(next)
 }
@@ -440,7 +423,6 @@ function initializeUi(): void {
   if (process.platform === 'win32') {
     mountWindowsTitlebarLayout({ document, ipcRenderer })
   }
-  mount()
   mountAbout()
   mountMobileButton()
   checkBootFailureInDom()
@@ -455,6 +437,8 @@ function initializeUi(): void {
   })
   window.addEventListener('unload', () => localeObserver.disconnect(), { once: true })
   syncLocaleFromDocument()
+  watchUpdateCardTheme()
+  publishUpdateCardHostState()
   void refreshMobileStatus()
   void mountSafeModeBanner()
   positionSafeModeFrame()
@@ -675,6 +659,19 @@ contextBridge.exposeInMainWorld('dshEnterpriseChat', Object.freeze({
 contextBridge.exposeInMainWorld(
   'dshDesktopEnterprise',
   Object.freeze({
+    onCloudAccessRequired: (listener: (value: { owner: string; appId: string }) => void): (() => void) => {
+      if (typeof listener !== 'function') throw new TypeError('A cloud access listener is required.')
+      const handler = (_event: Electron.IpcRendererEvent, value: unknown) => {
+        if (value && typeof value === 'object' && typeof (value as { owner?: unknown }).owner === 'string' && typeof (value as { appId?: unknown }).appId === 'string') listener(value as { owner: string; appId: string })
+      }
+      ipcRenderer.on('enterprise-cloud:access-required', handler)
+      return () => ipcRenderer.removeListener('enterprise-cloud:access-required', handler)
+    },
+    cloudRequest: (input: unknown): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:request', input),
+    openCloudWorkbench: (appId: string, bounds: unknown, connectionKey: string, owner: string): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:open', appId, bounds, connectionKey, owner),
+    resizeCloudWorkbench: (bounds: unknown, owner: string): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:bounds', bounds, owner),
+    releaseCloudWorkbench: (appId: string, connectionKey: string): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:release', appId, connectionKey),
+    closeCloudWorkbench: (owner: string): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:close', owner),
     onLoginLink: (listener: (url: string) => void): (() => void) => {
       if (typeof listener !== 'function') {
         throw new TypeError('Enterprise login listener must be a function.')
@@ -725,167 +722,38 @@ contextBridge.exposeInMainWorld(
   })
 )
 
-function mount(): void {
-  if (document.getElementById(ROOT_ID)) return
 
-  host = document.createElement('div')
-  host.id = ROOT_ID
-  host.style.cssText = [
-    'position:fixed',
-    'right:20px',
-    'bottom:20px',
-    'z-index:2147483646',
-    'display:none',
-    'width:min(384px,calc(100vw - 40px))',
-    'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif'
-  ].join(';')
 
-  const shadow = host.attachShadow({ mode: 'closed' })
-  const style = document.createElement('style')
-  style.textContent = styles
-  content = document.createElement('div')
-  shadow.append(style, content)
-  document.documentElement.appendChild(host)
-  render()
+function element<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  className: string
+): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag)
+  node.className = className
+  return node
 }
 
-function applyStatus(status: UpdateStatus): void {
-  currentStatus = status
-  if (host) {
-    host.dataset.updatePhase = status.phase
-    host.dataset.updateManual = String(status.manual)
-  }
-  if (status.phase === 'error') installing = false
-  if (status.phase !== 'available') accepting = false
-  render()
+function button(label: string, className: string): HTMLButtonElement {
+  const node = element('button', className)
+  node.type = 'button'
+  node.textContent = label
+  return node
 }
 
-function render(): void {
-  if (!host || !content || !currentStatus) return
-
-  if (
-    !shouldShowUpdate(currentStatus) ||
-    isUpdateDismissed(currentStatus, dismissedVersion, dismissedTransientPhase)
-  ) {
-    host.style.display = 'none'
-    content.replaceChildren()
-    return
-  }
-
-  host.style.display = 'block'
-  const status = currentStatus
-  const card = element('aside', 'card')
-  card.setAttribute('aria-live', 'polite')
-  card.setAttribute('aria-label', locale === 'zh' ? 'BISHENG 更新' : 'BISHENG update')
-
-  const row = element('div', 'row')
-  const badge = element('span', status.phase === 'error' ? 'badge warning' : 'badge')
-  badge.setAttribute('aria-hidden', 'true')
-  if (isBusy(status)) badge.appendChild(element('span', 'spinner'))
-  else badge.innerHTML = updateIcon
-  row.appendChild(badge)
-
-  const headline = updateHeadline(status, locale)
-  const body = element('div', 'body')
-  const title = element('p', 'title')
-  title.textContent = headline.title
-  body.appendChild(title)
-
-  // The failure's own words beat ours, when it has any.
-  const description = element('p', 'description')
-  description.textContent =
-    status.phase === 'error' && status.message ? status.message : headline.description
-  if (description.textContent) body.appendChild(description)
-
-  if (status.phase === 'downloading') {
-    const progress = element('div', 'progress')
-    progress.setAttribute('role', 'progressbar')
-    progress.setAttribute('aria-valuemin', '0')
-    progress.setAttribute('aria-valuemax', '100')
-    progress.setAttribute('aria-valuenow', String(Math.round(status.percent ?? 0)))
-    const value = element('div', 'progressValue')
-    value.style.width = `${status.percent ?? 0}%`
-    progress.appendChild(value)
-    body.appendChild(progress)
-  }
-
-  if (status.phase === 'available') {
-    const actions = element('div', 'actions')
-    const accept = button(locale === 'zh' ? '同意更新' : 'Update now', 'primary')
-    accept.disabled = accepting
-    accept.addEventListener('click', () => {
-      accepting = true
-      render()
-      void ipcRenderer.invoke('updates:download').catch((error: unknown) => {
-        accepting = false
-        console.error('[updater] unable to download update', error)
-        render()
-      })
-    })
-    actions.append(accept, skipButton(status))
-    body.appendChild(actions)
-  }
-
-  if (status.phase === 'downloading') {
-    const actions = element('div', 'actions')
-    actions.appendChild(skipButton(status))
-    body.appendChild(actions)
-  }
-
-  if (status.phase === 'downloaded') {
-    const actions = element('div', 'actions')
-    const install = button(
-      installing
-        ? locale === 'zh'
-          ? '正在重启…'
-          : 'Restarting…'
-        : locale === 'zh'
-          ? '重新启动并安装'
-          : 'Restart and install',
-      'primary'
-    )
-    install.disabled = installing
-    install.addEventListener('click', () => {
-      installing = true
-      render()
-      void ipcRenderer.invoke('updates:install').catch((error: unknown) => {
-        installing = false
-        console.error('[updater] unable to install update', error)
-        render()
-      })
-    })
-    actions.append(install, skipButton(status))
-    body.appendChild(actions)
-  }
-
-  row.appendChild(body)
-
-  const close = button('×', 'close')
-  close.setAttribute('aria-label', locale === 'zh' ? '关闭' : 'Close')
-  close.addEventListener('click', dismissCurrent)
-  row.appendChild(close)
-
-  card.appendChild(row)
-  content.replaceChildren(card)
+function updateCardTheme(): 'dark' | 'light' {
+  return document.body?.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light'
 }
 
-/**
- * Stop being told about this version at all. The close button silences the
- * banner for this sitting only, so a release the user has decided against
- * comes back every launch; this one is remembered. A later release still asks,
- * and a manual check offers the skipped one again.
- */
-function skipButton(status: UpdateStatus): HTMLButtonElement {
-  const skip = button(locale === 'zh' ? '跳过此版本' : 'Skip this version', 'secondary')
-  skip.addEventListener('click', () => {
-    const version = status.availableVersion
-    if (!version) return
-    dismissCurrent()
-    void ipcRenderer.invoke('updates:skip', version).catch((error: unknown) => {
-      console.error('[updater] unable to skip update', error)
-    })
-  })
-  return skip
+function publishUpdateCardHostState(): void {
+  ipcRenderer.send('updates:card-host-state', { held: aboutOpen, locale, theme: updateCardTheme() })
+}
+
+function watchUpdateCardTheme(): void {
+  const body = document.body
+  if (!body) return
+  const observer = new MutationObserver(() => publishUpdateCardHostState())
+  observer.observe(body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] })
+  window.addEventListener('unload', () => observer.disconnect(), { once: true })
 }
 
 function mountAbout(): void {
@@ -918,6 +786,7 @@ function renderAbout(): void {
     aboutPresentation.close()
     const existing = aboutShadow.querySelector('.about-overlay')
     if (existing) existing.remove()
+    publishUpdateCardHostState()
     return
   }
 
@@ -942,7 +811,6 @@ function renderAbout(): void {
   card.setAttribute('aria-modal', 'true')
   card.setAttribute('aria-label', zh ? '关于 BISHENG' : 'About BISHENG')
 
-  // Header row with Title and Close '×'
   const header = element('div', 'about-header')
   const title = element('h2', 'about-title')
   title.textContent = zh ? '关于 BISHENG' : 'About BISHENG'
@@ -957,7 +825,6 @@ function renderAbout(): void {
   header.appendChild(closeBtn)
   card.appendChild(header)
 
-  // Body content matching user's screenshot
   const body = element('div', 'about-body')
   const line1 = element('p', 'about-line')
   line1.textContent = `${zh ? 'BISHENG 版本： ' : 'BISHENG version: '}${info.desktopVersion}`
@@ -974,163 +841,9 @@ function renderAbout(): void {
 
   overlay.replaceChildren(card)
   aboutPresentation.show(closeBtn)
-}
-function dismissCurrent(): void {
-  if (!currentStatus) return
-  if (currentStatus.availableVersion) {
-    dismissedVersion = currentStatus.availableVersion
-  } else {
-    dismissedTransientPhase = currentStatus.phase
-  }
-  render()
+  publishUpdateCardHostState()
 }
 
-function isBusy(status: UpdateStatus): boolean {
-  return status.phase === 'checking' || status.phase === 'downloading'
-}
-
-function element<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  className: string
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag)
-  node.className = className
-  return node
-}
-
-function button(label: string, className: string): HTMLButtonElement {
-  const node = element('button', className)
-  node.type = 'button'
-  node.textContent = label
-  return node
-}
-
-const styles = `
-  :host { color-scheme: light dark; }
-  * { box-sizing: border-box; }
-  .card {
-    color: var(--dsw-alias-label-primary, #202124);
-    background: var(--dsw-alias-bg-layer-1, rgba(255, 255, 255, 0.98));
-    border: 1px solid var(--dsw-alias-border-l2, rgba(32, 33, 36, 0.14));
-    border-radius: 14px;
-    padding: 15px 16px;
-    box-shadow: 0 14px 38px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08);
-    backdrop-filter: blur(18px);
-  }
-  .row { display: flex; align-items: flex-start; gap: 12px; }
-  .body { min-width: 0; flex: 1; }
-  .title { margin: 0; font-size: 14px; font-weight: 650; line-height: 20px; letter-spacing: -0.1px; }
-  .description {
-    margin: 3px 0 0;
-    color: var(--dsw-alias-label-secondary, #666b73);
-    font-size: 12.5px;
-    line-height: 18px;
-    display: -webkit-box;
-    overflow: hidden;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-  }
-  .badge {
-    width: 34px;
-    height: 34px;
-    margin-top: -1px;
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 999px;
-    color: #2ea043;
-    background: rgba(46, 160, 67, 0.14);
-  }
-  .badge.warning { color: #d29922; background: rgba(210, 153, 34, 0.16); }
-  .spinner {
-    width: 16px;
-    height: 16px;
-    flex: none;
-    border: 2px solid currentColor;
-    border-top-color: transparent;
-    border-radius: 999px;
-    opacity: 0.85;
-    animation: spin 0.75s linear infinite;
-  }
-  .progress {
-    height: 5px;
-    margin-top: 11px;
-    overflow: hidden;
-    border-radius: 999px;
-    background: var(--dsw-alias-bg-layer-2, rgba(32, 33, 36, 0.1));
-  }
-  .progressValue {
-    height: 100%;
-    min-width: 2px;
-    border-radius: inherit;
-    background: #2ea043;
-    transition: width 180ms ease;
-  }
-  .actions { display: flex; gap: 8px; margin-top: 13px; }
-  button {
-    appearance: none;
-    border: 0;
-    font: inherit;
-    cursor: pointer;
-  }
-  button:focus-visible { outline: 2px solid #4d6bfe; outline-offset: 2px; }
-  button:disabled { cursor: default; opacity: 0.55; }
-  .primary, .secondary {
-    min-height: 32px;
-    padding: 6px 14px;
-    border-radius: 999px;
-    font-size: 12.5px;
-    font-weight: 600;
-  }
-  .primary { color: #fff; background: #4d6bfe; }
-  .primary:hover:not(:disabled) { background: #3e5de7; }
-  /* Ghosted, so the accepted action is the only filled thing on the card. */
-  .secondary {
-    color: var(--dsw-alias-label-secondary, #666b73);
-    background: transparent;
-    border: 1px solid var(--dsw-alias-border-l2, rgba(32, 33, 36, 0.16));
-  }
-  .secondary:hover {
-    color: var(--dsw-alias-label-primary, #202124);
-    background: var(--dsw-alias-interactive-bg-hover, rgba(32, 33, 36, 0.06));
-  }
-  .close {
-    width: 24px;
-    height: 24px;
-    margin: -4px -6px 0 0;
-    flex: none;
-    color: var(--dsw-alias-label-secondary, #73777f);
-    background: transparent;
-    border-radius: 7px;
-    font-size: 20px;
-    line-height: 20px;
-  }
-  .close:hover { color: var(--dsw-alias-label-primary, #202124); background: rgba(127, 127, 127, 0.1); }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @media (prefers-color-scheme: dark) {
-    .card {
-      color: var(--dsw-alias-label-primary, #f3f4f6);
-      background: var(--dsw-alias-bg-layer-1, rgba(31, 32, 35, 0.98));
-      border-color: var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.14));
-      box-shadow: 0 16px 42px rgba(0, 0, 0, 0.42), 0 2px 8px rgba(0, 0, 0, 0.25);
-    }
-    .description { color: var(--dsw-alias-label-secondary, #a9adb5); }
-    .badge { color: #3fb950; background: rgba(63, 185, 80, 0.16); }
-    .badge.warning { color: #e3b341; background: rgba(227, 179, 65, 0.18); }
-    .secondary {
-      color: var(--dsw-alias-label-secondary, #a9adb5);
-      border-color: var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.18));
-    }
-    .secondary:hover { color: var(--dsw-alias-label-primary, #f3f4f6); background: rgba(255, 255, 255, 0.08); }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .spinner { animation: none; }
-    .progressValue { transition: none; }
-  }
-`
-
-const updateIcon = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true"><path d="M4.6 12a7.4 7.4 0 0 1 12.6-5.2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M19.4 12a7.4 7.4 0 0 1-12.6 5.2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M17.6 3.5v3.4h-3.4M6.4 20.5v-3.4h3.4" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>`
 
 const phoneIcon = `<svg viewBox="0 0 24 24" width="19" height="19" fill="none" aria-hidden="true"><rect x="7" y="2.75" width="10" height="18.5" rx="2.25" stroke="currentColor" stroke-width="1.7"/><path d="M10.2 5.5h3.6M10.5 18.35h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>`
 
@@ -1277,10 +990,6 @@ const aboutStyles = `
   }
 `
 
-ipcRenderer.on('updates:status-changed', (_event, status: UpdateStatus) => {
-  receivedStatusEvent = true
-  applyStatus(status)
-})
 
 ipcRenderer.on('desktop:show-about', (_event, info: AboutInfo) => {
   aboutInfo = info
@@ -1298,12 +1007,6 @@ window.addEventListener('keydown', (event) => {
   }
 })
 
-void ipcRenderer
-  .invoke('updates:status')
-  .then((status: UpdateStatus) => {
-    if (!receivedStatusEvent) applyStatus(status)
-  })
-  .catch((error: unknown) => console.warn('[updater] unable to read update status', error))
 
 if (document.readyState === 'loading') {
   window.addEventListener('DOMContentLoaded', initializeUi, { once: true })

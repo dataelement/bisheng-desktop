@@ -224,7 +224,11 @@ jobs:
             app-directory: mac
     runs-on: ${{ matrix.runner }}
     env:
+      # arch keeps Electron on the target binary under Rosetta. cpu selects optional
+      # native packages such as Koffi; a host cpu=arm64 setting would install the
+      # arm64 prebuild, which the x64 Node cannot load and then tries to compile.
       npm_config_arch: ${{ matrix.arch }}
+      npm_config_cpu: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
         with:

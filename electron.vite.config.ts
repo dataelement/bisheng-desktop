@@ -19,7 +19,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('src/preload/index.ts'),
-          'enterprise-chat': resolve('src/preload/enterprise-chat.ts')
+          'enterprise-chat': resolve('src/preload/enterprise-chat.ts'),
+          'update-overlay': resolve('src/preload/update-overlay.ts')
         },
         output: {
           format: 'cjs',

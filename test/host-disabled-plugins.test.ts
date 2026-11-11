@@ -10,6 +10,9 @@ import { inspectProfileBootInputs } from '../src/main/state/profile-boot-preflig
 import { prepareProfileBundleForHostEnable, setHostPluginEnabled } from '../src/main/state/host-plugin-state'
 import { projectRoot } from './patch-path'
 
+// Profile-policy checks use the macOS production startup deadline from HarnessRuntime.
+// They still require ready state and an authenticated settings response.
+const startupTimeoutMs = process.platform === 'darwin' ? 45_000 : 30_000
 const homes: string[] = []
 afterEach(async () => { await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true }))) })
 
@@ -96,7 +99,7 @@ describe('disabled Profile packages in Desktop host patch', () => {
       dshHome: home,
       logPath: join(home, 'harness.log'),
       preferredPort: 0,
-      startupTimeoutMs: 30_000,
+      startupTimeoutMs,
       launchProcess: (executable, args, options) => spawn(executable, args, options),
       onChanged() {}
     })
@@ -136,7 +139,7 @@ describe('disabled Profile packages in Desktop host patch', () => {
       dshHome: home,
       logPath: join(home, 'harness.log'),
       preferredPort: 0,
-      startupTimeoutMs: 30_000,
+      startupTimeoutMs,
       launchProcess: (executable, args, options) => spawn(executable, args, options),
       onChanged() {}
     })
@@ -191,7 +194,7 @@ describe('disabled Profile packages in Desktop host patch', () => {
       dshHome: home,
       logPath: join(home, 'harness.log'),
       preferredPort: 0,
-      startupTimeoutMs: 30_000,
+      startupTimeoutMs,
       launchProcess: (executable, args, options) => spawn(executable, args, options),
       onChanged() {}
     })

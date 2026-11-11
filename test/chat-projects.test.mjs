@@ -6,7 +6,7 @@ import { expect, it, vi } from 'vitest'
 const source = await readFile('packages/dsh-desktop-client-ui/client.js', 'utf8')
 const implementation = source.slice(source.indexOf('function createChatProjects()'), source.indexOf('function ChatProjectDialog('))
 async function fixture() {
-  const data = new Map(), accounts = new Map(), receipts = new Map(), imports = new Map()
+  const data = new Map(), accounts = new Map(), imports = new Map()
   let account = 'account-a', epoch = 4, failAfterCommit = false
   const storage = { getItem: vi.fn(key => data.get(key) ?? null), setItem: vi.fn((key, value) => data.set(key, value)) }
   const cloud = () => {
@@ -19,12 +19,15 @@ async function fixture() {
     projectConversations: vi.fn(async input => ({ epoch, revision: String(cloud().revision), items: [{ id: 'older-chat', title: 'Old history', updatedAt: '' }], nextCursor: null })),
     projectAction: vi.fn(async (input, expectedEpoch) => {
       if (expectedEpoch !== epoch) throw new Error('identity changed')
-      const state = cloud(), key = account + ':' + input.request_id
-      let result = receipts.get(key)
-      if (!result) {
+      const state = cloud()
+      let result
+      {
         const outcome = {}
         if (input.operation === 'create') {
-          const id = randomUUID(); state.projects.push({ id, name: input.name }); outcome.project_id = id
+          // Client-generated id: a retried create returns the same project.
+          const id = input.project_id
+          if (!state.projects.some(project => project.id === id)) state.projects.push({ id, name: input.name })
+          outcome.project_id = id
           if (input.chat_id) state.assignments[input.chat_id] = id
         } else if (input.operation === 'rename') state.projects = state.projects.map(project => project.id === input.project_id ? { ...project, name: input.name } : project)
         else if (input.operation === 'delete') {
@@ -36,21 +39,20 @@ async function fixture() {
         } else if (input.operation === 'import') {
           outcome.items = []
           for (const project of input.projects) {
-            const entry = account + ':' + input.source_client_id + ':' + project.legacy_id
-            if (!imports.has(entry)) {
-              const id = randomUUID(); state.projects.push({ id, name: project.name }); imports.set(entry, id)
-            }
-            outcome.items.push({ kind: 'project', status: 'imported' })
+            // Deterministic per account and legacy id, like the server's uuid5.
+            const entry = account + ':' + project.legacy_id
+            if (imports.has(entry)) { outcome.items.push({ kind: 'project', legacy_id: project.legacy_id, status: 'already_imported' }); continue }
+            const id = randomUUID(); state.projects.push({ id, name: project.name }); imports.set(entry, id)
+            outcome.items.push({ kind: 'project', legacy_id: project.legacy_id, status: 'imported' })
           }
           for (const member of input.memberships) {
-            const id = imports.get(account + ':' + input.source_client_id + ':' + member.legacy_project_id)
+            const id = imports.get(account + ':' + member.legacy_project_id)
             if (id && !state.assignments[member.chat_id]) state.assignments[member.chat_id] = id
             outcome.items.push({ kind: 'membership', status: 'imported' })
           }
         }
         state.revision++
-        result = { epoch, outcome, revision: String(state.revision) }
-        receipts.set(key, result)
+        result = { epoch, outcome }
       }
       if (failAfterCommit) { failAfterCommit = false; throw new Error('response lost') }
       return structuredClone(result)
@@ -77,9 +79,10 @@ it('uses the shared service for CRUD and never writes local project truth', asyn
   expect(store.snapshot().projects).toEqual([])
   await select('account-a', 6)
   expect(store.snapshot().projects[0].name).toBe('Updated')
-  expect(bridge.projectAction).toHaveBeenCalledWith(expect.objectContaining({ operation: 'create', request_id: expect.any(String) }), 4)
+  expect(bridge.projectAction).toHaveBeenCalledWith(expect.objectContaining({ operation: 'create', project_id: expect.any(String) }), 4)
+  expect(bridge.projectAction.mock.calls[0][0]).not.toHaveProperty('request_id')
 })
-it('preserves input and the request id when a committed response is lost', async () => {
+it('preserves input and the draft project id when a committed response is lost', async () => {
   const { store, bridge, failAfterCommit, cloud } = await fixture()
   store.edit('create')
   failAfterCommit()
@@ -88,7 +91,7 @@ it('preserves input and the request id when a committed response is lost', async
   await store.confirm('Retry research')
   expect(cloud().projects).toHaveLength(1)
   expect(store.snapshot().editor).toBeNull()
-  expect(bridge.projectAction.mock.calls[0][0].request_id).toBe(bridge.projectAction.mock.calls[1][0].request_id)
+  expect(bridge.projectAction.mock.calls[0][0].project_id).toBe(bridge.projectAction.mock.calls[1][0].project_id)
 })
 it('applies live server changes and rejects stale epochs and versions', async () => {
   const { store, cloud, snapshot } = await fixture()
@@ -110,7 +113,7 @@ it('reads project conversations independently of global history pages', async ()
   expect(bridge.projectConversations).toHaveBeenCalledWith({ project_id: id }, 4)
 })
 it('automatically migrates scoped history, retaining legacy keys and same-name cloud projects', async () => {
-  const { store, data, select, storage } = await fixture()
+  const { store, data, select, storage, bridge } = await fixture()
   await createProject(store, 'Same name')
   const original = JSON.stringify({ projects: [{ id: 'local-a', name: 'Same name' }], assignments: { 'old-chat': 'local-a' } })
   data.set('desktop.chatProjects.v1:account-a', original)
@@ -122,7 +125,8 @@ it('automatically migrates scoped history, retaining legacy keys and same-name c
   expect(store.snapshot().assignments['old-chat']).toBeTruthy()
   await select('account-b', 7); await select('account-a', 8)
   expect(store.snapshot().projects).toHaveLength(2)
-  expect(storage.setItem).toHaveBeenCalledWith('desktop.chatProjects.importDone.v1:account-a', expect.any(String))
+  expect(storage.setItem).toHaveBeenCalledWith('desktop.chatProjects.importDone.v1:account-a', '1')
+  expect(bridge.projectAction.mock.calls.filter(([input]) => input.operation === 'import')).toHaveLength(1)
 })
 it('deletes projects without deleting chats and validates before sending', async () => {
   const { store, bridge } = await fixture()

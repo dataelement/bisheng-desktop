@@ -3,6 +3,7 @@ import { parseWorkSkillRequest, readSkillBytes } from './work-skills'
 import { parseWorkResourceRequest, readResourceJson } from './work-resources'
 import { parseWorkMcpRequest, sendWorkMcp } from './work-mcp'
 import { parseWebSession, type EnterpriseWebSession } from './web-session'
+import { CloudWorkbenchService, type CloudAuthorize } from './cloud-workbench'
 import { parseMarketRequest } from './enterprise-market'
 import { parseEnterpriseResponsesPayload } from './enterprise-responses'
 import { discardWorkbenchArtifact, rememberWorkbenchArtifact, releaseWorkbenchArtifact as releaseRetainedWorkbenchArtifact, verifyWorkbenchArtifactResponse, WORKBENCH_ARTIFACT_LIMIT } from './workbench-artifact'
@@ -111,6 +112,8 @@ export interface EnterprisePublicState {
   audit_context?: { fields: AuditContextField[] }
   audit_conversation_title?: { version: 1 }
   auditTitleEpoch?: number
+  audit_message_feedback?: { version: 1 }
+  auditFeedbackEpoch?: number
 }
 
 export interface EnterpriseLoginStartResult {
@@ -123,6 +126,7 @@ export interface EnterpriseServiceNote {
   event: string
   status?: number
   requestId?: string
+  code?: string
   originHash?: string
   pluginId?: string
   path?: string
@@ -130,6 +134,8 @@ export interface EnterpriseServiceNote {
 }
 
 export interface EnterpriseServiceOptions {
+  cloudRoot?: string
+  confirmCloudEffect?: CloudAuthorize
   desktopVersion?: string
   activateDesktop?: () => Promise<void> | void
   vault: SecureEnterpriseCredentialVault
@@ -153,6 +159,7 @@ interface PendingLogin {
 }
 
 export class EnterpriseService {
+  private cloudService: CloudWorkbenchService | undefined
   private mutation: Promise<unknown> = Promise.resolve()
   private refreshInFlight: Promise<EnterprisePublicState> | undefined
   private epoch = 0
@@ -183,6 +190,8 @@ export class EnterpriseService {
   private auditRefreshGeneration = 0
   private auditTitleAvailable = false
   private auditTitleInFlight = false
+  private auditFeedbackAvailable = false
+  private auditFeedbackInFlight = false
 
   constructor(private readonly options: EnterpriseServiceOptions) {
     this.phase = options.vault.available ? 'idle' : 'disabled'
@@ -202,6 +211,7 @@ export class EnterpriseService {
       connected,
       ...(connected && this.auditFields.length ? { audit_context: { fields: [...this.auditFields] } } : {}),
       ...(connected && this.auditTitleAvailable ? { audit_conversation_title: { version: 1 as const }, auditTitleEpoch: this.epoch } : {}),
+      ...(connected && this.auditFeedbackAvailable ? { audit_message_feedback: { version: 1 as const }, auditFeedbackEpoch: this.epoch } : {}),
       secureStorageAvailable: this.options.vault.available,
       phase: this.phase,
       revision: this.revision,
@@ -290,7 +300,7 @@ export class EnterpriseService {
         allowInsecurePrivateHttp: true
       })
       if (isInsecurePrivateHttpOrigin(preview) && options.confirmInsecurePrivateHttp !== true) {
-        throw Object.assign(new Error('HTTP intranet addresses require explicit confirmation.'), {
+        throw Object.assign(new Error('HTTP addresses require explicit confirmation.'), {
           status: 400
         })
       }
@@ -921,6 +931,64 @@ export class EnterpriseService {
     }
   }
 
+  async reportAuditFeedback(input: unknown, signal?: AbortSignal): Promise<unknown> {
+    const invalid = () => Object.assign(new Error('Invalid audit feedback request.'), { status: 400 })
+    if (!input || typeof input !== 'object' || Array.isArray(input) ||
+        Object.keys(input).sort().join(',') !== 'auditFeedbackEpoch,connectionKey,update') throw invalid()
+    const request = input as Record<string, unknown>
+    const contract = await loadEnterpriseContract()
+    let update
+    try { update = contract.parseAuditFeedbackUpdate(request.update) } catch { throw invalid() }
+    const epoch = this.epoch
+    const assertConnection = () => {
+      if (!this.session?.base || !this.snapshot().connected || !this.auditFeedbackAvailable ||
+          epoch !== this.epoch || request.auditFeedbackEpoch !== epoch || request.connectionKey !== this.connectionKey() ||
+          (this.session.session_expires_at !== undefined && !(Date.parse(this.session.session_expires_at) > this.now()))) {
+        throw Object.assign(new Error('Enterprise audit feedback connection changed.'), { status: 409 })
+      }
+      signal?.throwIfAborted()
+    }
+    const controller = new AbortController()
+    assertConnection()
+    if (this.auditFeedbackInFlight) throw Object.assign(new Error('Audit feedback synchronization busy.'), { status: 429 })
+    this.auditFeedbackInFlight = true
+    this.chatControllers.add(controller)
+    const combined = AbortSignal.any([controller.signal, ...(signal ? [signal] : [])])
+    try {
+      assertConnection()
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const accessToken = await this.ensureAccess(epoch)
+        assertConnection()
+        const base = this.session?.base
+        if (!base) throw Object.assign(new Error('Enterprise account changed.'), { status: 409 })
+        try {
+          const result = await requestEnterpriseJson(this.options.fetchImpl, base, contract.API_PATHS.auditFeedback, {
+            ...this.platformRequestOptions(), method: 'POST', body: update, accessToken, timeoutMs: 5000, signal: combined
+          })
+          assertConnection()
+          const body = result.body
+          if (!body || typeof body !== 'object' || Array.isArray(body)) throw invalid()
+          const value = body as Record<string, unknown>
+          if (!['UPDATED', 'UNCHANGED', 'STALE', 'CONFLICT', 'DISABLED', 'NOT_READY'].includes(String(value.status)) ||
+              (value.event_seq !== undefined && (!Number.isSafeInteger(value.event_seq) || Number(value.event_seq) < 0))) throw invalid()
+          return { status: value.status, ...(value.event_seq === undefined ? {} : { event_seq: value.event_seq }) }
+        } catch (error) {
+          assertConnection()
+          if (error instanceof EnterprisePlatformError && error.status === 401 && attempt === 0) {
+            await this.refresh()
+            assertConnection()
+            continue
+          }
+          const status = error instanceof EnterprisePlatformError ? error.status ?? 503 : 503
+          throw Object.assign(new Error('Audit feedback synchronization unavailable.'), { status })
+        }
+      }
+    } finally {
+      this.auditFeedbackInFlight = false
+      this.chatControllers.delete(controller)
+    }
+  }
+
   async marketRequest(input: unknown): Promise<{ bytes: Buffer, binary: boolean }> {
     const request = parseMarketRequest(input)
     const epoch = this.epoch
@@ -1124,6 +1192,63 @@ export class EnterpriseService {
     assertCurrent()
     this.options.note?.({ event: 'web_session_created', status: result.status })
     return parseWebSession(result.body, base, connectionKey, this.now())
+  }
+
+  async cloudRequest(input: unknown): Promise<unknown> {
+    if (!this.options.cloudRoot) throw new Error('Cloud workbench storage is unavailable.')
+    this.cloudService ??= new CloudWorkbenchService(async (path, init = {}, expectedConnectionKey) => {
+      const epoch = this.epoch
+      const connectionKey = this.connectionKey()
+      if (expectedConnectionKey !== undefined && expectedConnectionKey !== connectionKey) throw new Error('Enterprise account changed.')
+      const accessToken = await this.ensureAccess(epoch)
+      const base = this.session?.base
+      if (!base || !this.snapshot().connected || this.epoch !== epoch) throw new Error('Enterprise login required.')
+      const { endpoint } = await resolveEnterpriseEndpoint(base, path, this.options.allowInsecureLoopback,
+        this.platformRequestOptions().allowInsecurePrivateHttp)
+      if (endpoint.origin !== new URL(base).origin) throw new Error('Invalid enterprise cloud endpoint.')
+      if (this.epoch !== epoch || this.connectionKey() !== connectionKey) throw new Error('Enterprise account changed.')
+      const controller = new AbortController()
+      this.chatControllers.add(controller)
+      try {
+        const response = await createEnterpriseFetch(this.options.fetchImpl)(endpoint.toString(), {
+          ...init, signal: AbortSignal.any([controller.signal, AbortSignal.timeout(120000)]),
+          headers: { authorization: `Bearer ${accessToken}` }
+        })
+        if (this.epoch !== epoch || this.connectionKey() !== connectionKey) {
+          await response.body?.cancel()
+          throw new Error('Enterprise account changed.')
+        }
+        // Pull one chunk at a time; bounded consumers can cancel before a
+        // large source response is buffered in the privileged process.
+        const reader = response.body?.getReader()
+        const owner = this
+        if (!reader) this.chatControllers.delete(controller)
+        const stream = reader ? new ReadableStream<Uint8Array>({
+          async pull(sink) {
+            try {
+              const chunk = await reader.read()
+              if (owner.epoch !== epoch) throw new Error('Enterprise account changed.')
+              if (chunk.done) { sink.close(); owner.chatControllers.delete(controller); reader.releaseLock() }
+              else sink.enqueue(chunk.value)
+            } catch (error) {
+              sink.error(error)
+              owner.chatControllers.delete(controller)
+              await reader.cancel().catch(() => undefined)
+            }
+          },
+          async cancel() {
+            controller.abort()
+            owner.chatControllers.delete(controller)
+            await reader.cancel().catch(() => undefined)
+          }
+        }) : null
+        return { response: new Response(stream, { status: response.status, headers: response.headers }), base, connectionKey }
+      } catch (error) {
+        this.chatControllers.delete(controller)
+        throw error
+      }
+    }, this.options.cloudRoot, this.options.confirmCloudEffect)
+    return this.cloudService.request(input)
   }
 
   async verifyWorkbenchArtifact(input: unknown): Promise<{ ok: boolean, stage?: string, error?: string }> {
@@ -1450,6 +1575,7 @@ export class EnterpriseService {
     const generation = ++this.auditRefreshGeneration
     this.auditFields = []
     this.auditTitleAvailable = false
+    this.auditFeedbackAvailable = false
     this.publish()
     const epoch = this.epoch
     const base = this.session?.base
@@ -1464,6 +1590,7 @@ export class EnterpriseService {
           base !== this.session?.base || connectionKey !== this.connectionKey()) return
       this.auditFields = config.enabled ? config.audit_context?.fields ?? [] : []
       this.auditTitleAvailable = config.enabled && config.audit_conversation_title?.version === 1
+      this.auditFeedbackAvailable = config.enabled && config.audit_message_feedback?.version === 1
     } catch {
       // Only optional audit capability is lost; do not replay or reject model calls.
       if (generation === this.auditRefreshGeneration && epoch === this.epoch) this.note('audit_capability_unavailable')
@@ -1541,6 +1668,7 @@ export class EnterpriseService {
     this.options.note?.({
       event,
       ...(details.status ? { status: details.status } : {}),
+      ...(typeof details.code === 'string' && details.code.length > 0 && details.code.length <= 64 ? { code: details.code } : {}),
       ...(sanitizeRequestId(details.requestId) ? { requestId: sanitizeRequestId(details.requestId) } : {}),
       ...(details.originHash ? { originHash: details.originHash } : {}),
       ...(details.pluginId ? { pluginId: details.pluginId } : {}),
@@ -1600,6 +1728,8 @@ function publicStateSignature(state: EnterprisePublicState): string {
     audit_context: state.audit_context,
     audit_conversation_title: state.audit_conversation_title,
     auditTitleEpoch: state.auditTitleEpoch,
+    audit_message_feedback: state.audit_message_feedback,
+    auditFeedbackEpoch: state.auditFeedbackEpoch,
     base: state.base,
     user: state.user,
     tenant: state.tenant,
@@ -1649,7 +1779,8 @@ function noteFromError(error: unknown): Omit<EnterpriseServiceNote, 'event'> {
   if (error instanceof EnterprisePlatformError) {
     return {
       ...(error.status ? { status: error.status } : {}),
-      ...(sanitizeRequestId(error.requestId) ? { requestId: sanitizeRequestId(error.requestId) } : {})
+      ...(sanitizeRequestId(error.requestId) ? { requestId: sanitizeRequestId(error.requestId) } : {}),
+      ...(typeof error.code === 'string' && error.code.length > 0 && error.code.length <= 64 ? { code: error.code } : {})
     }
   }
   return {}

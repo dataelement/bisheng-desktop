@@ -317,14 +317,14 @@ window.__ModuleLoader__.load({
       zh: { title: '对话项目', create: '新建项目', rename: '重命名项目', remove: '删除项目', actions: '项目操作', startChat: '在此项目新建对话', empty: '暂无对话', name: '项目名称', nameHelp: '请输入 1–30 个字符', cancel: '取消', save: '保存', close: '关闭', move: '移入项目', moveOut: '移出项目', deleteHelp: '删除“{name}”后，其中的对话将移回对话列表，聊天记录会保留。', failed: '项目保存失败，请重试。', unavailable: '项目数据无法读取，点击重试。', retry: '重试' },
       en: { title: 'Chat Project', create: 'New project', rename: 'Rename project', remove: 'Delete project', actions: 'Project actions', startChat: 'New chat in this project', empty: 'No conversations yet', name: 'Project name', nameHelp: 'Enter 1–30 characters', cancel: 'Cancel', save: 'Save', close: 'Close', move: 'Move to project', moveOut: 'Move out of project', deleteHelp: 'Delete “{name}”? Its conversations will return to the conversation list. Chat history will be kept.', failed: 'Could not save projects. Please try again.', unavailable: 'Could not read projects. Retry.', retry: 'Retry' }
     }
-    Object.assign(PROJECTS_COPY.zh, { pending: '正在保存或加载…', connecting: '正在连接项目同步…', degraded: '已保存，同步暂有延迟', offline: '项目尚未同步，正在重连…', auth_required: '请重新登录以同步项目', unsupported: '当前服务不支持项目同步，请升级服务端。', import: '旧版项目迁移结果', migrationRunning: '正在自动迁移旧版项目…', migrationRetry: '旧版项目暂未迁移，正在自动重试。原记录已保留。', importDone: '迁移完成，{count} 项未迁移或保留了云端归属。' })
-    Object.assign(PROJECTS_COPY.en, { pending: 'Saving or loading…', connecting: 'Connecting project sync…', degraded: 'Saved. Sync is delayed.', offline: 'Projects are not synced. Reconnecting…', auth_required: 'Sign in again to sync projects.', unsupported: 'This server does not support project sync. Update the server.', import: 'Legacy migration results', migrationRunning: 'Migrating legacy projects automatically…', migrationRetry: 'Retrying legacy project migration automatically. Original records are kept.', importDone: 'Migration finished. {count} items were skipped or kept their cloud assignment.' })
-    Object.assign(PROJECTS_COPY.zh, { importReason_cloud_membership_kept: '已保留云端归属', importReason_project_unavailable: '项目已不可用', importReason_conversation_unavailable: '对话已删除或不属于当前账号', importReason_invalid_date: '创建日期无效', importReason_invalid_local_data: '本机记录损坏或格式无效', importReason_unknown: '此项未导入', moreResults: '查看更多' })
-    Object.assign(PROJECTS_COPY.en, { importReason_cloud_membership_kept: 'Cloud assignment kept', importReason_project_unavailable: 'Project unavailable', importReason_conversation_unavailable: 'Conversation deleted or owned by another account', importReason_invalid_date: 'Invalid creation date', importReason_invalid_local_data: 'Invalid local record', importReason_unknown: 'Item not imported', moreResults: 'Show more' })
+    Object.assign(PROJECTS_COPY.zh, { pending: '正在保存或加载…', offline: '项目暂未更新，网络恢复或窗口重新激活时会再次读取。', auth_required: '请重新登录以同步项目', unsupported: '当前服务不支持项目同步，请升级服务端。', import: '旧版项目迁移结果', migrationRunning: '正在自动迁移旧版项目…', migrationRetry: '旧版项目暂未迁移，正在自动重试。原记录已保留。', importDone: '迁移完成，{count} 项未迁移或保留了云端归属。' })
+    Object.assign(PROJECTS_COPY.en, { pending: 'Saving or loading…', offline: 'Projects are not up to date. They reload when the network or this window comes back.', auth_required: 'Sign in again to sync projects.', unsupported: 'This server does not support project sync. Update the server.', import: 'Legacy migration results', migrationRunning: 'Migrating legacy projects automatically…', migrationRetry: 'Retrying legacy project migration automatically. Original records are kept.', importDone: 'Migration finished. {count} items were skipped or kept their cloud assignment.' })
+    Object.assign(PROJECTS_COPY.zh, { importReason_not_owned: '当前账号在旧项目中没有对话，未导入', importReason_cloud_membership_kept: '已保留云端归属', importReason_conversation_unavailable: '对话已删除或不属于当前账号', importReason_invalid_local_data: '本机记录损坏或格式无效', importReason_unknown: '此项未导入', moreResults: '查看更多' })
+    Object.assign(PROJECTS_COPY.en, { importReason_not_owned: 'No conversation in this legacy project belongs to this account', importReason_cloud_membership_kept: 'Cloud assignment kept', importReason_conversation_unavailable: 'Conversation deleted or owned by another account', importReason_invalid_local_data: 'Invalid local record', importReason_unknown: 'Item not imported', moreResults: 'Show more' })
     /** Server projections own project data; local keys remain import-only. */
     function createChatProjects() {
       const empty = () => ({ projects: [], assignments: {} })
-      let state = { scope: undefined, epoch: undefined, ...empty(), expanded: {}, rows: {}, assigning: new Set(), editor: null, phase: 'idle', error: null, busy: false, revision: '0', connection: 'connecting', migrationAvailable: false, migrationPhase: 'idle', migrationResult: null, migrationDetails: [], search: { query: '', items: [], phase: 'idle', nextCursor: null } }
+      let state = { scope: undefined, epoch: undefined, ...empty(), expanded: {}, rows: {}, assigning: new Set(), editor: null, phase: 'idle', error: null, busy: false, revision: '0', connection: 'live', migrationAvailable: false, migrationPhase: 'idle', migrationResult: null, migrationDetails: [], search: { query: '', items: [], phase: 'idle', nextCursor: null } }
       const listeners = new Set()
       let readPending, reading = false, disposed = false
       let generation = 0, searchRequest = 0
@@ -394,10 +394,10 @@ window.__ModuleLoader__.load({
           publish({ search: { query, items, phase: 'ready', nextCursor: page.nextCursor } })
         } catch { if (same(scope, epoch) && request === searchRequest) publish({ search: { ...previous, query, phase: 'error' } }) }
       }
-      const action = async (operation, requestId) => {
+      const action = async operation => {
         const scope = state.scope, epoch = state.epoch
         if (!scope || !Number.isSafeInteger(epoch)) throw new Error('Project identity unavailable.')
-        const result = await window.dshEnterpriseChat.projectAction({ ...operation, request_id: requestId || crypto.randomUUID() }, epoch)
+        const result = await window.dshEnterpriseChat.projectAction(operation, epoch)
         if (!same(scope, epoch) || result.epoch !== epoch) throw new Error('Project identity changed.')
         await read()
         return result
@@ -408,9 +408,6 @@ window.__ModuleLoader__.load({
         if (!raw || raw.length > 4 * 1024 * 1024) throw new Error('Invalid legacy project data.')
         const data = JSON.parse(raw)
         if (!data || !Array.isArray(data.projects) || !data.assignments || typeof data.assignments !== 'object' || Array.isArray(data.assignments)) throw new Error('Invalid legacy project data.')
-        const sourceKey = 'desktop.chatProjects.importSource.v1:' + scope
-        let source = window.localStorage.getItem(sourceKey)
-        if (!source) { source = crypto.randomUUID(); window.localStorage.setItem(sourceKey, source) }
         let skipped = 0
         const details = []
         const projects = data.projects.flatMap((project, index) => {
@@ -421,17 +418,20 @@ window.__ModuleLoader__.load({
           if (!validId(chat_id) || chat_id === 'new' || typeof legacy_project_id !== 'string') { skipped++; details.push({ id: chat_id, status: 'invalid_local_data' }); return [] }
           return [{ chat_id, legacy_project_id }]
         })
-        const submit = async (projects, memberships) => {
-          if (!same(scope, epoch)) throw new Error('Project identity changed.')
-          const result = await action({ operation: 'import', source_client_id: source, projects, memberships }, crypto.randomUUID())
-          skipped += result.outcome.items?.filter(item => item.status !== 'imported').length || 0
-          details.push(...(result.outcome.items || []).filter(item => item.status !== 'imported').map(item => ({ id: item.chat_id || item.legacy_id || '', status: item.status })))
-          if (same(scope, epoch)) publish({ migrationDetails: [...details] })
-        }
-        for (let offset = 0; offset < projects.length; offset += 100) await submit(projects.slice(offset, offset + 100), [])
-        for (let offset = 0; offset < memberships.length; offset += 500) await submit([], memberships.slice(offset, offset + 500))
+        // One request carries the whole record (server cap 100 projects / 2000 memberships).
+        // The server imports a project only when this account owns one of its conversations,
+        // under a deterministic id, so a retry after a lost response creates no duplicate.
+        for (const extra of projects.slice(100)) { skipped++; details.push({ id: extra.legacy_id, status: 'invalid_local_data' }) }
+        const kept = new Set(projects.slice(0, 100).map(project => project.legacy_id))
+        const keptMembers = memberships.filter(member => kept.has(member.legacy_project_id))
+        for (const extra of keptMembers.slice(2000)) { skipped++; details.push({ id: extra.chat_id, status: 'invalid_local_data' }) }
+        if (!same(scope, epoch)) throw new Error('Project identity changed.')
+        const result = await action({ operation: 'import', projects: projects.slice(0, 100), memberships: keptMembers.slice(0, 2000) })
+        const reported = (result.outcome.items || []).filter(item => !['imported', 'already_imported'].includes(item.status))
+        skipped += reported.length
+        details.push(...reported.map(item => ({ id: item.chat_id || item.legacy_id || '', status: item.status })))
         if (!same(scope, epoch)) return
-        window.localStorage.setItem('desktop.chatProjects.importDone.v1:' + scope, source)
+        window.localStorage.setItem('desktop.chatProjects.importDone.v1:' + scope, '1')
         publish({ migrationAvailable: false, migrationPhase: 'done', migrationResult: skipped, migrationDetails: details })
       }
       const migrate = async () => {
@@ -459,7 +459,7 @@ window.__ModuleLoader__.load({
           let migrationAvailable = false
           try { migrationAvailable = !!scope && window.localStorage.getItem('desktop.chatProjects.v1:' + scope) !== null && !window.localStorage.getItem('desktop.chatProjects.importDone.v1:' + scope) }
           catch { /* Import availability cannot block server projects. Original keys remain intact. */ }
-          publish({ scope, epoch, ...empty(), expanded: {}, rows: {}, assigning: new Set(), editor: null, busy: false, phase: scope ? 'loading' : 'idle', error: null, revision: '0', connection: 'connecting', migrationAvailable, migrationPhase: 'idle', migrationResult: null, migrationDetails: [], search: { query: '', items: [], phase: 'idle', nextCursor: null } })
+          publish({ scope, epoch, ...empty(), expanded: {}, rows: {}, assigning: new Set(), editor: null, busy: false, phase: scope ? 'loading' : 'idle', error: null, revision: '0', connection: 'live', migrationAvailable, migrationPhase: 'idle', migrationResult: null, migrationDetails: [], search: { query: '', items: [], phase: 'idle', nextCursor: null } })
           if (scope) void read()
         },
         async assign(id, projectId) {
@@ -492,7 +492,7 @@ window.__ModuleLoader__.load({
           void load(id)
         },
         edit(mode, id, title) {
-          if (mode !== 'import' && state.phase === 'ready') publish({ editor: { mode, id, title, requestId: crypto.randomUUID() }, error: null })
+          if (mode !== 'import' && state.phase === 'ready') publish({ editor: { mode, id, title, draftProjectId: crypto.randomUUID() }, error: null })
         },
         close() { if (!state.busy) publish({ editor: null, error: null }) },
         showImportResults() { publish({ editor: { mode: 'import', done: true, limit: 50 }, error: null }) },
@@ -506,11 +506,12 @@ window.__ModuleLoader__.load({
           try {
             let operation
             {
-              if (editor.mode === 'create') operation = { operation: 'create', name: trimmed, ...(editor.id ? { chat_id: editor.id } : {}) }
+              // draftProjectId is minted once per dialog, so retrying a create after a lost response returns the same project.
+              if (editor.mode === 'create') operation = { operation: 'create', project_id: editor.draftProjectId, name: trimmed, ...(editor.id ? { chat_id: editor.id } : {}) }
               else if (editor.mode === 'rename') operation = { operation: 'rename', project_id: editor.id, name: trimmed }
               else if (editor.mode === 'remove') operation = { operation: 'delete', project_id: editor.id }
               if (!operation) return
-              const result = await action(operation, editor.requestId)
+              const result = await action(operation)
               if (result.outcome.project_id && operation.operation === 'create') { publish({ expanded: { ...state.expanded, [result.outcome.project_id]: true } }); void load(result.outcome.project_id) }
             }
             if (same(scope, epoch)) publish({ editor: null, error: null })
@@ -537,7 +538,7 @@ window.__ModuleLoader__.load({
           placeholder: t('nameHelp'), 'aria-label': t('name'), 'data-modal-autofocus': true, onChange: event => setName(event.target.value) })),
         state.busy && React.createElement('p', { role: 'status' }, t('pending')),
         request.mode === 'import' && request.done && React.createElement('p', { role: 'status' }, t('importDone', { count: state.migrationResult })),
-        request.mode === 'import' && state.migrationDetails.length > 0 && React.createElement('ul', null, ...state.migrationDetails.slice(0, request.limit || 50).map((item, index) => React.createElement('li', { key: index }, item.id + ': ' + t('importReason_' + (['cloud_membership_kept', 'project_unavailable', 'conversation_unavailable', 'invalid_date', 'invalid_local_data'].includes(item.status) ? item.status : 'unknown'))))),
+        request.mode === 'import' && state.migrationDetails.length > 0 && React.createElement('ul', null, ...state.migrationDetails.slice(0, request.limit || 50).map((item, index) => React.createElement('li', { key: index }, item.id + ': ' + t('importReason_' + (['not_owned', 'cloud_membership_kept', 'conversation_unavailable', 'invalid_local_data'].includes(item.status) ? item.status : 'unknown'))))),
         request.mode === 'import' && state.migrationDetails.length > (request.limit || 50) && React.createElement(Button, { type: 'button', variant: 'outline', onClick: store.moreImportResults }, t('moreResults')),
         state.error && React.createElement('p', { role: 'alert' }, t(state.error))))
     }
@@ -704,6 +705,25 @@ window.__ModuleLoader__.load({
       const projects = createChatProjects()
       let openRequest = 0
       let active = false, revision = 0, historyRequest = 0, historyDirty = false
+      let startupStateRetryTimer, startupStateRetryCount = 0
+      // The page can report navigation after the first snapshot. Retry only while the
+      // account is connected and navigation is still absent. An object, including an
+      // empty entry list, means the report has already landed.
+      const startupStateRetryDelays = [250, 1000, 3000]
+      const cancelStartupStateRetry = () => {
+        if (startupStateRetryTimer === undefined) return
+        window.clearTimeout(startupStateRetryTimer)
+        startupStateRetryTimer = undefined
+      }
+      const scheduleStartupStateRetry = () => {
+        if (!active || startupStateRetryTimer !== undefined || startupStateRetryCount >= startupStateRetryDelays.length) return
+        const delay = startupStateRetryDelays[startupStateRetryCount]
+        startupStateRetryCount += 1
+        startupStateRetryTimer = window.setTimeout(() => {
+          startupStateRetryTimer = undefined
+          void readEnterpriseState(true)
+        }, delay)
+      }
       const publish = (patch) => { value = { ...value, ...patch }; listeners.forEach(fn => fn()) }
       const select = (mode, landingMorph) => {
         if (mode === 'chat' && !value.connected) {
@@ -776,14 +796,28 @@ if (clearHistory) { historyRequest++; openRequest++; historyDirty = false; delet
         if (signedIn) window.dispatchEvent(new CustomEvent('dsh-desktop:close-settings'))
         if (next.connected && next.phase === 'ready' && (refresh || identityChanged || signedIn || conversationChanged || becameReady)) void refreshHistory()
       }
-      const sync = async () => {
+      const readEnterpriseState = async (recover) => {
         const request = ++revision
+        cancelStartupStateRetry()
+        if (!recover) startupStateRetryCount = startupStateRetryDelays.length
         try {
           const next = await window.dshEnterpriseChat?.state()
-          if (!active || request !== revision || !next) return
-          applyState(next, true)
-        } catch { /* A missed focus read must not paint the reconnect page. */ }
+          if (!active || request !== revision) return
+          if (!next) {
+            if (recover) scheduleStartupStateRetry()
+            return
+          }
+          const pendingNavigation = recover && next.connected === true && (next.navigation == null || typeof next.navigation !== 'object')
+          const refreshHistory = !recover || startupStateRetryCount === 0
+          if (!pendingNavigation) startupStateRetryCount = startupStateRetryDelays.length
+          applyState(next, refreshHistory)
+          if (pendingNavigation) scheduleStartupStateRetry()
+        } catch {
+          // A missed focus or account read must not paint the reconnect page.
+          if (active && request === revision && recover) scheduleStartupStateRetry()
+        }
       }
+      const sync = () => { void readEnterpriseState(false) }
       // One guarded read. It does not refresh history; sync() owns that on focus and visibility.
       const readHostState = async () => {
         const request = ++revision
@@ -847,6 +881,8 @@ if (clearHistory) { historyRequest++; openRequest++; historyDirty = false; delet
         },
         start() {
           active = true
+          startupStateRetryCount = 0
+          cancelStartupStateRetry()
           const account = () => { void sync() }
           const visibility = () => { if (!document.hidden) void sync() }
 // Older workspace hosts omit this registration. Failing here used to skip
@@ -901,6 +937,8 @@ if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
           const unsubscribeSessions = ctx.sessions.list.subscribe(workState)
           const unsubscribeChat = window.dshEnterpriseChat?.subscribe?.((next) => {
             revision++
+            startupStateRetryCount = startupStateRetryDelays.length
+            cancelStartupStateRetry()
             applyState(next)
           })
           const unsubscribeProjects = window.dshEnterpriseChat?.onProjectsChanged?.(next => {
@@ -916,9 +954,12 @@ if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
           window.addEventListener('dsh-desktop:settings-surface', settingsSurface)
           window.addEventListener('focus', sync)
           document.addEventListener('visibilitychange', visibility)
-          void sync()
+          void readEnterpriseState(true)
           return () => {
-active = false; deletion.reset(); projects.setScope(undefined); revision++; historyRequest++; unsubscribe(); unsubscribeSessions(); unsubscribeWork(); unsubscribeChat?.(); unsubscribeProjects?.()
+active = false
+startupStateRetryCount = startupStateRetryDelays.length
+cancelStartupStateRetry()
+deletion.reset(); projects.setScope(undefined); revision++; historyRequest++; unsubscribe(); unsubscribeSessions(); unsubscribeWork(); unsubscribeChat?.(); unsubscribeProjects?.()
             window.removeEventListener('dsh-desktop:enterprise-account-changed', account)
             disposeNavigation()
             if (revealWorkSession && ctx.uiWorkspace.openSession === revealWorkSession) ctx.uiWorkspace.openSession = originalOpenSession
@@ -1494,6 +1535,11 @@ active = false; deletion.reset(); projects.setScope(undefined); revision++; hist
       const squarePage = /^\/square\/?$/u.test(state.path ?? '')
       const usesModuleFrame = squarePage || /^\/(?:knowledge|channel)(?:\/|$)|^\/(?:apps|skills|capabilities)\/?$/u.test(state.path ?? '')
       React.useEffect(() => navigation.start(), [navigation])
+      React.useEffect(() => {
+        if (mode !== 'work') return
+        // Start the enterprise tool handshake before the plus menu opens it.
+        fetch('/api/enterprise.work-tools', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operation: 'catalog' }) }).catch(() => {})
+      }, [mode])
       const panel = React.useRef(null)
       const workPanel = React.useRef(null)
       const surfacePresenter = React.useRef(null)

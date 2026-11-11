@@ -22,6 +22,7 @@ it('archives the unpacked Windows application without relying on the platform ta
   await mkdir(path.join(source, 'resources'), { recursive: true })
   await writeFile(path.join(source, 'BISHENG.exe'), 'executable')
   await writeFile(path.join(source, 'resources', 'app.asar'), 'archive')
+  await writeFile(path.join(source, 'resources', 'app-update.yml'), 'provider: generic\n')
 
   const result = await archiveWindowsUnpacked(source, archive)
 
@@ -33,6 +34,22 @@ it('archives the unpacked Windows application without relying on the platform ta
     .resolves.toBe('executable')
   await expect(readFile(path.join(extracted, 'win-unpacked', 'resources', 'app.asar'), 'utf8'))
     .resolves.toBe('archive')
+  await expect(readFile(path.join(extracted, 'win-unpacked', 'resources', 'app-update.yml'), 'utf8'))
+    .resolves.toBe('provider: generic\n')
+})
+
+it('rejects an unpacked application that cannot locate its update feed', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'dsh-windows-archive-update-'))
+  cleanups.push(root)
+  const source = path.join(root, 'win-unpacked')
+  const archive = path.join(root, 'win-unpacked.tar.gz')
+  await mkdir(path.join(source, 'resources'), { recursive: true })
+  await writeFile(path.join(source, 'BISHENG.exe'), 'executable')
+
+  await expect(archiveWindowsUnpacked(source, archive)).rejects.toThrow('resources/app-update.yml')
+
+  await writeFile(path.join(source, 'resources', 'app-update.yml'), '')
+  await expect(archiveWindowsUnpacked(source, archive)).rejects.toThrow('resources/app-update.yml')
 })
 
 it('rejects a missing unpacked application before creating an archive', async () => {

@@ -93,36 +93,27 @@ try {
     app.whenReady().then(async()=>{
       const longTitle = '用于验收长标题滚动的云端对话 · A cloud conversation with a very long title'
       const rows = Array.from({length:4},(_,i)=>({chat_id:'cloud-'+i,name:i===0?longTitle:'云端会话 '+i,flow_type:15,update_time:new Date(Date.now()-(5+i)*60_000).toISOString()}))
-      let deleted = new Set(), attempts = new Map(), revision = 0
+      let deleted = new Set(), attempts = new Map()
       let projects = [], memberships = {}
-      const subscribers = new Set(), receipts = new Map()
-      const frame = (res,event) => res.write('event: '+event+'\\ndata: '+JSON.stringify({protocol_version:1,revision:String(revision),notification:'live'})+'\\n\\n')
-      const broadcast = () => {for(const res of subscribers) frame(res,'changed')}
       const server = createServer(async (req,res)=>{
         res.setHeader('content-type',req.url.startsWith('/api/')?'application/json':'text/html')
         const url = new URL(req.url,'http://fixture')
         if(url.pathname.startsWith('/api/v1/chat/projects')) {
           assert.ok(req.headers.cookie?.includes('fixture=synthetic'))
           const reply = data => res.end(JSON.stringify({status_code:200,data}))
-          if(url.pathname.endsWith('/events')) {
-            res.setHeader('content-type','text/event-stream');res.setHeader('cache-control','no-store')
-            subscribers.add(res); frame(res,'ready')
-            const heartbeat=setInterval(()=>frame(res,'heartbeat'),15000)
-            res.on('close',()=>{subscribers.delete(res);clearInterval(heartbeat)})
-            return
-          }
-          if(url.pathname.endsWith('/snapshot')) return reply({protocol_version:1,identity:{user_id:7,tenant_id:1},revision:String(revision),projects,memberships:Object.entries(memberships).map(([chat_id,project_id])=>({chat_id,project_id})),next_cursor:null})
+          if(url.pathname.endsWith('/snapshot')) return reply({identity:{user_id:7,tenant_id:1},projects,memberships:Object.entries(memberships).map(([chat_id,project_id])=>({chat_id,project_id}))})
           if(url.pathname.endsWith('/conversations')) {
             const list=rows.filter(row=>!deleted.has(row.chat_id)&&memberships[row.chat_id]&&(url.searchParams.get('project_id')?memberships[row.chat_id]===url.searchParams.get('project_id'):row.name.toLowerCase().includes((url.searchParams.get('query')||'').toLowerCase())))
-            return reply({data:list,total:list.length,revision:String(revision),next_cursor:null})
+            return reply({data:list,total:list.length,next_cursor:null})
           }
           if(url.pathname.endsWith('/actions')) {
             const chunks=[];for await(const chunk of req) chunks.push(chunk)
-            const action=JSON.parse(Buffer.concat(chunks).toString()), previous=receipts.get(action.request_id)
-            if(previous) return reply({...previous,revision:String(revision),replayed:true})
+            const action=JSON.parse(Buffer.concat(chunks).toString())
             const outcome={}
             if(action.operation==='create') {
-              const project={id:randomUUID(),name:action.name};projects.unshift(project);outcome.project_id=project.id
+              // Client-generated id: a retried create returns the existing project.
+              if(!projects.some(project=>project.id===action.project_id)) projects.unshift({id:action.project_id,name:action.name})
+              outcome.project_id=action.project_id
               if(action.chat_id) memberships[action.chat_id]=project.id
             } else if(action.operation==='rename') projects=projects.map(project=>project.id===action.project_id?{...project,name:action.name}:project)
             else if(action.operation==='delete') {
@@ -132,9 +123,7 @@ try {
               if(action.project_id) memberships[action.chat_id]=action.project_id
               else delete memberships[action.chat_id]
             } else throw new Error('Unexpected fixture operation')
-            revision++;broadcast()
-            const result={revision:String(revision),applied_revision:String(revision),replayed:false,notification:'live',outcome}
-            receipts.set(action.request_id,result);return reply(result)
+            return reply({outcome})
           }
         }
         if(req.url.startsWith('/api/v1/chat/list')) return res.end(JSON.stringify({status_code:200,data:rows.filter(row=>!deleted.has(row.chat_id)&&!row.chat_id.startsWith('project-'))}))
@@ -143,7 +132,7 @@ try {
           const id = req.url.split('/').at(-1), count = (attempts.get(id)||0)+1
           attempts.set(id,count)
           if(count===1) return res.end(JSON.stringify({status_code:500}))
-          deleted.add(id);delete memberships[id];revision++;broadcast();return res.end(JSON.stringify({status_code:200}))
+          deleted.add(id);delete memberships[id];return res.end(JSON.stringify({status_code:200}))
         }
         res.end('<!doctype html><body>Isolated cloud conversation</body>')
       })
@@ -158,6 +147,8 @@ try {
         return method==='state'?host.snapshot():method==='present'?host.present(owner,args[0]):method==='capture'?host.capture(owner):host[method](...args)
       })
       const run=code=>owner.webContents.executeJavaScript(code)
+      // No push channel: another client's edit appears when a Desktop window regains focus.
+      const focusAgain=async()=>{await new Promise(r=>setTimeout(r,1100));app.emit('browser-window-focus')}
       const wait=async check=>{for(let i=0;i<200;i++){if(await check())return;await new Promise(r=>setTimeout(r,20))}console.error('Fixture timeout',await run('JSON.stringify({hidden:document.hidden,focused:document.hasFocus(),active:document.activeElement.outerHTML.slice(0,220),dialog:document.querySelector("[role=dialog]")?.outerHTML.slice(0,1500),visibility:document.querySelector("[role=dialog]")?.checkVisibility({checkVisibilityCSS:true}),overlay:[...document.querySelectorAll("[data-dsh-chat-history-preview],[role=menu]")].map(node=>({bounds:node.getBoundingClientRect().toJSON(),visible:node.checkVisibility({opacityProperty:true}),pending:!!node.closest("[data-dsh-native-overlay-pending]")})),backing:!!document.querySelector("[data-dsh-native-frame]"),projects:fixture.navigation.projects.snapshot()})'));throw new Error('Native cloud deletion timed out')}
       const click=async selector=>{await run('document.querySelector('+JSON.stringify(selector)+').click()');await new Promise(r=>setTimeout(r,60))}
       const menu=async label=>{await run('[...document.querySelectorAll("[role=menuitem]")].find(node=>node.textContent==='+JSON.stringify(label)+').click()');await new Promise(r=>setTimeout(r,60))}
@@ -181,7 +172,7 @@ try {
       const firstProject=projectSubmenu+' > button:nth-of-type(2)'
       const moveOut=projectSubmenu+' > button:has(.dshChatProjectMenuRemove)'
       const submenuRows=()=>run('[...document.querySelectorAll(".dshCloudHistoryMenu [role=menu] > button")].map(row=>[row.textContent,getComputedStyle(row,"::before").height==="1px"])')
-      const webAction=async operation=>{const response=await fetch(origin+'/api/v1/chat/projects/actions',{method:'POST',headers:{'Content-Type':'application/json',Cookie:'fixture=synthetic'},body:JSON.stringify({...operation,request_id:randomUUID()})});assert.equal((await response.json()).status_code,200)}
+      const webAction=async operation=>{const response=await fetch(origin+'/api/v1/chat/projects/actions',{method:'POST',headers:{'Content-Type':'application/json',Cookie:'fixture=synthetic'},body:JSON.stringify(operation.operation==='create'?{project_id:randomUUID(),...operation}:operation)});assert.equal((await response.json()).status_code,200)}
       try {
         await owner.loadFile(${JSON.stringify(join(dir,'index.html'))})
         owner.showInactive()
@@ -233,7 +224,7 @@ try {
           const testLongMenu=language==='en'&&dark
           if(testLongMenu) {
             projects.push(...Array.from({length:18},(_,i)=>({id:randomUUID(),name:'Additional project '+i})))
-            revision++;broadcast()
+            await focusAgain()
             await wait(()=>run('document.querySelectorAll("[data-chat-project]").length===19'))
             await run('document.querySelector("aside").style.overflow="auto";document.querySelector(".dshRecentHistory .dshHistoryRow").scrollIntoView({block:"end"})')
           }
@@ -268,7 +259,7 @@ try {
           assert.equal(await run('document.querySelector("[role=dialog]")===null'),true,'Selecting an existing project files the conversation directly')
           assert.equal(await run('document.querySelectorAll("[data-history-kind=chat]").length'),4,'Project membership does not duplicate a conversation')
           if(testLongMenu) {
-            projects=projects.filter(project=>project.id===projectId);revision++;broadcast()
+            projects=projects.filter(project=>project.id===projectId);await focusAgain()
             await wait(()=>run('document.querySelectorAll("[data-chat-project]").length===1'))
             await run('document.querySelector("aside").style.overflow=""')
           }
@@ -347,14 +338,14 @@ try {
         await wait(()=>run('document.querySelector("[data-chat-project]").textContent.includes("Old project conversation")'))
         const changedAt=Date.now()
         await webAction({operation:'rename',project_id:projectId,name:'Renamed from Web'})
+        await focusAgain()
         await wait(()=>run('document.querySelector("[data-chat-project]").textContent.includes("Renamed from Web")'))
         const syncLatencyMs=Date.now()-changedAt
-        assert.ok(syncLatencyMs<2000,'Open Desktop updates without refresh/focus within the healthy target')
         await run('fixture.navigation.projects.edit("rename",'+JSON.stringify(projectId)+',"Renamed from Web");fixture.navigation.projects.confirm("Renamed from Desktop")')
         const webSnapshot=await (await fetch(origin+'/api/v1/chat/projects/snapshot',{headers:{Cookie:'fixture=synthetic'}})).json()
         assert.equal(webSnapshot.data.projects[0].name,'Renamed from Desktop','Desktop changes are visible to a separate HTTP client')
-        for(const client of subscribers) client.destroy()
-        projects[0].name='Recovered after disconnect';revision++
+        projects[0].name='Recovered after disconnect'
+        await focusAgain()
         await wait(()=>run('document.querySelector("[data-chat-project]").textContent.includes("Recovered after disconnect")'))
         await webAction({operation:'assign',chat_id:'project-created',project_id:null})
         rows.pop()
@@ -391,7 +382,7 @@ try {
           await wait(()=>view.getVisible())
           cases++
         }
-        const result={cases,projectCases:4,projectPersistence:true,serverMembership:true,bidirectionalSync:true,reconnect:true,olderProjectHistory:true,syncLatencyMs,deleted:deleted.size,attempts:[...attempts.values()],platform:process.platform,electron:process.versions.electron,scope:'production UI primitives, project/history controllers, native Chat view and authenticated loopback fixture; no production deployment'}
+        const result={cases,projectCases:4,projectPersistence:true,serverMembership:true,bidirectionalSync:true,focusRefresh:true,olderProjectHistory:true,syncLatencyMs,deleted:deleted.size,attempts:[...attempts.values()],platform:process.platform,electron:process.versions.electron,scope:'production UI primitives, project/history controllers, native Chat view and authenticated loopback fixture; no production deployment'}
         if(${JSON.stringify(output || '')}) {await mkdir(${JSON.stringify(output || '')},{recursive:true});await writeFile(${JSON.stringify(join(output || dir,'result.json'))},JSON.stringify(result,null,2));await writeFile(${JSON.stringify(join(output || dir,'completed.png'))},(await owner.webContents.capturePage()).toPNG())}
         console.log(JSON.stringify(result))
       } finally {host.dispose();owner.destroy();server.closeAllConnections();await new Promise(resolve=>server.close(resolve))}
