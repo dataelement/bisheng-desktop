@@ -94,7 +94,7 @@ function cardButtons(card) {
   return buttons.map(button => button.props.children.flat().filter(child => typeof child === 'string').join(''))
 }
 
-function interactiveMarket(service, tab = 'market', clipboard, enterprise) {
+function interactiveMarket(service, tab = 'market', clipboard, enterpriseSnapshot) {
   let renderMarket
   let stateIndex = 0
   const state = []
@@ -111,7 +111,7 @@ function interactiveMarket(service, tab = 'market', clipboard, enterprise) {
       useRef: () => ({ current: null }),
     useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot()
   }
-  vm.runInNewContext(code, { window: { sessionStorage, __dshEnterpriseWorkbenchSnapshot: enterprise, localStorage: enabledStorage, navigator: clipboard && { clipboard }, __ModuleLoader__: { load({ factory }) {
+  vm.runInNewContext(code, { window: { sessionStorage, localStorage: enabledStorage, navigator: clipboard && { clipboard }, ...(enterpriseSnapshot ? { __dshEnterpriseWorkbenchSnapshot: enterpriseSnapshot } : {}), __ModuleLoader__: { load({ factory }) {
     renderMarket = factory(name => name === 'react' ? testReact : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null, Toast: function Toast() {} }).Market
   } } }, document, setTimeout, clearTimeout, AbortController })
   const find = (node, predicate) => {
