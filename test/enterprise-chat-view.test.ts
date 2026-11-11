@@ -9,6 +9,8 @@ const fake = vi.hoisted(() => ({ views: [] as any[], sessions: [] as any[], hang
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events')
   return {
+    // chat-view re-reads projects on browser-window-focus.
+    app: new EventEmitter(),
     session: { fromPartition: () => {
       const isolated = { webRequest: { onCompleted: vi.fn() }, fetch: vi.fn(async (url: string) => url.endsWith('usage-summary') || url.endsWith('quota/effective') ? usageResponse(url) : ({ ok: true, json: async () => ({ data: [{ chat_id: 'cloud-a', name: 'Cloud A', flow_type: 15, update_time: '2026-10-16' }] }) })), cookies: { set: vi.fn(async () => {}) }, clearStorageData: vi.fn(async () => {}), closeAllConnections: vi.fn(async () => {}), setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() }
       fake.sessions.push(isolated)
@@ -1311,7 +1313,9 @@ describe('cloud conversation deletion', () => {
       const epoch = f.host.snapshot().epoch
       fake.sessions[0].fetch.mockResolvedValueOnce(new Response(JSON.stringify({ status_code: 200 })))
       expect(await f.host.remove('cloud-a', epoch)).toEqual({ epoch })
-      expect(fake.sessions[0].fetch).toHaveBeenLastCalledWith('https://enterprise.example/api/v1/chat/cloud-a', expect.objectContaining({ method: 'DELETE', redirect: 'error', signal: expect.any(AbortSignal) }))
+      expect(fake.sessions[0].fetch).toHaveBeenCalledWith('https://enterprise.example/api/v1/chat/cloud-a', expect.objectContaining({ method: 'DELETE', redirect: 'error', signal: expect.any(AbortSignal) }))
+      // With no push channel, the committed delete is followed by a project snapshot re-read.
+      await vi.waitFor(() => expect(fake.sessions[0].fetch).toHaveBeenLastCalledWith('https://enterprise.example/api/v1/chat/projects/snapshot', expect.anything()))
       expect(fake.views[0].webContents.loadURL).toHaveBeenLastCalledWith('https://enterprise.example/workspace/c/new?embed=dsh&dshTheme=dark')
       await expect(f.host.open('cloud-a')).rejects.toThrow('current Chat history')
       // A lagging/in-flight list response cannot restore a deleted row or its grant.
