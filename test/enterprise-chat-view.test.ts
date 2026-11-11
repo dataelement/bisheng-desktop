@@ -1696,17 +1696,18 @@ describe('cloud conversation activity', () => {
     } finally { f.host.dispose() }
   })
 
+  // Only the subframe case leaves the main frame, so every other case reaches the path and list checks.
   it.each([
-    ['a subframe', { ids: ['cloud-x'], path: '/workspace/c/cloud-a' }, {}],
-    ['another path', { ids: ['cloud-x'], path: '/workspace/c/other' }, undefined],
-    ['a forged identity', { ids: ['../cloud-x'], path: '/workspace/c/cloud-a' }, undefined],
-    ['a non-array', { ids: 'cloud-x', path: '/workspace/c/cloud-a' }, undefined],
-    ['an oversized list', { ids: Array.from({ length: 101 }, (_, i) => `cloud-${i}`), path: '/workspace/c/cloud-a' }, undefined]
-  ])('ignores a report from %s and keeps the previous list', async (_label, input, frame) => {
-    const { f, report } = await ready()
+    ['a subframe', { ids: ['cloud-x'], path: '/workspace/c/cloud-a' }, 'subframe'],
+    ['another path', { ids: ['cloud-x'], path: '/workspace/c/other' }, 'main'],
+    ['a forged identity', { ids: ['../cloud-x'], path: '/workspace/c/cloud-a' }, 'main'],
+    ['a non-array', { ids: 'cloud-x', path: '/workspace/c/cloud-a' }, 'main'],
+    ['an oversized list', { ids: Array.from({ length: 101 }, (_, i) => `cloud-${i}`), path: '/workspace/c/cloud-a' }, 'main']
+  ])('ignores a report from %s and keeps the previous list', async (_label, input, sender) => {
+    const { f, wc, report } = await ready()
     try {
       report({ ids: ['cloud-a'], path: '/workspace/c/cloud-a' })
-      report(input, frame)
+      report(input, sender === 'main' ? wc.mainFrame : {})
       expect(f.host.snapshot().running).toEqual(['cloud-a'])
     } finally { f.host.dispose() }
   })
