@@ -39,7 +39,7 @@ async function main() {
   }
   const child = spawn(process.execPath, [entry, ...process.argv.slice(2)], {
     cwd: root,
-    env: { ...systemProxyEnvironment(), DSH_HOME: home, DSH_WEB_RUNTIME: '1' },
+    env: { ...systemProxyEnvironment(), PATH: path.join(root, 'node') + path.delimiter + (process.env.PATH ?? ''), DSH_HOME: home, DSH_WEB_RUNTIME: '1' },
     stdio: 'inherit'
   })
   child.on('error', error => {
