@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module'
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import path, { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { create } from 'tar'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -38,7 +38,9 @@ describe('community npm packages', () => {
     const canonical = await realpath(root)
     const require = createRequire(join(isolated.entry, 'package.json'))
     for (const name of ['pnpm', 'tar', '@deepseek-ai/dsh-app-boot', '@deepseek-ai/cordis-plugin-group']) {
-      expect(require.resolve(name).startsWith(canonical)).toBe(true)
+      const resolved = await realpath(require.resolve(name))
+      const relative = path.relative(canonical, resolved)
+      expect(relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative), resolved).toBe(false)
     }
   })
 

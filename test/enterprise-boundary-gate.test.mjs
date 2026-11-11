@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { test, onTestFinished } from 'vitest'
@@ -20,6 +20,7 @@ function fixture(t, { baseline = true } = {}) {
   git('config', 'user.name', 'Boundary Fixture')
   git('config', 'user.email', 'boundary@example.invalid')
   git('config', 'core.filemode', 'true')
+  git('config', 'core.autocrlf', 'false')
   put('.gitignore', 'node_modules/\ntmp/\n.tmp/\n')
   put('src/host/core.js', 'upstream\n')
   put('patches/sdk.patch', 'reviewed\n')
@@ -29,8 +30,42 @@ function fixture(t, { baseline = true } = {}) {
   git('commit', '-m', 'initial reviewed baseline')
   if (baseline) git('update-ref', 'refs/remotes/upstream/bisheng-adaptor', 'HEAD')
   const check = () => checkBoundary({ cwd, upstreamBase: 'upstream/bisheng-adaptor' })
-  return { cwd, git, put, check }
+  // Git's index supports mode/type and NUL-safe filenames even where the host
+  // filesystem cannot create executable bits, symlinks or newline/tab filenames.
+  const stage = (file, mode, bytes = 'staged\n') => {
+    const oid = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd, input: bytes, encoding: 'utf8' }).trim()
+    execFileSync('git', ['update-index', '-z', '--index-info'], { cwd, input: mode + ' ' + oid + '\t' + file + '\0' })
+  }
+  return { cwd, git, put, check, stage }
 }
+
+test('real CRLF Git checkout remains valid for Node CLI and Vite module imports', async t => {
+  const f = fixture(t)
+  const relative = 'scripts/verify-upstream-boundary.mjs'
+  const checkout = path.join(f.cwd, relative)
+  f.put(relative, readFileSync(script, 'utf8').replace(/\r\n/g, '\n'))
+  f.git('add', '--', relative)
+  f.git('commit', '-m', 'boundary module checkout fixture')
+  rmSync(checkout)
+  f.git('-c', 'core.autocrlf=true', 'checkout', '--', relative)
+  assert.ok(readFileSync(checkout, 'utf8').includes('\r\n'))
+  const syntax = spawnSync(process.execPath, ['--check', checkout], { encoding: 'utf8' })
+  assert.equal(syntax.status, 0, syntax.stderr)
+  const { createServer } = await import('vite')
+  const server = await createServer({
+    root: f.cwd,
+    configFile: false,
+    cacheDir: path.join(f.cwd, 'node_modules/.vite'),
+    server: { middlewareMode: true, hmr: false, watch: null },
+    appType: 'custom'
+  })
+  try {
+    const module = await server.ssrLoadModule('/' + relative)
+    assert.deepEqual(module.checkBoundary({ cwd: f.cwd, upstreamBase: 'upstream/bisheng-adaptor' }).illegalFiles, [])
+  } finally {
+    await server.close()
+  }
+})
 
 test('invalid shell-bearing explicit baseline fails without executing a shell', t => {
   const f = fixture(t)
@@ -98,7 +133,7 @@ test('upstream core synchronization passes only for identical final bytes and mo
   f.git('commit', '-m', 'enterprise branch')
   f.git('merge', '--no-edit', 'reviewed-update')
   assert.deepEqual(f.check().illegalFiles, [])
-  chmodSync(path.join(f.cwd, 'src/host/core.js'), 0o755)
+  f.stage('src/host/core.js', '100755', 'reviewed update\n')
   assert.deepEqual(f.check().illegalFiles, ['src/host/core.js'])
 })
 
@@ -121,8 +156,7 @@ test('working and staged synchronization match upstream bytes before commit', t 
 test('core symlink replacement is rejected even when target bytes match', t => {
   const f = fixture(t)
   f.put('target.txt', 'upstream\n')
-  rmSync(path.join(f.cwd, 'src/host/core.js'))
-  symlinkSync('../../target.txt', path.join(f.cwd, 'src/host/core.js'))
+  f.stage('src/host/core.js', '120000', '../../target.txt')
   assert.ok(f.check().illegalFiles.includes('src/host/core.js'))
 })
 
@@ -153,11 +187,13 @@ test('tracked temporary content fails both when staged and committed', t => {
 
 test('NUL-safe collection includes every nested untracked source and unusual filename', t => {
   const f = fixture(t)
-  const files = ['rootsecret', 'untracked-dir/deep/source.js', 'untracked-dir/ space\nand\ttab.js']
+  const files = ['rootsecret', 'untracked-dir/deep/source.js', 'untracked-dir/ space 中文.js']
   for (const file of files) f.put(file)
   assert.deepEqual(f.check().illegalFiles, [...files].sort())
   f.git('add', '--', 'untracked-dir')
-  assert.deepEqual(f.check().illegalFiles, [...files].sort())
+  const unusual = 'untracked-dir/ space\nand\ttab.js'
+  f.stage(unusual, '100644')
+  assert.deepEqual(f.check().illegalFiles, [...files, unusual].sort())
 })
 
 test('ignored node_modules/tmp and exact untracked .tmp directory stay excluded', t => {

@@ -180,9 +180,9 @@ describe('private desktop release YAML contracts', () => {
   it('keeps verify-target before native packaging and prevents packaging on target failure', async () => {
     const work = await mkdtemp(path.join(tmpdir(), 'desktop-command-'))
     try {
-      for (const executable of ['node', 'npx']) {
-        await writeFile(path.join(work, executable), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALLS"\ncase "$1" in scripts/verify/verify-target.mjs) exit "$TARGET_EXIT";; esac\n', { mode: 0o755 })
-      }
+      // Child-shell functions exercise the exact && guard without relying on a
+      // runner's execution of extensionless shebang files or its architecture.
+      const drivers = 'node() { printf "%s\\n" "$*" >> "$CALLS"; return "$TARGET_EXIT"; }; npx() { printf "%s\\n" "$*" >> "$CALLS"; return 0; };\n'
       for (const job of ['macos', 'windows-x64']) {
         const commands = jobs[job].steps.filter(step => step.run?.startsWith('node scripts/verify/verify-target.mjs'))
         expect(commands).toHaveLength(2)
@@ -193,8 +193,8 @@ describe('private desktop release YAML contracts', () => {
           for (const result of ['1', '0']) {
             const calls = path.join(work, 'calls')
             await writeFile(calls, '')
-            const run = spawnSync('bash', ['-c', command], { env: { PATH: work + path.delimiter + process.env.PATH, CALLS: calls, TARGET_EXIT: result } })
-            expect(run.status).toBe(Number(result))
+            const run = spawnSync('bash', ['-c', drivers + command], { env: { PATH: process.env.PATH, CALLS: calls, TARGET_EXIT: result }, encoding: 'utf8' })
+            expect(run.status, run.error?.message || run.stderr).toBe(Number(result))
             expect((await readFile(calls, 'utf8')).trim().split('\n')).toHaveLength(result === '1' ? 1 : 2)
           }
         }
