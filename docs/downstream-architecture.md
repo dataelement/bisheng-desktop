@@ -44,18 +44,26 @@ flowchart TD
 为避免因“人不可靠”或工期紧急导致在下游随意篡改底座代码，仓库部署了机械化 CI 门禁（`scripts/verify-upstream-boundary.mjs`）。
 
 ### 2.1 白名单目录
-下游 PR 与本地提交**仅允许**变动以下范围的文件：
+下游 PR 与本地提交按门禁脚本的精确规则检查。企业插件、品牌配置、独立 Web 交付与企业流水线属于下游；公共底座先经上游 PR + CI 合入，再同步。主要允许范围如下：
+
 * `packages/dsh-desktop-enterprise/**`（企业专有业务代码）
-* `packages/dsh-desktop-office/(lib/web-|web-)`（Office 的 Web 适配层）
-* `packages/dsh-desktop-workbenches/(web-package-backend|enterprise-install|install-outcome|local-archive)`（工作台 Web 适配层）
+* Office 的 `lib/web-modes.{js,d.ts}`、`lib/web-runtime.js`、`web-cli.mjs`、`web-index.{js,d.ts}`；工作台的 `web-package-backend.{mjs,d.mts}`、`local-archive.mjs`（精确 Web 适配入口）。
+* 工作台旧企业适配文件 `enterprise-install.mjs`、`install-outcome.mjs` 仅允许迁移删除，不允许继续编辑或新增。
 * `build/bisheng-*`、`build/app-icon.png`、`build/icon.*`（品牌资源）
 * `build/web-runtime/**`、`bin/start.*`（Web 运行时独立配置与脚本）
 * `build/dsh-desktop.patch.yml`（仅允许挂载 enterprise 插件）
-* `ops/**`、`docs/downstream-*`、`.github/workflows/build-web-runtime.yml`
-* `test/enterprise-*.test.*`（企业业务测试）
+* `ops/ci/**`、`ops/nginx/work-updates.conf`、`docs/downstream-*.md`；CI workflow 精确允许 `release.yml`、`build-web-runtime.yml`、`verify-boundary.yml`、`bisheng-ci.yml`。
+* Web 打包脚本 `pack-{office-web,ppt-web,workbenches-web,web-runtime}.mjs`、`prepare-web-ci-inputs.mjs` 及门禁列出的构建/验证/启动辅助脚本；不按 `scripts/web-*` 前缀任意放行。
+* `test/enterprise-*`、`test/web-runtime-*` 的脚本与 fixture、门禁自身、package/锁文件、品牌及构建配置，具体扩展名与路径以脚本列表为准。
 
 ### 2.2 机械阻断原则
-任何对 `src/main/`、`src/host/`、`src/preload/` 或 `patches/` 等底座核心目录的修改，**本地运行 `npm run verify:boundary` 及 GitHub Actions 将直接失败拦截**，彻底杜绝代码向下游腐化。
+对 `src/main/`、`src/host/`、`src/preload/`、`patches/` 等公共底座的下游漂移，本地 `npm run verify:boundary` 与 GitHub Actions 均阻断。`patches/` 没有目录白名单。只有最终文件字节、Git 文件模式和对象类型与已评审上游基准完全一致的核心同步才通过；暂存区有差异时也须与该基准一致，不能用恢复工作区来隐藏待提交的底座修改。
+
+基准取显式 `UPSTREAM_BASE`，未指定时只使用已验证的 `upstream/bisheng-adaptor`。所有 Git 调用使用 `execFileSync` 参数数组，无 shell 插值。基准不存在、不是 commit 或无法求 merge-base 时直接失败；禁止回退到 `origin/main`、`main` 或 `HEAD~1`。CI 应先获取已评审 ref，或显式传入已评审的上游 commit。维护者负责评审来源，脚本负责解析与内容核验。
+
+比较包含基准与 HEAD 的双点差异、暂存区和工作区差异，并通过 `git ls-files --others --exclude-standard -z` 逐文件收集未跟踪源文件。所有文件列表采用 NUL 分隔，保留空格、换行与 tab。未同步的上游底座更新同样会失败，须先同步再运行最终门禁。仅未跟踪的确切 `.tmp/` 路径可忽略；tracked/staged 的 `.tmp/` 变更一律失败，`.tmp-secret` 等相似前缀不享有例外。忽略规则中的 node_modules 和临时缓存不会纳入未跟踪列表。
+
+回归使用临时真实 Git 仓库：`node --test test/enterprise-boundary-gate.test.mjs`（Node 24 普通执行，无 Electron 或实验 VM 参数）。
 
 ---
 
@@ -68,14 +76,14 @@ flowchart LR
     B -->|"修底座 Bug / 增改 Slot 槽位"| D["底座演进开发者 (按需)"]
     B -->|"上游底座发布新版本"| E["Tech Lead / 架构师 (定期)"]
 
-    C --> C1["仅面向 origin 仓库\n正常开发提 PR\n门禁自动放行"]
+    C --> C1["企业层开发提 PR\n使用已评审上游基准\n门禁与 CI 通过后合入"]
     D --> D1["切到 dsh-desktop 仓库\n补单测并修复\n合并后下游 rebase"]
     E --> E1["git fetch upstream\ngit rebase upstream/main\n全量跑测试后推回 origin"]
 ```
 
 ### 角色 1：普通业务开发者（95% 研发场景，零心智负担）
 * **日常体感**：与普通的单仓库开发完全一致。
-* **无需配置**：本地**不需要**执行 `git remote add upstream`，也无需了解底座细节。
+* **基准准备**：开发环境或 CI 必须提供可验证的已评审上游基准（默认 `upstream/bisheng-adaptor`，也可显式设置 `UPSTREAM_BASE` 为已获取的上游 commit）；基准缺失会失败，不使用 origin 分支兜底。
 * **操作流程**：
   ```bash
   git clone https://github.com/dataelement/bisheng-desktop.git

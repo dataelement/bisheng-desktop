@@ -3,8 +3,8 @@ import * as fs from 'node:fs/promises'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { checkWebHarnessVersion } from './web-runtime-version.mjs'
-import { addWebSidebarSwitcher } from './web-sidebar-slot.mjs'
-import { applyWebPluginManagerPatch } from './web-plugin-manager.mjs'
+import { assertWebPluginManagerContract } from './web-plugin-manager.mjs'
+import { WEB_HARNESS_VERSION } from './web-runtime-version.mjs'
 
 async function requireFile(file) {
   const stat = await fs.lstat(file)
@@ -49,23 +49,26 @@ export async function stageWindowsWebRuntime({ modules, node, office, ppt, profi
   for (const file of ['package.json', 'cordis.yml', 'cordis.patch.yml']) await requireFile(path.join(profile, file))
   const profileManifest = JSON.parse(await fs.readFile(path.join(profile, 'package.json'), 'utf8'))
   const bundles = profileManifest.dsh?.profile?.bundles
-  for (const name of ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', 'dsh-desktop-enterprise', 'dsh-desktop-workbenches', 'dsh-desktop-client-ui', 'dsh-desktop-office', 'dsh-ppt-composer']) if (!Array.isArray(bundles) || !bundles.includes(name)) throw new Error('Missing profile bundle: ' + name)
+  for (const name of ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app']) if (!Array.isArray(bundles) || !bundles.includes(name)) throw new Error('Missing profile bundle: ' + name)
+  if (bundles.some(name => !['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'].includes(name))) throw new Error('Host plugins must be mounted once by the explicit profile patch')
   for (const name of ['dsh-desktop-enterprise', 'dsh-desktop-workbenches', 'dsh-desktop-client-ui', 'dsh-desktop-office', 'dsh-ppt-composer']) if (Object.hasOwn(profileManifest.dependencies ?? {}, name)) throw new Error('Bundled plugin must not be a profile dependency: ' + name)
   await requireFile(node)
   await requireFile(path.join(modules, '@deepseek-ai/dsh/lib/bin.js'))
   // mkdir is exclusive: partial output remains for inspection after failure, never overwritten.
   await fs.mkdir(target)
   await fs.cp(modules, path.join(target, 'node_modules'), { recursive: true, filter: p => ![path.join(modules, 'dsh-desktop-office'), path.join(modules, 'dsh-ppt-composer')].includes(p) })
-  await applyWebPluginManagerPatch(path.join(target, 'node_modules'))
+  await assertWebPluginManagerContract(path.join(target, 'node_modules'))
   const sidebar = path.join(target, 'node_modules/@deepseek-ai/dsh-client-ui-sidebar')
   const sidebarManifest = await manifest(sidebar, '@deepseek-ai/dsh-client-ui-sidebar')
-  if (sidebarManifest.version !== '0.2.2-alpha.3') throw new Error('Unsupported Web sidebar version: ' + sidebarManifest.version)
-  const sidebarClient = path.join(sidebar, 'lib/client.js')
-  await fs.writeFile(sidebarClient, addWebSidebarSwitcher(await fs.readFile(sidebarClient, 'utf8')))
+  if (sidebarManifest.version !== WEB_HARNESS_VERSION) throw new Error('Unsupported Web sidebar version: ' + sidebarManifest.version)
+  const sidebarSource = await fs.readFile(path.join(sidebar, 'lib/client.js'), 'utf8')
+  for (const slot of ['sidebar.quickSwitcher', 'sidebar.settings.action']) if (!sidebarSource.includes(slot)) throw new Error('Missing replayed sidebar contract: ' + slot)
   await fs.cp(office, path.join(target, 'node_modules/dsh-desktop-office'), { recursive: true })
   await fs.cp(ppt, path.join(target, 'node_modules/dsh-ppt-composer'), { recursive: true })
   await fs.mkdir(path.join(target, 'node'))
   await fs.copyFile(node, path.join(target, 'node/node.exe'))
+  await fs.writeFile(path.join(target, 'node/pnpm.cmd'), '@echo off\r\n"%~dp0node.exe" "%~dp0..\\node_modules\\pnpm\\bin\\pnpm.cjs" %*\r\nexit /b %errorlevel%\r\n')
+  await fs.writeFile(path.join(target, 'bundled-plugins.json'), JSON.stringify({ version: 1, packages: ['dsh-desktop-client-ui', 'dsh-desktop-enterprise', 'dsh-desktop-workbenches', 'dsh-desktop-office', 'dsh-ppt-composer'] }, null, 2))
   await fs.mkdir(path.join(target, 'profile'))
   // Never copy unrecognized Profile files such as credentials or session data.
   for (const name of ['package.json', 'cordis.yml', 'cordis.patch.yml']) await fs.copyFile(path.join(profile, name), path.join(target, 'profile', name))

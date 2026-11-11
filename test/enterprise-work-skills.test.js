@@ -1,0 +1,187 @@
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { zipSync } from 'fflate'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createEnterpriseSkills, enterpriseSkillName, skillContentHash } from '../packages/dsh-desktop-enterprise/work-skills.js'
+const homes = []
+afterEach(async () => { for (const home of homes.splice(0)) await rm(home, { recursive: true, force: true }) })
+async function setup() {
+  const home = await mkdtemp(join(tmpdir(), 'work-skills-')); homes.push(home)
+  let state = { connected: true, connectionKey: 'key-a', base: 'https://a.example', tenant: { id: 2 }, user: { id: 3 } }
+  let files = { 'SKILL.md': Buffer.from('---\nname: office\ndescription: office\n---\nEnterprise instructions'), 'scripts/run.py': Buffer.from('print(42)'), 'templates/file.bin': Buffer.from([0, 255, 42]) }
+  const version = () => skillContentHash(new Map(Object.entries(files).map(([key, data]) => [key, { data }])))
+  let enabled = true
+  const request = vi.fn(async body => body.operation === 'dependencies' ? [7] : body.operation === 'list' ? (enabled ? [{ id: 7, name: 'office', display_name: 'Office', description: 'Create documents', content_hash: version() }] : []) : Buffer.from(zipSync(files)))
+  const skills = createEnterpriseSkills({ state: () => state, request, home })
+  return { skills, request, setState: value => { state = value }, state, disable: () => { enabled = false }, update: () => { files = { ...files, 'SKILL.md': Buffer.from('Updated instructions') } } }
+}
+describe('enterprise Work skill provider', () => {
+  it('uses the enterprise display label for discovery while keeping isolated invocation keys', async () => {
+    const { skills, request } = await setup()
+    request.mockResolvedValue([
+      { id: 35, name: 'gov-doc-writing', display_name: '公文写作', description: 'Draft official documents', content_hash: 'a'.repeat(64) },
+      { id: 36, name: 'gov-doc-writing', display_name: '公文写作副本', description: '', content_hash: 'a'.repeat(64) }
+    ])
+    const rows = await skills.catalog()
+    expect(rows[0].name).toMatch(/^gov-doc-writing-bisheng-[a-f0-9]{24}-35$/)
+    expect(rows[1].name).toMatch(/^gov-doc-writing-bisheng-[a-f0-9]{24}-36$/)
+    expect(rows.map(row => row.displayName)).toEqual(['公文写作', '公文写作副本'])
+    expect(rows[0].description).toBe('Draft official documents')
+    expect(rows[1].description).toBe('公文写作副本')
+    expect(rows[0].name).not.toBe(rows[1].name)
+  })
+  it.each(['', '公文写作', 'Office Skill', 'office_skill', '-office', 'office--skill', 'office\n'])('falls back safely for a non-invocable bundle name %j', name => {
+    expect(enterpriseSkillName('a'.repeat(64), 7, name)).toBe(`bisheng-${'a'.repeat(24)}-7`)
+  })
+  it('falls back to the API name when the display label is empty', async () => {
+    const { skills, request } = await setup()
+    request.mockResolvedValue([{ id: 7, name: 'office', display_name: '', description: 'Create documents', content_hash: 'a'.repeat(64) }])
+    const [row] = await skills.catalog()
+    expect(row.displayName).toBe('office')
+    expect(row.description).toBe('Create documents')
+  })
+  it('reuses discovery snapshots only within the same authorization connection and revision', async () => {
+    const { skills, request, state, setState, disable } = await setup()
+    const [row] = await skills.catalog()
+    expect((await skills.catalog(undefined, true))[0].name).toBe(row.name)
+    expect(request).toHaveBeenCalledTimes(1)
+    setState({ ...state, connectionKey: 'renewed-key' })
+    await skills.catalog(undefined, true)
+    expect(request).toHaveBeenCalledTimes(2)
+    skills.clear()
+    await skills.catalog(undefined, true)
+    expect(request).toHaveBeenCalledTimes(3)
+    const abort = new AbortController()
+    abort.abort()
+    await expect(skills.catalog(abort.signal, true)).rejects.toThrow()
+    disable()
+    await expect(skills.load(row.name)).rejects.toThrow('no longer available')
+    expect(request).toHaveBeenCalledTimes(4)
+  })
+  it('keeps local names independent and loads the complete verified bundle', async () => {
+    const { skills } = await setup()
+    const [row] = await skills.catalog()
+    expect(row.name).not.toBe('office')
+    expect(row.name).toMatch(/^office-bisheng-[a-f0-9]{24}-7$/)
+    expect(row.locator.originalName).toBe('office')
+    expect(row.locator.displayName).toBe('Office')
+    const loaded = await skills.load(row.name)
+    expect(loaded.content).toContain('Enterprise instructions')
+    expect(loaded.content).toContain('mcp__bisheng__bisheng_tool_7')
+    expect(await readFile(join(loaded.resourceBase.path, 'templates/file.bin'))).toEqual(Buffer.from([0, 255, 42]))
+    expect(await readFile(join(loaded.resourceBase.path, 'scripts/run.py'), 'utf8')).toBe('print(42)')
+  })
+  it('rechecks authorization before using cached files and refreshes edited versions', async () => {
+    const { skills, update, disable, request } = await setup()
+    const [row] = await skills.catalog()
+    const first = await skills.load(row.name)
+    await skills.load(row.name)
+    expect(request.mock.calls.filter(([body]) => body.operation === 'bundle')).toHaveLength(1)
+    update()
+    const next = await skills.load(row.name)
+    expect(next.path).not.toBe(first.path)
+    expect(next.content).toContain('Updated instructions')
+    disable()
+    await expect(skills.load(row.name)).rejects.toThrow('no longer available')
+  })
+  it('isolates users, tenants, and logout, including account changes during downloads', async () => {
+    const { skills, setState, state, request } = await setup()
+    const [row] = await skills.catalog()
+    setState({ ...state, user: { id: 4 }, connectionKey: 'key-b' }); skills.clear()
+    expect((await skills.catalog())[0].name).not.toBe(row.name)
+    await expect(skills.load(row.name)).rejects.toThrow('no longer available')
+    setState(state)
+    const original = request.getMockImplementation()
+    request.mockImplementation(async body => { const result = await original(body); if (body.operation === 'bundle') setState({ ...state, connected: false }); return result })
+    await expect(skills.load(row.name)).rejects.toThrow('account changed')
+    expect(await skills.catalog()).toEqual([])
+  })
+  it('rejects bundle content substitutions and unsafe archive paths', async () => {
+    const { skills, request } = await setup()
+    const [row] = await skills.catalog()
+    const original = request.getMockImplementation()
+    request.mockImplementation(async body => body.operation !== 'bundle' ? original(body) : Buffer.from(zipSync({ '../outside': Buffer.from('x') })))
+    await expect(skills.load(row.name)).rejects.toThrow('Unsafe ZIP')
+    request.mockImplementation(async body => body.operation !== 'bundle' ? original(body) : Buffer.from(zipSync({ 'SKILL.md': Buffer.from('substituted') })))
+    await expect(skills.load(row.name)).rejects.toThrow('verification failed')
+  })
+})
+
+it('invalidates skills on explicit catalog and identity changes, not a timer', async () => {
+  vi.useFakeTimers()
+  try {
+    const fixture = await setup(), invalidate = vi.fn(), abort = new AbortController()
+    let provider, route
+    const { applyEnterpriseSkills } = await import('../packages/dsh-desktop-enterprise/work-skills.js')
+    const api = applyEnterpriseSkills({ skills: { registerProvider: factory => { provider = factory({ invalidate, signal: abort.signal }) } },
+      connection: { fetch: { register: value => { route = value } } } },
+    { state: () => fixture.state, request: fixture.request, refreshState: async () => {}, home: homes.at(-1) })
+    await provider.list({ signal: abort.signal })
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(invalidate).not.toHaveBeenCalled()
+    expect(fixture.request).toHaveBeenCalledTimes(1)
+    const response = await route.fetch(new Request('http://localhost/api/enterprise.work-skills', { method: 'POST', body: JSON.stringify({ operation: 'catalog' }) }))
+    expect(response.status).toBe(200)
+    expect(invalidate).toHaveBeenCalledTimes(1)
+    const callsAfterRefresh = fixture.request.mock.calls.length
+    await provider.list({ signal: abort.signal })
+    expect(fixture.request.mock.calls.length).toBe(callsAfterRefresh)
+    api.clear()
+    expect(invalidate).toHaveBeenCalledTimes(2)
+    abort.abort()
+  } finally { vi.useRealTimers() }
+})
+
+it('returns fallback labels from the picker route and rechecks disabled skill selections', async () => {
+  const f = await setup(), abort = new AbortController()
+  const { applyEnterpriseSkills } = await import('../packages/dsh-desktop-enterprise/work-skills.js')
+  let route
+  applyEnterpriseSkills({
+    skills: { registerProvider: create => create({ invalidate: vi.fn(), signal: abort.signal }) },
+    connection: { fetch: { register: value => { route = value } } }
+  }, { state: () => f.state, refreshState: async () => {}, home: homes.at(-1), request: async (body, signal) => {
+    const result = await f.request(body, signal)
+    return body.operation === 'list' ? result.map(row => ({ ...row, display_name: '' })) : result
+  } })
+  const send = body => route.fetch(new Request('http://localhost/api/enterprise.work-skills', { method: 'POST', body: JSON.stringify(body) }))
+  const catalog = await (await send({ operation: 'catalog' })).json()
+  expect(catalog.skills).toEqual([{ name: expect.stringMatching(/^office-bisheng-[a-f0-9]{24}-7$/), displayName: 'office' }])
+  const selection = { operation: 'validate', names: [catalog.skills[0].name] }
+  expect((await send(selection)).status).toBe(200)
+  f.disable()
+  expect((await send(selection)).status).toBe(400)
+  abort.abort()
+})
+
+it('coexists with a same-named local skill in the actual Harness registry', async () => {
+  const { Context } = await import('@deepseek-ai/cordis')
+  const { default: SkillRegistry, renderSkillContent } = await import('@deepseek-ai/dsh-skill')
+  const { applyEnterpriseSkills } = await import('../packages/dsh-desktop-enterprise/work-skills.js')
+  const fixture = await setup()
+  const ctx = new Context()
+  const fork = ctx.plugin(SkillRegistry, {})
+  await fork
+  let disposeProvider = () => {}
+  try {
+    ctx.skills.register({ name: 'office', description: 'Local office', content: 'Local instructions', source: 'local' })
+    const api = applyEnterpriseSkills({ skills: { registerProvider: create => { disposeProvider = ctx.skills.registerProvider(create) } }, connection: { fetch: { register() {} } } }, {
+      state: () => fixture.state, request: fixture.request, refreshState: async () => {}, home: homes.at(-1)
+    })
+    const catalog = await ctx.skills.list()
+    expect(catalog).toHaveLength(2)
+    const enterprise = catalog.find(row => row.provider === 'bisheng-enterprise')
+    expect(enterprise.name).toMatch(/^office-bisheng-[a-f0-9]{24}-7$/)
+    expect(enterprise.displayName).toBe('Office')
+    expect((await ctx.skills.get('office')).content).toBe('Local instructions')
+    const loaded = await ctx.skills.get(enterprise.name)
+    expect(renderSkillContent(loaded)).toContain('Enterprise instructions')
+    expect(loaded.resourceBase.kind).toBe('directory')
+    fixture.disable()
+    await expect(ctx.skills.get(enterprise.name)).rejects.toThrow('no longer available')
+    fixture.setState({ ...fixture.state, user: { id: 4 }, connectionKey: 'key-b' })
+    api.clear()
+    expect((await ctx.skills.list()).some(row => row.name === enterprise.name)).toBe(false)
+    expect(await ctx.skills.get(enterprise.name)).toBeUndefined()
+  } finally { disposeProvider(); await fork.dispose() }
+})

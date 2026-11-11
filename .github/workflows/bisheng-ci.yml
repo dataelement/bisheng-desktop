@@ -1,0 +1,98 @@
+name: BiSheng candidate checks
+
+on:
+  pull_request:
+    branches: [main, codex/bisheng-unified]
+  push:
+    branches: [main, codex/bisheng-unified]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bisheng-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-checks:
+    name: Native checks (${{ matrix.platform }}/${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux
+            arch: x64
+            desktop: false
+          - runner: windows-2022
+            platform: win32
+            arch: x64
+            desktop: true
+            package-script: package:dev:win
+            artifact-platform: win
+          - runner: macos-15
+            platform: darwin
+            arch: arm64
+            desktop: true
+            package-script: package:dev:mac:arm64
+            artifact-platform: mac
+          - runner: macos-15-intel
+            platform: darwin
+            arch: x64
+            desktop: true
+            package-script: package:dev:mac:x64
+            artifact-platform: mac
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      DSH_TELEMETRY_DISABLED: '1'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+          architecture: ${{ matrix.arch }}
+          cache: npm
+      - name: Verify native ordinary Node target
+        run: node -e "if(process.platform !== '${{ matrix.platform }}' || process.arch !== '${{ matrix.arch }}' || process.version !== 'v24.15.0') process.exit(1)"
+      - name: Fetch reviewed upstream baseline
+        run: |
+          git remote add upstream https://github.com/dataelement/dsh-desktop.git
+          git fetch --no-tags upstream bisheng-adaptor:refs/remotes/upstream/bisheng-adaptor
+          git rev-parse --verify upstream/bisheng-adaptor
+      - run: npm run verify:boundary
+        env:
+          UPSTREAM_BASE: upstream/bisheng-adaptor
+      - name: Install locked dependencies with postinstall
+        run: npm ci --prefer-offline --no-audit --no-fund
+      - name: Verify pinned pnpm
+        run: node node_modules/pnpm/bin/pnpm.cjs --version | node -e "let s='';process.stdin.on('data',x=>s+=x).on('end',()=>{if(s.trim()!=='10.34.5')process.exit(1)})"
+      - run: npm run typecheck
+      - name: Build on supported native Office targets
+        if: matrix.desktop
+        run: npm run build
+      - name: Run complete regressions under ordinary Node on supported native targets
+        if: matrix.desktop
+        run: npm test -- --maxWorkers=2
+      - name: Run Linux pure Web regressions without native Office preparation
+        if: ${{ !matrix.desktop }}
+        run: node node_modules/vitest/vitest.mjs run test/web-runtime-ci.test.mjs test/web-runtime-ci-workflows.test.mjs test/web-runtime-offline-launcher.test.mjs test/web-runtime-system-proxy.test.mjs --maxWorkers=2
+      - name: Verify native Desktop loader
+        if: matrix.desktop
+        run: node scripts/verify/verify-target.mjs ${{ matrix.platform }} ${{ matrix.arch }}
+      - name: Build unsigned Desktop packages with mandatory afterPack gates
+        if: matrix.desktop
+        run: npm run ${{ matrix.package-script }}
+      - name: Verify Desktop package files
+        if: matrix.desktop
+        run: node ops/ci/desktop-artifacts.mjs development ${{ matrix.artifact-platform }} ${{ matrix.arch }}
+      - name: Verify tracked sources remain clean
+        run: git diff --exit-code

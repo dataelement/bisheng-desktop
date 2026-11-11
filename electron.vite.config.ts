@@ -17,7 +17,7 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          index: resolve('src/main/shell/app.ts'),
+          index: resolve('packages/dsh-desktop-enterprise/desktop/main.ts'),
           host: resolve('src/host/index.ts'),
           'operation-report-worker': resolve('src/main/shell/operation-report-worker.ts')
         }
@@ -29,7 +29,8 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          app: resolve('src/preload/app.ts')
+          app: resolve('packages/dsh-desktop-enterprise/desktop/preload.ts'),
+          'enterprise-chat': resolve('packages/dsh-desktop-enterprise/desktop/preload/enterprise-chat.ts')
         },
         output: {
           format: 'cjs',

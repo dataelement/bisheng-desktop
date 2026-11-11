@@ -2,36 +2,32 @@ name: Downstream Boundary Gatekeeper
 
 on:
   pull_request:
-    branches:
-      - main
-      - upgrade/*
-      - codex/*
+    branches: [main, codex/bisheng-unified]
   push:
-    branches:
-      - main
-      - upgrade/*
-      - codex/*
+    branches: [main, codex/bisheng-unified]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   check-boundary:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+          persist-credentials: false
+      - uses: actions/setup-node@v4
         with:
-          node-version: 22
-
-      - name: Add and fetch upstream
+          node-version: '24.15.0'
+      - name: Fetch the reviewed upstream baseline
         run: |
-          git remote add upstream https://github.com/dataelement/dsh-desktop.git || true
-          git fetch upstream upgrade/dsh-0.2.2-rc.1 || git fetch upstream main || true
-
-      - name: Verify Downstream Boundary
-        run: |
-          npm run verify:boundary
-
+          git remote add upstream https://github.com/dataelement/dsh-desktop.git
+          git fetch --no-tags upstream bisheng-adaptor:refs/remotes/upstream/bisheng-adaptor
+          git rev-parse --verify upstream/bisheng-adaptor
+      - name: Verify downstream changes
+        run: npm run verify:boundary
+        env:
+          UPSTREAM_BASE: upstream/bisheng-adaptor

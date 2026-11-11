@@ -882,15 +882,6 @@ window.__ModuleLoader__.load({
       } catch {}
     }
 
-    function openEnterpriseSettingsSection() {
-      if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return
-      const dispatch = () => window.dispatchEvent(
-        new CustomEvent(OPEN_SETTINGS_SECTION_EVENT, { detail: { id: ENTERPRISE_SECTION_ID } })
-      )
-      dispatch()
-      window.setTimeout(dispatch, 0)
-    }
-
     const LEGACY_ACCOUNT_PHRASES = {
       'session revoked': 'session_revoked',
       'dsh session revoked': 'session_revoked',
@@ -1099,7 +1090,6 @@ window.__ModuleLoader__.load({
         const bridge = window.dshDesktopEnterprise
         if (!bridge?.onLoginLink) return undefined
         return bridge.onLoginLink((url) => {
-          openEnterpriseSettingsSection()
           bridge.consumeLoginLink?.()
           void inspectDeepLink(url)
         })
@@ -1392,7 +1382,7 @@ window.__ModuleLoader__.load({
       select(next); refs.current[next]?.focus()
     }
 
-    function RemoteSettings({ section, t }) {
+    function RemoteSettings({ section, t, close, focusShell }) {
       const target = useRef(null)
       const [state, setState] = useState({ phase: 'idle', connected: false })
       const [failed, setFailed] = useState(false)
@@ -1431,18 +1421,18 @@ window.__ModuleLoader__.load({
         }
       }, [section, state.connected, state.settingsProtocolVersion])
       useEffect(() => {
+        const requestClose = () => { if (typeof close === 'function') close() }
         const focus = event => {
-          if (event.detail?.section !== section) return
-          const approvals = target.current?.closest('[data-dsh-approvals]')
-          if (approvals) {
-            approvals.querySelector(event.detail.direction === 'previous' ? '[data-dsh-approvals-nav] [aria-current=true]' : '[data-dsh-approvals-close]')?.focus()
-          } else {
-            document.querySelector(event.detail.direction === 'previous' ? '[data-dsh-settings-section] [aria-current="true"]' : '[data-dsh-settings-close]')?.focus()
-          }
+          if (event.detail?.section !== section || !['previous', 'next'].includes(event.detail.direction)) return
+          if (typeof focusShell === 'function') focusShell(event.detail.direction)
         }
+        window.addEventListener('dsh-desktop:close-settings', requestClose)
         window.addEventListener('dsh-desktop:settings-focus', focus)
-        return () => window.removeEventListener('dsh-desktop:settings-focus', focus)
-      }, [section])
+        return () => {
+          window.removeEventListener('dsh-desktop:close-settings', requestClose)
+          window.removeEventListener('dsh-desktop:settings-focus', focus)
+        }
+      }, [section, close, focusShell])
       const failure = failed || state.settingsFailure || state.phase === 'error'
       const supported = state.settingsProtocolVersion === 1
       const ready = supported && state.settingsSection === section && state.settingsReady
@@ -1624,7 +1614,7 @@ window.__ModuleLoader__.load({
           quota && quota.limit !== -1 && h('progress', { className: 'dshUsageProgress', value: quota.limit > 0 ? Math.min(1, quota.used / quota.limit) : 1, max: 1, 'aria-label': t('storage') })))
     }
 
-    function AiAccess({ t }) { return h('section', { className: 'dshSettingsSection' }, h('h2', null, t('ai')), h(RemoteSettings, { section: 'ai-access', t })) }
+    function AiAccess({ t, close, focusShell }) { return h('section', { className: 'dshSettingsSection' }, h('h2', null, t('ai')), h(RemoteSettings, { section: 'ai-access', t, close, focusShell })) }
     const APPROVAL_SECTIONS = [['my-tasks', 'tasks'], ['my-requests', 'requests'], ['notifications', 'notifications']]
 
     function approvalsIcon(id) {
@@ -1636,7 +1626,12 @@ window.__ModuleLoader__.load({
     function ApprovalsPanel({ onClose, t }) {
       const titleId = React.useId()
       const refs = useRef({})
+      const closeButton = useRef(null)
       const [section, setSection] = useState('my-tasks')
+      const focusShell = useCallback(direction => {
+        if (direction === 'previous') refs.current[section]?.focus()
+        else if (direction === 'next') closeButton.current?.focus()
+      }, [section])
       return h('div', { 'data-dsh-approvals': '', className: 'dshApprovalsPanel' },
         h('nav', { 'data-dsh-approvals-nav': '', className: 'dshApprovalsNav', 'aria-labelledby': titleId },
           h('div', { className: 'dshApprovalsNavTitle', id: titleId }, t('approvals')),
@@ -1645,11 +1640,31 @@ window.__ModuleLoader__.load({
               approvalsIcon(id), h('span', { className: 'dshApprovalsNavLabel' }, t(key)))))),
         h('div', { className: 'dshApprovalsContent' },
           h('div', { className: 'dshApprovalsHeader' },
-            h('button', { type: 'button', className: 'dshApprovalsClose', 'data-dsh-approvals-close': '', 'aria-label': t('close'), onClick: onClose }, h(IconCloseOutlineRegular, { size: 14 }))),
-          h('div', { 'data-dsh-approvals-content': '', className: 'dshApprovalsOptions' }, h(RemoteSettings, { key: section, section, t }))))
+            h('button', { ref: closeButton, type: 'button', className: 'dshApprovalsClose', 'data-dsh-approvals-close': '', 'aria-label': t('close'), onClick: onClose }, h(IconCloseOutlineRegular, { size: 14 }))),
+          h('div', { 'data-dsh-approvals-content': '', className: 'dshApprovalsOptions' }, h(RemoteSettings, { key: section, section, t, close: onClose, focusShell }))))
+    }
+
+    function desktopSettingsCapability(name) {
+      const owner = [window.dshDesktopEnterprise, window.dshDesktop].find(bridge => typeof bridge?.[name] === 'function')
+      return owner ? (...args) => owner[name](...args) : undefined
+    }
+
+    function bindDesktopSettingsEvents() {
+      const bridge = window.dshDesktopEnterprise
+      const close = bridge?.onSettingsClose?.(() => {
+        window.dispatchEvent(new CustomEvent('dsh-desktop:close-settings'))
+      })
+      const sections = ['desktop-usage', 'ai-access', 'my-tasks', 'my-requests', 'notifications']
+      const focus = bridge?.onSettingsFocus?.(value => {
+        if (!value || !sections.includes(value.section) || !['previous', 'next'].includes(value.direction)) return
+        window.dispatchEvent(new CustomEvent('dsh-desktop:settings-focus', { detail: { section: value.section, direction: value.direction } }))
+      })
+      return () => { close?.(); focus?.() }
     }
 
     function About({ t }) {
+      const settingsInfo = desktopSettingsCapability('settingsInfo')
+      const settingsAction = desktopSettingsCapability('settingsAction')
       const [info, setInfo] = useState()
       const alive = useRef(true)
       const [error, setError] = useState('')
@@ -1657,19 +1672,19 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         let disposed = false
         alive.current = true
-        void window.dshDesktop?.settingsInfo?.().then(value => { if (!disposed) setInfo(value) }).catch(() => { if (!disposed) setError('infoError') })
+        if (settingsInfo) void Promise.resolve().then(() => settingsInfo()).then(value => { if (!disposed) setInfo(value) }).catch(() => { if (!disposed) setError('infoError') })
         return () => { disposed = true; alive.current = false }
       }, [])
       const run = async action => {
         setBusy(true); setError('')
-        try { await window.dshDesktop.settingsAction(action) }
+        try { await settingsAction(action) }
         catch { if (alive.current) setError('actionError') }
         finally { if (alive.current) setBusy(false) }
       }
       return h('section', { className: 'dshSettingsSection' },
         h('h2', null, t('about')),
-        h('dl', { className: 'dshSettingsVersions' }, ...[['desktopVersion', info?.desktopVersion], ['harnessVersion', info?.harnessVersion]].flatMap(([key, value]) => [h('dt', { key: `${key}:label` }, t(key)), h('dd', { key }, value || '—')])),
-        typeof window.dshDesktop?.settingsAction === 'function' && h('div', { className: 'dshSettingsButtons' },
+        settingsInfo && h('dl', { className: 'dshSettingsVersions' }, ...[['desktopVersion', info?.desktopVersion], ['harnessVersion', info?.harnessVersion]].flatMap(([key, value]) => [h('dt', { key: `${key}:label` }, t(key)), h('dd', { key }, value || '—')])),
+        settingsAction && h('div', { className: 'dshSettingsButtons' },
           ...[['check-for-updates', 'update'], ['show-harness-log', 'logs'], ['safe-mode', 'recovery']].map(([action, label]) => h('button', { key: action, type: 'button', disabled: busy, onClick: () => run(action) }, t(label)))),
         error && h('p', { role: 'alert' }, t(error)))
     }
@@ -1789,7 +1804,7 @@ window.__ModuleLoader__.load({
       }, failed && h('p', { className: 'dshAccountDialogError', role: 'alert' }, t('logoutFailed')))
     }
 
-    function AccountLauncher({ wide, settingsOpen, openSettings, settingsShortcut, t }) {
+    function AccountLauncher({ wide, settingsOpen, openSettings, openSettingsSection, settingsShortcut, t }) {
       const identity = useAccountIdentity()
       const pending = useApprovalsPending()
       const [menuOpen, setMenuOpen] = useState(false)
@@ -1804,13 +1819,25 @@ window.__ModuleLoader__.load({
       const closeLogout = useCallback(() => { setLogoutOpen(false); setLogoutFailed(false); trigger.current?.focus() }, [])
       useEffect(() => {
         alive.current = true
-        const close = () => {
-          if (approvalsOpen) closeApprovals()
-          if (logoutOpen) closeLogout()
-        }
-        window.addEventListener('dsh-desktop:close-settings', close)
-        return () => { alive.current = false; window.removeEventListener('dsh-desktop:close-settings', close) }
-      }, [approvalsOpen, logoutOpen, closeApprovals, closeLogout])
+        return () => { alive.current = false }
+      }, [])
+      const openSection = useCallback(id => {
+        if (!['enterprise-account', 'desktop-ai-access', 'desktop-about'].includes(id)) return
+        setMenuOpen(false); setApprovalsOpen(false)
+        if (typeof openSettingsSection === 'function') openSettingsSection(id)
+        else openSettings()
+      }, [openSettingsSection, openSettings])
+      useEffect(() => {
+        const open = event => { openSection(event.detail?.id) }
+        window.addEventListener(OPEN_SETTINGS_SECTION_EVENT, open)
+        const unsubscribe = window.dshDesktopEnterprise?.onLoginLink?.(() => openSection(ENTERPRISE_SECTION_ID))
+        return () => { window.removeEventListener(OPEN_SETTINGS_SECTION_EVENT, open); unsubscribe?.() }
+      }, [openSection])
+      useEffect(() => {
+        const publish = open => window.dispatchEvent(new CustomEvent('dsh-desktop:settings-visibility', { detail: { open } }))
+        publish(settingsOpen === true)
+        return () => publish(false)
+      }, [settingsOpen])
       useEffect(() => { if (settingsOpen) { setMenuOpen(false); setApprovalsOpen(false); setLogoutOpen(false); setLogoutFailed(false) } }, [settingsOpen])
       useEffect(() => {
         if (identity.account?.connected === false) { setApprovalsOpen(false); setLogoutOpen(false) }
@@ -1835,12 +1862,12 @@ window.__ModuleLoader__.load({
         if (busy) return
         setActionBusy(true); setActionError(false)
         try {
-          await window.dshDesktop.openPhonePairing()
+          await window.dshDesktop.openMobilePairing()
           if (alive.current) { setMenuOpen(false); setApprovalsOpen(false) }
         } catch { if (alive.current) { setActionError(true); setMenuOpen(true) } }
         finally { if (alive.current) setActionBusy(false) }
       }
-      const openAccountSettings = () => { setMenuOpen(false); openSettings(); openAccount() }
+      const openAccountSettings = () => openSection(ENTERPRISE_SECTION_ID)
       const confirmLogout = async () => {
         if (busy) return
         setActionBusy(true); setLogoutFailed(false)
@@ -1863,7 +1890,7 @@ window.__ModuleLoader__.load({
           connected && h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'account' }), disabled: busy, onSelect: openAccountSettings }, t('accountSettings')),
           Boolean(window.dshEnterpriseChat) && h(MenuItemButton, { icon: h(IconChecklistOutlineRegular), disabled: busy || !connected, onSelect: () => { setMenuOpen(false); setApprovalsOpen(true) } },
             h('span', { className: 'dshAccountMenuRow' }, t('approvals'), badge)),
-          typeof window.dshDesktop?.openPhonePairing === 'function' && h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'phone' }), disabled: busy, onSelect: () => { void pairPhone() } }, t('phone')),
+          typeof window.dshDesktop?.openMobilePairing === 'function' && h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'phone' }), disabled: busy, onSelect: () => { void pairPhone() } }, t('phone')),
           connected
             ? h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'logout' }), separatorBefore: true, danger: true, disabled: busy, onSelect: () => { setMenuOpen(false); setLogoutFailed(false); setLogoutOpen(true) } }, t('logout'))
             : h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'login' }), separatorBefore: true, disabled: busy, onSelect: openAccountSettings }, t('login')),
@@ -1871,11 +1898,6 @@ window.__ModuleLoader__.load({
           failure && h(MenuItemButton, { disabled: busy, onSelect: () => { if (actionError) { void pairPhone(); return } setActionError(false); void identity.refresh() } }, t('again'))),
         Boolean(window.dshEnterpriseChat) && h(ApprovalsDialog, { open: approvalsOpen, onClose: closeApprovals, t }),
         h(LogoutDialog, { open: logoutOpen, busy, failed: logoutFailed, onCancel: closeLogout, onConfirm: () => { void confirmLogout() }, t }))
-    }
-
-    const NAV_GLYPHS = { 'enterprise-account': IconUserOutlineMedium, 'desktop-usage': IconGaugeOutlineMedium, 'desktop-ai-access': IconApiOutlineMedium, 'desktop-about': IconInfoOutlineMedium }
-    function SettingsNavigation({ rows, renderEntry }) {
-      return rows.map(row => renderEntry(row, NAV_GLYPHS[row.id] ? { icon: NAV_GLYPHS[row.id] } : undefined))
     }
 
     const DESKTOP_SETTINGS_CSS = `
@@ -1906,6 +1928,7 @@ window.__ModuleLoader__.load({
         ctx.provide('enterpriseWorkResources', { enabled: true })
       }
       ctx.effect(bindWorkToolChanges, 'enterprise: refresh saved tool availability')
+      ctx.effect(bindDesktopSettingsEvents, 'enterprise: desktop settings events')
       installStyles()
       installMarketStyles()
       ctx.effect(
@@ -1920,11 +1943,6 @@ window.__ModuleLoader__.load({
       marketTranslate = ctx.locale.bind('settings.enterpriseMarket')
       ctx.effect(() => bindEnterpriseModelSync(), 'enterprise: foreground model catalog sync')
       ctx.effect(() => bindEnterpriseMarketTab(ctx), 'enterprise-market: account-bound plugins tab')
-      ctx.effect(() => {
-        const bridge = window.dshDesktopEnterprise
-        if (!bridge?.onLoginLink) return undefined
-        return bridge.onLoginLink(() => openEnterpriseSettingsSection())
-      }, 'dsh-desktop-enterprise: open settings on login link')
       ctx.slots.inject('settings.section', () => ctx.slots.register({
         name: 'settings.section',
         id: ENTERPRISE_SECTION_ID,
@@ -1971,7 +1989,8 @@ window.__ModuleLoader__.load({
 
       registerSlot(ctx, 'desktop.account.usage', 'desktop-usage', Usage, { priority: 10 })
       registerSlot(ctx, 'settings.launcher', 'desktop-account-menu', AccountLauncher)
-      registerSlot(ctx, 'settings.section', 'desktop-about', About, {
+      const hasDesktopSettings = Boolean(desktopSettingsCapability('settingsInfo') || desktopSettingsCapability('settingsAction'))
+      if (hasDesktopSettings) registerSlot(ctx, 'settings.section', 'desktop-about', About, {
         order: 90,
         label: () => settingsT('about')
       })
@@ -1983,7 +2002,7 @@ window.__ModuleLoader__.load({
           inject: () => ({})
         }, ({ size }) => h(IconUserOutlineMedium, { size: size || 18 })))
 
-        ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+        if (hasDesktopSettings) ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
           name: 'settings.section.icon',
           id: 'desktop-about',
           inject: () => ({})
@@ -2024,7 +2043,6 @@ window.__ModuleLoader__.load({
         }
       }, 'enterprise: account capabilities')
 
-      registerSlot(ctx, 'settings.navigation', 'desktop-nav-glyphs', SettingsNavigation)
     }
 
     exports.apply = apply

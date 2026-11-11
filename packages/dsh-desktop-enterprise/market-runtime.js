@@ -13,8 +13,9 @@ function contained(root, path) {
 /** Authorization adapter only: Harness owns ESM resolution and root composition. */
 export function createMarketRuntime(ctx, auth, onRequestSettled) {
   return async record => {
-    const layers = ctx.get('profileRuntimeLayers')
-    if (!layers) throw new Error('Enterprise plugins require the Harness root composition service.')
+    const composition = ctx.get('profileRuntimeLayers')
+    if (!composition) throw new Error('Enterprise plugins require the Harness root composition service.')
+    const layers = composition.for(ctx)
     const root = join(record.directory, 'node_modules', record.name)
     const parent = pathToFileURL(join(root, 'package.json')).href
     const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
@@ -51,6 +52,11 @@ export function createMarketRuntime(ctx, auth, onRequestSettled) {
     anchor(patches)
     let transport, unbind, detach, removed
     const remove = () => removed ??= (async () => {
+      // Mark every owned entry before revoking its service: Loader treats an
+      // unsolicited fiber stop as a persistent user disable. These transient
+      // entries are removed by root composition instead of written to its journal.
+      const entries = [...ctx.loader.entries()].filter(entry => owned.has(entry.options.id) && owned.get(entry.options.id) === entry.options.name)
+      for (const entry of entries) entry.options.disabled = true
       unbind?.()
       detach?.()
       const errors = []
@@ -58,10 +64,8 @@ export function createMarketRuntime(ctx, auth, onRequestSettled) {
       try {
         // Stop our own fibers even when the owner is being removed by a root
         // transaction; waiting on another root transaction would deadlock it.
-        for (const entry of [...ctx.loader.entries()]) {
-          if (owned.has(entry.options.id) && owned.get(entry.options.id) === entry.options.name) {
-            try { await entry.fiber?.dispose() } catch (error) { errors.push(error) }
-          }
+        for (const entry of entries) {
+          try { await entry.fiber?.dispose() } catch (error) { errors.push(error) }
         }
       } catch (error) { errors.push(error) }
       try { await layers.remove(id, ctx.fiber.uid === null) } catch (error) { errors.push(error) }

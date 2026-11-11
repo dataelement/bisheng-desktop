@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 
 describe('enterprise product patch injection', () => {
   it('includes dsh-desktop-enterprise in desktop product patch', () => {
-    const patch = buildDesktopProductPatch()
+    const patch = buildDesktopProductPatch({ dshDesktopHostPlugins: ['dsh-desktop-enterprise'] })
     expect(patch).toContain('dsh-desktop-enterprise')
     expect(patch).toContain('dsh-desktop-client-ui')
     expect(patch).toContain('dsh-desktop-workbenches')
@@ -15,7 +15,7 @@ describe('enterprise product patch injection', () => {
   it('writes desktop-product.patch.yml with enterprise plugin row', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'bisheng-patch-test-'))
     try {
-      const filePath = await writeDesktopProductPatch(dir, 'desktop')
+      const filePath = await writeDesktopProductPatch(dir, 'desktop', { dshDesktopHostPlugins: ['dsh-desktop-enterprise'] })
       const content = await readFile(filePath, 'utf-8')
       expect(content).toContain('- id: dsh-desktop-enterprise')
       expect(content).toContain('name: dsh-desktop-enterprise')
