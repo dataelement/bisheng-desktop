@@ -138,14 +138,14 @@ export class CloudWorkbenchView {
   resizeFor(owner: unknown, bounds: unknown): void { if (owner === this.owner) this.resize(bounds) }
   closeFor(owner: unknown): void { if (owner === this.owner) { this.generation++; this.hide() } }
 
-  release(appId: string, connectionKey: string): void {
+  async release(appId: string, connectionKey: string): Promise<void> {
     const key = `${connectionKey}:${appId}`
     const item = this.retained.get(key)
     if (!item) return
     this.retained.delete(key)
     if (this.active === item) this.hide()
     if (!item.view.webContents.isDestroyed()) item.view.webContents.close()
-    void item.partition.clearStorageData()
+    await item.partition.clearStorageData()
   }
 
   private hide(): void {

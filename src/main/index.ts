@@ -1718,10 +1718,10 @@ function registerHarnessHandlers(): void {
       async appId => await enterprise.cloudRequest({ operation: 'launch', appId }) as CloudLaunch)
     return { appId: launch.appId }
   })
-  ipcMain.handle('enterprise-cloud:release', (event, appId: unknown, connectionKey: unknown) => {
+  ipcMain.handle('enterprise-cloud:release', async (event, appId: unknown, connectionKey: unknown) => {
     const enterprise = checkCloudHost(event)
     if (typeof appId !== 'string' || !/^[a-f0-9]{32}$/.test(appId) || typeof connectionKey !== 'string' || connectionKey !== enterprise.snapshot().connectionKey) throw new Error('Invalid cloud application identity.')
-    cloudWorkbenchView.release(appId, connectionKey)
+    await cloudWorkbenchView.release(appId, connectionKey)
   })
   ipcMain.handle('enterprise-cloud:bounds', (event, bounds: unknown, owner: unknown) => { checkCloudHost(event); cloudWorkbenchView.resizeFor(owner, bounds) })
   ipcMain.handle('enterprise-cloud:close', (event, owner: unknown) => { assertTrustedMainWindowEvent(event); cloudWorkbenchView.closeFor(owner) })
