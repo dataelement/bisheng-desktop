@@ -94,7 +94,7 @@ function cardButtons(card) {
   return buttons.map(button => button.props.children.flat().filter(child => typeof child === 'string').join(''))
 }
 
-function interactiveMarket(service, tab = 'market', clipboard) {
+function interactiveMarket(service, tab = 'market', clipboard, enterpriseSnapshot) {
   let renderMarket
   let stateIndex = 0
   const state = []
@@ -111,7 +111,7 @@ function interactiveMarket(service, tab = 'market', clipboard) {
       useRef: () => ({ current: null }),
     useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot()
   }
-  vm.runInNewContext(code, { window: { sessionStorage, localStorage: enabledStorage, navigator: clipboard && { clipboard }, __ModuleLoader__: { load({ factory }) {
+  vm.runInNewContext(code, { window: { sessionStorage, localStorage: enabledStorage, navigator: clipboard && { clipboard }, ...(enterpriseSnapshot ? { __dshEnterpriseWorkbenchSnapshot: enterpriseSnapshot } : {}), __ModuleLoader__: { load({ factory }) {
     renderMarket = factory(name => name === 'react' ? testReact : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null, Toast: function Toast() {} }).Market
   } } }, document, setTimeout, clearTimeout, AbortController })
   const find = (node, predicate) => {
@@ -1260,6 +1260,20 @@ describe('desktop workbench client navigation', () => {
     expect(source).not.toContain('showSubmit')
     expect(source).not.toContain("'aria-expanded'")
     expect(source).not.toContain('setGuideOpen')
+  })
+
+  it('omits the install-local-workbench button when third-party workbenches are closed', async () => {
+    const { service } = await fixture()
+    service.ctx.locale = { bind: () => () => '来自企业' }
+    const headerLabels = (allowThirdPartyWorkbenches) => {
+      const ui = interactiveMarket(service, 'market', undefined, { known: true, connected: true, allowThirdPartyWorkbenches })
+      const tree = ui.render()
+      const header = ui.find(tree, node => node.props?.className === 'dshWbMarketHeaderActions')[0]
+      return ui.find(header, node => node.type?.name === 'Button').map(button => button.props.children.flat().filter(child => typeof child === 'string').join(''))
+    }
+    expect(headerLabels(false)).toEqual(['制作我的工作台'])
+    expect(headerLabels(true)).toEqual(['制作我的工作台'])
+    service.dispose()
   })
 
   it('provides one prompt for local development and one for submission', () => {
