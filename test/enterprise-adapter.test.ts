@@ -191,6 +191,46 @@ describe('enterprise adapter without a Broker', () => {
       error: 'Enterprise login is not available yet.'
     })
   })
+
+  it('marks packaged loopback HTTP for confirmation without starting login', async () => {
+    const routes = createPluginContext()
+    const inspected = await invoke(routes, '/api/enterprise.base.inspect', 'POST', {
+      base: 'http://127.0.0.1:3001'
+    })
+    expect(inspected.status).toBe(200)
+    await expect(inspected.json()).resolves.toEqual({
+      base: 'http://127.0.0.1:3001',
+      insecurePrivateHttp: true
+    })
+
+    const deepLink = await invoke(routes, '/api/enterprise.deep-link.inspect', 'POST', {
+      url: 'bisheng://login?server=http%3A%2F%2F127.0.0.1%3A3001'
+    })
+    expect(deepLink.status).toBe(200)
+    await expect(deepLink.json()).resolves.toEqual({
+      base: 'http://127.0.0.1:3001',
+      insecurePrivateHttp: true
+    })
+  })
+
+  it('lets the development loopback variable skip the confirmation mark', async () => {
+    process.env.DSH_DESKTOP_ENTERPRISE_ALLOW_INSECURE_LOOPBACK = '1'
+    const routes = createPluginContext()
+    const loopback = await invoke(routes, '/api/enterprise.base.inspect', 'POST', {
+      base: 'http://127.0.0.1:3001'
+    })
+    expect(loopback.status).toBe(200)
+    await expect(loopback.json()).resolves.toEqual({ base: 'http://127.0.0.1:3001' })
+
+    const intranet = await invoke(routes, '/api/enterprise.base.inspect', 'POST', {
+      base: 'http://192.168.106.119:30006'
+    })
+    expect(intranet.status).toBe(200)
+    await expect(intranet.json()).resolves.toEqual({
+      base: 'http://192.168.106.119:30006',
+      insecurePrivateHttp: true
+    })
+  })
 })
 
 describe('enterprise adapter with a Broker', () => {

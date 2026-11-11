@@ -243,8 +243,9 @@ export class EnterpriseService {
       if (!stored.session) return
       this.session = stored.session
       this.authEnabled = true
-      const { isInsecurePrivateHttpOrigin } = await import('dsh-desktop-enterprise/deep-link')
-      this.allowPrivateHttpForSession = isInsecurePrivateHttpOrigin(stored.session.base ?? '')
+      const { isInsecureHttpSessionOrigin } = await import('dsh-desktop-enterprise/deep-link')
+      // Restoring a saved origin is not a new login, so it does not consult the confirmation prompt.
+      this.allowPrivateHttpForSession = isInsecureHttpSessionOrigin(stored.session.base ?? '')
       this.phase = 'connected'
       await this.refreshAuditCapability()
       this.clearError()
@@ -263,7 +264,7 @@ export class EnterpriseService {
   }
 
   async inspectBase(baseValue: string): Promise<{ base: string, insecurePrivateHttp?: boolean }> {
-    const { isInsecurePrivateHttpOrigin, normalizeEnterpriseServerUrl } = await import(
+    const { insecureHttpNeedsConfirmation, normalizeEnterpriseServerUrl } = await import(
       'dsh-desktop-enterprise/deep-link'
     )
     const base = normalizeEnterpriseServerUrl(baseValue, {
@@ -272,7 +273,9 @@ export class EnterpriseService {
     })
     return {
       base,
-      ...(isInsecurePrivateHttpOrigin(base) ? { insecurePrivateHttp: true } : {})
+      ...(insecureHttpNeedsConfirmation(base, {
+        allowInsecureLoopback: this.options.allowInsecureLoopback
+      }) ? { insecurePrivateHttp: true } : {})
     }
   }
 
@@ -288,14 +291,17 @@ export class EnterpriseService {
           status: 503
         })
       }
-      const { isInsecurePrivateHttpOrigin, normalizeEnterpriseServerUrl } = await import(
+      const { insecureHttpNeedsConfirmation, isInsecureHttpSessionOrigin, normalizeEnterpriseServerUrl } = await import(
         'dsh-desktop-enterprise/deep-link'
       )
       const preview = normalizeEnterpriseServerUrl(baseValue, {
         ...this.platformRequestOptions(),
         allowInsecurePrivateHttp: true
       })
-      if (isInsecurePrivateHttpOrigin(preview) && options.confirmInsecurePrivateHttp !== true) {
+      if (
+        insecureHttpNeedsConfirmation(preview, { allowInsecureLoopback: this.options.allowInsecureLoopback })
+        && options.confirmInsecurePrivateHttp !== true
+      ) {
         throw Object.assign(new Error('HTTP intranet addresses require explicit confirmation.'), {
           status: 400
         })
@@ -304,7 +310,7 @@ export class EnterpriseService {
         ...this.platformRequestOptions(),
         allowInsecurePrivateHttp: options.confirmInsecurePrivateHttp === true
       })
-      this.allowPrivateHttpForSession = isInsecurePrivateHttpOrigin(base)
+      this.allowPrivateHttpForSession = isInsecureHttpSessionOrigin(base)
       const contract = await loadEnterpriseContract()
       await this.cancelPendingLogin()
       this.epoch += 1

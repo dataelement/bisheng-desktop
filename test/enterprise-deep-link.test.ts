@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   enterpriseLoginDeepLinkFromArgv,
+  insecureHttpNeedsConfirmation,
+  isInsecureHttpSessionOrigin,
+  isInsecureLoopbackHttpOrigin,
+  isInsecurePrivateHttpOrigin,
   normalizeEnterpriseServerUrl,
   parseEnterpriseLoginDeepLink
 } from '../packages/dsh-desktop-enterprise/deep-link.js'
@@ -45,9 +49,57 @@ describe('BiSheng enterprise deep link', () => {
     ).serverUrl).toBe('http://127.0.0.1:17860')
   })
 
-  it('requires HTTPS when insecure loopback is not allowed', () => {
+  it('requires confirmation for canonical loopback HTTP unless private HTTP is allowed', () => {
     expect(normalizeEnterpriseServerUrl('https://bisheng.example.com')).toBe('https://bisheng.example.com')
-    expect(() => normalizeEnterpriseServerUrl('http://127.0.0.1:17860')).toThrow('must use HTTPS')
+    expect(() => normalizeEnterpriseServerUrl('http://127.0.0.1:17860')).toThrow('explicit confirmation')
+    expect(() => normalizeEnterpriseServerUrl('http://[::1]:17860')).toThrow('explicit confirmation')
+    expect(normalizeEnterpriseServerUrl('http://127.0.0.1:17860', { allowInsecurePrivateHttp: true }))
+      .toBe('http://127.0.0.1:17860')
+    expect(normalizeEnterpriseServerUrl('http://[::1]:17860', { allowInsecurePrivateHttp: true }))
+      .toBe('http://[::1]:17860')
+    expect(parseEnterpriseLoginDeepLink(
+      'bisheng://login?server=http%3A%2F%2F127.0.0.1%3A3001',
+      { allowInsecureLoopback: false, allowInsecurePrivateHttp: true }
+    ).serverUrl).toBe('http://127.0.0.1:3001')
+  })
+
+  it('treats numeric loopback spellings as the canonical origin', () => {
+    for (const value of [
+      'http://127.1:3001',
+      'http://2130706433:3001',
+      'http://0x7f000001:3001',
+      'http://0177.0.0.1:3001'
+    ]) {
+      expect(() => normalizeEnterpriseServerUrl(value)).toThrow('explicit confirmation')
+      expect(normalizeEnterpriseServerUrl(value, { allowInsecurePrivateHttp: true }))
+        .toBe('http://127.0.0.1:3001')
+    }
+  })
+
+  it('rejects loopback lookalikes after the HTTP confirmation flag', () => {
+    for (const value of [
+      'http://localhost:3001',
+      'http://127.0.0.2:3001',
+      'http://[::ffff:127.0.0.1]:3001',
+      'http://8.8.8.8',
+      'http://bisheng.internal'
+    ]) {
+      expect(() => normalizeEnterpriseServerUrl(value, { allowInsecurePrivateHttp: true }))
+        .toThrow('must use HTTPS')
+    }
+  })
+
+  it('separates loopback confirmation from session permission', () => {
+    expect(isInsecureLoopbackHttpOrigin('http://127.0.0.1:3001')).toBe(true)
+    expect(isInsecureLoopbackHttpOrigin('http://[::1]:3001')).toBe(true)
+    expect(isInsecurePrivateHttpOrigin('http://127.0.0.1:3001')).toBe(false)
+    expect(isInsecureHttpSessionOrigin('http://127.0.0.1:3001')).toBe(true)
+    expect(isInsecureHttpSessionOrigin('http://10.0.0.8:8080')).toBe(true)
+    expect(isInsecureHttpSessionOrigin('https://127.0.0.1:3001')).toBe(false)
+    expect(insecureHttpNeedsConfirmation('http://127.0.0.1:3001', { allowInsecureLoopback: false })).toBe(true)
+    expect(insecureHttpNeedsConfirmation('http://127.0.0.1:3001', { allowInsecureLoopback: true })).toBe(false)
+    expect(insecureHttpNeedsConfirmation('http://10.0.0.8:8080', { allowInsecureLoopback: true })).toBe(true)
+    expect(insecureHttpNeedsConfirmation('http://localhost:3001', { allowInsecurePrivateHttp: true })).toBe(false)
   })
 
   it('allows HTTP private-network IPs only after an explicit opt-in', () => {

@@ -47,6 +47,28 @@ async function createService(
   return { service, vault, notes, entries }
 }
 
+async function createPackagedService(fetchImpl: EnterpriseFetch = createEnterpriseFetch(globalThis.fetch)) {
+  const directory = await mkdtemp(join(tmpdir(), 'enterprise-service-'))
+  const vault = new SecureEnterpriseCredentialVault(join(directory, ENTERPRISE_VAULT_FILENAME), memorySafeStorage())
+  const service = new EnterpriseService({
+    vault,
+    fetchImpl,
+    allowInsecureLoopback: false
+  })
+  await service.restore()
+  cleanups.push(async () => service.stop())
+  return { service, vault }
+}
+
+function countPlatformCalls(counts: { models: number, token: number }): EnterpriseFetch {
+  return createEnterpriseFetch(async (input, init) => {
+    const url = String(input)
+    if (url.includes('/api/v1/dsh/models')) counts.models += 1
+    if (url.includes('/api/v1/dsh/token')) counts.token += 1
+    return globalThis.fetch(input, init)
+  })
+}
+
 async function completeBrowserLogin(origin: string, authorizationUrl: string) {
   const authId = new URL(authorizationUrl).searchParams.get('auth_id')
   const browserResponse = await fetch(`${origin}/__mock/authorize`, {
@@ -620,6 +642,109 @@ describe('enterprise service login loop', () => {
       message: 'HTTP intranet addresses require explicit confirmation.',
       status: 400
     })
+  })
+
+  it('skips confirmation for development loopback HTTP while intranet HTTP still requires it', async () => {
+    const { service } = await createService()
+    await expect(service.inspectBase('http://127.0.0.1:3001')).resolves.toEqual({
+      base: 'http://127.0.0.1:3001'
+    })
+    await expect(service.inspectBase('http://10.0.0.8:8080')).resolves.toEqual({
+      base: 'http://10.0.0.8:8080',
+      insecurePrivateHttp: true
+    })
+  })
+
+  it('requires confirmation for packaged loopback HTTP and still rejects other HTTP', async () => {
+    let calls = 0
+    const fetchImpl: EnterpriseFetch = async () => {
+      calls += 1
+      throw new Error('platform request was not expected')
+    }
+    const { service } = await createPackagedService(fetchImpl)
+    await expect(service.inspectBase('http://127.0.0.1:3001')).resolves.toEqual({
+      base: 'http://127.0.0.1:3001',
+      insecurePrivateHttp: true
+    })
+    await expect(service.inspectBase('http://[::1]:3001')).resolves.toEqual({
+      base: 'http://[::1]:3001',
+      insecurePrivateHttp: true
+    })
+    await expect(service.startLogin('http://127.0.0.1:3001')).rejects.toMatchObject({
+      message: 'HTTP intranet addresses require explicit confirmation.',
+      status: 400
+    })
+    await expect(service.startLogin('http://127.0.0.1:3002')).rejects.toMatchObject({
+      message: 'HTTP intranet addresses require explicit confirmation.',
+      status: 400
+    })
+    for (const address of [
+      'http://localhost:3001',
+      'http://127.0.0.2:3001',
+      'http://8.8.8.8',
+      'http://bisheng.internal'
+    ]) {
+      await expect(service.startLogin(address, { confirmInsecurePrivateHttp: true })).rejects.toThrow(
+        'must use HTTPS'
+      )
+    }
+    expect(calls).toBe(0)
+  })
+
+  it('asks for confirmation again after a packaged loopback session logs out', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    let configCalls = 0
+    const fetchImpl = createEnterpriseFetch(async (input, init) => {
+      if (String(input).includes('/api/v1/dsh/config')) configCalls += 1
+      return globalThis.fetch(input, init)
+    })
+    const { service } = await createPackagedService(fetchImpl)
+    const started = await service.startLogin(origin, { confirmInsecurePrivateHttp: true })
+    await completeBrowserLogin(origin, started.authorizationUrl)
+    await waitFor(() => service.snapshot().phase === 'connected' && service.snapshot().modelsAvailable === true)
+    await service.logout()
+    const configCallsAfterLogout = configCalls
+    await expect(service.startLogin(origin)).rejects.toMatchObject({
+      message: 'HTTP intranet addresses require explicit confirmation.',
+      status: 400
+    })
+    expect(configCalls).toBe(configCallsAfterLogout)
+  })
+
+  it('restores a confirmed loopback session and completes a later authenticated request', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    const counts = { models: 0, token: 0 }
+    const fetchImpl = countPlatformCalls(counts)
+    const directory = await mkdtemp(join(tmpdir(), 'enterprise-service-'))
+    const vault = new SecureEnterpriseCredentialVault(join(directory, ENTERPRISE_VAULT_FILENAME), memorySafeStorage())
+    const service = new EnterpriseService({ vault, fetchImpl, allowInsecureLoopback: false })
+    cleanups.push(async () => service.stop())
+    await service.restore()
+
+    const started = await service.startLogin(origin, { confirmInsecurePrivateHttp: true })
+    await completeBrowserLogin(origin, started.authorizationUrl)
+    await waitFor(() => service.snapshot().phase === 'connected' && service.snapshot().modelsAvailable === true)
+    expect((await vault.read()).session?.base).toBe(origin)
+
+    await service.stop()
+    const modelsBeforeRestore = counts.models
+
+    const restarted = new EnterpriseService({ vault, fetchImpl, allowInsecureLoopback: false })
+    cleanups.push(async () => restarted.stop())
+    await restarted.restore()
+    await waitFor(() => restarted.snapshot().modelsAvailable === true)
+    expect(counts.models).toBeGreaterThan(modelsBeforeRestore)
+
+    const tokenBeforeAuth = counts.token
+    const refreshed = await restarted.refresh()
+    expect(refreshed.phase).toBe('connected')
+    expect(refreshed.connected).toBe(true)
+    expect(refreshed.modelsAvailable).toBe(true)
+    expect(counts.token).toBeGreaterThan(tokenBeforeAuth)
   })
 
   it('keeps refreshing until per-model usage finishes after login', async () => {

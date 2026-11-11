@@ -9,6 +9,12 @@ export interface EnterpriseUrlOptions {
   allowInsecurePrivateHttp?: boolean
 }
 export declare function isInsecurePrivateHttpOrigin(value: string): boolean
+export declare function isInsecureLoopbackHttpOrigin(value: string): boolean
+export declare function isInsecureHttpSessionOrigin(value: string): boolean
+export declare function insecureHttpNeedsConfirmation(
+  value: string,
+  options?: EnterpriseUrlOptions
+): boolean
 export declare function normalizeEnterpriseServerUrl(
   value: string,
   options?: EnterpriseUrlOptions

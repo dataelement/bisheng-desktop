@@ -40,13 +40,37 @@ function isPrivateNetworkHost(hostname) {
   return /^f[cd][0-9a-f]{2}:/iu.test(ipv6Hostname(hostname))
 }
 
-export function isInsecurePrivateHttpOrigin(value) {
+function httpUrl(value) {
   try {
     const url = new URL(value)
-    return url.protocol === 'http:' && isPrivateNetworkHost(url.hostname)
+    return url.protocol === 'http:' ? url : undefined
   } catch {
-    return false
+    return undefined
   }
+}
+
+export function isInsecurePrivateHttpOrigin(value) {
+  const url = httpUrl(value)
+  return url !== undefined && isPrivateNetworkHost(url.hostname)
+}
+
+export function isInsecureLoopbackHttpOrigin(value) {
+  const url = httpUrl(value)
+  return url !== undefined && isLoopbackHost(url.hostname)
+}
+
+// A saved loopback session must keep working after restart even when this
+// process would ask for confirmation before a new login.
+export function isInsecureHttpSessionOrigin(value) {
+  return isInsecurePrivateHttpOrigin(value) || isInsecureLoopbackHttpOrigin(value)
+}
+
+// Intranet HTTP always needs a prompt. Loopback HTTP needs one only when the
+// development exemption is off, so the two checks cannot share one predicate.
+export function insecureHttpNeedsConfirmation(value, options = {}) {
+  if (isInsecurePrivateHttpOrigin(value)) return true
+  if (isInsecureLoopbackHttpOrigin(value)) return options.allowInsecureLoopback !== true
+  return false
 }
 
 export function normalizeEnterpriseServerUrl(value, options = {}) {
@@ -69,13 +93,15 @@ export function normalizeEnterpriseServerUrl(value, options = {}) {
     return url.origin
   }
   if (url.protocol === 'http:') {
-    if (options.allowInsecureLoopback === true && isLoopbackHost(url.hostname)) {
+    const loopback = isLoopbackHost(url.hostname)
+    const intranet = isPrivateNetworkHost(url.hostname)
+    if (options.allowInsecureLoopback === true && loopback) {
       return url.origin
     }
-    if (options.allowInsecurePrivateHttp === true && isPrivateNetworkHost(url.hostname)) {
+    if (options.allowInsecurePrivateHttp === true && (intranet || loopback)) {
       return url.origin
     }
-    if (isPrivateNetworkHost(url.hostname)) {
+    if (intranet || loopback) {
       throw new Error('HTTP intranet addresses require explicit confirmation.')
     }
     throw new Error(

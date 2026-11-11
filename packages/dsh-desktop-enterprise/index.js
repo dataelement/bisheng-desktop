@@ -12,7 +12,7 @@ import { parseThirdPartyPolicy } from './contract.js'
 import { createAuditTitleSync } from './audit-title.js'
 import { createAuditFeedbackSync } from './audit-feedback.js'
 import {
-  isInsecurePrivateHttpOrigin,
+  insecureHttpNeedsConfirmation,
   normalizeEnterpriseServerUrl,
   parseEnterpriseLoginDeepLink
 } from './deep-link.js'
@@ -68,7 +68,9 @@ function inspectUrlOptions() {
 function inspectedBase(base) {
   return {
     base,
-    ...(isInsecurePrivateHttpOrigin(base) ? { insecurePrivateHttp: true } : {})
+    ...(insecureHttpNeedsConfirmation(base, { allowInsecureLoopback: allowInsecureLoopback() })
+      ? { insecurePrivateHttp: true }
+      : {})
   }
 }
 

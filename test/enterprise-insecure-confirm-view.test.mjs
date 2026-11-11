@@ -191,6 +191,20 @@ it('drops the trusted-source prompt after sign-in and shows it again only on the
   expect(text()).toContain(SERVICE)
 })
 
+it('closes the trusted-source prompt without starting login when confirmation is cancelled', async () => {
+  const { text, click, requests } = await mountEnterprise(idleAccount())
+  await click('在浏览器中登录')
+  expect(requests.filter((item) => item.path === '/api/enterprise.base.inspect')).toHaveLength(1)
+  expect(requests.some((item) => item.path === '/api/enterprise.login.start')).toBe(false)
+  expect(text()).toContain('确认为可信来源')
+
+  await click('取消')
+  expect(text()).not.toContain('确认为可信来源')
+  expect(text()).toContain('在浏览器中登录')
+  expect(requests.filter((item) => item.path === '/api/enterprise.login.start')).toHaveLength(0)
+  expect(requests.filter((item) => item.path === '/api/enterprise.deep-link.confirm')).toHaveLength(0)
+})
+
 it('ignores a same-origin login link while browser sign-in is already in progress', async () => {
   const { text, requests, deliverLoginLink } = await mountEnterprise({
     ...idleAccount(),
