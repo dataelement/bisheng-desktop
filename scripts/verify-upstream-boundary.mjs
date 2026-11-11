@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+// Invoked with node: avoid CRLF shebangs breaking Vite/Vitest module imports.
 import { execFileSync } from 'node:child_process'
 import { lstatSync, readFileSync, readlinkSync } from 'node:fs'
 import path from 'node:path'
