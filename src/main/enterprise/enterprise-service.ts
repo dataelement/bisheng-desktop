@@ -300,7 +300,7 @@ export class EnterpriseService {
         allowInsecurePrivateHttp: true
       })
       if (isInsecurePrivateHttpOrigin(preview) && options.confirmInsecurePrivateHttp !== true) {
-        throw Object.assign(new Error('HTTP intranet addresses require explicit confirmation.'), {
+        throw Object.assign(new Error('HTTP addresses require explicit confirmation.'), {
           status: 400
         })
       }
