@@ -94,7 +94,7 @@ export class CloudWorkbenchView {
         await this.refreshCookie(item, launch)
         await view.webContents.loadURL(launch.entryUrl)
       }
-      if (generation !== this.generation) {
+      if (generation !== this.generation || this.retained.get(cacheKey) !== item) {
         superseded = true
         throw new Error('Cloud workbench opening was cancelled.')
       }
@@ -137,6 +137,16 @@ export class CloudWorkbenchView {
   }
   resizeFor(owner: unknown, bounds: unknown): void { if (owner === this.owner) this.resize(bounds) }
   closeFor(owner: unknown): void { if (owner === this.owner) { this.generation++; this.hide() } }
+
+  release(appId: string, connectionKey: string): void {
+    const key = `${connectionKey}:${appId}`
+    const item = this.retained.get(key)
+    if (!item) return
+    this.retained.delete(key)
+    if (this.active === item) this.hide()
+    if (!item.view.webContents.isDestroyed()) item.view.webContents.close()
+    void item.partition.clearStorageData()
+  }
 
   private hide(): void {
     if (this.active && this.parent && !this.parent.isDestroyed()) this.parent.contentView.removeChildView(this.active.view)

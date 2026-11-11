@@ -328,7 +328,10 @@ describe('desktop workbench client navigation', () => {
     expect(service.cloudConversationId).toBe(null)
     await service.open(id, sessionId)
     expect(service.cloudConversationId).toBe(id)
-    await service.remove(id)
+    const release = vi.fn(async () => {})
+    clientWindow.dshDesktopEnterprise = { releaseCloudWorkbench: release }
+    try { await service.remove(id) } finally { delete clientWindow.dshDesktopEnterprise }
+    expect(release).toHaveBeenCalledExactlyOnceWith(item.id, connectionKey)
     expect(saved().state.added).not.toContain(id)
     expect(saved().state.cloudWorkbenches[id].appId).toBe(item.id)
   })
@@ -4367,4 +4370,19 @@ it.each([false, true])('preserves the full development instructions with an ente
     expect(service.creationPrompt()).toBe(text + '\n\nMy 【idea】')
   }
   service.dispose()
+})
+
+it('cloud uninstall releases the native page before removing the local shortcut', async () => {
+  const { service } = await fixture()
+  const key = 'a'.repeat(16)
+  const appId = 'b'.repeat(32)
+  await service.addCloud({ id: appId, name: 'Cloud' }, key)
+  const id = `cloud:${key}:${appId}`
+  const release = vi.fn(async () => { expect(service.state.added).toContain(id) })
+  clientWindow.dshDesktopEnterprise = { releaseCloudWorkbench: release }
+  try {
+    await service.remove(id)
+    expect(release).toHaveBeenCalledExactlyOnceWith(appId, key)
+    expect(service.state.added).not.toContain(id)
+  } finally { delete clientWindow.dshDesktopEnterprise }
 })

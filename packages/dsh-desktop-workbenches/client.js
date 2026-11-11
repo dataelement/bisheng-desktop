@@ -1400,7 +1400,9 @@ window.__ModuleLoader__.load({
         await this.commit((state) => { state.active = null })
         if (!this.disposed && !signal.aborted && ticket === this.navigation) this.ctx.layout.selectPanel(null)
       }
-      remove(id) {
+      async remove(id) {
+        const cloud = this.state.cloudWorkbenches?.[id]
+        if (cloud) await window.dshDesktopEnterprise.releaseCloudWorkbench(cloud.appId, cloud.connectionKey)
         this.ctx.layout.beginNavigation()
         ++this.navigation
         return this.commit((state) => {

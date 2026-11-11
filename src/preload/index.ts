@@ -668,6 +668,7 @@ contextBridge.exposeInMainWorld(
     cloudRequest: (input: unknown): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:request', input),
     openCloudWorkbench: (appId: string, bounds: unknown, connectionKey: string, owner: string): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:open', appId, bounds, connectionKey, owner),
     resizeCloudWorkbench: (bounds: unknown, owner: string): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:bounds', bounds, owner),
+    releaseCloudWorkbench: (appId: string, connectionKey: string): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:release', appId, connectionKey),
     closeCloudWorkbench: (owner: string): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:close', owner),
     onLoginLink: (listener: (url: string) => void): (() => void) => {
       if (typeof listener !== 'function') {

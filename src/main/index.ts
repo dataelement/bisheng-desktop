@@ -1695,7 +1695,7 @@ async function uninstallMarketAndRestart(): Promise<{ ok: boolean }> {
 function registerHarnessHandlers(): void {
   const disposeNotifications = registerDesktopNotificationBridge(() => mainWindow, desktopIconPath, harnessLocale)
   app.once('will-quit', disposeNotifications)
-  for (const channel of ['enterprise-cloud:request', 'enterprise-cloud:open', 'enterprise-cloud:bounds', 'enterprise-cloud:close']) ipcMain.removeHandler(channel)
+  for (const channel of ['enterprise-cloud:request', 'enterprise-cloud:open', 'enterprise-cloud:bounds', 'enterprise-cloud:close', 'enterprise-cloud:release']) ipcMain.removeHandler(channel)
   const checkCloudHost = (event: IpcMainInvokeEvent) => {
     assertTrustedMainWindowEvent(event)
     if (!sameHarnessOrigin(event.sender.getURL(), runtime.snapshot().url)) throw new Error('Trusted workbench host required.')
@@ -1717,6 +1717,11 @@ function registerHarnessHandlers(): void {
     await cloudWorkbenchView.open(mainWindow, launch, bounds, owner, () => enterpriseDesktop?.snapshot().connected ? enterpriseDesktop.snapshot().connectionKey : undefined,
       async appId => await enterprise.cloudRequest({ operation: 'launch', appId }) as CloudLaunch)
     return { appId: launch.appId }
+  })
+  ipcMain.handle('enterprise-cloud:release', (event, appId: unknown, connectionKey: unknown) => {
+    const enterprise = checkCloudHost(event)
+    if (typeof appId !== 'string' || !/^[a-f0-9]{32}$/.test(appId) || typeof connectionKey !== 'string' || connectionKey !== enterprise.snapshot().connectionKey) throw new Error('Invalid cloud application identity.')
+    cloudWorkbenchView.release(appId, connectionKey)
   })
   ipcMain.handle('enterprise-cloud:bounds', (event, bounds: unknown, owner: unknown) => { checkCloudHost(event); cloudWorkbenchView.resizeFor(owner, bounds) })
   ipcMain.handle('enterprise-cloud:close', (event, owner: unknown) => { assertTrustedMainWindowEvent(event); cloudWorkbenchView.closeFor(owner) })

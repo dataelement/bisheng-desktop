@@ -177,3 +177,33 @@ it('keeps a shared initial page when a newer opening supersedes its creator', as
   expect(view(0).webContents.close).not.toHaveBeenCalled()
   expect(partition(0).clearStorageData).not.toHaveBeenCalled()
 })
+
+
+it('explicit uninstall releases only that app and reinstall navigates a fresh isolated page', async () => {
+  const host = parent()
+  await controller.open(host, launch('a'), bounds, 'first', () => 'one')
+  controller.closeFor('first')
+  await controller.open(host, launch('b'), bounds, 'second', () => 'one')
+  controller.release('a', 'other-account')
+  expect(view(0).webContents.close).not.toHaveBeenCalled()
+  controller.release('a', 'one')
+  expect(view(0).webContents.close).toHaveBeenCalledOnce()
+  expect(partition(0).clearStorageData).toHaveBeenCalledOnce()
+  expect(view(1).webContents.close).not.toHaveBeenCalled()
+  controller.release('a', 'one')
+  await controller.open(host, launch('a'), bounds, 'reinstalled', () => 'one')
+  expect(views).toHaveLength(3)
+  expect(view(2).webContents.loadURL).toHaveBeenCalledOnce()
+})
+
+it('uninstall during ticket exchange cannot reattach the released page', async () => {
+  const host = parent()
+  await controller.open(host, launch('a'), bounds, 'first', () => 'one')
+  let finish: (() => void) | undefined
+  partition(0).fetch.mockImplementationOnce(() => new Promise<Response>(resolve => { finish = () => resolve(new Response(null, { status: 204 })) }))
+  const pending = controller.open(host, launch('a'), bounds, 'pending', () => 'one')
+  controller.release('a', 'one')
+  finish?.()
+  await expect(pending).rejects.toThrow('cancelled')
+  expect(host.contentView.addChildView).toHaveBeenCalledTimes(1)
+})
