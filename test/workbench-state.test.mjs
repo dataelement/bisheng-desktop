@@ -2,7 +2,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createStateStore, emptyState, MAX_STATE_BYTES } from '../packages/dsh-desktop-workbenches/state.mjs'
+import { createStateStore, emptyState, MAX_STATE_BYTES, validateState } from '../packages/dsh-desktop-workbenches/state.mjs'
 import { apply, authorizedStateMigrations, catalogReadOptions } from '../packages/dsh-desktop-workbenches/index.js'
 
 const roots = []
@@ -257,4 +257,16 @@ describe('desktop workbench state', () => {
     expect(cancelled).toBe(true)
     expect((await post('x'.repeat(MAX_STATE_BYTES + 1))).status).toBe(413)
   })
+})
+
+
+it('cloud state stores display identity but refuses credentials and hosted URLs', () => {
+  const appId = 'a'.repeat(32), connectionKey = 'b'.repeat(16)
+  const id = `cloud:${connectionKey}:${appId}`
+  const item = { appId, connectionKey, title: 'Shared tasks', description: '', versionId: null }
+  const state = { ...emptyState(), added: [id], pinned: [id], cloudWorkbenches: { [id]: item } }
+  expect(validateState(state).cloudWorkbenches[id]).toEqual(item)
+  for (const field of ['ticket', 'key', 'token', 'url']) {
+    expect(() => validateState({ ...state, cloudWorkbenches: { [id]: { ...item, [field]: 'private' } } })).toThrow('metadata')
+  }
 })

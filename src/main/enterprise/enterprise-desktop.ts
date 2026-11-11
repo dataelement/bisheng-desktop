@@ -1,3 +1,4 @@
+import type { CloudAuthorize } from './cloud-workbench'
 import type { EnterpriseWebSession } from './web-session'
 import { join } from 'node:path'
 import { parseThirdPartyPolicy } from 'dsh-desktop-enterprise/contract'
@@ -15,6 +16,7 @@ import {
 } from './secure-credential-vault'
 
 export interface EnterpriseDesktopRuntime {
+  cloudRequest(input: unknown): Promise<unknown>
   snapshot(): EnterprisePublicState
   webSession(connectionKey: string): Promise<EnterpriseWebSession>
   subscribe(listener: (state: EnterprisePublicState) => void): () => void
@@ -25,6 +27,7 @@ export interface EnterpriseDesktopRuntime {
 }
 
 export async function startEnterpriseDesktop(options: {
+  confirmCloudEffect?: CloudAuthorize
   desktopVersion?: string
   activateDesktop?: () => Promise<void> | void
   userDataPath: string
@@ -46,6 +49,8 @@ export async function startEnterpriseDesktop(options: {
         catch { options.note?.('[enterprise] state_listener_failed') }
       }
     },
+    confirmCloudEffect: options.confirmCloudEffect,
+    cloudRoot: join(options.userDataPath, 'cloud-development'),
     desktopVersion: options.desktopVersion,
     activateDesktop: options.activateDesktop,
     vault,
@@ -75,6 +80,7 @@ export async function startEnterpriseDesktop(options: {
   }
 
   return {
+    cloudRequest: input => service.cloudRequest(input),
     snapshot: () => service.snapshot(),
     webSession: (key) => service.webSession(key),
     subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener) } },

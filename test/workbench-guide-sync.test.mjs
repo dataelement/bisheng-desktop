@@ -74,6 +74,8 @@ describe('bundled workbench development guide', () => {
     expect(guide).not.toContain('screenshots.json')
     // The guide is self-contained: readers see it outside the checkout.
     expect(guide).not.toContain('../../docs/')
+    expect(guide).not.toContain('../packages/dsh-desktop-workbenches/')
+    expect(guide).toContain('`cloud_workbench` 的 `guide`')
   })
 
   it('ships the market acceptance spec as its own document', () => {
@@ -107,7 +109,7 @@ describe('bundled workbench development guide', () => {
     try {
       const routes = []
       const connection = { fetch: { register(route) { routes.push(route) } } }
-      apply({ effect: fn => fn(), inject: (_deps, callback) => callback({ connection, desktopPnpm: {} }), reflect: { provide() {} }, connection }, { root })
+      apply({ effect: fn => fn(), inject: (deps, callback) => { if (deps.every(name => name === 'desktopPnpm')) callback({ connection, desktopPnpm: {} }) }, reflect: { provide() {} }, connection }, { root })
       expect(routes.length).toBeGreaterThan(5)
       for (const route of routes) expect([route.path, route.requestBody]).toEqual([route.path, 'buffered'])
     } finally { await rm(root, { recursive: true, force: true }) }

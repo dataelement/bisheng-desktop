@@ -16,3 +16,8 @@ Version: 2026-10-12 · For full rules, see the [Workbench Development Standard](
 **UI acceptance**: Check first entry without a session, an owned session, expanded and collapsed sidebar, and a narrow window. For a standard split, check the host generic guidance beside the business panel; for `customFrame`, provide your own first-use action. Use realistic Chinese and English text; prevent single-character vertical wrapping, clipped controls, and page-wide horizontal overflow. Preserve host shared entrances.
 
 **Empty-directory example**: If the directory is empty and the user only pasted generic development instructions or said “make a workbench,” reuse any context already provided. If the name is unknown, ask only “What would you like to call this workbench?” and allow a provisional name. On the next turn, ask the one business question that most affects implementation, such as “What should it mainly help you do?” If the purpose is already clear, skip that question and suggest a minimal flow for confirmation. Read-only directory and Desktop capability checks are allowed. Until the business goal and scope are sufficiently clear, do not create package files, business code, or pages, or build, install, or submit. A name alone is not a business brief.
+
+
+## BiSheng cloud deployment supplement
+
+During requirements discovery, assess continuous execution, collaboration and local-device dependencies. Record deployment rationale, shared/personal state and conflict policy. Follow the [cloud workbench protocol](../packages/dsh-desktop-workbenches/cloud-guide.en.md) for hosted use, source-on-demand development and acceptance. Normal use loads the hosted URL; source is fetched only for authorized code changes. Do not ask for a publishing key.

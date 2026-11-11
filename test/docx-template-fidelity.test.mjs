@@ -242,14 +242,13 @@ it.each(['coffee-market', 'equity-research', 'meeting-minutes'])('retains the na
   expect((await f.call('office_template_write', f.plan)).isError).toBe(false)
   expect((await f.call('present', { files: [{ path: 'result.docx' }] })).isError).toBe(false)
 })
-it('blocks layout and style mutations before delivery', async () => {
+// Each mutation exercises a separate Python/tool round trip. Give each
+// independent safety assertion the same per-test budget as other tool cases.
+it.each(['font', 'footer', 'divider', 'text-style', 'page-margins', 'document-grid', 'style-definition', 'table-columns'])('blocks %s mutation before delivery', async (kind) => {
   const f = await fixture(); await f.call('office_template_write', f.plan)
   const resultPath = join(f.workspace, 'result.docx')
-  const original = await readFile(resultPath)
   const { execFile } = await import('node:child_process'); const { promisify } = await import('node:util')
   const python = resolve('.build/office-runtime/primary-runtime/dependencies/python', process.platform === 'win32' ? 'python.exe' : 'bin/python3')
-  for (const kind of ['font', 'footer', 'divider', 'text-style', 'page-margins', 'document-grid', 'style-definition', 'table-columns']) {
-    await writeFile(resultPath, original)
     await promisify(execFile)(python, ['-I', '-B', '-c', `
 import sys,zipfile
 from lxml import etree as E
@@ -273,7 +272,6 @@ with zipfile.ZipFile(p,'w',zipfile.ZIP_DEFLATED) as z:
 `, resultPath, kind])
     expect((await f.call('present', { files: [{ path: 'result.docx' }] })).isError).toBe(true)
     expect(f.delivered).not.toHaveBeenCalled()
-  }
 }, 60_000)
 
 it('retains mixed heading/body typography with explicit native run references', async () => {

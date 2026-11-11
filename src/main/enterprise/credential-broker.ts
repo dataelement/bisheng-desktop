@@ -13,6 +13,7 @@ export const ENTERPRISE_ALLOW_INSECURE_LOOPBACK_ENV = 'DSH_DESKTOP_ENTERPRISE_AL
 
 const JSON_ROUTES = new Map<string, 'GET' | 'POST'>([
   ['/v1/state', 'GET'],
+  ['/v1/cloud', 'POST'],
   ['/v1/login/start', 'POST'],
   ['/v1/login/manual', 'POST'],
   ['/v1/refresh', 'POST'],
@@ -103,6 +104,16 @@ export async function startEnterpriseCredentialBroker(
       return
     }
     try {
+      if (path === '/v1/cloud') {
+        const body = await readJsonBody(request, ENTERPRISE_BROKER_JSON_LIMIT)
+        // Launch tickets are consumed only by the main-process view controller.
+        if ((body as { operation?: unknown }).operation === 'launch') {
+          sendJson(response, 403, { error: 'Use the native cloud workbench view.' })
+          return
+        }
+        sendJson(response, 200, await service.cloudRequest(body))
+        return
+      }
       if (path === '/v1/state') {
         sendJson(response, 200, await service.readState())
         return

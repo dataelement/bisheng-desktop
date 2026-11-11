@@ -1,4 +1,7 @@
+import { confirmCloudEffect, assertCloudRendererRequest } from './enterprise/cloud-confirmation'
 import { EnterpriseChatView } from './enterprise/chat-view'
+import { CloudWorkbenchView } from './enterprise/cloud-workbench-view'
+import type { CloudLaunch } from './enterprise/cloud-workbench'
 import { desktopFileUrl, navigateDesktopWindow } from './desktop-navigation'
 import { recoverStartupConfiguration } from './startup-config-recovery'
 import { initializeDesktopService, desktopDiagnostics } from './desktop-service'
@@ -239,6 +242,7 @@ let mainWindow: BrowserWindow | undefined
 let mobileWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let runtime: HarnessRuntime
+const cloudWorkbenchView = new CloudWorkbenchView()
 let enterpriseDesktop: EnterpriseDesktopRuntime | undefined
 let enterpriseChat: EnterpriseChatView | undefined
 let localWorkbenchCapability: string | undefined
@@ -1085,6 +1089,7 @@ function createWindow(): BrowserWindow {
   installContextMenu(window, harnessLocale)
   installMainWindowRendererRecovery(window)
   window.on('closed', () => {
+    cloudWorkbenchView.close()
     if (mainWindow === window) mainWindow = undefined
     resolvePluginRecoveryAction('quit')
     resolveWebImportAction('skip')
@@ -1691,6 +1696,36 @@ async function uninstallMarketAndRestart(): Promise<{ ok: boolean }> {
 function registerHarnessHandlers(): void {
   const disposeNotifications = registerDesktopNotificationBridge(() => mainWindow, desktopIconPath, harnessLocale)
   app.once('will-quit', disposeNotifications)
+  for (const channel of ['enterprise-cloud:request', 'enterprise-cloud:open', 'enterprise-cloud:bounds', 'enterprise-cloud:close', 'enterprise-cloud:release']) ipcMain.removeHandler(channel)
+  const checkCloudHost = (event: IpcMainInvokeEvent) => {
+    assertTrustedMainWindowEvent(event)
+    if (!sameHarnessOrigin(event.sender.getURL(), runtime.snapshot().url)) throw new Error('Trusted workbench host required.')
+    if (!enterpriseDesktop) throw new Error('Enterprise connection unavailable.')
+    return enterpriseDesktop
+  }
+  ipcMain.handle('enterprise-cloud:request', async (event, input: unknown) => {
+    const enterprise = checkCloudHost(event)
+    assertCloudRendererRequest(input)
+    return enterprise.cloudRequest(input)
+  })
+  ipcMain.handle('enterprise-cloud:open', async (event, appId: unknown, bounds: unknown, connectionKey: unknown, owner: unknown) => {
+    const enterprise = checkCloudHost(event)
+    if (typeof owner !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(owner) || connectionKey !== enterprise.snapshot().connectionKey) throw new Error('Enterprise account changed.')
+    const launch = await enterprise.cloudRequest({ operation: 'launch', appId }) as CloudLaunch
+    if (launch.connectionKey !== connectionKey) throw new Error('Enterprise account changed.')
+    if (!mainWindow) throw new Error('Workbench window closed.')
+    await cloudWorkbenchView.open(mainWindow, launch, bounds, owner, () => enterpriseDesktop?.snapshot().connected ? enterpriseDesktop.snapshot().connectionKey : undefined,
+      async appId => await enterprise.cloudRequest({ operation: 'launch', appId }) as CloudLaunch)
+    return { appId: launch.appId }
+  })
+  ipcMain.handle('enterprise-cloud:release', async (event, appId: unknown, connectionKey: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    if (!sameHarnessOrigin(event.sender.getURL(), runtime.snapshot().url) || typeof appId !== 'string' || !/^[a-f0-9]{32}$/.test(appId) || typeof connectionKey !== 'string' || !/^[a-f0-9]{16}$/.test(connectionKey)) throw new Error('Invalid cloud application identity.')
+    await cloudWorkbenchView.release(appId, connectionKey)
+  })
+  ipcMain.handle('enterprise-cloud:bounds', (event, bounds: unknown, owner: unknown) => { checkCloudHost(event); cloudWorkbenchView.resizeFor(owner, bounds) })
+  ipcMain.handle('enterprise-cloud:close', (event, owner: unknown) => { assertTrustedMainWindowEvent(event); cloudWorkbenchView.closeFor(owner) })
+
   ipcMain.removeAllListeners('dsh:storage-load-sync')
   ipcMain.on('dsh:storage-load-sync', (event) => {
     event.returnValue = desktopStorageManager?.getAll() ?? {}
@@ -3490,6 +3525,7 @@ async function bootstrap(): Promise<void> {
   })
   try {
     enterpriseDesktop = await startEnterpriseDesktop({
+      confirmCloudEffect: effect => confirmCloudEffect(effect, mainWindow, harnessLocale() === 'zh'),
       desktopVersion: app.getVersion(),
       activateDesktop: async () => {
         const snapshot = runtime.snapshot()

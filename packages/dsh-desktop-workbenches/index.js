@@ -1,4 +1,5 @@
 import { installEnterpriseWorkbench } from './enterprise-install.mjs'
+import { registerCloudTools } from './cloud-tools.mjs'
 import { readInstallEvidence } from './install-evidence.mjs'
 import Schema from '@deepseek-ai/schemastery'
 import { CatalogError, createCatalogReader } from './catalog.mjs'
@@ -79,6 +80,7 @@ async function recordLocalInstall(root, install) {
 
 export function apply(ctx, config) {
   const store = createStateStore(config.root)
+  registerCloudTools(ctx, store)
   const readCatalog = createCatalogReader({
     fetch: selectMarketFetch(),
     cachePath: join(config.root, 'workbench-catalog-cache.json'),
@@ -123,7 +125,34 @@ export function apply(ctx, config) {
       }
     }
   })
+  ctx.inject(['desktopCloud'], scoped => {
+    scoped.connection.fetch.register({
+      path: '/api/desktop-workbenches/cloud', methods: ['POST'], requestBody: 'buffered',
+      async fetch(request) {
+        try { return Response.json(await scoped.desktopCloud.request(await readPayload(request))) }
+        catch (error) { return Response.json({ error: error.message }, { status: 400 }) }
+      }
+    })
+  })
+  ctx.connection.fetch.register(documentRoute('/api/desktop-workbenches/cloud-guide', 'cloud-guide.zh.md'))
+  ctx.connection.fetch.register(documentRoute('/api/desktop-workbenches/cloud-guide-en', 'cloud-guide.en.md'))
+  ctx.connection.fetch.register({
+    path: '/api/desktop-workbenches/cloud-client.mjs', methods: ['GET'], requestBody: 'buffered',
+    async fetch() {
+      return new Response(await readFile(new URL('./cloud-client.mjs', import.meta.url), 'utf8'), {
+        headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' }
+      })
+    }
+  })
   ctx.connection.fetch.register(documentRoute('/api/desktop-workbenches/development-guide', 'development-guide.zh.md'))
+  ctx.connection.fetch.register({
+    path: '/api/desktop-workbenches/create-workbench.mjs', methods: ['GET'], requestBody: 'buffered',
+    async fetch() {
+      return new Response(await readFile(new URL('./create-workbench.mjs', import.meta.url), 'utf8'), {
+        headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' }
+      })
+    }
+  })
   ctx.connection.fetch.register(documentRoute('/api/desktop-workbenches/author-guide', 'development-guide.zh.md'))
   ctx.connection.fetch.register(documentRoute('/api/desktop-workbenches/market-acceptance', 'market-acceptance.zh.md'))
   ctx.connection.fetch.register(documentRoute('/api/desktop-workbenches/development-guide-en', 'development-guide.en.md'))
