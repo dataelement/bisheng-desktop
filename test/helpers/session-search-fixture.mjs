@@ -36,7 +36,7 @@ export function createSessionSearchFixture(workspaceSource, desktopSource, { gro
   const catalog = { phase: 'ready', projectionsBySession: {}, ids: ['one', 'two'], byId: Object.fromEntries(['one', 'two'].map(id => [id, { id, title: `会话 ${id}`, updatedAt: 1, blank: false, retainedBy: {} }])) }
   const workspaces = { phase: 'ready', state: 'ready', items: [], archivedSessionIds: [], pinnedSessionIds: [] }
   const view = { groupBy, orderBy: 'updated', archivedFilter: archivedOnly ? 'only' : 'default', groupExpansion: { '': true }, sessionOrderByAccount: {}, unreadSessionIds: [] }
-  let cloud = { mode: 'work', page: 1, historyPhase: 'ready', items: [{ id: 'cloud', title: '云端会话', updatedAt: '2026-01-01T00:00:00Z' }] }
+  let cloud = { mode: 'work', page: 1, historyPhase: 'ready', running: [], items: [{ id: 'cloud', title: '云端会话', updatedAt: '2026-01-01T00:00:00Z' }] }
   const cloudListeners = new Set()
   const opened = []
   const navigation = { projects: createChatProjects(), snapshot: () => cloud, subscribe: fn => { cloudListeners.add(fn); return () => cloudListeners.delete(fn) }, open: id => opened.push(`chat:${id}`) }

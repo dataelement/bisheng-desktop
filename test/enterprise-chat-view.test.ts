@@ -1577,3 +1577,179 @@ describe('cloud conversation deletion', () => {
     } finally { f.host.dispose() }
   })
 })
+
+// Rename uses BiSheng's own conversation rename endpoint under the history grant deletion uses.
+describe('cloud conversation rename', () => {
+  it('posts the trimmed name for a listed conversation and tells the open document', async () => {
+    const f = fixture()
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      await f.host.history(1)
+      await f.host.open('cloud-a')
+      const epoch = f.host.snapshot().epoch
+      const fetch = fake.sessions[0].fetch
+      fetch.mockResolvedValueOnce(new Response(JSON.stringify({ status_code: 200 })))
+      await expect(f.host.rename('cloud-a', '  季度复盘  ', epoch)).resolves.toEqual({ epoch })
+      const [url, init] = fetch.mock.lastCall
+      expect(url).toBe('https://enterprise.example/api/v1/chat/conversation/rename')
+      expect(init).toMatchObject({ method: 'POST', redirect: 'error', headers: { 'content-type': 'application/json' }, signal: expect.any(AbortSignal) })
+      expect(JSON.parse(init.body)).toEqual({ conversationId: 'cloud-a', name: '季度复盘' })
+      expect(fake.views[0].webContents.send).toHaveBeenCalledWith('enterprise-chat:conversation-renamed', { conversationId: 'cloud-a' })
+      // Unlike deletion, rename keeps the open document and the conversation's navigation grant.
+      expect(fake.views[0].webContents.loadURL).not.toHaveBeenLastCalledWith(expect.stringContaining('/workspace/c/new'))
+      await expect(f.host.open('cloud-a')).resolves.toBeUndefined()
+    } finally { f.host.dispose() }
+  })
+
+  // The sidebar also offers rename on project pages and search results, which come from this read.
+  it.each([
+    ['a project page', { project_id: '11111111-1111-4111-8111-111111111111' }],
+    ['a search result', { query: 'Older' }]
+  ])('renames a conversation listed only by %s', async (_label, page) => {
+    const f = fixture()
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      const json = (data: unknown) => new Response(JSON.stringify({ status_code: 200, data }), { headers: { 'content-type': 'application/json' } })
+      const fetch = fake.sessions[0].fetch
+      fetch.mockImplementation(async (url: string) => url.includes('/api/v1/chat/projects/snapshot')
+        ? json({ identity: { user_id: 7, tenant_id: 2 }, projects: [{ id: '11111111-1111-4111-8111-111111111111', name: 'Research' }], memberships: [{ chat_id: 'cloud-p', project_id: '11111111-1111-4111-8111-111111111111' }] })
+        : url.includes('/api/v1/chat/projects/conversations')
+          ? json({ data: [{ chat_id: 'cloud-p', name: 'Older', flow_type: 15, update_time: '2026-10-01T00:00:00' }], total: 1, next_cursor: null })
+          : new Response(JSON.stringify({ status_code: 200 })))
+      const epoch = f.host.snapshot().epoch
+      await expect(f.host.rename('cloud-p', 'Renamed', epoch)).rejects.toThrow('current Chat history')
+      expect((await f.host.projectConversations(page, epoch)).items.map(item => item.id)).toEqual(['cloud-p'])
+      await expect(f.host.rename('cloud-p', 'Renamed', epoch)).resolves.toEqual({ epoch })
+      const [url, init] = fetch.mock.lastCall
+      expect(url).toBe('https://enterprise.example/api/v1/chat/conversation/rename')
+      expect(JSON.parse(init.body)).toEqual({ conversationId: 'cloud-p', name: 'Renamed' })
+    } finally { f.host.dispose() }
+  })
+
+  it.each([
+    ['a stale identity', 'cloud-a', 'Name', -1],
+    ['an unlisted conversation', 'unknown', 'Name', undefined],
+    ['a forged identity', '../cloud-a', 'Name', undefined],
+    ['an empty name', 'cloud-a', '   ', undefined],
+    ['a non-string name', 'cloud-a', 42, undefined],
+    ['a control character', 'cloud-a', 'line\nbreak', undefined],
+    ['a name beyond the column', 'cloud-a', '名'.repeat(256), undefined]
+  ])('rejects %s before calling the server', async (_label, id, name, staleEpoch) => {
+    const f = fixture()
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      await f.host.history(1)
+      const fetch = fake.sessions[0].fetch
+      fetch.mockClear()
+      await expect(f.host.rename(id, name, staleEpoch ?? f.host.snapshot().epoch)).rejects.toThrow()
+      expect(fetch).toHaveBeenCalledTimes(0)
+      expect(fake.views[0].webContents.send).not.toHaveBeenCalledWith('enterprise-chat:conversation-renamed', expect.anything())
+    } finally { f.host.dispose() }
+  })
+
+  it('accepts a name at the column limit counted in characters', async () => {
+    const f = fixture()
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      await f.host.history(1)
+      fake.sessions[0].fetch.mockResolvedValueOnce(new Response(JSON.stringify({ status_code: 200 })))
+      const name = '😀'.repeat(255)
+      await f.host.rename('cloud-a', name, f.host.snapshot().epoch)
+      expect(JSON.parse(fake.sessions[0].fetch.mock.lastCall[1].body).name).toBe(name)
+    } finally { f.host.dispose() }
+  })
+
+  it.each([new Response('', { status: 403 }), new Response(JSON.stringify({ status_code: 500 })), new Response('invalid')])('reports a failed rename without notifying the document', async response => {
+    const f = fixture()
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      await f.host.history(1)
+      const epoch = f.host.snapshot().epoch
+      fake.sessions[0].fetch.mockResolvedValueOnce(response)
+      await expect(f.host.rename('cloud-a', 'Name', epoch)).rejects.toThrow()
+      expect(fake.views[0].webContents.send).not.toHaveBeenCalledWith('enterprise-chat:conversation-renamed', expect.anything())
+      fake.sessions[0].fetch.mockResolvedValueOnce(new Response(JSON.stringify({ status_code: 200 })))
+      await expect(f.host.rename('cloud-a', 'Name', epoch)).resolves.toEqual({ epoch })
+    } finally { f.host.dispose() }
+  })
+
+  it('discards a rename response after logout', async () => {
+    const f = fixture()
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      await f.host.history(1)
+      let finish: (response: Response) => void = () => {}
+      fake.sessions[0].fetch.mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve }))
+      const pending = f.host.rename('cloud-a', 'Name', f.host.snapshot().epoch)
+      const rejected = expect(pending).rejects.toThrow('identity changed')
+      f.change({ connected: false, connectionKey: 'tenant-a' })
+      finish(new Response(JSON.stringify({ status_code: 200 })))
+      await rejected
+    } finally { f.host.dispose() }
+  })
+})
+
+// The enterprise document reports which conversations it is still generating.
+describe('cloud conversation activity', () => {
+  async function ready() {
+    const f = fixture()
+    f.host.present(f.owner, presentation)
+    await flush()
+    const wc = fake.views[0].webContents
+    await wc.loadURL('https://enterprise.example/workspace/c/cloud-a')
+    const report = (input: unknown, frame: unknown = wc.mainFrame) => wc.emit('ipc-message', { senderFrame: frame }, 'enterprise-chat:running', input)
+    return { f, wc, report }
+  }
+
+  it('publishes a sorted, unique list from the current main frame', async () => {
+    const { f, report } = await ready()
+    try {
+      expect(f.host.snapshot().running).toBeUndefined()
+      report({ ids: ['cloud-b', 'cloud-a', 'cloud-b'], path: '/workspace/c/cloud-a' })
+      expect(f.host.snapshot().running).toEqual(['cloud-a', 'cloud-b'])
+      expect(f.owner.webContents.send).toHaveBeenLastCalledWith('enterprise-chat:changed', expect.objectContaining({ running: ['cloud-a', 'cloud-b'] }))
+      const sends = f.owner.webContents.send.mock.calls.length
+      report({ ids: ['cloud-a', 'cloud-b'], path: '/workspace/c/cloud-a' })
+      expect(f.owner.webContents.send.mock.calls.length).toBe(sends)
+      report({ ids: [], path: '/workspace/c/cloud-a' })
+      expect(f.host.snapshot().running).toBeUndefined()
+    } finally { f.host.dispose() }
+  })
+
+  // Only the subframe case leaves the main frame, so every other case reaches the path and list checks.
+  it.each([
+    ['a subframe', { ids: ['cloud-x'], path: '/workspace/c/cloud-a' }, 'subframe'],
+    ['another path', { ids: ['cloud-x'], path: '/workspace/c/other' }, 'main'],
+    ['a forged identity', { ids: ['../cloud-x'], path: '/workspace/c/cloud-a' }, 'main'],
+    ['a non-array', { ids: 'cloud-x', path: '/workspace/c/cloud-a' }, 'main'],
+    ['an oversized list', { ids: Array.from({ length: 101 }, (_, i) => `cloud-${i}`), path: '/workspace/c/cloud-a' }, 'main']
+  ])('ignores a report from %s and keeps the previous list', async (_label, input, sender) => {
+    const { f, wc, report } = await ready()
+    try {
+      report({ ids: ['cloud-a'], path: '/workspace/c/cloud-a' })
+      report(input, sender === 'main' ? wc.mainFrame : {})
+      expect(f.host.snapshot().running).toEqual(['cloud-a'])
+    } finally { f.host.dispose() }
+  })
+
+  it('clears activity when the document is replaced or the account signs out', async () => {
+    const { f, wc, report } = await ready()
+    try {
+      report({ ids: ['cloud-a'], path: '/workspace/c/cloud-a' })
+      wc.emit('did-start-navigation', {}, wc.getURL(), true, true)
+      expect(f.host.snapshot().running).toEqual(['cloud-a'])
+      wc.emit('did-start-navigation', {}, wc.getURL(), false, true)
+      expect(f.host.snapshot().running).toBeUndefined()
+      expect(f.owner.webContents.send).toHaveBeenLastCalledWith('enterprise-chat:changed', expect.not.objectContaining({ running: expect.anything() }))
+      report({ ids: ['cloud-a'], path: '/workspace/c/cloud-a' })
+      f.change({ connected: false, connectionKey: 'tenant-a' })
+      expect(f.host.snapshot().running).toBeUndefined()
+    } finally { f.host.dispose() }
+  })
+})
