@@ -74,7 +74,7 @@ for (const name of ['dsh-desktop-office', 'dsh-ppt-composer', 'dsh-desktop-enter
     const scripts = [...html.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/giu)].map(match => match[1])
     const bootstrap = scripts.find(src => src.includes('@deepseek-ai/dsh-client-modules/client.js'))
     if (!bootstrap) throw new Error('HTML does not reference the module bootstrap')
-    const scriptUrl = new URL(bootstrap, url)
+    const scriptUrl = new URL(bootstrap.replaceAll('&amp;', '&'), url)
     if (scriptUrl.origin !== url.origin) throw new Error('Bootstrap escaped local runtime')
     const script = await fetch(scriptUrl, { headers: { Cookie: cookie }, signal: AbortSignal.timeout(10_000) })
     if (!script.ok || !registeredBootstrap(await script.text())) throw new Error('Bootstrap did not execute its module registration')

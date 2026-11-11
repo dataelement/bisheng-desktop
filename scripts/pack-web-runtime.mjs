@@ -10,6 +10,7 @@ import { assertWebPluginManagerContract } from './web-plugin-manager.mjs'
 
 const projectRoot = fileURLToPath(new URL('../', import.meta.url))
 export async function packWebRuntime({ project = projectRoot, inputs, output } = {}) {
+  if (process.versions.electron || process.version !== 'v24.15.0' || !['darwin', 'win32'].includes(process.platform)) throw new Error('Native Web packaging requires ordinary Node 24.15.0 on a supported Office target')
   project = path.resolve(project)
   const target = process.platform + '-' + process.arch
   const dist = path.join(project, 'dist')
@@ -30,7 +31,11 @@ export async function packWebRuntime({ project = projectRoot, inputs, output } =
   await fs.mkdir(path.join(output, 'node'))
   const nodeName = process.platform === 'win32' ? 'node.exe' : 'node'
   await fs.copyFile(process.execPath, path.join(output, 'node', nodeName))
-  if (process.platform !== 'win32') await fs.chmod(path.join(output, 'node', nodeName), 0o755)
+  if (process.platform !== 'win32') {
+    await fs.chmod(path.join(output, 'node', nodeName), 0o755)
+    await fs.writeFile(path.join(output, 'node/pnpm'), '#!/bin/sh\nset -eu\nDIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$DIR/node" "$DIR/../node_modules/pnpm/bin/pnpm.cjs" "$@"\n')
+    await fs.chmod(path.join(output, 'node/pnpm'), 0o755)
+  } else await fs.writeFile(path.join(output, 'node/pnpm.cmd'), '@echo off\r\n"%~dp0node.exe" "%~dp0..\\node_modules\\pnpm\\bin\\pnpm.cjs" %*\r\nexit /b %errorlevel%\r\n')
   const launcherRoot = path.join(project, 'build', 'web-runtime')
   for (const name of ['dsh-offline.mjs', 'dsh-offline.cmd', 'system-proxy.mjs']) await fs.copyFile(path.join(launcherRoot, name), path.join(output, name))
   await fs.writeFile(path.join(output, 'start.sh'), '#!/bin/sh\nset -eu\nROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexec "$ROOT/node/node" "$ROOT/dsh-offline.mjs" "$@"\n')
