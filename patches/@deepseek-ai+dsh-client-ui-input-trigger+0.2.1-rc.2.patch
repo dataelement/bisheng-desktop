@@ -1,7 +1,8 @@
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/client.js b/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/client.js
+index b5ff487c..6878553c 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/client.js
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/client.js
-@@ -944,7 +944,7 @@
+@@ -944,7 +944,7 @@ window.__ModuleLoader__.load({
  					if (hl && next.source === hl.source && next.index === hl.index) return state;
  					return {
  						...state,
@@ -10,7 +11,7 @@ diff --git a/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/client.js
  					};
  				}
  				case "hover": {
-@@ -958,7 +958,7 @@
+@@ -958,7 +958,7 @@ window.__ModuleLoader__.load({
  					if (hl && hl.source === target.source && hl.index === target.index) return state;
  					return {
  						...state,
@@ -19,7 +20,7 @@ diff --git a/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/client.js
  					};
  				}
  				case "close": return closed(state);
-@@ -1625,7 +1625,7 @@
+@@ -1625,7 +1625,7 @@ window.__ModuleLoader__.load({
  		}
  		//#endregion
  		//#region \0dsh-css:/home/runner/work/deepseek-harness/deepseek-harness/packages/client/ui-input-trigger/src/client/MenuView.module.css.mjs
@@ -28,7 +29,7 @@ diff --git a/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/client.js
  		const tagId = "@deepseek-ai/dsh-client-ui-input-trigger/MenuView.module.css";
  		if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
  			const tag = document.createElement("style");
-@@ -1673,14 +1673,60 @@
+@@ -1673,14 +1673,60 @@ window.__ModuleLoader__.load({
  		* (a localized title), then the description right-aligned. A source publishing crumbs gets a breadcrumb
  		* header pinned above the scrolling list.
  		*/
@@ -96,7 +97,7 @@ diff --git a/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/client.js
  		/** DOM id of one option row (the aria-activedescendant target). */
  		function optionId(source, index) {
  			return `dsh-slash-option-${source}-${index}`;
-@@ -1696,7 +1742,7 @@
+@@ -1696,7 +1742,7 @@ window.__ModuleLoader__.load({
  			const listRef = (0, react.useRef)(null);
  			const viewportRef = (0, react.useRef)(null);
  			const [hasOverflowBelow, setHasOverflowBelow] = (0, react.useState)(false);
@@ -105,7 +106,7 @@ diff --git a/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/client.js
  			const updateOverflowHint = (0, react.useCallback)(() => {
  				const viewport = viewportRef.current;
  				setHasOverflowBelow(viewport !== null && viewport.scrollTop + viewport.clientHeight < viewport.scrollHeight - 1);
-@@ -1705,13 +1751,20 @@
+@@ -1705,13 +1751,20 @@ window.__ModuleLoader__.load({
  				updateOverflowHint();
  			}, [
  				state,
@@ -129,7 +130,7 @@ diff --git a/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/client.js
  			}, [highlight]);
  			(0, react.useEffect)(() => {
  				if (!state.open) return;
-@@ -1730,7 +1783,7 @@
+@@ -1730,7 +1783,7 @@ window.__ModuleLoader__.load({
  			return (0, react_jsx_runtime.jsxs)(_deepseek_ai_dsh_client_ui_primitives.MenuSurface, {
  				ref: listRef,
  				className: MenuView_module_css_default.menu,
@@ -138,10 +139,20 @@ diff --git a/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/client.js
  				"data-trigger-menu": "",
  				"data-overflow-below": hasOverflowBelow || void 0,
  				children: [state.groups.map((group) => {
+@@ -1815,7 +1868,7 @@ window.__ModuleLoader__.load({
+ 									className: MenuView_module_css_default.itemName,
+ 									children: item.label ?? item.name
+ 								}),
+-								item.label !== void 0 && item.label.toLowerCase() !== item.name.toLowerCase() && (0, react_jsx_runtime.jsx)("span", {
++								item.hideAlias !== true && item.label !== void 0 && item.label.toLowerCase() !== item.name.toLowerCase() && (0, react_jsx_runtime.jsx)("span", {
+ 									className: MenuView_module_css_default.itemAlias,
+ 									children: item.name
+ 								}),
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/types/core/contract.d.ts b/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/types/core/contract.d.ts
+index 783482c5..23e3aeeb 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/types/core/contract.d.ts
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/types/core/contract.d.ts
-@@ -42,6 +42,8 @@
+@@ -42,6 +42,8 @@ export interface MenuState {
      readonly highlight: {
          readonly source: string;
          readonly index: number;
@@ -150,3 +161,16 @@ diff --git a/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/types/cor
      } | null;
  }
  /** Menu reduction events. Source failure = silent group removal (log only; no error UI tier). */
+diff --git a/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/types/types.d.ts b/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/types/types.d.ts
+index ffc64db2..5351837a 100644
+--- a/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/types/types.d.ts
++++ b/node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/types/types.d.ts
+@@ -42,6 +42,8 @@ export interface InputTriggerCandidate {
+      * findable by its command name).
+      */
+     readonly label?: string;
++    /** Hide internal identity beside an explicit label; pick payload remains name. */
++    readonly hideAlias?: boolean;
+     readonly description?: string;
+     /** Reference glyph token, or an icon component from the shared icon set. */
+     readonly icon?: InputTriggerCandidateIcon | ComponentType<IconProps>;

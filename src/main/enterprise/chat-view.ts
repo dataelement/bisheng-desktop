@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { session, shell, WebContentsView, type BrowserWindow, type Session } from 'electron'
+import { app, session, shell, WebContentsView, type BrowserWindow, type Session } from 'electron'
 import { parseEnterpriseNavigation, parseEnterpriseSettingsSection, parseChatPage, parseChatId, parseChatPresentation, type EnterpriseSettingsSection, type EnterpriseChatFrame, type EnterpriseChatHistory, type EnterpriseChatPresentation, type EnterpriseChatViewState } from '../../shared/enterprise-chat-view'
 import type { EnterpriseDesktopRuntime } from './enterprise-desktop'
 import { MODULE_ROUTE_PATTERN, MODULE_THEME_CSS, moduleThemeScript } from './chat-module-theme'
@@ -74,6 +74,9 @@ async function loadWithin<T>(operation: Promise<T>, ms: number): Promise<T> {
 export class EnterpriseChatView {
   private projects?: EnterpriseChatProjects
   private projectsRequested = false
+  // Projects have no server push; re-read when any Desktop window regains focus.
+  private readonly refreshProjectsOnFocus = (): void => { this.projects?.refreshIfStale() }
+  private projectFocusBound = false
   private modalOpen = false
   private modalRequest = 0
   private modalOpening = false
@@ -267,8 +270,10 @@ export class EnterpriseChatView {
     this.projectsRequested = true
     if (!this.projects) await this.connect()
     this.projects?.start()
+    // A sidebar read (including its retry button) also re-reads a failed or stale projection.
+    this.projects?.refreshIfStale()
     const user = this.enterprise.snapshot().user
-    return this.projects ? { ...this.projects.state(), identityLabel: user?.display_name || user?.username || user?.name || user?.id } : { epoch: this.generation, phase: 'idle', connection: 'connecting', revision: '0', projects: [], assignments: {} }
+    return this.projects ? { ...this.projects.state(), identityLabel: user?.display_name || user?.username || user?.name || user?.id } : { epoch: this.generation, phase: 'idle', connection: 'live', revision: '0', projects: [], assignments: {} }
   }
 
   async projectAction(input: unknown, epoch: unknown) {
@@ -332,6 +337,9 @@ export class EnterpriseChatView {
     this.deletedConversations.add(id)
     this.routes.delete(id)
     this.note('[enterprise-chat] conversation deleted')
+    // The server unbinds the project membership in the delete commit; with no push
+    // channel, re-read so the sidebar drops the stale assignment.
+    void this.projects?.refresh().catch(() => this.note('[project-sync] post_delete_refresh_failed'))
     if (this.settingsReturnRoute?.match(/^\/workspace\/(?:c|chat|linsight)\/([a-zA-Z0-9_-]+)/u)?.[1] === id) {
       this.settingsReturnRoute = '/workspace/c/new'
     }
@@ -750,6 +758,7 @@ export class EnterpriseChatView {
           }
         })
         if (this.projectsRequested) this.projects.start()
+        if (!this.projectFocusBound) { app.on('browser-window-focus', this.refreshProjectsOnFocus); this.projectFocusBound = true }
       }
       stage = this.renewalMode ? 'renew' : 'load'
       const reloaded = !this.onWorkspace()
@@ -923,6 +932,7 @@ export class EnterpriseChatView {
   }
 
   private clear(): void {
+    if (this.projectFocusBound) { app.removeListener('browser-window-focus', this.refreshProjectsOnFocus); this.projectFocusBound = false }
     this.projects?.dispose()
     this.projects = undefined
     this.projectsRequested = false

@@ -3,50 +3,70 @@ import { EnterpriseChatProjects } from '../src/main/enterprise/chat-projects'
 import { parseProjectAction, parseProjectSnapshot } from '../src/shared/chat-projects'
 
 const projectId = '11111111-1111-4111-8111-111111111111'
-const requestId = '22222222-2222-4222-8222-222222222222'
-const snapshot = (revision = '1', name = 'Research') => ({ protocol_version: 1, identity: { user_id: 7, tenant_id: 2 }, revision, projects: [{ id: projectId, name }], memberships: [{ chat_id: 'chat-one', project_id: projectId }], next_cursor: null })
+const snapshot = (name = 'Research') => ({ identity: { user_id: 7, tenant_id: 2 }, projects: [{ id: projectId, name }], memberships: [{ chat_id: 'chat-one', project_id: projectId }] })
 const json = (data: unknown) => new Response(JSON.stringify({ status_code: 200, data }), { headers: { 'content-type': 'application/json' } })
 
 describe('project protocol boundary', () => {
-  it('rejects identity injection and arbitrary operations', () => {
-    expect(() => parseProjectAction({ operation: 'create', request_id: requestId, name: 'A', user_id: 8 })).toThrow()
+  it('rejects identity injection, retired fields and arbitrary operations', () => {
+    expect(() => parseProjectAction({ operation: 'create', project_id: projectId, name: 'A', user_id: 8 })).toThrow()
+    expect(() => parseProjectAction({ operation: 'create', project_id: projectId, name: 'A', request_id: projectId })).toThrow()
+    expect(() => parseProjectAction({ operation: 'create', name: 'A' })).toThrow()
     expect(() => parseProjectAction({ operation: 'fetch', url: 'https://example.invalid' })).toThrow()
-    expect(parseProjectAction({ operation: 'create', request_id: requestId, name: ' A ' })).toMatchObject({ name: 'A' })
+    expect(parseProjectAction({ operation: 'create', project_id: projectId, name: ' A ' })).toMatchObject({ project_id: projectId, name: 'A' })
   })
-  it('rejects unsupported/malformed snapshots', () => {
-    expect(() => parseProjectSnapshot({ ...snapshot(), protocol_version: 2 })).toThrow()
-    expect(() => parseProjectSnapshot({ ...snapshot(), revision: 2 })).toThrow()
+  it('accepts the whole legacy record in one import, within the server cap', () => {
+    const memberships = Array.from({ length: 2000 }, (_, i) => ({ chat_id: `chat-${i}`, legacy_project_id: 'old' }))
+    expect(parseProjectAction({ operation: 'import', projects: [{ legacy_id: 'old', name: 'Old' }], memberships })).toMatchObject({ operation: 'import' })
+    expect(() => parseProjectAction({ operation: 'import', projects: [], memberships: [...memberships, memberships[0]] })).toThrow()
+    expect(() => parseProjectAction({ operation: 'import', source_client_id: projectId, projects: [], memberships: [] })).toThrow()
+  })
+  it('rejects malformed snapshots', () => {
+    expect(() => parseProjectSnapshot({ ...snapshot(), identity: { user_id: 0, tenant_id: 2 } })).toThrow()
     expect(parseProjectSnapshot(snapshot()).identity).toEqual({ user_id: 7, tenant_id: 2 })
   })
 })
 
-it('updates automatically from the event stream and cancels its reader on disposal', async () => {
-  let revision = '1'
+it('re-reads on focus and advances its local sequence only when content changes', async () => {
   let name = 'Research'
-  let stream: ReadableStreamDefaultController<Uint8Array> | undefined
-  const cancelled = vi.fn()
-  const transport = vi.fn(async (path: string) => path.endsWith('/events')
-    ? new Response(new ReadableStream<Uint8Array>({ start(controller) { stream = controller }, cancel: cancelled }), { headers: { 'content-type': 'text/event-stream' } })
-    : json(snapshot(revision, name)))
-  const controller = new EnterpriseChatProjects({ epoch: 4, fetch: transport, renew: async () => {}, changed: vi.fn(), note: vi.fn(), expectedUserId: '7', expectedTenantId: '2' })
+  const changed = vi.fn()
+  const transport = vi.fn(async (path: string) => {
+    expect(path).not.toContain('/events')
+    return json(snapshot(name))
+  })
+  const controller = new EnterpriseChatProjects({ epoch: 4, fetch: transport, renew: async () => {}, changed, note: vi.fn(), expectedUserId: '7', expectedTenantId: '2' })
   controller.start()
   await vi.waitFor(() => expect(controller.state().phase).toBe('ready'))
-  revision = '2'; name = 'Updated'
-  stream?.enqueue(new TextEncoder().encode('event: changed\ndata: {"protocol_version":1,"revision":"2","notification":"live"}\n\n'))
+  expect(controller.state().revision).toBe('1')
+  await controller.refresh()
+  expect(controller.state().revision).toBe('1')
+  name = 'Updated'
+  controller.refreshIfStale(0)
   await vi.waitFor(() => expect(controller.state().projects[0]?.name).toBe('Updated'))
+  expect(controller.state().revision).toBe('2')
   controller.dispose()
-  await vi.waitFor(() => expect(cancelled).toHaveBeenCalled())
 })
 
-it('checks epochs, sends one fixed operation and reads current state after replay', async () => {
+it('skips a focus refresh inside the burst window but always retries a failed projection', async () => {
+  const fetch = vi.fn().mockResolvedValueOnce(new Response('', { status: 503 })).mockResolvedValue(json(snapshot()))
+  const controller = new EnterpriseChatProjects({ epoch: 4, changed: vi.fn(), note: vi.fn(), renew: async () => {}, fetch })
+  controller.start()
+  await vi.waitFor(() => expect(controller.state()).toMatchObject({ phase: 'error', connection: 'offline' }))
+  controller.refreshIfStale()
+  await vi.waitFor(() => expect(controller.state()).toMatchObject({ phase: 'ready', connection: 'live' }))
+  controller.refreshIfStale()
+  expect(fetch).toHaveBeenCalledTimes(2)
+  controller.dispose()
+})
+
+it('checks epochs, sends one fixed operation and reads current state after it', async () => {
   const calls: Array<{ path: string; body?: string }> = []
   const controller = new EnterpriseChatProjects({ epoch: 4, changed: vi.fn(), note: vi.fn(), renew: async () => {}, fetch: async (path, init) => {
     calls.push({ path, body: typeof init?.body === 'string' ? init.body : undefined })
-    return path.endsWith('/actions') ? json({ revision: '3', applied_revision: '1', replayed: true, notification: 'live', outcome: { project_id: projectId } }) : json(snapshot('3', 'Current'))
+    return path.endsWith('/actions') ? json({ outcome: { project_id: projectId } }) : json(snapshot('Current'))
   } })
-  await expect(controller.action({ operation: 'create', name: 'A', request_id: requestId }, 3)).rejects.toThrow()
-  await controller.action({ operation: 'create', name: 'A', request_id: requestId }, 4)
-  expect(calls[0]?.path).toBe('/api/v1/chat/projects/actions')
+  await expect(controller.action({ operation: 'create', project_id: projectId, name: 'A' }, 3)).rejects.toThrow()
+  await controller.action({ operation: 'create', project_id: projectId, name: 'A' }, 4)
+  expect(calls[0]).toEqual({ path: '/api/v1/chat/projects/actions', body: JSON.stringify({ operation: 'create', project_id: projectId, name: 'A' }) })
   expect(controller.state().projects[0]?.name).toBe('Current')
   controller.dispose()
 })
