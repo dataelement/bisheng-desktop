@@ -7,7 +7,11 @@ const PROVIDER = 'bisheng-enterprise'
 const hash = value => createHash('sha256').update(value).digest('hex')
 const identity = state => state.connected && state.connectionKey && state.base && state.tenant?.id != null && state.user?.id != null
   ? hash(JSON.stringify([state.base, String(state.tenant.id), String(state.user.id)])) : null
-export const enterpriseSkillName = (account, id) => `bisheng-${account.slice(0, 24)}-${id}`
+// Keep invocation keys valid and isolated even when API names collide or are legacy labels.
+export const enterpriseSkillName = (account, id, name) => {
+  const identifier = `bisheng-${account.slice(0, 24)}-${id}`
+  return typeof name === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name) ? `${name}-${identifier}` : identifier
+}
 
 // Matches the platform's content-addressed file mapping, including binary assets.
 export function skillContentHash(files) {
@@ -20,23 +24,29 @@ export function skillContentHash(files) {
 
 export function createEnterpriseSkills({ state, request, home = process.env.DSH_HOME }) {
   let revision = 0
+  let snapshot
   const pending = new Map()
-  const catalog = async signal => {
+  // Discovery may reuse the just-refreshed catalog; every load still rechecks authorization.
+  const catalog = async (signal, reuse = false) => {
     const account = state(), key = identity(account), started = revision
+    signal?.throwIfAborted()
     if (!key) return []
+    if (reuse && snapshot?.key === key && snapshot.connectionKey === account.connectionKey && snapshot.revision === started) return snapshot.rows
     const rows = await request({ operation: 'list', connectionKey: account.connectionKey }, signal)
     signal?.throwIfAborted()
     if (revision !== started || identity(state()) !== key || state().connectionKey !== account.connectionKey) throw new Error('Enterprise account changed.')
     if (!Array.isArray(rows) || rows.length > 10000) throw new Error('Invalid enterprise skill catalog.')
     const ids = new Set()
-    return rows.map(row => {
+    const mapped = rows.map(row => {
       if (!Number.isSafeInteger(row.id) || row.id <= 0 || ids.has(row.id) || typeof row.name !== 'string' ||
           !/^[a-f0-9]{64}$/.test(row.content_hash) || typeof row.description !== 'string' || typeof row.display_name !== 'string') throw new Error('Invalid enterprise skill metadata.')
       ids.add(row.id)
-      return { name: enterpriseSkillName(key, row.id), description: row.description || row.display_name,
+      return { name: enterpriseSkillName(key, row.id, row.name), displayName: row.display_name || row.name, description: row.description || row.display_name,
         invocation: { modelInvocable: true, userInvocable: true }, source: 'bisheng', provider: PROVIDER, rank: 500,
         locator: { id: row.id, key, connectionKey: account.connectionKey, version: row.content_hash, originalName: row.name, displayName: row.display_name } }
     })
+    snapshot = { key, connectionKey: account.connectionKey, revision: started, rows: mapped }
+    return mapped
   }
   const materialize = async (candidate, signal) => {
     if (!home) throw new Error('Desktop skill storage is unavailable.')
@@ -98,7 +108,7 @@ export function createEnterpriseSkills({ state, request, home = process.env.DSH_
     pending.set(key, loading)
     try { return await loading } finally { if (pending.get(key) === loading) pending.delete(key) }
   }
-  return { catalog, load, clear: () => { revision++ } }
+  return { catalog, load, clear: () => { revision++; snapshot = undefined } }
 }
 
 export function applyEnterpriseSkills(ctx, options) {
@@ -107,7 +117,7 @@ export function applyEnterpriseSkills(ctx, options) {
   ctx.skills.registerProvider(control => {
     invalidate = control.invalidate
     control.signal.addEventListener('abort', () => { skills.clear() }, { once: true })
-    return { name: PROVIDER, list: async ({ signal }) => { await options.refreshState(); return skills.catalog(signal) },
+    return { name: PROVIDER, list: async ({ signal }) => { await options.refreshState(); return skills.catalog(signal, true) },
       get: async (candidate, { signal }) => { await options.refreshState(); return skills.load(candidate.name, signal) } }
   })
   ctx.connection.fetch.register({ path: '/api/enterprise.work-skills', methods: ['POST'], requestBody: 'buffered',
@@ -120,7 +130,7 @@ export function applyEnterpriseSkills(ctx, options) {
         if (body.operation === 'catalog') {
           const rows = await skills.catalog(request.signal)
           invalidate()
-          return Response.json({ skills: rows.map(row => ({ name: row.name, displayName: row.locator.displayName })) }, { headers: { 'cache-control': 'no-store' } })
+          return Response.json({ skills: rows.map(row => ({ name: row.name, displayName: row.displayName })) }, { headers: { 'cache-control': 'no-store' } })
         }
         if (body.operation !== 'validate' || !Array.isArray(body.names) || body.names.length > 50 || body.names.some(name => typeof name !== 'string')) throw new Error('Invalid skill selection.')
         for (const name of new Set(body.names)) await skills.load(name, request.signal)

@@ -14,6 +14,7 @@ import { applyWorkCapabilities } from './work-capabilities.js'
 import { requestImageDimensions } from '@deepseek-ai/dsh-attachment'
 import { applyEnterpriseMarket } from './market.js'
 import { applyEnterpriseWorkbenchMarket } from './workbench-market.js'
+import { applyEnterpriseWorkbenchInstall } from './workbench-install.js'
 import { readScreenshotResponse } from './workbench-screenshots.js'
 import { applyEnterpriseAuth, createEnterpriseAuthTransport } from './enterprise-auth.js'
 import {
@@ -731,6 +732,7 @@ export function apply(ctx, config) {
     authorizationAvailable: Boolean(broker || sessionAuth || process.env.DSH_WEB_RUNTIME === '1')
   })
   workbenches = applyEnterpriseWorkbenchMarket(ctx, accountController)
+  applyEnterpriseWorkbenchInstall(ctx)
   if (typeof ctx.provide === 'function') {
     ctx.provide('enterpriseWorkbenchPackages', {
       async open(id) {

@@ -22,9 +22,19 @@
     "desktop",
     "agent"
   ],
+  "dshDesktopIdentity": {
+    "productName": "BISHENG",
+    "userDataDirectory": "bisheng",
+    "developmentUserDataDirectory": "bisheng-dev"
+  },
+  "dshDesktopHostPlugins": [
+    "dsh-desktop-enterprise",
+    "dsh-desktop-client-ui",
+    "dsh-desktop-workbenches"
+  ],
   "scripts": {
     "postinstall": "patch-package && node scripts/release/install-brand-assets.mjs && install-electron --no",
-    "dev": "npm run office:prepare && npm run ppt:build && electron-vite dev",
+    "dev": "npm run office:prepare && npm run ppt:build && DSH_DESKTOP_PRIMARY_RUNTIME_DIR=\"$PWD/.build/office-runtime/primary-runtime\" electron-vite dev",
     "build": "npm run office:prepare && npm run ppt:build && electron-vite build",
     "icons:generate": "node scripts/release/generate-app-icons.mjs",
     "loader:generate": "node scripts/release/generate-loader-gifs.mjs",
@@ -329,7 +339,17 @@
     "appId": "io.bisheng",
     "productName": "BISHENG",
     "extraMetadata": {
-      "productName": "BISHENG"
+      "productName": "BISHENG",
+      "dshDesktopIdentity": {
+        "productName": "BISHENG",
+        "userDataDirectory": "bisheng",
+        "developmentUserDataDirectory": "bisheng-dev"
+      },
+      "dshDesktopHostPlugins": [
+        "dsh-desktop-enterprise",
+        "dsh-desktop-client-ui",
+        "dsh-desktop-workbenches"
+      ]
     },
     "asar": true,
     "asarUnpack": [

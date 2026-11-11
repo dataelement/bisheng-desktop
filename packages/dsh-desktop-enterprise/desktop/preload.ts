@@ -1,0 +1,89 @@
+import { contextBridge, ipcRenderer } from 'electron'
+import { isEnterpriseAppUrl } from './ipc-policy'
+import { ENTERPRISE_SETTINGS_SECTIONS, type EnterpriseChatPresentation, type EnterpriseChatViewState } from './shared/enterprise-chat-view'
+import { parseDesktopSettingsAction, type DesktopSettingsAction } from './shared/desktop-settings'
+
+// 先导入底座主 Preload 逻辑（完成平台标记、存储持久化、安全模式、快捷键、拖拽、更新、PlatformView等初始化）
+import '../../../src/preload/app'
+
+// Recovery, import and remote documents must never acquire the account bridge.
+if (isEnterpriseAppUrl(location.href) && !process.argv.includes('--dsh-desktop-safe-mode')) {
+  const enterpriseLoginListeners = new Set<(url: string) => void>()
+  let pendingEnterpriseLoginUrl: string | undefined
+
+  ipcRenderer.on('enterprise:login-link', (_event, url: unknown) => {
+    if (typeof url !== 'string') return
+    pendingEnterpriseLoginUrl = url
+    for (const listener of enterpriseLoginListeners) listener(url)
+  })
+
+  contextBridge.exposeInMainWorld('dshEnterpriseChat', Object.freeze({
+    onToolsChanged: (listener: () => void): (() => void) => {
+      if (typeof listener !== 'function') throw new TypeError('Tool change listener must be a function.')
+      const receive = (): void => listener()
+      ipcRenderer.on('enterprise-chat:tools-changed', receive)
+      return () => ipcRenderer.removeListener('enterprise-chat:tools-changed', receive)
+    },
+    focusSettings: (): Promise<void> => ipcRenderer.invoke('enterprise-chat:focus-settings'),
+    present: (value: EnterpriseChatPresentation): Promise<EnterpriseChatViewState> => ipcRenderer.invoke('enterprise-chat:present', value),
+    capture: () => ipcRenderer.invoke('enterprise-chat:capture'),
+    state: (): Promise<EnterpriseChatViewState> => ipcRenderer.invoke('enterprise-chat:state'),
+    retry: (): Promise<void> => ipcRenderer.invoke('enterprise-chat:retry'),
+    usage: (): Promise<import('./shared/enterprise-usage').EnterpriseUsage> => ipcRenderer.invoke('enterprise-chat:usage'),
+    history: (page: number) => ipcRenderer.invoke('enterprise-chat:history', page),
+    openPage: (id: string): Promise<void> => ipcRenderer.invoke('enterprise-chat:open-page', id),
+    open: (id: string, projectId?: string): Promise<void> => ipcRenderer.invoke('enterprise-chat:open', id, projectId),
+    remove: (id: string, epoch: number): Promise<{ epoch: number }> => ipcRenderer.invoke('enterprise-chat:remove', id, epoch),
+    rename: (id: string, name: string, epoch: number): Promise<void> => ipcRenderer.invoke('enterprise-chat:rename', id, name, epoch),
+    projectsState: () => ipcRenderer.invoke('enterprise-chat:projects-state'),
+    projectAction: (action: unknown, epoch: unknown) => ipcRenderer.invoke('enterprise-chat:project-action', action, epoch),
+    projectConversations: (page: unknown, epoch: unknown) => ipcRenderer.invoke('enterprise-chat:project-conversations', page, epoch),
+    subscribe: (listener: (state: EnterpriseChatViewState) => void): (() => void) => {
+      const receive = (_event: Electron.IpcRendererEvent, state: EnterpriseChatViewState): void => listener(state)
+      ipcRenderer.on('enterprise-chat:changed', receive)
+      return () => ipcRenderer.removeListener('enterprise-chat:changed', receive)
+    }
+  }))
+
+  contextBridge.exposeInMainWorld(
+    'dshDesktopEnterprise',
+    Object.freeze({
+      settingsInfo: (): Promise<{ desktopVersion: string; harnessVersion?: string }> => ipcRenderer.invoke('enterprise:settings-info'),
+      settingsAction: (action: DesktopSettingsAction): Promise<void> => ipcRenderer.invoke('enterprise:settings-action', parseDesktopSettingsAction(action)),
+      onSettingsClose: (listener: () => void): (() => void) => {
+        if (typeof listener !== 'function') throw new TypeError('Settings listener must be a function.')
+        const receive = (): void => listener()
+        ipcRenderer.on('enterprise-chat:close-settings', receive)
+        return () => ipcRenderer.removeListener('enterprise-chat:close-settings', receive)
+      },
+      onSettingsFocus: (listener: (value: { section: string; direction: 'previous' | 'next' }) => void): (() => void) => {
+        if (typeof listener !== 'function') throw new TypeError('Settings listener must be a function.')
+        const receive = (_event: Electron.IpcRendererEvent, value: unknown): void => {
+          if (!value || typeof value !== 'object') return
+          const { section, direction } = value as Record<string, unknown>
+          if (typeof section !== 'string' || !ENTERPRISE_SETTINGS_SECTIONS.some(item => item === section)
+            || (direction !== 'previous' && direction !== 'next')) return
+          listener({ section, direction })
+        }
+        ipcRenderer.on('enterprise-chat:settings-focus', receive)
+        return () => ipcRenderer.removeListener('enterprise-chat:settings-focus', receive)
+      },
+      onLoginLink: (listener: (url: string) => void): (() => void) => {
+        if (typeof listener !== 'function') {
+          throw new TypeError('Enterprise login listener must be a function.')
+        }
+        enterpriseLoginListeners.add(listener)
+        if (pendingEnterpriseLoginUrl) listener(pendingEnterpriseLoginUrl)
+        return () => {
+          enterpriseLoginListeners.delete(listener)
+        }
+      },
+      consumeLoginLink: (): string | undefined => {
+        const url = pendingEnterpriseLoginUrl
+        pendingEnterpriseLoginUrl = undefined
+        return url
+      }
+    })
+  )
+
+}

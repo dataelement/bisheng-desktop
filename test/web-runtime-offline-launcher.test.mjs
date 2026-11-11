@@ -3,16 +3,16 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { test } from 'node:test'
+import { test, onTestFinished } from 'vitest'
 import { fileURLToPath } from 'node:url'
 
 const source = fileURLToPath(new URL('../build/web-runtime/dsh-offline.mjs', import.meta.url))
 const cmd = fileURLToPath(new URL('../build/web-runtime/dsh-offline.cmd', import.meta.url))
 const names = ['package.json', 'cordis.yml', 'cordis.patch.yml']
 
-function fixture(t) {
+function fixture() {
   const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'offline runtime (test) ')))
-  t.after(() => rmSync(root, { recursive: true, force: true }))
+  onTestFinished(() => rmSync(root, { recursive: true, force: true }))
   copyFileSync(source, path.join(root, 'dsh-offline.mjs'))
   copyFileSync(fileURLToPath(new URL('../build/web-runtime/system-proxy.mjs', import.meta.url)), path.join(root, 'system-proxy.mjs'))
   mkdirSync(path.join(root, 'profile'))
@@ -27,8 +27,8 @@ function run(root, ...args) {
   return spawnSync(process.execPath, [path.join(root, 'dsh-offline.mjs'), ...args], { encoding: 'utf8' })
 }
 
-test('initializes once and forwards arguments, environment and exit code', t => {
-  const root = fixture(t)
+test('initializes once and forwards arguments, environment and exit code', () => {
+  const root = fixture()
   const result = run(root, 'web', '--name', 'hello world')
   assert.equal(result.status, 23, result.stderr)
   assert.deepEqual(JSON.parse(result.stdout), { args: ['web', '--name', 'hello world'], home: path.join(root, 'data'), flag: '1', cwd: root })
@@ -39,8 +39,8 @@ test('initializes once and forwards arguments, environment and exit code', t => 
   assert.equal(readFileSync(path.join(profile, 'cordis.yml'), 'utf8'), 'user data')
 })
 
-test('missing runtime or template fails before creating data', t => {
-  const root = fixture(t)
+test('missing runtime or template fails before creating data', () => {
+  const root = fixture()
   rmSync(path.join(root, 'profile', 'cordis.yml'))
   const result = run(root, 'web')
   assert.equal(result.status, 1)
@@ -48,8 +48,8 @@ test('missing runtime or template fails before creating data', t => {
   assert.throws(() => readFileSync(path.join(root, 'data', 'profiles', 'web', 'package.json')))
 })
 
-test('preserves incomplete existing profile and fails clearly', t => {
-  const root = fixture(t)
+test('preserves incomplete existing profile and fails clearly', () => {
+  const root = fixture()
   const profile = path.join(root, 'data', 'profiles', 'web')
   mkdirSync(profile, { recursive: true })
   writeFileSync(path.join(profile, 'package.json'), 'user data')

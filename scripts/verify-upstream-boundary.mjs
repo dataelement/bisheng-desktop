@@ -1,140 +1,152 @@
 #!/usr/bin/env node
-import { execSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
+import { lstatSync, readFileSync, readlinkSync } from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-/**
- * Downstream Fork 边界规则门禁 (CI Boundary Gatekeeper)
- *
- * 核心目的:
- * 防止开发者直接在下游 (bisheng-work / bisheng-desktop) 随意修改底座平台代码 (src/main, src/host, patches 等)。
- * 强制底座代码的任何修复与功能演进必须在 upstream (dataelem/dsh-desktop) 发生并闭环。
- */
-
-// 1. 下游合法扩展白名单模式 (Whitelist patterns for downstream)
+// 下游只拥有企业业务、品牌和独立 Web 交付；公共底座必须先在上游评审。
 const ALLOWED_PATTERNS = [
   /^packages\/dsh-desktop-enterprise\//,
-  /^packages\/dsh-desktop-office\/(lib\/web-|web-)/,
-  /^packages\/dsh-desktop-workbenches\/(web-package-backend|enterprise-install|install-outcome|local-archive)/,
+  /^packages\/dsh-desktop-office\/(?:lib\/web-(?:modes\.(?:js|d\.ts)|runtime\.js)|web-(?:cli\.mjs|index\.(?:js|d\.ts)))$/,
+  /^packages\/dsh-desktop-workbenches\/(?:web-package-backend\.(?:mjs|d\.mts)|local-archive\.mjs)$/,
   /^build\/bisheng-/,
-  /^build\/app-icon\.png$/,
-  /^build\/icon\.(png|ico|icns)$/,
+  /^build\/(?:app-icon\.png|icon\.(?:png|ico|icns)|dsh-desktop\.patch\.yml)$/,
   /^build\/web-runtime\//,
-  /^build\/dsh-desktop\.patch\.yml$/,
-  /^bin\/start\.(sh|bat)$/,
-  /^ops\//,
-  /^\.github\/workflows\/build-web-runtime\.yml$/,
-  /^\.github\/workflows\/verify-boundary\.yml$/,
-  /^scripts\/verify-upstream-boundary\.mjs$/,
-  /^scripts\/pack-web-runtime\.mjs$/,
-  /^scripts\/build-web-runtime\.mjs$/,
-  /^scripts\/stage-windows-web-runtime\.mjs$/,
-  /^scripts\/check-web-runtime-import\.mjs$/,
-  /^scripts\/mock-bisheng-enterprise\./,
-  /^scripts\/web-/,
-  /^docs\/downstream-/,
+  /^bin\/start\.(?:sh|bat)$/,
+  /^ops\/ci\//,
+  /^ops\/nginx\/work-updates\.conf$/,
+  /^scripts\/mock-bisheng-enterprise\.d\.mts$/,
+  /^\.github\/workflows\/(?:release|build-web-runtime|verify-boundary|bisheng-ci)\.yml$/,
+  /^scripts\/(?:verify-upstream-boundary|pack-(?:office-web|ppt-web|workbenches-web|web-runtime)|prepare-web-ci-inputs|build-web-runtime|stage-windows-web-runtime|check-web-runtime-import|mock-bisheng-enterprise|web-sidebar-slot|web-runtime-version|web-plugin-manager)\.mjs$/,
+  /^docs\/downstream-[^/]+\.md$/,
   /^docs\/architecture-setup-plan\.md$/,
-  /^test\/(enterprise-|web-runtime-)/,
-  /^\.tmp/,
-  /^package\.json$/,
-  /^package-lock\.json$/,
-  /^electron-builder(\..+)?\.cjs$/,
-  /^AGENTS\.md$/,
-  /^\.gitignore$/
+  /^test\/(?:enterprise-|web-runtime-)[^/]+\.(?:mjs|js|ts|mts)$/,
+  /^(?:package\.json|package-lock\.json|tsconfig\.node\.json|electron\.vite\.config\.ts|electron-builder(?:\.[^/]+)?\.cjs|AGENTS\.md|\.gitignore)$/
 ]
 
-// 2. 获取比对基准 (Upstream Ref or Origin Target)
-function getUpstreamBase() {
-  const envBase = process.env.UPSTREAM_BASE
-  if (envBase) return envBase
-
-  // 优先级: 显式 upstream 分支 > origin 对应主干分支
-  const candidateRefs = [
-    'upstream/bisheng-adaptor',
-    'origin/bisheng-adaptor',
-    'upstream/upgrade/dsh-0.2.2-rc.1',
-    'origin/upgrade/dsh-0.2.2-rc.1',
-    'upstream/main',
-    'origin/main',
-    'main'
-  ]
-
-  for (const ref of candidateRefs) {
-    try {
-      execSync(`git rev-parse --verify ${ref}`, { stdio: 'ignore' })
-      return ref
-    } catch {
-      // ignore
-    }
-  }
-
-  // 兜底回退到上一次提交
-  return 'HEAD~1'
+function git(cwd, args, input) {
+  return execFileSync('git', args, { cwd, input, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'] })
 }
 
-function run() {
-  const baseRef = getUpstreamBase()
-  console.log(`🔍 [Boundary Gatekeeper] 正在检查相对基准 [${baseRef}] 的修改文件...`)
+const splitPaths = text => text.split('\0').filter(Boolean)
 
-  let changedFiles = []
+export function getUpstreamBase(cwd, upstreamBase = process.env.UPSTREAM_BASE) {
+  const ref = upstreamBase === undefined ? 'upstream/bisheng-adaptor' : upstreamBase
+  if (!ref || ref.startsWith('-') || /[\0\r\n]/.test(ref)) throw new Error('无效 UPSTREAM_BASE')
   try {
-    // 1. 获取当前分支自 baseRef 分叉以来的所有提交文件 (Triple-dot)
-    const committedDiff = execSync(`git diff --name-only ${baseRef}...HEAD`, { encoding: 'utf8' }).trim()
-    // 2. 获取工作区及暂存区的未提交修改
-    const workingDiff = execSync(`git diff --name-only HEAD`, { encoding: 'utf8' }).trim()
-    // 3. 获取所有未跟踪文件
-    const untracked = execSync(`git status --porcelain`, { encoding: 'utf8' })
-      .split('\n')
-      .filter(line => line.startsWith('??'))
-      .map(line => line.slice(3).trim())
-      .filter(Boolean)
-
-    const all = [
-      ...committedDiff.split('\n'),
-      ...workingDiff.split('\n'),
-      ...untracked
-    ].map(f => f.trim()).filter(Boolean)
-
-    changedFiles = Array.from(new Set(all))
-  } catch (error) {
-    console.warn(`⚠️ 无法通过 ${baseRef}...HEAD 获取 diff，回退到工作区直接比较:`, error.message)
-    changedFiles = execSync(`git diff --name-only ${baseRef}`, { encoding: 'utf8' })
-      .split('\n')
-      .map(f => f.trim())
-      .filter(Boolean)
+    const commit = git(cwd, ['rev-parse', '--verify', '--end-of-options', ref + '^{commit}']).trim()
+    return { ref, commit }
+  } catch {
+    throw new Error('无法验证上游基准 ' + JSON.stringify(ref) + '；请 fetch 已评审的 upstream/bisheng-adaptor 或显式设置 UPSTREAM_BASE。禁止回退到 origin/main 或 HEAD~1。')
   }
-
-  if (changedFiles.length === 0) {
-    console.log('✅ [Boundary Gatekeeper] 无修改文件，门禁通过。')
-    process.exit(0)
-  }
-  const illegalFiles = []
-
-  for (const file of changedFiles) {
-    const isAllowed = ALLOWED_PATTERNS.some(pattern => pattern.test(file))
-    if (!isAllowed) {
-      illegalFiles.push(file)
-    }
-  }
-
-  if (illegalFiles.length > 0) {
-    console.error('\n' + '='.repeat(68))
-    console.error('❌ [CI 门禁拦截] 检测到底座平台文件被直接修改！')
-    console.error('='.repeat(68))
-    console.error('根据《Downstream Fork 架构规范》，严禁在下游商业仓库直接修改底座核心代码：')
-    for (const f of illegalFiles) {
-      console.error(`  ⛔ ${f}`)
-    }
-    console.error('-'.repeat(68))
-    console.error('💡 正确修复流程：')
-    console.error('  1. 请切到上游仓库 (dataelem/dsh-desktop) 对应的开发分支；')
-    console.error('  2. 在上游编写测试用例并完成 Bug 修复 / 能力演进；')
-    console.error('  3. 上游合入后，在当前仓库通过 git rebase upstream 同步底座更新。')
-    console.error('='.repeat(68) + '\n')
-    process.exit(1)
-  }
-
-  console.log(`✅ [Boundary Gatekeeper] 检查通过！共 ${changedFiles.length} 个修改文件均在下游白名单内。`)
-  process.exit(0)
 }
 
-run()
+export function collectChanges({ cwd = process.cwd(), upstreamBase = process.env.UPSTREAM_BASE } = {}) {
+  cwd = git(cwd, ['rev-parse', '--show-toplevel']).trim()
+  const base = getUpstreamBase(cwd, upstreamBase)
+  // 即使双点比较可执行，无共同祖先也必须失败，不能掩盖错误的仓库/基准。
+  try {
+    git(cwd, ['merge-base', base.commit, 'HEAD'])
+  } catch {
+    throw new Error('上游基准与 HEAD 无法计算 merge-base；请检查 fetch 深度和基准，门禁不会降级比较。')
+  }
+  const diff = (...args) => splitPaths(git(cwd, ['diff', '--no-ext-diff', '--no-renames', '--name-only', '-z', ...args, '--']))
+  // 双点包含尚未同步的上游变更；仅 triple-dot 会遗漏这些底座漂移。
+  const committed = diff(base.commit, 'HEAD')
+  const staged = diff('--cached', 'HEAD')
+  const working = diff()
+  const untracked = splitPaths(git(cwd, ['ls-files', '--others', '--exclude-standard', '-z']))
+    .filter(file => !file.startsWith('.tmp/'))
+  const files = [...new Set([...committed, ...staged, ...working, ...untracked])].sort()
+  return { cwd, base, files, staged, working, untracked }
+}
+
+function treeEntries(cwd, commit) {
+  return new Map(splitPaths(git(cwd, ['ls-tree', '-r', '-z', commit])).map(record => {
+    const tab = record.indexOf('	')
+    const [mode, type, oid] = record.slice(0, tab).split(' ')
+    return [record.slice(tab + 1), { mode, type, oid }]
+  }))
+}
+
+function indexEntries(cwd) {
+  const entries = new Map()
+  for (const record of splitPaths(git(cwd, ['ls-files', '--stage', '-z']))) {
+    const tab = record.indexOf('	')
+    const [mode, oid, stage] = record.slice(0, tab).split(' ')
+    const file = record.slice(tab + 1)
+    entries.set(file, stage === '0' ? { mode, oid, type: mode === '160000' ? 'commit' : 'blob' } : { type: 'unmerged' })
+  }
+  return entries
+}
+
+function worktreeEntry(cwd, file) {
+  const absolute = path.join(cwd, file)
+  let stat
+  try {
+    stat = lstatSync(absolute)
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return undefined
+    throw error
+  }
+  if (!stat.isFile() && !stat.isSymbolicLink()) return { type: 'unsupported' }
+  const mode = stat.isSymbolicLink() ? '120000' : stat.mode & 0o111 ? '100755' : '100644'
+  const bytes = stat.isSymbolicLink() ? readlinkSync(absolute, { encoding: 'buffer' }) : readFileSync(absolute)
+  const oid = git(cwd, ['hash-object', '--no-filters', '--stdin'], bytes).trim()
+  return { mode, type: 'blob', oid }
+}
+
+function sameEntry(left, right) {
+  if (!left || !right) return left === right
+  return left.type === right.type && left.mode === right.mode && left.oid === right.oid
+}
+
+// 纯路径规则；core 的例外只能由调用者提供已核对 bytes + mode 的集合。
+export function checkPaths(files, { upstreamMatches = new Set(), legacyDeletions = new Set() } = {}) {
+  return files.filter(file => {
+    if (file === '.tmp' || file.startsWith('.tmp/')) return true
+    return !ALLOWED_PATTERNS.some(pattern => pattern.test(file)) && !legacyDeletions.has(file) && !upstreamMatches.has(file)
+  })
+}
+
+export function checkBoundary(options = {}) {
+  const changes = collectChanges(options)
+  const baseline = treeEntries(changes.cwd, changes.base.commit)
+  const index = indexEntries(changes.cwd)
+  const staged = new Set(changes.staged)
+  const untracked = new Set(changes.untracked)
+  const upstreamMatches = new Set()
+  const legacyDeletions = new Set()
+  for (const file of changes.files) {
+    if (ALLOWED_PATTERNS.some(pattern => pattern.test(file))) continue
+    const actual = worktreeEntry(changes.cwd, file)
+    // 仅允许真实旧企业安装适配文件删除，不能借迁移名义继续改公共工作台代码。
+    if (/^packages\/dsh-desktop-workbenches\/(?:enterprise-install|install-outcome)\.mjs$/.test(file) && !actual && (!staged.has(file) || !index.has(file))) {
+      legacyDeletions.add(file)
+    }
+    if (!untracked.has(file) && sameEntry(actual, baseline.get(file)) && (!staged.has(file) || sameEntry(index.get(file), baseline.get(file)))) {
+      upstreamMatches.add(file)
+    }
+  }
+  return { ...changes, illegalFiles: checkPaths(changes.files, { upstreamMatches, legacyDeletions }) }
+}
+
+export function run() {
+  try {
+    const result = checkBoundary()
+    console.log('🔍 [Boundary Gatekeeper] 已验证上游基准 ' + result.base.ref + ' (' + result.base.commit + ')')
+    if (result.illegalFiles.length) {
+      console.error('❌ 下游底座漂移：以下文件不属于企业白名单，或最终 bytes / filemode 与已评审上游不一致：')
+      for (const file of result.illegalFiles) console.error('  ⛔ ' + JSON.stringify(file))
+      console.error('请先在上游通过 PR + CI 合入底座修复，再同步到下游；禁止放宽门禁绕过。')
+      return 1
+    }
+    console.log('✅ 边界检查通过，共检查 ' + result.files.length + ' 个文件（企业白名单或与上游完全一致）。')
+    return 0
+  } catch (error) {
+    console.error('❌ [Boundary Gatekeeper] ' + error.message)
+    return 1
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = run()

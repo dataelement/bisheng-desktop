@@ -20,6 +20,8 @@
 
     - id: dsh-desktop-office
       name: dsh-desktop-office
+      config:
+        root: !!js dshHomePath('office-web')
 
     - id: dsh-ppt-composer
       name: 'dsh-ppt-composer'

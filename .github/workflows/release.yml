@@ -7,7 +7,6 @@ on:
   pull_request:
     branches:
       - main
-      - V0.9.1
   workflow_dispatch:
     inputs:
       mode:
@@ -48,7 +47,7 @@ on:
           - extended
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   RELEASE_NOTES_MODEL: gpt-6-luna
@@ -153,7 +152,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24.15.0
           cache: npm
       - name: Set app version from release tag
         if: startsWith(github.ref, 'refs/tags/v')
@@ -267,7 +266,7 @@ jobs:
         env:
           CSC_KEYCHAIN: ${{ steps.signing_keychain.outputs.keychain }}
         run: |
-          dmg_path="dist/dsh-desktop-mac-${{ matrix.arch }}.dmg"
+          dmg_path="dist/bisheng-mac-${{ matrix.arch }}.dmg"
           identity="$(security find-identity -v -p codesigning "$CSC_KEYCHAIN" | awk '/Developer ID Application/ { print $2; exit }')"
           test -n "$identity" || { echo "::error::Developer ID Application identity not found"; exit 1; }
           codesign --keychain "$CSC_KEYCHAIN" --sign "$identity" --timestamp --force "$dmg_path"
@@ -303,7 +302,7 @@ jobs:
       - name: Verify signed and notarized ${{ matrix.label }} app
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         run: |
-          app_path="dist/${{ matrix.app-directory }}/DSH Desktop.app"
+          app_path="dist/${{ matrix.app-directory }}/BISHENG.app"
           codesign --verify --deep --strict --verbose=2 "$app_path"
           spctl --assess --type execute --verbose=4 "$app_path"
           for attempt in 1 2 3 4 5 6; do
@@ -312,23 +311,27 @@ jobs:
             echo "stapler validate failed on app_path, retrying in $((attempt * 10))s (attempt $attempt/6)..."
             sleep $((attempt * 10))
           done
-          codesign --verify --verbose=2 dist/dsh-desktop-mac-${{ matrix.arch }}.dmg
-          spctl --assess --type open --context context:primary-signature --verbose=4 dist/dsh-desktop-mac-${{ matrix.arch }}.dmg
+          codesign --verify --verbose=2 dist/bisheng-mac-${{ matrix.arch }}.dmg
+          spctl --assess --type open --context context:primary-signature --verbose=4 dist/bisheng-mac-${{ matrix.arch }}.dmg
           for attempt in 1 2 3 4 5 6; do
-            if xcrun stapler validate dist/dsh-desktop-mac-${{ matrix.arch }}.dmg; then break; fi
+            if xcrun stapler validate dist/bisheng-mac-${{ matrix.arch }}.dmg; then break; fi
             if [ "$attempt" -eq 6 ]; then exit 1; fi
             echo "stapler validate failed on dmg, retrying in $((attempt * 10))s (attempt $attempt/6)..."
             sleep $((attempt * 10))
           done
+      - name: Verify all desktop build outputs
+        env:
+          BUILD_CHANNEL: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.mode == 'signed' || inputs.mode == 'prerelease') && 'release' || 'development' }}
+        run: node ops/ci/desktop-artifacts.mjs "$BUILD_CHANNEL" mac ${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         with:
           name: ${{ matrix.artifact }}
           retention-days: 7
           path: |
-            dist/dsh-desktop-mac-${{ matrix.arch }}.dmg
-            dist/dsh-desktop-mac-${{ matrix.arch }}.zip
-            dist/dsh-desktop-mac-${{ matrix.arch }}.zip.blockmap
+            dist/bisheng-mac-${{ matrix.arch }}.dmg
+            dist/bisheng-mac-${{ matrix.arch }}.zip
+            dist/bisheng-mac-${{ matrix.arch }}.zip.blockmap
             dist/latest-mac-${{ matrix.arch }}.yml
           compression-level: 0
           if-no-files-found: error
@@ -338,9 +341,9 @@ jobs:
           name: ${{ matrix.artifact }}-dev
           retention-days: 3
           path: |
-            dist-dev/dsh-desktop-dev-mac-${{ matrix.arch }}.dmg
-            dist-dev/dsh-desktop-dev-mac-${{ matrix.arch }}.zip
-            dist-dev/dsh-desktop-dev-mac-${{ matrix.arch }}.zip.blockmap
+            dist-dev/bisheng-dev-mac-${{ matrix.arch }}.dmg
+            dist-dev/bisheng-dev-mac-${{ matrix.arch }}.zip
+            dist-dev/bisheng-dev-mac-${{ matrix.arch }}.zip.blockmap
           compression-level: 0
           if-no-files-found: error
 
@@ -363,7 +366,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24.15.0
           cache: npm
       - name: Set app version from release tag
         if: startsWith(github.ref, 'refs/tags/v')
@@ -454,8 +457,8 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.checks == 'extended'
         shell: pwsh
         env:
-          SMOKE_EXE: ${{ (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))) && 'dist\win-unpacked\DSH Desktop.exe' || 'dist-dev\win-unpacked\DSH Desktop Dev.exe' }}
-          SMOKE_USERDATA: ${{ (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))) && 'dsh-desktop' || 'dsh-desktop-dev' }}
+          SMOKE_EXE: ${{ (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))) && 'dist\win-unpacked\BISHENG.exe' || 'dist-dev\win-unpacked\BISHENG Dev.exe' }}
+          SMOKE_USERDATA: ${{ (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))) && 'bisheng' || 'bisheng-dev' }}
         run: |
           $userData = Join-Path $env:APPDATA $env:SMOKE_USERDATA
           $logPath = Join-Path $userData 'logs\harness.log'
@@ -506,7 +509,7 @@ jobs:
             $endpoint = $null
             while ((Get-Date) -lt $deadline) {
               if ($desktop.HasExited) {
-                throw "DSH Desktop Dev exited before Harness was ready (exit code $($desktop.ExitCode))."
+                throw "BISHENG Dev exited before Harness was ready (exit code $($desktop.ExitCode))."
               }
               if (Test-Path $logPath) {
                 $log = Get-Content -Raw $logPath
@@ -575,7 +578,7 @@ jobs:
               throw 'Harness process exited after workspace and session creation.'
             }
             if ($desktop.HasExited) {
-              throw "DSH Desktop Dev exited after workspace and session creation (exit code $($desktop.ExitCode))."
+              throw "BISHENG Dev exited after workspace and session creation (exit code $($desktop.ExitCode))."
             }
             Write-Host 'Packaged Windows Harness smoke test passed.'
           } finally {
@@ -618,6 +621,11 @@ jobs:
             } while ((Get-Date) -lt $cleanupDeadline)
             if ($remaining.Count -gt 0) { throw 'Processes from the isolated packaged smoke did not exit.' }
           }
+      - name: Verify all desktop build outputs
+        shell: bash
+        env:
+          BUILD_CHANNEL: ${{ (startsWith(github.ref, 'refs/tags/v') || inputs.mode == 'signed' || inputs.mode == 'prerelease') && 'release' || 'development' }}
+        run: node ops/ci/desktop-artifacts.mjs "$BUILD_CHANNEL" win x64
       - name: Archive and verify unpacked Windows payload
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease' || inputs.checks == 'extended'))
         shell: pwsh
@@ -626,13 +634,21 @@ jobs:
         run: |
           node scripts/release/archive-windows-release.mjs "$env:ARCHIVE_DIST"
       - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'development' && inputs.checks == 'extended' && !startsWith(github.ref, 'refs/tags/v')
+        with:
+          name: windows-x64-dev-unpacked
+          path: dist-dev/win-unpacked.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 3
+      - uses: actions/upload-artifact@v4
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         with:
           name: windows-x64-unsigned
           path: |
-            dist/dsh-desktop-windows-x64-setup.exe
+            dist/bisheng-windows-x64-setup.exe
             dist/win-unpacked.tar.gz
-            dist/dsh-desktop-windows-x64-setup.exe.blockmap
+            dist/bisheng-windows-x64-setup.exe.blockmap
             dist/latest.yml
           compression-level: 0
           if-no-files-found: error
@@ -643,9 +659,8 @@ jobs:
           name: windows-x64-dev
           retention-days: 3
           path: |
-            dist-dev/dsh-desktop-dev-windows-x64-setup.exe
-            dist-dev/dsh-desktop-dev-windows-x64-setup.exe.blockmap
-            dist-dev/latest.yml
+            dist-dev/bisheng-dev-windows-x64-setup.exe
+            dist-dev/bisheng-dev-windows-x64-setup.exe.blockmap
           compression-level: 0
           if-no-files-found: error
 
@@ -672,7 +687,7 @@ jobs:
       - uses: actions/setup-node@v4
         timeout-minutes: 5
         with:
-          node-version: 22
+          node-version: 24.15.0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -733,6 +748,8 @@ jobs:
           echo "JSIGN_JAR=$jsign_jar" >> "$GITHUB_ENV"
       - name: Sign Windows installer with SafeNet UKey
         env:
+          JSIGN_NAME: BISHENG
+          JSIGN_URL: https://www.dshdesktop.com
           WINDOWS_SIGNING_PIN: ${{ secrets.DESKTOP_WINDOWS_SIGNING_PIN }}
         run: |
           set -euo pipefail
@@ -768,7 +785,7 @@ jobs:
               --tsmode RFC3161 \
               --tsretries 3 \
               --tsretrywait 10 \
-              --name 'DSH Desktop' \
+              --name 'BISHENG' \
               --url https://www.dshdesktop.com \
               --verbose \
               "$installer"; then
@@ -809,8 +826,8 @@ jobs:
           name: windows-x64
           retention-days: 7
           path: |
-            ${{ runner.temp }}/dsh-windows-${{ github.run_id }}/release/dsh-desktop-windows-x64-setup.exe
-            ${{ runner.temp }}/dsh-windows-${{ github.run_id }}/release/dsh-desktop-windows-x64-setup.exe.blockmap
+            ${{ runner.temp }}/dsh-windows-${{ github.run_id }}/release/bisheng-windows-x64-setup.exe
+            ${{ runner.temp }}/dsh-windows-${{ github.run_id }}/release/bisheng-windows-x64-setup.exe.blockmap
             ${{ runner.temp }}/dsh-windows-${{ github.run_id }}/release/latest.yml
           compression-level: 0
           if-no-files-found: error
@@ -825,6 +842,9 @@ jobs:
 
   publish-signed-test:
     name: Upload signed test installers and notify
+    permissions:
+      actions: read
+      contents: read
     needs: [macos, sign-windows]
     if: >-
       always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'signed' &&
@@ -851,7 +871,7 @@ jobs:
           python-version: '3.12'
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24.15.0
       - name: Install release summary CLI
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.MODELS_TOKEN }}
@@ -872,7 +892,8 @@ jobs:
           "$RUNNER_TEMP/test-upload-env/bin/pip" install -q modelscope
           "$RUNNER_TEMP/test-upload-env/bin/python3" .github/scripts/signed_test_build.py \
             --directory test-assets --target "$TEST_TARGET" \
-            --version "$SIGNED_VERSION" --run-id "$GITHUB_RUN_ID"
+            --version "$SIGNED_VERSION" --run-id "$GITHUB_RUN_ID" \
+            --artifact-prefix bisheng --product-name BISHENG
 
   publish:
     name: Publish GitHub Release
@@ -915,7 +936,7 @@ jobs:
           echo "RELEASE_SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24.15.0
           cache: npm
       - run: npm ci --ignore-scripts
       - uses: actions/download-artifact@v4
@@ -951,7 +972,7 @@ jobs:
       - name: Verify release assets before publication
         run: |
           set -euo pipefail
-          node scripts/verify/verify-release-assets.mjs release-assets "${RELEASE_TAG#v}"
+          node scripts/verify/verify-release-assets.mjs release-assets "${RELEASE_TAG#v}" --artifact-prefix bisheng
       - name: Build GitHub release note prompt
         run: |
           set -euo pipefail
@@ -1041,7 +1062,7 @@ jobs:
             gh release create "$RELEASE_TAG" release-assets/* \
               --verify-tag \
               --notes-file "$notes" \
-              --title "DSH Desktop $RELEASE_TAG" \
+              --title "BISHENG $RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY"
           fi
       - name: Mirror release assets to ModelScope
@@ -1163,6 +1184,8 @@ jobs:
 
   publish-prerelease:
     name: Publish GitHub Pre-release
+    permissions:
+      contents: write
     if: >-
       always() &&
       github.event_name == 'workflow_dispatch' &&
@@ -1181,7 +1204,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24.15.0
           cache: npm
       - run: npm ci --ignore-scripts
       - uses: actions/download-artifact@v4
@@ -1204,7 +1227,7 @@ jobs:
             \( -name latest-mac-arm64.yml -o -name latest-mac-x64.yml \) \
             -delete
       - name: Verify release assets before publication
-        run: node scripts/verify/verify-release-assets.mjs release-assets "${{ inputs.version }}"
+        run: node scripts/verify/verify-release-assets.mjs release-assets "${{ inputs.version }}" --artifact-prefix bisheng
       - name: Create or update pre-release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1217,7 +1240,7 @@ jobs:
               --prerelease \
               --target "$GITHUB_SHA" \
               --generate-notes \
-              --title "DSH Desktop $RELEASE_TAG（预发布）" \
+              --title "BISHENG $RELEASE_TAG（预发布）" \
               --repo "$GITHUB_REPOSITORY"
           fi
       - name: Mirror pre-release assets to ModelScope
