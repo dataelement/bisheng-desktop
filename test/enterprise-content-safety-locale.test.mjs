@@ -77,7 +77,7 @@ async function createFixture({ queueProtocol } = {}) {
     if (request.url === '/v1/state') return response.end(JSON.stringify(account))
     // Model admission now refreshes the enterprise tool catalog before assembly.
     // This content-safety fixture has an authenticated account and an empty catalog.
-    if (request.url === '/v1/work-mcp') {
+    if (request.url === '/v1/work-tools') {
       const message = input.message
       if (message.method.startsWith('notifications/')) return response.end('null')
       const result = message.method === 'initialize'
