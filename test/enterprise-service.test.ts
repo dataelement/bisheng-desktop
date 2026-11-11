@@ -615,14 +615,14 @@ describe('enterprise service login loop', () => {
     expect(notes).toContain('logout_committed')
   })
 
-  it('inspects intranet HTTP but refuses to start login without confirmation', async () => {
+  it('inspects non-loopback HTTP and requires confirmation before login', async () => {
     const { service } = await createService()
     await expect(service.inspectBase('http://192.168.106.119:30006')).resolves.toEqual({
       base: 'http://192.168.106.119:30006',
       insecurePrivateHttp: true
     })
     await expect(service.startLogin('http://192.168.106.119:30006')).rejects.toMatchObject({
-      message: 'HTTP intranet addresses require explicit confirmation.',
+      message: 'HTTP addresses require explicit confirmation.',
       status: 400
     })
   })
