@@ -1,3 +1,4 @@
+import type { CloudAuthorize } from './cloud-workbench'
 import type { EnterpriseWebSession } from './web-session'
 import { join } from 'node:path'
 import { parseThirdPartyPolicy } from 'dsh-desktop-enterprise/contract'
@@ -26,6 +27,7 @@ export interface EnterpriseDesktopRuntime {
 }
 
 export async function startEnterpriseDesktop(options: {
+  confirmCloudEffect?: CloudAuthorize
   desktopVersion?: string
   activateDesktop?: () => Promise<void> | void
   userDataPath: string
@@ -47,6 +49,7 @@ export async function startEnterpriseDesktop(options: {
         catch { options.note?.('[enterprise] state_listener_failed') }
       }
     },
+    confirmCloudEffect: options.confirmCloudEffect,
     cloudRoot: join(options.userDataPath, 'cloud-development'),
     desktopVersion: options.desktopVersion,
     activateDesktop: options.activateDesktop,

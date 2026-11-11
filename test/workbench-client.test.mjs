@@ -4143,7 +4143,7 @@ describe('sidebar central panel selection', () => {
     service.publish()
     const ui = interactiveMarket(service, 'enterprise', undefined, { known: true, connected: true, connectionKey, allowThirdPartyWorkbenches: false })
     let tree = ui.render()
-    expect(ui.find(tree, node => node.props?.role === 'tab')).toHaveLength(5)
+    expect(ui.find(tree, node => node.props?.role === 'tab')).toHaveLength(3)
     expect(ui.find(tree, node => node.type?.name === 'CloudInstalledCard')).toHaveLength(0)
     ui.find(tree, node => node.props?.id === 'dsh-workbench-cloud-tab')[0].props.onClick()
     tree = ui.render()
@@ -4200,35 +4200,31 @@ describe('sidebar central panel selection', () => {
     expect(ui.find(tree, node => node.props?.className === 'dshWbBrowseTools')).toHaveLength(0)
     expect(ui.find(tree, node => node.props?.className === 'dshWbSearch')).toHaveLength(0)
   })
-  it('keeps every collection discoverable before login and shows a login panel on selection', async () => {
+  it('keeps cloud sign-in available while closed-policy public collections remain hidden', async () => {
     const { service } = await fixture()
     const ui = interactiveMarket(service, 'market', undefined, { known: true, connected: false, allowThirdPartyWorkbenches: false })
-    for (const tab of ['market', 'favorites', 'enterprise', 'cloud', 'mine']) {
-      const node = ui.find(ui.render(), node => node.props?.id === `dsh-workbench-${tab}-tab`)[0]
-      expect(node).toBeDefined()
-      node.props.onClick()
-      const tree = ui.render()
-      expect(ui.find(tree, node => node.props?.id === `dsh-workbench-${tab}-panel`)).toHaveLength(1)
-      if (['market', 'favorites', 'enterprise', 'cloud'].includes(tab)) {
-        expect(ui.button(tree, '登录毕昇账号')).toBeDefined()
-        expect(ui.find(tree, node => node.type === 'article')).toHaveLength(0)
-        expect(ui.find(tree, node => node.props?.className === 'dshWbBrowseTools')).toHaveLength(0)
-      }
+    const tree = ui.render()
+    for (const tab of ['market', 'favorites', 'enterprise']) {
+      expect(ui.find(tree, node => node.props?.id === `dsh-workbench-${tab}-tab`)).toHaveLength(0)
     }
+    expect(ui.find(tree, node => node.props?.id === 'dsh-workbench-cloud-tab')).toHaveLength(1)
+    expect(ui.find(tree, node => node.props?.id === 'dsh-workbench-mine-tab')).toHaveLength(1)
+    expect(ui.button(tree, '登录毕昇账号')).toBeDefined()
+    expect(ui.button(tree, '安装本地工作台')).toBeUndefined()
   })
 
-  it('keeps enterprise distribution separate when public installation is blocked', async () => {
+  it('uses enterprise distribution as the market when public installation is blocked', async () => {
     const { service } = await fixture()
-    service.remoteCatalog = [{ id: 'o/a', owner: 'o', name: 'Cached workbench', description: { zh: '缓存目录', en: 'Cached catalog' }, screenshots: [], url: 'https://github.com/o/a' }]
+    service.remoteCatalog = [{ id: 'o/a', owner: 'o', name: 'Cached public workbench', description: { zh: '缓存目录', en: 'Cached catalog' }, screenshots: [], url: 'https://github.com/o/a' }]
+    service.enterpriseCatalog = [{ id: 'enterprise-board', displayName: 'Enterprise board' }]
     service.publish()
     const ui = interactiveMarket(service, 'market', undefined, { known: true, connected: true, allowThirdPartyWorkbenches: false })
-    expect(ui.find(ui.render(), node => node.type === 'article')).toHaveLength(0)
-    expect(ui.find(ui.render(), node => node.type === 'strong' && node.props.children.includes('当前企业未开放网络工作台安装'))).toHaveLength(1)
-    ui.find(ui.render(), node => node.props?.id === 'dsh-workbench-enterprise-tab')[0].props.onClick()
-    expect(ui.find(ui.render(), node => node.props?.id === 'dsh-workbench-enterprise-panel')).toHaveLength(1)
-    expect(ui.button(ui.render(), '登录毕昇账号')).toBeUndefined()
-    ui.find(ui.render(), node => node.props?.id === 'dsh-workbench-market-tab')[0].props.onClick()
-    expect(ui.find(ui.render(), node => node.type === 'article')).toHaveLength(0)
+    const tree = ui.render()
+    expect(ui.find(tree, node => node.type === 'article')).toHaveLength(1)
+    expect(ui.find(tree, node => node.type === 'article' && node.props.key === 'enterprise-board')).toHaveLength(1)
+    for (const tab of ['favorites', 'enterprise']) expect(ui.find(tree, node => node.props?.id === `dsh-workbench-${tab}-tab`)).toHaveLength(0)
+    expect(ui.button(tree, '安装本地工作台')).toBeUndefined()
+    expect(ui.button(tree, '登录毕昇账号')).toBeUndefined()
   })
 
   it('keeps the Workbench entrance visible before enterprise login', () => {
@@ -4384,5 +4380,22 @@ it('cloud uninstall releases the native page before removing the local shortcut'
     await service.remove(id)
     expect(release).toHaveBeenCalledExactlyOnceWith(appId, key)
     expect(service.state.added).not.toContain(id)
+  } finally { delete clientWindow.dshDesktopEnterprise }
+})
+
+
+it('uninstalls an old-account shortcut after identity switching without dropping current-account entries', async () => {
+  const { service } = await fixture()
+  const oldKey = 'a'.repeat(16), newKey = 'c'.repeat(16), appId = 'b'.repeat(32)
+  await service.addCloud({ id: appId, name: 'Old account' }, oldKey)
+  await service.addCloud({ id: appId, name: 'Current account' }, newKey)
+  service.syncCloudIdentity(newKey)
+  const release = vi.fn(async () => {})
+  clientWindow.dshDesktopEnterprise = { releaseCloudWorkbench: release }
+  try {
+    await service.remove(`cloud:${oldKey}:${appId}`)
+    expect(release).toHaveBeenCalledExactlyOnceWith(appId, oldKey)
+    expect(service.state.added).not.toContain(`cloud:${oldKey}:${appId}`)
+    expect(service.state.added).toContain(`cloud:${newKey}:${appId}`)
   } finally { delete clientWindow.dshDesktopEnterprise }
 })

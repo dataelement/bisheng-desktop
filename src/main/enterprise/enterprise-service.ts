@@ -3,7 +3,7 @@ import { parseWorkSkillRequest, readSkillBytes } from './work-skills'
 import { parseWorkResourceRequest, readResourceJson } from './work-resources'
 import { parseWorkMcpRequest, sendWorkMcp } from './work-mcp'
 import { parseWebSession, type EnterpriseWebSession } from './web-session'
-import { CloudWorkbenchService } from './cloud-workbench'
+import { CloudWorkbenchService, type CloudAuthorize } from './cloud-workbench'
 import { parseMarketRequest } from './enterprise-market'
 import { parseEnterpriseResponsesPayload } from './enterprise-responses'
 import { discardWorkbenchArtifact, rememberWorkbenchArtifact, releaseWorkbenchArtifact as releaseRetainedWorkbenchArtifact, verifyWorkbenchArtifactResponse, WORKBENCH_ARTIFACT_LIMIT } from './workbench-artifact'
@@ -135,6 +135,7 @@ export interface EnterpriseServiceNote {
 
 export interface EnterpriseServiceOptions {
   cloudRoot?: string
+  confirmCloudEffect?: CloudAuthorize
   desktopVersion?: string
   activateDesktop?: () => Promise<void> | void
   vault: SecureEnterpriseCredentialVault
@@ -1246,7 +1247,7 @@ export class EnterpriseService {
         this.chatControllers.delete(controller)
         throw error
       }
-    }, this.options.cloudRoot)
+    }, this.options.cloudRoot, this.options.confirmCloudEffect)
     return this.cloudService.request(input)
   }
 

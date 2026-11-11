@@ -2474,16 +2474,15 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
       const added = state.added
       const favorites = state.favorites || []
       const unavailableEntry = (id) => ({ id, title: id, category: tr('其他'), categoryId: 'other', unavailable: true, description: both('提供此工作台的插件当前未加载。', 'The plugin for this workbench is not loaded.'), loadFailure: both('工作台插件当前未加载。', 'The workbench plugin is not loaded.') })
-      // Keep navigation stable across sign-in and policy changes; gate each panel's content.
-      const collectionValues = ['market', 'favorites', 'enterprise', 'cloud', 'mine']
+      const enterpriseAsMarket = enterpriseVisible && !publicMarket
+      const collectionValues = [...(publicMarket ? ['market', 'favorites'] : enterpriseAsMarket ? ['market'] : []), ...(enterpriseVisible && publicMarket ? ['enterprise'] : []), 'cloud', 'mine']
       const visibleTab = collectionValues.includes(tab) ? tab : collectionValues[0]
-      const showingEnterprise = visibleTab === 'enterprise'
+      const showingEnterprise = visibleTab === 'enterprise' || (visibleTab === 'market' && enterpriseAsMarket)
       const showingCloud = visibleTab === 'cloud'
       const enterpriseLoading = showingEnterprise && enterpriseCatalogStatus === 'loading'
       const cloudLoading = showingCloud && cloudCatalogStatus === 'loading'
       const requiresLogin = (enterprise.known || showingEnterprise || showingCloud) && !enterpriseVisible && ['market', 'favorites', 'enterprise', 'cloud'].includes(visibleTab)
-      const policyBlocked = !publicMarket && ['market', 'favorites'].includes(visibleTab)
-      const collectionBlocked = requiresLogin || policyBlocked
+      const collectionBlocked = requiresLogin
       const signIn = () => window.dispatchEvent(new window.CustomEvent('dsh-desktop:open-settings-section', { detail: { id: 'enterprise-account' } }))
       const localizedCatalog = catalog.map((entry) => displayEntry(visibleTab === 'mine' ? service.installedEntry(entry) : entry))
       const marketEntries = localizedCatalog.filter((entry) => entry.listed === true)
@@ -2541,14 +2540,13 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
             h('h1', null, tab === 'submit' ? tr('制作属于你的工作台') : tr('工作台')),
             h('p', { className: 'dshWbMuted' }, tab === 'submit' ? tr('与 Agent 确认需求，完成开发和部署，也可以准备材料提交到工作台市场。') : tr('有序组织专属界面、会话与资料')), tab !== 'submit' && !collectionBlocked && h('label', { className: 'dshWbSearch' }, h(MarketIcon, { name: 'search' }), h('input', { type: 'search', placeholder: tr('搜索名称、作者或分类'), 'aria-label': tr('搜索工作台'), value: search, onChange: (event) => { setSearch(event.target.value); setVisibleCount(PAGE_SIZE) } }))),
           h('div', { className: 'dshWbMarketHeaderActions' },
-            !publicMarket && h(Button, { className: 'dshWbBtn', onClick: () => { void globalThis.dshDesktop?.installLocalWorkbench?.() } }, '安装本地工作台'),
             h(Button, { primary: tab !== 'submit', className: `dshWbBtn${tab !== 'submit' ? ' dshWbPrimary' : ''} dshWbCreate`, onClick: () => { setTab(tab === 'submit' ? (publicMarket ? 'market' : 'mine') : 'submit'); setDetail(null); setCopyStatus(null) } }, h(MarketIcon, { name: tab === 'submit' ? 'search' : 'plus' }), tab === 'submit' ? (publicMarket ? tr('返回工作台市场') : tr('返回已安装')) : tr('制作我的工作台')))),
         h(Notice, { service, showCatalogStatus: true }),
         tab !== 'submit' && h('div', { className: 'dshWbToolbar' },
           h('div', { className: 'dshWbTabs' }, h('div', { role: 'tablist', 'aria-label': tr('工作台集合') },
-            h(Button, { id: 'dsh-workbench-market-tab', role: 'tab', tabIndex: visibleTab === 'market' ? 0 : -1, 'aria-selected': visibleTab === 'market', 'aria-controls': 'dsh-workbench-market-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('market') }, tr('工作台市场')),
-            h(Button, { id: 'dsh-workbench-favorites-tab', role: 'tab', tabIndex: visibleTab === 'favorites' ? 0 : -1, 'aria-selected': visibleTab === 'favorites', 'aria-controls': 'dsh-workbench-favorites-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('favorites') }, `${tr('我的收藏')} (${favorites.length})`),
-            h(Button, { id: 'dsh-workbench-enterprise-tab', role: 'tab', tabIndex: visibleTab === 'enterprise' ? 0 : -1, 'aria-selected': visibleTab === 'enterprise', 'aria-controls': 'dsh-workbench-enterprise-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('enterprise') }, tr('来自企业')),
+            (publicMarket || enterpriseAsMarket) && h(Button, { id: 'dsh-workbench-market-tab', role: 'tab', tabIndex: visibleTab === 'market' ? 0 : -1, 'aria-selected': visibleTab === 'market', 'aria-controls': 'dsh-workbench-market-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('market') }, tr('工作台市场')),
+            publicMarket && h(Button, { id: 'dsh-workbench-favorites-tab', role: 'tab', tabIndex: visibleTab === 'favorites' ? 0 : -1, 'aria-selected': visibleTab === 'favorites', 'aria-controls': 'dsh-workbench-favorites-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('favorites') }, `${tr('我的收藏')} (${favorites.length})`),
+            (enterpriseVisible && publicMarket) && h(Button, { id: 'dsh-workbench-enterprise-tab', role: 'tab', tabIndex: visibleTab === 'enterprise' ? 0 : -1, 'aria-selected': visibleTab === 'enterprise', 'aria-controls': 'dsh-workbench-enterprise-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('enterprise') }, tr('来自企业')),
             h(Button, { id: 'dsh-workbench-cloud-tab', role: 'tab', tabIndex: showingCloud ? 0 : -1, 'aria-selected': showingCloud, 'aria-controls': 'dsh-workbench-cloud-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('cloud') }, cloudText('title')),
             h(Button, { id: 'dsh-workbench-mine-tab', role: 'tab', tabIndex: visibleTab === 'mine' ? 0 : -1, 'aria-selected': visibleTab === 'mine', 'aria-controls': 'dsh-workbench-mine-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('mine') }, `${tr('已安装')} (${installedEntries.length})`))),
           !collectionBlocked && h('div', { className: 'dshWbBrowseTools' },

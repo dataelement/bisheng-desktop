@@ -5,6 +5,17 @@ import { c as createTar, t as listTar, x as extractTar } from 'tar'
 import ignore from 'ignore'
 
 export type CloudFetch = (path: string, init?: RequestInit, expectedConnectionKey?: string) => Promise<{ response: Response, base: string, connectionKey: string }>
+export interface CloudEffect {
+  operation: 'publish' | 'checkout'
+  serverUrl: string
+  appId?: string
+  versionId?: string
+  path?: string
+  digest?: string
+  releaseNotes?: string
+  schemaChange?: boolean
+}
+export type CloudAuthorize = (effect: Readonly<CloudEffect>) => Promise<boolean>
 export interface CloudLaunch { appId: string; slug: string; launchUrl: string; entryUrl: string; ticket: string; connectionKey: string }
 const ID = /^[a-f0-9]{32}$/u
 const PRIVATE = /^(?:\.git|node_modules|\.venv|venv|\.npmrc|\.pypirc|\.netrc|\.DS_Store|\.ssh|\.aws|\.azure|\.cache|\.env(?:\..*)?|\.bisheng|\.dsh|__pycache__|data|sessions?|logs?)$|\.(?:pem|key|p12|pfx|(?:db|sqlite3?)(?:-(?:wal|shm|journal))?)$/iu
@@ -49,7 +60,11 @@ async function projectExclusions(path: string) {
 
 export class CloudWorkbenchService {
   private readonly projects = new Map<string, { path: string; appId?: string; versionId?: string; connectionKey: string }>()
-  constructor(private readonly fetch: CloudFetch, private readonly root: string) {}
+  constructor(private readonly fetch: CloudFetch, private readonly root: string, private readonly authorize?: CloudAuthorize) {}
+
+  private async confirm(effect: CloudEffect): Promise<void> {
+    if (!this.authorize || !await this.authorize(Object.freeze(effect))) throw new Error('Cloud operation requires explicit Desktop confirmation.')
+  }
 
   async request(input: unknown): Promise<unknown> {
     const request = record(input)
@@ -103,7 +118,10 @@ export class CloudWorkbenchService {
   }
 
   private async checkout(appId: string, versionId: string) {
-    const result = await this.fetch(`/api/v1/dsh/apps/${appId}/versions/${versionId}/source`)
+    const checked = await this.fetch('/api/v1/dsh/apps/deploy-limits')
+    await json(checked.response)
+    await this.confirm({ operation: 'checkout', serverUrl: checked.base, appId, versionId })
+    const result = await this.fetch(`/api/v1/dsh/apps/${appId}/versions/${versionId}/source`, {}, checked.connectionKey)
     if (!result.response.ok || !result.response.headers.get('content-type')?.startsWith('application/gzip')) {
       await json(result.response)
       throw new Error('The server did not return editable source.')
@@ -180,7 +198,7 @@ export class CloudWorkbenchService {
     const root = await realpath(this.root)
     const path = await realpath(project.path)
     if (relative(root, path).startsWith('..') || resolve(root) === resolve(path)) throw new Error('Invalid development project directory.')
-    return { ...project, path }
+    return { ...project, path, serverUrl: limits.base }
   }
 
   private async publish(request: Record<string, unknown>) {
@@ -201,13 +219,18 @@ export class CloudWorkbenchService {
         } }, entries)
       const bytes = await readFile(archive)
       if (bytes.length > 64 * 1024 * 1024) throw new Error('Application package exceeds the allowed size.')
+      const schemaChange = request.confirmSchemaChange === true
+      const releaseNotes = typeof request.releaseNotes === 'string' ? request.releaseNotes : undefined
+      await this.confirm({ operation: 'publish', serverUrl: project.serverUrl, appId: project.appId,
+        versionId: project.versionId, path, digest: createHash('sha256').update(bytes).digest('hex'),
+        releaseNotes, schemaChange })
       const body = new FormData()
       body.set('package', new Blob([new Uint8Array(bytes)]), 'workbench.tar.gz')
       if (project.appId) body.set('app_id', project.appId)
       if (project.versionId) body.set('base_version_id', project.versionId)
-      if (typeof request.releaseNotes === 'string') body.set('release_notes', request.releaseNotes)
+      if (releaseNotes) body.set('release_notes', releaseNotes)
       // Destructive schema confirmation is never inferred from a publish click.
-      if (request.confirmSchemaChange === true) body.set('confirm_schema_change', 'true')
+      if (schemaChange) body.set('confirm_schema_change', 'true')
       const accepted = await json((await this.fetch('/api/v1/dsh/apps/deploy', { method: 'POST', body }, project.connectionKey)).response)
       const acceptedAppId = id(accepted.app_id)
       if (project.appId && project.appId !== acceptedAppId) throw new Error('The deployment returned a different application identity.')

@@ -1,3 +1,4 @@
+import { confirmCloudEffect, assertCloudRendererRequest } from './enterprise/cloud-confirmation'
 import { EnterpriseChatView } from './enterprise/chat-view'
 import { CloudWorkbenchView } from './enterprise/cloud-workbench-view'
 import type { CloudLaunch } from './enterprise/cloud-workbench'
@@ -1704,8 +1705,7 @@ function registerHarnessHandlers(): void {
   }
   ipcMain.handle('enterprise-cloud:request', async (event, input: unknown) => {
     const enterprise = checkCloudHost(event)
-    // Launch tickets are consumed only by the main-process view controller.
-    if ((input as { operation?: unknown })?.operation === 'launch') throw new Error('Use the workbench open action.')
+    assertCloudRendererRequest(input)
     return enterprise.cloudRequest(input)
   })
   ipcMain.handle('enterprise-cloud:open', async (event, appId: unknown, bounds: unknown, connectionKey: unknown, owner: unknown) => {
@@ -1719,8 +1719,8 @@ function registerHarnessHandlers(): void {
     return { appId: launch.appId }
   })
   ipcMain.handle('enterprise-cloud:release', async (event, appId: unknown, connectionKey: unknown) => {
-    const enterprise = checkCloudHost(event)
-    if (typeof appId !== 'string' || !/^[a-f0-9]{32}$/.test(appId) || typeof connectionKey !== 'string' || connectionKey !== enterprise.snapshot().connectionKey) throw new Error('Invalid cloud application identity.')
+    assertTrustedMainWindowEvent(event)
+    if (!sameHarnessOrigin(event.sender.getURL(), runtime.snapshot().url) || typeof appId !== 'string' || !/^[a-f0-9]{32}$/.test(appId) || typeof connectionKey !== 'string' || !/^[a-f0-9]{16}$/.test(connectionKey)) throw new Error('Invalid cloud application identity.')
     await cloudWorkbenchView.release(appId, connectionKey)
   })
   ipcMain.handle('enterprise-cloud:bounds', (event, bounds: unknown, owner: unknown) => { checkCloudHost(event); cloudWorkbenchView.resizeFor(owner, bounds) })
@@ -3525,6 +3525,7 @@ async function bootstrap(): Promise<void> {
   })
   try {
     enterpriseDesktop = await startEnterpriseDesktop({
+      confirmCloudEffect: effect => confirmCloudEffect(effect, mainWindow, harnessLocale() === 'zh'),
       desktopVersion: app.getVersion(),
       activateDesktop: async () => {
         const snapshot = runtime.snapshot()

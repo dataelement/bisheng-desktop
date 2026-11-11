@@ -46,6 +46,7 @@ jobs:
           npx --no-install vitest run --maxWorkers=1
           --reporter=default --reporter=junit
           --outputFile.junit=artifacts/cloud-workbench-junit.xml
+          test/cloud-confirmation.test.ts
           test/cloud-workbench-service.test.ts
           test/cloud-workbench-tools.test.mjs
           test/cloud-workbench-view.test.ts
