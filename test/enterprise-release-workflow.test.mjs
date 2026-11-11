@@ -203,6 +203,15 @@ describe('private desktop release YAML contracts', () => {
   })
 })
 
+it('publishes the private product to the repository served by its update gateway', async () => {
+  const config = await readFile(path.join(root, 'ops/nginx/work-updates.conf'), 'utf8')
+  const match = /modelscope[.]cn\/models\/([^/]+\/[^/]+)\/resolve\/master\/releases\/latest/.exec(config)
+  expect(match).not.toBeNull()
+  const destinations = Object.values(jobs).flatMap(job => job.steps ?? []).map(step => step.env?.MODELSCOPE_REPO_ID).filter(Boolean)
+  expect(destinations).toHaveLength(3)
+  for (const destination of destinations) expect(destination).toBe(match[1])
+})
+
 describe('metadata-derived desktop output verification', () => {
   it('accepts a complete product fixture and rejects a missing or empty individual asset', async () => {
     const previousNoAsar = process.noAsar
