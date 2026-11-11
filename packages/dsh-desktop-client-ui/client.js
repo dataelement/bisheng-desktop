@@ -377,6 +377,13 @@ window.__ModuleLoader__.load({
       let generation = 0, searchRequest = 0
       let migrationRun, migrationTimer, migrationAttempt = 0
       const rowRequests = new Map()
+      // Conversation renames this session; a page requested before one finished still carries the old title.
+      const renames = new Map()
+      let renameMark = 0
+      const renamedSince = (mark, items) => items.map(item => {
+        const rename = renames.get(item.id)
+        return rename && rename.mark > mark ? { ...item, title: rename.title, updatedAt: rename.updatedAt } : item
+      })
       const validId = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,255}$/u.test(value)
       const publish = patch => { state = { ...state, ...patch }; listeners.forEach(fn => fn()) }
       const legacyKey = () => 'desktop.chatProjects.v1:' + state.scope
@@ -414,14 +421,14 @@ window.__ModuleLoader__.load({
         const scope = state.scope, epoch = state.epoch
         const previous = state.rows[id] || { items: [], nextCursor: null, phase: 'idle' }
         if (more && !previous.nextCursor) return
-        const request = (rowRequests.get(id) || 0) + 1
+        const request = (rowRequests.get(id) || 0) + 1, mark = renameMark
         rowRequests.set(id, request)
         publish({ rows: { ...state.rows, [id]: { ...previous, phase: 'loading' } } })
         try {
           const page = await window.dshEnterpriseChat.projectConversations({ project_id: id, ...(more ? { cursor: previous.nextCursor } : {}) }, epoch)
           if (!same(scope, epoch) || rowRequests.get(id) !== request) return
           if (page.epoch !== epoch || BigInt(page.revision) < BigInt(state.revision)) { void load(id); return }
-          const items = [...new Map([...(more ? previous.items : []), ...page.items].map(item => [item.id, item])).values()]
+          const items = renamedSince(mark, [...new Map([...(more ? previous.items : []), ...page.items].map(item => [item.id, item])).values()])
           publish({ rows: { ...state.rows, [id]: { items, nextCursor: page.nextCursor, phase: 'ready', revision: page.revision } } })
         } catch {
           if (same(scope, epoch) && rowRequests.get(id) === request) publish({ rows: { ...state.rows, [id]: { ...previous, phase: 'error' } } })
@@ -429,7 +436,7 @@ window.__ModuleLoader__.load({
       }
       const search = async (query, more = false) => {
         query = String(query || '').trim()
-        const request = ++searchRequest, scope = state.scope, epoch = state.epoch
+        const request = ++searchRequest, scope = state.scope, epoch = state.epoch, mark = renameMark
         const previous = state.search
         if (!query || !scope) { publish({ search: { query, items: [], phase: 'idle', nextCursor: null } }); return }
         if (more && !previous.nextCursor) return
@@ -437,7 +444,7 @@ window.__ModuleLoader__.load({
         try {
           const page = await window.dshEnterpriseChat.projectConversations({ query, ...(more ? { cursor: previous.nextCursor } : {}) }, epoch)
           if (!same(scope, epoch) || request !== searchRequest || page.epoch !== epoch) return
-          const items = [...new Map([...(more ? previous.items : []), ...page.items].map(item => [item.id, item])).values()]
+          const items = renamedSince(mark, [...new Map([...(more ? previous.items : []), ...page.items].map(item => [item.id, item])).values()])
           publish({ search: { query, items, phase: 'ready', nextCursor: page.nextCursor } })
         } catch { if (same(scope, epoch) && request === searchRequest) publish({ search: { ...previous, query, phase: 'error' } }) }
       }
@@ -501,7 +508,7 @@ window.__ModuleLoader__.load({
         setScope(scope, epoch) {
           scope = validId(scope) ? scope : undefined
           if (scope === state.scope && epoch === state.epoch) { if (scope && state.phase === 'idle') void read(); return }
-          generation++; searchRequest++; rowRequests.clear(); reading = false; readPending = undefined
+          generation++; searchRequest++; rowRequests.clear(); renames.clear(); reading = false; readPending = undefined
           clearTimeout(migrationTimer); migrationTimer = undefined; migrationRun = undefined; migrationAttempt = 0
           let migrationAvailable = false
           try { migrationAvailable = !!scope && window.localStorage.getItem('desktop.chatProjects.v1:' + scope) !== null && !window.localStorage.getItem('desktop.chatProjects.importDone.v1:' + scope) }
@@ -527,6 +534,20 @@ window.__ModuleLoader__.load({
               publish({ assigning })
             }
           }
+        },
+        /** Conversations a project page or the current search shows; the host still checks its own routes. */
+        lists(id) {
+          return Object.hasOwn(state.assignments, id) || state.search.items.some(item => item.id === id) ||
+            Object.values(state.rows).some(page => page.items.some(item => item.id === id))
+        },
+        /** Project pages keep creation order and are not reread on rename, so patch them and the search in place. */
+        renamed(id, title, updatedAt) {
+          renames.set(id, { title, updatedAt, mark: ++renameMark })
+          const patch = items => items.map(item => item.id === id ? { ...item, title, updatedAt } : item)
+          publish({
+            rows: Object.fromEntries(Object.entries(state.rows).map(([project, page]) => [project, { ...page, items: patch(page.items) }])),
+            search: { ...state.search, items: patch(state.search.items) }
+          })
         },
         toggle(id) {
           const expanded = { ...state.expanded, [id]: !state.expanded[id] }
@@ -819,10 +840,12 @@ publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page
         if (epoch !== value.epoch || !value.connected) throw new Error('Chat identity changed.')
         const response = await window.dshEnterpriseChat.rename(id, name, epoch)
         if (!active || epoch !== value.epoch || response.epoch !== epoch) return
-        // The server also moves the conversation's update time. A newer local row
-        // outranks cached project pages until the reread brings the server's own.
+        // The server also moves the conversation's update time. History is reread;
+        // project pages and the current search are not, so they take the same change.
         historyRequest++
-        publish({ items: value.items.map(item => item.id === id ? { ...item, title: name, updatedAt: new Date().toISOString() } : item), historyPhase: 'idle' })
+        const updatedAt = new Date().toISOString()
+        publish({ items: value.items.map(item => item.id === id ? { ...item, title: name, updatedAt } : item), historyPhase: 'idle' })
+        projects.renamed(id, name, updatedAt)
         void refreshHistory()
       })
       const open = async (id, projectId) => {
@@ -906,8 +929,9 @@ if (clearHistory) { historyRequest++; openRequest++; historyDirty = false; delet
           if (projectId === undefined) projects.edit('create', id)
           else if (await projects.assign(id, projectId) && projectId && value.epoch === epoch) projects.reveal(projectId)
         },
+        // Every row the sidebar shows can be renamed: history, project pages and search results.
         requestRename(id, title, epoch) {
-          if (value.connected && epoch === value.epoch && (value.items.some(item => item.id === id) || Object.hasOwn(projects.snapshot().assignments, id))) renaming.request(id, title, epoch)
+          if (value.connected && epoch === value.epoch && (value.items.some(item => item.id === id) || projects.lists(id))) renaming.request(id, title, epoch)
         },
         requestDelete(id, title, epoch) {
           if (value.connected && epoch === value.epoch && (value.items.some(item => item.id === id) || Object.hasOwn(projects.snapshot().assignments, id))) deletion.request(id, title, epoch)

@@ -14,10 +14,11 @@ beforeAll(() => {
 })
 afterEach(async () => { await cleanup?.(); cleanup = undefined; vi.restoreAllMocks() })
 
-async function fixture({ language = 'zh', rename = async () => {} } = {}) {
+// `project` turns on one cloud project: its memberships and what its pages and searches return.
+async function fixture({ language = 'zh', rename = async () => {}, mode = 'projects', query = '', project } = {}) {
   let plugin
   const entries = new Map(), dictionaries = new Map(), disposers = []
-  let state = { connected: true, phase: 'ready', epoch: 1, conversationId: 'cloud-a' }, listener
+  let state = { connected: true, phase: 'ready', epoch: 1, conversationId: 'cloud-a', ...(project ? { projectScope: 'scope-a' } : {}) }, listener
   let items = [{ id: 'cloud-a', title: '季度复盘', updatedAt: '2026-11-03' }, { id: 'cloud-b', title: '', updatedAt: '2026-11-02' }]
   const bridge = {
     state: async () => state,
@@ -29,7 +30,9 @@ async function fixture({ language = 'zh', rename = async () => {} } = {}) {
       return { epoch }
     }),
     remove: vi.fn(async (_id, epoch) => ({ epoch })),
-    open: vi.fn(async () => {})
+    open: vi.fn(async () => {}),
+    projectsState: vi.fn(async () => ({ epoch: state.epoch, phase: 'ready', connection: 'live', revision: '1', projects: [{ id: 'project-a', name: '研究' }], assignments: project.assignments })),
+    projectConversations: vi.fn(async input => ({ epoch: state.epoch, revision: '1', items: await project.list(input), nextCursor: null }))
   }
   window.dshEnterpriseChat = bridge
   window.__ModuleLoader__ = { load({ factory }) {
@@ -63,7 +66,7 @@ async function fixture({ language = 'zh', rename = async () => {} } = {}) {
   document.body.append(container)
   const root = createRoot(container)
   await act(async () => root.render(React.createElement(React.Fragment, null,
-    React.createElement(collection.Component, { ...collectionProps, mode: 'projects', query: '', archivedOnly: false, items: [], projects: () => null }),
+    React.createElement(collection.Component, { ...collectionProps, mode, query, archivedOnly: false, items: [], projects: () => null }),
     React.createElement(overlay.Component, overlayProps))))
   const settle = () => act(async () => new Promise(resolve => setTimeout(resolve, 0)))
   await settle()
@@ -204,6 +207,84 @@ it('drops a pending rename when the account changes', async () => {
   expect(ui.bridge.rename).not.toHaveBeenCalled()
 })
 
+// Project pages and search results keep their own copies; history pages are not the only source of rows.
+const olderProjectChat = { assignments: { 'cloud-old': 'project-a' }, list: async () => [{ id: 'cloud-old', title: '旧项目会话', updatedAt: '2026-10-01' }] }
+async function expandProject(ui) {
+  await act(async () => document.querySelector('.dshChatProjectToggle').click())
+  await ui.settle()
+}
+// The sidebar debounces the server search.
+const searchSettled = () => act(async () => new Promise(resolve => setTimeout(resolve, 250)))
+
+it('renames an older project conversation that no loaded history page contains', async () => {
+  const ui = await fixture({ project: olderProjectChat })
+  await expandProject(ui)
+  await ui.menu('旧项目会话')
+  await ui.click('重命名')
+  await ui.type('项目会话新名')
+  await ui.key('Enter')
+  expect(ui.bridge.rename).toHaveBeenCalledWith('cloud-old', '项目会话新名', 1)
+  expect(ui.row('项目会话新名')).toBeTruthy()
+  expect(ui.row('旧项目会话')).toBeFalsy()
+})
+
+it('keeps the new name when a project page requested before the rename arrives after it', async () => {
+  const list = vi.fn(olderProjectChat.list)
+  const ui = await fixture({ project: { ...olderProjectChat, list } })
+  await expandProject(ui)
+  let arrive
+  list.mockImplementationOnce(() => new Promise(resolve => { arrive = resolve }))
+  void ui.navigation.projects.load('project-a')
+  await ui.menu('旧项目会话')
+  await ui.click('重命名')
+  await ui.type('项目会话新名')
+  await ui.key('Enter')
+  await act(async () => arrive([{ id: 'cloud-old', title: '旧项目会话', updatedAt: '2026-10-01' }]))
+  await ui.settle()
+  expect(ui.row('项目会话新名')).toBeTruthy()
+  expect(ui.row('旧项目会话')).toBeFalsy()
+  // A page requested afterwards is the server's own answer, even if it was renamed elsewhere.
+  list.mockResolvedValueOnce([{ id: 'cloud-old', title: '网页端改的名', updatedAt: '2026-11-10' }])
+  await act(async () => ui.navigation.projects.load('project-a'))
+  await ui.settle()
+  expect(ui.row('网页端改的名')).toBeTruthy()
+})
+
+it('keeps the new name when a search requested before the rename arrives after it', async () => {
+  const list = vi.fn(async () => [{ id: 'cloud-found', title: '搜索会话', updatedAt: '2026-10-01' }])
+  const ui = await fixture({ mode: 'search', query: '搜索', project: { assignments: {}, list } })
+  await searchSettled()
+  let arrive
+  list.mockImplementationOnce(() => new Promise(resolve => { arrive = resolve }))
+  void ui.navigation.projects.search('搜索')
+  await ui.menu('搜索会话')
+  await ui.click('重命名')
+  await ui.type('搜索会话新名')
+  await ui.key('Enter')
+  await act(async () => arrive([{ id: 'cloud-found', title: '搜索会话', updatedAt: '2026-10-01' }]))
+  await ui.settle()
+  expect(ui.row('搜索会话新名')).toBeTruthy()
+  expect(ui.row('搜索会话')).toBeFalsy()
+})
+
+it.each([
+  ['outside history and projects', {}, 'cloud-found', '搜索会话'],
+  ['in a project but outside history', { 'cloud-found': 'project-a' }, 'cloud-found', '搜索会话'],
+  ['also in history', {}, 'cloud-a', '季度复盘']
+])('renames a search result %s and updates that row', async (_label, assignments, id, title) => {
+  const query = title.slice(0, 2)
+  const ui = await fixture({ mode: 'search', query, project: { assignments, list: async input => input.query === query ? [{ id, title, updatedAt: '2026-10-01' }] : [] } })
+  await searchSettled()
+  await ui.menu(title)
+  await ui.click('重命名')
+  expect(ui.input().value).toBe(title)
+  await ui.type(`${title}（改）`)
+  await ui.key('Enter')
+  expect(ui.bridge.rename).toHaveBeenCalledWith(id, `${title}（改）`, 1)
+  expect(ui.row(`${title}（改）`)).toBeTruthy()
+  expect(ui.row(title)).toBeFalsy()
+})
+
 it.each([['zh', '进行中'], ['en', 'Running']])('shows host-reported activity on cloud rows in %s', async (language, label) => {
   const ui = await fixture({ language })
   const unnamed = language === 'zh' ? '新聊天' : 'New chat'
@@ -228,4 +309,15 @@ it('clears activity when the account signs out', async () => {
   await ui.push({ running: ['cloud-a'] })
   await ui.push({ connected: false, running: ['cloud-a'] })
   expect(ui.navigation.snapshot().running).toEqual([])
+})
+
+it.each([
+  ['a project page', { project: olderProjectChat }, expandProject],
+  ['a search result', { mode: 'search', query: '旧项', project: olderProjectChat }, searchSettled]
+])('shows host-reported activity on %s too', async (_label, options, reveal) => {
+  const ui = await fixture(options)
+  await reveal(ui)
+  expect(ui.row('旧项目会话').querySelector('.dshHistoryStatus')).toBeNull()
+  await ui.push({ running: ['cloud-old'] })
+  expect(ui.row('旧项目会话').querySelector('.dshHistoryStatus svg[data-state=ongoing]')).toBeTruthy()
 })

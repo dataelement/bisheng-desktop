@@ -1602,6 +1602,32 @@ describe('cloud conversation rename', () => {
     } finally { f.host.dispose() }
   })
 
+  // The sidebar also offers rename on project pages and search results, which come from this read.
+  it.each([
+    ['a project page', { project_id: '11111111-1111-4111-8111-111111111111' }],
+    ['a search result', { query: 'Older' }]
+  ])('renames a conversation listed only by %s', async (_label, page) => {
+    const f = fixture()
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      const json = (data: unknown) => new Response(JSON.stringify({ status_code: 200, data }), { headers: { 'content-type': 'application/json' } })
+      const fetch = fake.sessions[0].fetch
+      fetch.mockImplementation(async (url: string) => url.includes('/api/v1/chat/projects/snapshot')
+        ? json({ identity: { user_id: 7, tenant_id: 2 }, projects: [{ id: '11111111-1111-4111-8111-111111111111', name: 'Research' }], memberships: [{ chat_id: 'cloud-p', project_id: '11111111-1111-4111-8111-111111111111' }] })
+        : url.includes('/api/v1/chat/projects/conversations')
+          ? json({ data: [{ chat_id: 'cloud-p', name: 'Older', flow_type: 15, update_time: '2026-10-01T00:00:00' }], total: 1, next_cursor: null })
+          : new Response(JSON.stringify({ status_code: 200 })))
+      const epoch = f.host.snapshot().epoch
+      await expect(f.host.rename('cloud-p', 'Renamed', epoch)).rejects.toThrow('current Chat history')
+      expect((await f.host.projectConversations(page, epoch)).items.map(item => item.id)).toEqual(['cloud-p'])
+      await expect(f.host.rename('cloud-p', 'Renamed', epoch)).resolves.toEqual({ epoch })
+      const [url, init] = fetch.mock.lastCall
+      expect(url).toBe('https://enterprise.example/api/v1/chat/conversation/rename')
+      expect(JSON.parse(init.body)).toEqual({ conversationId: 'cloud-p', name: 'Renamed' })
+    } finally { f.host.dispose() }
+  })
+
   it.each([
     ['a stale identity', 'cloud-a', 'Name', -1],
     ['an unlisted conversation', 'unknown', 'Name', undefined],
