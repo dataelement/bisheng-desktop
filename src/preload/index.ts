@@ -656,6 +656,8 @@ contextBridge.exposeInMainWorld('dshEnterpriseChat', Object.freeze({
   focusSettings: (): Promise<void> => ipcRenderer.invoke('enterprise-chat:focus-settings'),
   present: (value: EnterpriseChatPresentation): Promise<EnterpriseChatViewState> => ipcRenderer.invoke('enterprise-chat:present', value),
   capture: (): Promise<import('../shared/enterprise-chat-view').EnterpriseChatFrame | undefined> => ipcRenderer.invoke('enterprise-chat:capture'),
+  landingGeometry: (): Promise<import('../shared/enterprise-chat-view').EnterpriseChatLandingGeometry | undefined> => ipcRenderer.invoke('enterprise-chat:landing-geometry'),
+  landingTextMotion: (phase: 'out' | 'in'): Promise<void> => ipcRenderer.invoke('enterprise-chat:landing-text-motion', phase),
   state: (): Promise<EnterpriseChatViewState> => ipcRenderer.invoke('enterprise-chat:state'),
   retry: (): Promise<void> => ipcRenderer.invoke('enterprise-chat:retry'),
   usage: (): Promise<import('../shared/enterprise-usage').EnterpriseUsage> => ipcRenderer.invoke('enterprise-chat:usage'),

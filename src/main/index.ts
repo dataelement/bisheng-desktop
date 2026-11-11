@@ -1701,7 +1701,7 @@ function registerHarnessHandlers(): void {
     }
   })
 
-  for (const channel of ['enterprise-chat:present', 'enterprise-chat:capture', 'enterprise-chat:state', 'enterprise-chat:retry', 'enterprise-chat:usage', 'enterprise-chat:history', 'enterprise-chat:open', 'enterprise-chat:remove', 'enterprise-chat:open-page', 'enterprise-chat:focus-settings', 'enterprise-chat:projects-state', 'enterprise-chat:project-action', 'enterprise-chat:project-conversations']) ipcMain.removeHandler(channel)
+  for (const channel of ['enterprise-chat:present', 'enterprise-chat:capture', 'enterprise-chat:landing-geometry', 'enterprise-chat:landing-text-motion', 'enterprise-chat:state', 'enterprise-chat:retry', 'enterprise-chat:usage', 'enterprise-chat:history', 'enterprise-chat:open', 'enterprise-chat:remove', 'enterprise-chat:open-page', 'enterprise-chat:focus-settings', 'enterprise-chat:projects-state', 'enterprise-chat:project-action', 'enterprise-chat:project-conversations']) ipcMain.removeHandler(channel)
   ipcMain.handle('enterprise-chat:projects-state', (event) => {
     assertTrustedMainWindowEvent(event)
     return enterpriseChat?.projectsState()
@@ -1719,6 +1719,14 @@ function registerHarnessHandlers(): void {
   ipcMain.handle('enterprise-chat:capture', (event) => {
     assertTrustedMainWindowEvent(event)
     return enterpriseChat?.capture(mainWindow!)
+  })
+  ipcMain.handle('enterprise-chat:landing-geometry', (event) => {
+    assertTrustedMainWindowEvent(event)
+    return mainWindow && enterpriseChat?.landingGeometry(mainWindow)
+  })
+  ipcMain.handle('enterprise-chat:landing-text-motion', (event, phase: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    return mainWindow && enterpriseChat?.landingTextMotion(mainWindow, phase)
   })
   ipcMain.handle('enterprise-chat:focus-settings', (event) => {
     assertTrustedMainWindowEvent(event)

@@ -14,6 +14,16 @@ export interface EnterpriseChatFrame {
   bounds: EnterpriseChatPresentation['bounds']
 }
 
+/** Blank Chat geometry in host CSS pixels and optional visual details of its bottom controls. */
+export interface EnterpriseChatLandingGeometry {
+  title: EnterpriseChatPresentation['bounds']
+  composer: EnterpriseChatPresentation['bounds']
+  seat: EnterpriseChatPresentation['bounds']
+  /** Closed selector's selected label, never an input or search value. */
+  model?: { label: string; width: number }
+  sendOpacity?: number
+}
+
 /** Roles the host samples from its own tokens; the embedded document never reads host CSS. */
 export const ENTERPRISE_PALETTE_ROLES = ['surface', 'raised', 'strong', 'labelPrimary', 'labelSecondary', 'labelTertiary', 'borderBase', 'borderDeep'] as const
 export type EnterprisePaletteRole = (typeof ENTERPRISE_PALETTE_ROLES)[number]
