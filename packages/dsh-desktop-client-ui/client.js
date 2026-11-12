@@ -6,7 +6,11 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
 
     const React = require('react')
-    const { Menu, MenuItemButton, Modal, Button, ReferenceIconRegular } = require('@deepseek-ai/dsh-client-ui-primitives')
+    const {
+      Menu, MenuItemButton, Modal, Button, HoverCard, StateDot, relativeTime, ReferenceIconRegular,
+      IconChevronRightOutlineRegular, IconEditOutlineRegular, IconEllipsisOutlineRegular, IconFolderCloseRegular, IconFolderOpenRegular,
+      IconNewChatOutlineRegular, IconPlusOutlineRegular, IconTrashOutlineRegular, IconTriangleRightFillRegular
+    } = require('@deepseek-ai/dsh-client-ui-primitives')
 
     // Paths are copied from build/bisheng-logo-mark.svg. Keeping the browser
     // occupant self-contained makes it replayable when Harness loads plugins
@@ -210,7 +214,8 @@ window.__ModuleLoader__.load({
     const DELETE_SESSION_NS = 'dsh-desktop-delete-session'
 
     // The shell owns the request: closing a row menu unmounts its occupants.
-    function createSessionDeletion(deleteSession) {
+    // Deletion confirms without input; rename passes the submitted name through.
+    function createSessionRequest(run) {
       let state = null
       let active = true
       const listeners = new Set()
@@ -225,12 +230,12 @@ window.__ModuleLoader__.load({
           if (active && state === null) publish({ sessionId, displayTitle, context, busy: false, error: null })
         },
         close: () => { if (state && state.busy === false) publish(null) },
-        confirm: async () => {
+        confirm: async (input) => {
           if (state === null || state.busy || active === false) return
           const pending = { ...state, busy: true, error: null }
           publish(pending)
           try {
-            await deleteSession(pending.sessionId, pending.context)
+            await run(pending.sessionId, pending.context, input)
             if (active && state === pending) publish(null)
           } catch (reason) {
             if (active && state === pending) {
@@ -269,10 +274,49 @@ window.__ModuleLoader__.load({
             'data-modal-autofocus': true
           }, t('cancel')),
           React.createElement(Button, {
-            variant: 'primary', disabled: request.busy, onClick: deletion.confirm
+            variant: 'primary', disabled: request.busy, onClick: () => { void deletion.confirm() }
           }, t(request.busy ? 'pending' : 'confirm')))
       }, request?.busy && React.createElement('p', { role: 'status' }, t('pending')),
       request && request.error !== null && React.createElement('div', { role: 'alert' },
+        React.createElement('p', null, t('failed')),
+        React.createElement('p', null, request.error)))
+    }
+
+    // Mirrors Work's session rename: one form per request, so each opens with a fresh draft.
+    function RenameChatDialog({ renaming, t }) {
+      const request = React.useSyncExternalStore(renaming.subscribe, renaming.getSnapshot)
+      if (request === null) return null
+      return React.createElement(RenameChatForm, { key: `${request.context}:${request.sessionId}`, request, renaming, t })
+    }
+
+    function RenameChatForm({ request, renaming, t }) {
+      const [draft, setDraft] = React.useState(request.displayTitle)
+      const composing = React.useRef(false)
+      const trimmed = draft.trim()
+      const blocked = request.busy || trimmed === ''
+      const confirm = () => { if (!blocked) void renaming.confirm(trimmed) }
+      return React.createElement(Modal, {
+        open: true,
+        onClose: renaming.close,
+        title: t('title'),
+        closeLabel: t('close'),
+        footer: React.createElement(React.Fragment, null,
+          React.createElement(Button, { variant: 'outline', disabled: request.busy, onClick: renaming.close }, t('cancel')),
+          React.createElement(Button, { variant: 'primary', disabled: blocked, onClick: confirm }, t(request.busy ? 'pending' : 'confirm')))
+      },
+      React.createElement('input', {
+        className: 'dshChatRenameInput', value: draft, maxLength: CHAT_NAME_MAX_LENGTH, 'aria-label': t('name'),
+        'data-modal-autofocus': true, disabled: request.busy,
+        onFocus: event => event.target.select(),
+        onChange: event => setDraft(event.target.value),
+        onCompositionStart: () => { composing.current = true },
+        onCompositionEnd: () => { composing.current = false },
+        onKeyDown: event => {
+          if (event.key === 'Enter' && !composing.current) { event.preventDefault(); confirm() }
+        }
+      }),
+      request.busy && React.createElement('p', { role: 'status', className: 'dshChatRenameStatus' }, t('pending')),
+      request.error !== null && React.createElement('div', { role: 'alert', className: 'dshChatRenameError' },
         React.createElement('p', null, t('failed')),
         React.createElement('p', null, request.error)))
     }
@@ -308,11 +352,360 @@ window.__ModuleLoader__.load({
       zh: { menu: '删除', actions: '会话操作', title: '删除会话', close: '关闭', cancel: '取消', confirm: '删除会话', description: '确定删除“{name}”？会话及其聊天记录将被永久删除。', pending: '正在删除会话…', failed: '删除失败，请重试。' },
       en: { menu: 'Delete', actions: 'Conversation actions', title: 'Delete conversation', close: 'Close', cancel: 'Cancel', confirm: 'Delete conversation', description: 'Permanently delete “{name}” and its chat history?', pending: 'Deleting conversation…', failed: 'Deletion failed. Please try again.' }
     }
+    const CLOUD_RENAME_NS = 'desktop.cloudChatRename'
+    const CLOUD_RENAME_COPY = {
+      zh: { title: '重命名会话', name: '会话名称', close: '关闭', cancel: '取消', confirm: '重命名', pending: '正在重命名…', failed: '重命名失败，请重试。' },
+      en: { title: 'Rename conversation', name: 'Conversation name', close: 'Close', cancel: 'Cancel', confirm: 'Rename', pending: 'Renaming…', failed: 'Rename failed. Please try again.' }
+    }
+    // Matches the server's message_session.name column; the host validates it again.
+    const CHAT_NAME_MAX_LENGTH = 255
+    const PROJECTS_NS = 'desktop.chatProjects'
+    const PROJECTS_COPY = {
+      zh: { title: '对话项目', create: '新建项目', rename: '重命名项目', remove: '删除项目', actions: '项目操作', startChat: '在此项目新建对话', empty: '暂无对话', name: '项目名称', nameHelp: '请输入 1–30 个字符', cancel: '取消', save: '保存', close: '关闭', move: '移入项目', moveOut: '移出项目', deleteHelp: '删除“{name}”后，其中的对话将移回对话列表，聊天记录会保留。', failed: '项目保存失败，请重试。', unavailable: '项目数据无法读取，点击重试。', retry: '重试' },
+      en: { title: 'Chat Project', create: 'New project', rename: 'Rename project', remove: 'Delete project', actions: 'Project actions', startChat: 'New chat in this project', empty: 'No conversations yet', name: 'Project name', nameHelp: 'Enter 1–30 characters', cancel: 'Cancel', save: 'Save', close: 'Close', move: 'Move to project', moveOut: 'Move out of project', deleteHelp: 'Delete “{name}”? Its conversations will return to the conversation list. Chat history will be kept.', failed: 'Could not save projects. Please try again.', unavailable: 'Could not read projects. Retry.', retry: 'Retry' }
+    }
+    Object.assign(PROJECTS_COPY.zh, { pending: '正在保存或加载…', offline: '项目暂未更新，网络恢复或窗口重新激活时会再次读取。', auth_required: '请重新登录以同步项目', unsupported: '当前服务不支持项目同步，请升级服务端。', import: '旧版项目迁移结果', migrationRunning: '正在自动迁移旧版项目…', migrationRetry: '旧版项目暂未迁移，正在自动重试。原记录已保留。', importDone: '迁移完成，{count} 项未迁移或保留了云端归属。' })
+    Object.assign(PROJECTS_COPY.en, { pending: 'Saving or loading…', offline: 'Projects are not up to date. They reload when the network or this window comes back.', auth_required: 'Sign in again to sync projects.', unsupported: 'This server does not support project sync. Update the server.', import: 'Legacy migration results', migrationRunning: 'Migrating legacy projects automatically…', migrationRetry: 'Retrying legacy project migration automatically. Original records are kept.', importDone: 'Migration finished. {count} items were skipped or kept their cloud assignment.' })
+    Object.assign(PROJECTS_COPY.zh, { importReason_not_owned: '当前账号在旧项目中没有对话，未导入', importReason_cloud_membership_kept: '已保留云端归属', importReason_conversation_unavailable: '对话已删除或不属于当前账号', importReason_invalid_local_data: '本机记录损坏或格式无效', importReason_unknown: '此项未导入', moreResults: '查看更多' })
+    Object.assign(PROJECTS_COPY.en, { importReason_not_owned: 'No conversation in this legacy project belongs to this account', importReason_cloud_membership_kept: 'Cloud assignment kept', importReason_conversation_unavailable: 'Conversation deleted or owned by another account', importReason_invalid_local_data: 'Invalid local record', importReason_unknown: 'Item not imported', moreResults: 'Show more' })
+    /** Server projections own project data; local keys remain import-only. */
+    function createChatProjects() {
+      const empty = () => ({ projects: [], assignments: {} })
+      let state = { scope: undefined, epoch: undefined, ...empty(), expanded: {}, rows: {}, assigning: new Set(), editor: null, phase: 'idle', error: null, busy: false, revision: '0', connection: 'live', migrationAvailable: false, migrationPhase: 'idle', migrationResult: null, migrationDetails: [], search: { query: '', items: [], phase: 'idle', nextCursor: null } }
+      const listeners = new Set()
+      let readPending, reading = false, disposed = false
+      let generation = 0, searchRequest = 0
+      let migrationRun, migrationTimer, migrationAttempt = 0
+      const rowRequests = new Map()
+      // Conversation renames this session; a page requested before one finished still carries the old title.
+      const renames = new Map()
+      let renameMark = 0
+      const renamedSince = (mark, items) => items.map(item => {
+        const rename = renames.get(item.id)
+        return rename && rename.mark > mark ? { ...item, title: rename.title, updatedAt: rename.updatedAt } : item
+      })
+      const validId = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,255}$/u.test(value)
+      const publish = patch => { state = { ...state, ...patch }; listeners.forEach(fn => fn()) }
+      const legacyKey = () => 'desktop.chatProjects.v1:' + state.scope
+      const same = (scope, epoch) => !disposed && state.scope === scope && state.epoch === epoch
+      const apply = snapshot => {
+        if (!snapshot || snapshot.epoch !== state.epoch || !state.scope || disposed) return
+        if (!Array.isArray(snapshot.projects) || !snapshot.assignments || !/^(0|[1-9]\d*)$/u.test(snapshot.revision || '')) { publish({ phase: 'error', error: 'unsupported' }); return }
+        if (BigInt(snapshot.revision) < BigInt(state.revision)) return
+        const changed = snapshot.revision !== state.revision
+        const recovered = (snapshot.connection === 'live' && state.connection !== 'live') || (snapshot.phase === 'ready' && state.phase === 'error')
+        publish({ projects: snapshot.projects, assignments: snapshot.assignments, phase: snapshot.phase, connection: snapshot.connection, revision: snapshot.revision, identity: snapshot.identity, identityLabel: snapshot.identityLabel, error: snapshot.error || null })
+        if (snapshot.phase === 'ready') void migrate()
+        if (changed || recovered) {
+          for (const id of Object.keys(state.expanded)) if (state.expanded[id]) void load(id)
+          if (state.search.query) void search(state.search.query)
+        }
+      }
+      const read = async () => {
+        if (!state.scope || !Number.isSafeInteger(state.epoch) || disposed) return
+        if (reading) return readPending
+        if (typeof window.dshEnterpriseChat?.projectsState !== 'function') { publish({ phase: 'error', error: 'unsupported' }); return }
+        const scope = state.scope, epoch = state.epoch, request = generation
+        reading = true
+        readPending = (async () => {
+          try {
+            const snapshot = await window.dshEnterpriseChat.projectsState()
+            if (same(scope, epoch) && request === generation) apply(snapshot)
+          } catch { if (same(scope, epoch) && request === generation) publish({ phase: 'error', error: 'unavailable' }) }
+          finally { if (request === generation) { reading = false; readPending = undefined } }
+        })()
+        return readPending
+      }
+      const load = async (id, more = false) => {
+        if (!state.scope || !state.projects.some(project => project.id === id)) return
+        const scope = state.scope, epoch = state.epoch
+        const previous = state.rows[id] || { items: [], nextCursor: null, phase: 'idle' }
+        if (more && !previous.nextCursor) return
+        const request = (rowRequests.get(id) || 0) + 1, mark = renameMark
+        rowRequests.set(id, request)
+        publish({ rows: { ...state.rows, [id]: { ...previous, phase: 'loading' } } })
+        try {
+          const page = await window.dshEnterpriseChat.projectConversations({ project_id: id, ...(more ? { cursor: previous.nextCursor } : {}) }, epoch)
+          if (!same(scope, epoch) || rowRequests.get(id) !== request) return
+          if (page.epoch !== epoch || BigInt(page.revision) < BigInt(state.revision)) { void load(id); return }
+          const items = renamedSince(mark, [...new Map([...(more ? previous.items : []), ...page.items].map(item => [item.id, item])).values()])
+          publish({ rows: { ...state.rows, [id]: { items, nextCursor: page.nextCursor, phase: 'ready', revision: page.revision } } })
+        } catch {
+          if (same(scope, epoch) && rowRequests.get(id) === request) publish({ rows: { ...state.rows, [id]: { ...previous, phase: 'error' } } })
+        }
+      }
+      const search = async (query, more = false) => {
+        query = String(query || '').trim()
+        const request = ++searchRequest, scope = state.scope, epoch = state.epoch, mark = renameMark
+        const previous = state.search
+        if (!query || !scope) { publish({ search: { query, items: [], phase: 'idle', nextCursor: null } }); return }
+        if (more && !previous.nextCursor) return
+        publish({ search: { ...previous, query, phase: 'loading' } })
+        try {
+          const page = await window.dshEnterpriseChat.projectConversations({ query, ...(more ? { cursor: previous.nextCursor } : {}) }, epoch)
+          if (!same(scope, epoch) || request !== searchRequest || page.epoch !== epoch) return
+          const items = renamedSince(mark, [...new Map([...(more ? previous.items : []), ...page.items].map(item => [item.id, item])).values()])
+          publish({ search: { query, items, phase: 'ready', nextCursor: page.nextCursor } })
+        } catch { if (same(scope, epoch) && request === searchRequest) publish({ search: { ...previous, query, phase: 'error' } }) }
+      }
+      const action = async operation => {
+        const scope = state.scope, epoch = state.epoch
+        if (!scope || !Number.isSafeInteger(epoch)) throw new Error('Project identity unavailable.')
+        const result = await window.dshEnterpriseChat.projectAction(operation, epoch)
+        if (!same(scope, epoch) || result.epoch !== epoch) throw new Error('Project identity changed.')
+        await read()
+        return result
+      }
+      const importLegacy = async () => {
+        const scope = state.scope, epoch = state.epoch
+        const raw = window.localStorage.getItem(legacyKey())
+        if (!raw || raw.length > 4 * 1024 * 1024) throw new Error('Invalid legacy project data.')
+        const data = JSON.parse(raw)
+        if (!data || !Array.isArray(data.projects) || !data.assignments || typeof data.assignments !== 'object' || Array.isArray(data.assignments)) throw new Error('Invalid legacy project data.')
+        let skipped = 0
+        const details = []
+        const projects = data.projects.flatMap((project, index) => {
+          if (!project || !validId(project.id) || typeof project.name !== 'string' || !project.name.trim() || project.name.trim().length > 30) { skipped++; details.push({ id: '#' + (index + 1), status: 'invalid_local_data' }); return [] }
+          return [{ legacy_id: project.id, name: project.name.trim() }]
+        })
+        const memberships = Object.entries(data.assignments).flatMap(([chat_id, legacy_project_id]) => {
+          if (!validId(chat_id) || chat_id === 'new' || typeof legacy_project_id !== 'string') { skipped++; details.push({ id: chat_id, status: 'invalid_local_data' }); return [] }
+          return [{ chat_id, legacy_project_id }]
+        })
+        // One request carries the whole record (server cap 100 projects / 2000 memberships).
+        // The server imports a project only when this account owns one of its conversations,
+        // under a deterministic id, so a retry after a lost response creates no duplicate.
+        for (const extra of projects.slice(100)) { skipped++; details.push({ id: extra.legacy_id, status: 'invalid_local_data' }) }
+        const kept = new Set(projects.slice(0, 100).map(project => project.legacy_id))
+        const keptMembers = memberships.filter(member => kept.has(member.legacy_project_id))
+        for (const extra of keptMembers.slice(2000)) { skipped++; details.push({ id: extra.chat_id, status: 'invalid_local_data' }) }
+        if (!same(scope, epoch)) throw new Error('Project identity changed.')
+        const result = await action({ operation: 'import', projects: projects.slice(0, 100), memberships: keptMembers.slice(0, 2000) })
+        const reported = (result.outcome.items || []).filter(item => !['imported', 'already_imported'].includes(item.status))
+        skipped += reported.length
+        details.push(...reported.map(item => ({ id: item.chat_id || item.legacy_id || '', status: item.status })))
+        if (!same(scope, epoch)) return
+        window.localStorage.setItem('desktop.chatProjects.importDone.v1:' + scope, '1')
+        publish({ migrationAvailable: false, migrationPhase: 'done', migrationResult: skipped, migrationDetails: details })
+      }
+      const migrate = async () => {
+        if (!state.migrationAvailable || state.phase !== 'ready' || migrationRun || migrationTimer || disposed) return
+        const scope = state.scope, epoch = state.epoch, token = {}
+        migrationRun = token
+        publish({ migrationPhase: 'busy' })
+        try { await importLegacy(); if (same(scope, epoch)) migrationAttempt = 0 }
+        catch {
+          if (same(scope, epoch)) {
+            publish({ migrationPhase: 'error' })
+            migrationTimer = setTimeout(() => { migrationTimer = undefined; void migrate() }, [2000, 5000, 10000, 30000][Math.min(migrationAttempt++, 3)])
+          }
+        } finally { if (migrationRun === token) migrationRun = undefined }
+      }
+      return {
+        snapshot: () => state,
+        subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn) },
+        apply, reload: read, load, search,
+        setScope(scope, epoch) {
+          scope = validId(scope) ? scope : undefined
+          if (scope === state.scope && epoch === state.epoch) { if (scope && state.phase === 'idle') void read(); return }
+          generation++; searchRequest++; rowRequests.clear(); renames.clear(); reading = false; readPending = undefined
+          clearTimeout(migrationTimer); migrationTimer = undefined; migrationRun = undefined; migrationAttempt = 0
+          let migrationAvailable = false
+          try { migrationAvailable = !!scope && window.localStorage.getItem('desktop.chatProjects.v1:' + scope) !== null && !window.localStorage.getItem('desktop.chatProjects.importDone.v1:' + scope) }
+          catch { /* Import availability cannot block server projects. Original keys remain intact. */ }
+          publish({ scope, epoch, ...empty(), expanded: {}, rows: {}, assigning: new Set(), editor: null, busy: false, phase: scope ? 'loading' : 'idle', error: null, revision: '0', connection: 'live', migrationAvailable, migrationPhase: 'idle', migrationResult: null, migrationDetails: [], search: { query: '', items: [], phase: 'idle', nextCursor: null } })
+          if (scope) void read()
+        },
+        async assign(id, projectId) {
+          if (!validId(id) || id === 'new' || state.phase !== 'ready' || state.assigning.has(id) ||
+            (projectId && (!state.projects.some(project => project.id === projectId) || state.assignments[id] === projectId))) return false
+          const scope = state.scope, epoch = state.epoch
+          publish({ assigning: new Set([...state.assigning, id]), error: null })
+          try {
+            await action({ operation: 'assign', chat_id: id, project_id: projectId || null })
+            return same(scope, epoch)
+          } catch {
+            if (same(scope, epoch)) publish({ error: 'failed' })
+            return false
+          } finally {
+            if (same(scope, epoch)) {
+              const assigning = new Set(state.assigning)
+              assigning.delete(id)
+              publish({ assigning })
+            }
+          }
+        },
+        /** Conversations a project page or the current search shows; the host still checks its own routes. */
+        lists(id) {
+          return Object.hasOwn(state.assignments, id) || state.search.items.some(item => item.id === id) ||
+            Object.values(state.rows).some(page => page.items.some(item => item.id === id))
+        },
+        /** Project pages keep creation order and are not reread on rename, so patch them and the search in place. */
+        renamed(id, title, updatedAt) {
+          renames.set(id, { title, updatedAt, mark: ++renameMark })
+          const patch = items => items.map(item => item.id === id ? { ...item, title, updatedAt } : item)
+          publish({
+            rows: Object.fromEntries(Object.entries(state.rows).map(([project, page]) => [project, { ...page, items: patch(page.items) }])),
+            search: { ...state.search, items: patch(state.search.items) }
+          })
+        },
+        toggle(id) {
+          const expanded = { ...state.expanded, [id]: !state.expanded[id] }
+          publish({ expanded })
+          if (expanded[id]) void load(id)
+        },
+        reveal(id) {
+          if (!state.projects.some(project => project.id === id)) return
+          publish({ expanded: { ...state.expanded, [id]: true } })
+          void load(id)
+        },
+        edit(mode, id, title) {
+          if (mode !== 'import' && state.phase === 'ready') publish({ editor: { mode, id, title, draftProjectId: crypto.randomUUID() }, error: null })
+        },
+        close() { if (!state.busy) publish({ editor: null, error: null }) },
+        showImportResults() { publish({ editor: { mode: 'import', done: true, limit: 50 }, error: null }) },
+        moreImportResults() { if (state.editor) publish({ editor: { ...state.editor, limit: (state.editor.limit || 50) + 50 } }) },
+        async confirm(name = '') {
+          const editor = state.editor, scope = state.scope, epoch = state.epoch
+          if (!editor || editor.done || state.busy) return
+          const trimmed = name.trim()
+          if (['create', 'rename'].includes(editor.mode) && (!trimmed || trimmed.length > 30)) return
+          publish({ busy: true, error: null })
+          try {
+            let operation
+            {
+              // draftProjectId is minted once per dialog, so retrying a create after a lost response returns the same project.
+              if (editor.mode === 'create') operation = { operation: 'create', project_id: editor.draftProjectId, name: trimmed, ...(editor.id ? { chat_id: editor.id } : {}) }
+              else if (editor.mode === 'rename') operation = { operation: 'rename', project_id: editor.id, name: trimmed }
+              else if (editor.mode === 'remove') operation = { operation: 'delete', project_id: editor.id }
+              if (!operation) return
+              const result = await action(operation)
+              if (result.outcome.project_id && operation.operation === 'create') { publish({ expanded: { ...state.expanded, [result.outcome.project_id]: true } }); void load(result.outcome.project_id) }
+            }
+            if (same(scope, epoch)) publish({ editor: null, error: null })
+          } catch { if (same(scope, epoch)) publish({ error: 'failed' }) }
+          finally { if (same(scope, epoch)) publish({ busy: false }) }
+        },
+        dispose() { disposed = true; clearTimeout(migrationTimer); generation++; searchRequest++; rowRequests.clear(); listeners.clear() }
+      }
+    }
+    function ChatProjectDialog({ store, state, t }) {
+      const request = state.editor
+      const [name, setName] = React.useState(request.mode === 'rename' ? request.title : '')
+      const naming = request.mode === 'create' || request.mode === 'rename'
+      const valid = !naming || (name.trim().length > 0 && name.trim().length <= 30)
+      const formId = React.useId()
+      return React.createElement(Modal, {
+        open: true, onClose: store.close, title: t(request.mode), closeLabel: t('close'),
+        description: request.mode === 'remove' ? t('deleteHelp', { name: request.title }) : undefined,
+        footer: React.createElement(React.Fragment, null,
+          React.createElement(Button, { variant: 'outline', disabled: state.busy, onClick: store.close, 'data-modal-autofocus': request.mode === 'remove' || undefined }, t('cancel')),
+          !request.done && React.createElement(Button, { variant: 'primary', type: 'submit', form: formId, disabled: !valid || state.busy }, t(state.busy ? 'pending' : request.mode === 'remove' ? 'remove' : request.mode === 'import' ? 'import' : 'save')))
+      }, React.createElement('form', { id: formId, className: 'dshChatProjectForm', onSubmit: event => { event.preventDefault(); if (valid) store.confirm(name) } },
+        naming && React.createElement('label', null, t('name'), React.createElement('input', { value: name, disabled: state.busy, maxLength: 30, required: true,
+          placeholder: t('nameHelp'), 'aria-label': t('name'), 'data-modal-autofocus': true, onChange: event => setName(event.target.value) })),
+        state.busy && React.createElement('p', { role: 'status' }, t('pending')),
+        request.mode === 'import' && request.done && React.createElement('p', { role: 'status' }, t('importDone', { count: state.migrationResult })),
+        request.mode === 'import' && state.migrationDetails.length > 0 && React.createElement('ul', null, ...state.migrationDetails.slice(0, request.limit || 50).map((item, index) => React.createElement('li', { key: index }, item.id + ': ' + t('importReason_' + (['not_owned', 'cloud_membership_kept', 'conversation_unavailable', 'invalid_local_data'].includes(item.status) ? item.status : 'unknown'))))),
+        request.mode === 'import' && state.migrationDetails.length > (request.limit || 50) && React.createElement(Button, { type: 'button', variant: 'outline', onClick: store.moreImportResults }, t('moreResults')),
+        state.error && React.createElement('p', { role: 'alert' }, t(state.error))))
+    }
+    // Use the same Menu for the ellipsis, a secondary click, and the keyboard's context-menu shortcut.
+    function useSidebarRowMenu() {
+      const [source, setSource] = React.useState(null)
+      const open = (event, input) => {
+        if (event.defaultPrevented || event.target.closest('[role="menu"]')) return
+        event.preventDefault()
+        event.stopPropagation()
+        setSource(input)
+      }
+      return {
+        open: source !== null,
+        fromKeyboard: source === 'keyboard',
+        close: () => setSource(null),
+        closeOnPointerLeave: source === 'pointer',
+        toggle: event => setSource(current => current ? null : event.detail ? 'pointer' : 'keyboard'),
+        onContextMenu: event => open(event, 'pointer'),
+        onKeyDown: event => {
+          if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) open(event, 'keyboard')
+        }
+      }
+    }
+    function ChatProjectRow({ project, chats, state, currentChat, navigation, t, projectText, deleteText, now }) {
+      const menu = useSidebarRowMenu()
+      const store = navigation.projects
+      const open = !!state.expanded[project.id]
+      const panelId = React.useId()
+      const current = state.assignments[currentChat] === project.id
+      return React.createElement('div', { className: 'dshChatProject', 'data-chat-project': project.id },
+        React.createElement('div', { className: 'dshSidebarItem dshChatProjectHeading', 'data-menu-open': menu.open || undefined, onContextMenu: menu.onContextMenu, onKeyDown: menu.onKeyDown },
+          React.createElement('button', { type: 'button', className: 'dshChatProjectToggle', 'aria-expanded': open, 'aria-controls': open ? panelId : undefined, onClick: () => store.toggle(project.id), title: project.name },
+            React.createElement(open ? IconFolderOpenRegular : IconFolderCloseRegular, { className: 'dshChatProjectFolder', 'data-current': current || undefined, 'aria-hidden': true }),
+            React.createElement(IconTriangleRightFillRegular, { className: 'dshChatProjectChevron', 'aria-hidden': true }),
+            React.createElement('span', { className: 'dshChatProjectName' }, project.name)),
+          React.createElement('div', { className: 'dshSidebarItemTools' },
+            React.createElement(Menu, { open: menu.open, onClose: menu.close, closeOnPointerLeave: menu.closeOnPointerLeave, portal: true, align: 'end', autoFocus: true, dense: true,
+              anchor: React.createElement('button', { type: 'button', className: 'dshChatProjectAction', 'aria-label': `${projectText('actions')} · ${project.name}`, 'aria-haspopup': 'menu', 'aria-expanded': menu.open, onClick: menu.toggle },
+                React.createElement(IconEllipsisOutlineRegular, { 'aria-hidden': true }))
+            }, ...['rename', 'remove'].map(mode => React.createElement(MenuItemButton, { key: mode, icon: React.createElement(mode === 'rename' ? IconEditOutlineRegular : IconTrashOutlineRegular), danger: mode === 'remove', onSelect: () => {
+              menu.close()
+              setTimeout(() => {
+                const latest = store.snapshot()
+                if (latest.epoch === state.epoch && latest.scope === state.scope) store.edit(mode, project.id, project.name)
+              }, 0)
+            } }, projectText(mode)))),
+            React.createElement('button', { type: 'button', className: 'dshChatProjectAction', 'aria-label': `${projectText('startChat')} · ${project.name}`, title: projectText('startChat'), onClick: () => navigation.startProjectChat(project.id) },
+              React.createElement(IconNewChatOutlineRegular, { 'aria-hidden': true })))),
+        open && React.createElement('div', { id: panelId },
+          ...chats.map(item => React.createElement(CloudHistoryRow, { key: item.id, item, now, selected: currentChat === item.id, navigation, t, projectText, deleteText })),
+          state.rows[project.id]?.phase === 'loading' && React.createElement('div', { role: 'status', className: 'dshChatProjectEmpty' }, projectText('pending')),
+          state.rows[project.id]?.phase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => { void store.load(project.id) } }, projectText('unavailable')),
+          state.rows[project.id]?.nextCursor && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: state.rows[project.id]?.phase === 'loading', onClick: () => { void store.load(project.id, true) } }, t('more')),
+          chats.length === 0 && state.rows[project.id]?.phase === 'ready' && React.createElement('div', { className: 'dshChatProjectEmpty' }, projectText('empty'))))
+    }
+    function ChatProjects({ navigation, t, projectText, deleteText, now }) {
+      const state = React.useSyncExternalStore(navigation.projects.subscribe, navigation.projects.snapshot)
+      const host = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
+      const grouped = React.useMemo(() => {
+        const groups = new Map()
+        const items = new Map()
+        // Project pages outlive ordinary-history refreshes. A cached or late
+        // page must not restore an older title; equal timestamps prefer the page.
+        for (const item of [...host.items, ...Object.values(state.rows).flatMap(page => page.items)]) {
+          const previous = items.get(item.id)
+          if (!previous || (Date.parse(item.updatedAt) || 0) >= (Date.parse(previous.updatedAt) || 0)) items.set(item.id, item)
+        }
+        for (const item of items.values()) {
+          const id = state.assignments[item.id]
+          if (typeof id !== 'string') continue
+          if (!groups.has(id)) groups.set(id, [])
+          groups.get(id).push(item)
+        }
+        return groups
+      }, [host.items, state.assignments, state.rows])
+      if (!host.connected || !state.scope) return null
+      return React.createElement('section', { className: 'dshChatProjects', 'aria-label': projectText('title') },
+        React.createElement('div', { className: 'dshHistoryHeading' }, React.createElement('span', null, projectText('title')),
+          React.createElement('button', { type: 'button', className: 'dshChatProjectAction', disabled: state.phase !== 'ready', 'aria-label': projectText('create'), onClick: () => navigation.projects.edit('create') },
+            React.createElement(IconPlusOutlineRegular, { 'aria-hidden': true }))),
+        state.phase !== 'error' && state.connection !== 'live' && React.createElement('div', { role: 'status', className: 'dshHistoryNotice' }, projectText(state.connection)),
+        ['busy', 'error'].includes(state.migrationPhase) && React.createElement('p', { role: 'status', className: 'dshHistoryNotice' }, projectText(state.migrationPhase === 'busy' ? 'migrationRunning' : 'migrationRetry')),
+        state.migrationResult > 0 && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: navigation.projects.showImportResults }, projectText('importDone', { count: state.migrationResult })),
+        state.projects.length === 0 && state.phase === 'ready' && React.createElement('button', { type: 'button', className: 'dshChatProjectCreate', onClick: () => navigation.projects.edit('create') }, `+ ${projectText('create')}`),
+        ...state.projects.map(project => React.createElement(ChatProjectRow, { key: `${state.scope}:${state.epoch}:${project.id}`, project, chats: grouped.get(project.id) || [], state, currentChat: host.mode === 'chat' && !host.pageId ? host.conversationId : undefined, navigation, t, projectText, deleteText, now })),
+        state.error && !state.editor && React.createElement('div', { role: 'alert', className: 'dshHistoryNotice' }, projectText(state.error),
+          React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: navigation.projects.reload }, projectText('retry'))))
+    }
     const MODES_NS = 'desktop.chatWork'
     const MODES_COPY = {
-      zh: { welcomeMessage: '来一起创造', welcome: '欢迎来到', newConversation: '新建对话', navigation: '导航', moreNavigation: '更多', recent: '对话', projects: '工作区', all: '所有会话', results: '搜索结果', cloud: '云端聊天', local: '本地工作', recentEmpty: '暂无最近会话', recentSearchEmpty: '当前列表没有匹配的会话', chat: '聊天', work: '工作', label: '聊天与工作', loading: '正在连接企业聊天…', error: '企业聊天连接失败，请重试', retry: '重新连接', refresh: '刷新聊天记录', historyLoading: '正在加载聊天记录…', historyError: '加载失败，点击重试', empty: '暂无聊天记录', more: '加载更多', newChat: '新聊天', signIn: '登录企业账号', signInTitle: '登录后使用聊天', signInDescription: '聊天由企业平台提供。登录后，即可使用平台中的模型和对话记录。', continueWork: '继续使用工作', close: '关闭', justNow: '刚刚' },
-      en: { welcomeMessage: "Let's Create Together", welcome: 'Welcome', newConversation: 'New conversation', navigation: 'Navigation', moreNavigation: 'More', recent: 'Conversations', projects: 'Workspaces', all: 'All conversations', results: 'Search results', cloud: 'Cloud chat', local: 'Local work', recentEmpty: 'No recent conversations', recentSearchEmpty: 'No matches in the current list', chat: 'Chat', work: 'Work', label: 'Chat and Work', loading: 'Connecting to enterprise Chat…', error: 'Could not connect to enterprise Chat. Try again.', retry: 'Reconnect', refresh: 'Refresh Chat history', historyLoading: 'Loading history…', historyError: 'Loading failed. Retry', empty: 'No chats yet', more: 'Load more', newChat: 'New chat', signIn: 'Sign in to your enterprise account', signInTitle: 'Sign in to use Chat', signInDescription: 'Chat is provided by your enterprise platform. Sign in to use its models and conversations.', continueWork: 'Continue in Work', close: 'Close', justNow: 'Now' }
+      zh: { welcomeMessage: '来一起创造', welcome: '欢迎来到', newConversation: '新建对话', navigation: '导航', moreNavigation: '更多', recent: '对话', projects: '工作区', all: '所有会话', results: '搜索结果', cloud: '云端聊天', local: '本地工作', recentEmpty: '暂无最近会话', recentSearchEmpty: '当前列表没有匹配的会话', chat: '对话', work: '工作', label: '对话与工作', loading: '正在连接企业聊天…', error: '企业聊天连接失败，请重试', retry: '重新连接', refresh: '刷新聊天记录', historyLoading: '正在加载聊天记录…', historyError: '加载失败，点击重试', empty: '暂无聊天记录', more: '加载更多', newChat: '新聊天', signIn: '登录企业账号', signInTitle: '登录后使用聊天', signInDescription: '聊天由企业平台提供。登录后，即可使用平台中的模型和对话记录。', continueWork: '继续使用工作', close: '关闭' },
+      en: { welcomeMessage: "Let's Create Together", welcome: 'Welcome', newConversation: 'New conversation', navigation: 'Navigation', moreNavigation: 'More', recent: 'Conversations', projects: 'Workspaces', all: 'All conversations', results: 'Search results', cloud: 'Cloud chat', local: 'Local work', recentEmpty: 'No recent conversations', recentSearchEmpty: 'No matches in the current list', chat: 'Chat', work: 'Work', label: 'Chat and Work', loading: 'Connecting to enterprise Chat…', error: 'Could not connect to enterprise Chat. Try again.', retry: 'Reconnect', refresh: 'Refresh Chat history', historyLoading: 'Loading history…', historyError: 'Loading failed. Retry', empty: 'No chats yet', more: 'Load more', newChat: 'New chat', signIn: 'Sign in to your enterprise account', signInTitle: 'Sign in to use Chat', signInDescription: 'Chat is provided by your enterprise platform. Sign in to use its models and conversations.', continueWork: 'Continue in Work', close: 'Close' }
     }
+    Object.assign(MODES_COPY.zh, { 'time.now': '刚刚', 'time.minutes': '{n}分钟', 'time.hours': '{n}小时', 'time.days': '{n}天', 'time.months': '{n}个月', 'time.years': '{n}年', 'time.ago': '{t}前' })
+    Object.assign(MODES_COPY.en, { 'time.now': 'now', 'time.minutes': '{n}min', 'time.hours': '{n}h', 'time.days': '{n}d', 'time.months': '{n}mo', 'time.years': '{n}y', 'time.ago': '{t} ago' })
+    // Same words as Work's session row menu and status.
+    Object.assign(MODES_COPY.zh, { rename: '重命名', running: '进行中' })
+    Object.assign(MODES_COPY.en, { rename: 'Rename', running: 'Running' })
     /**
      * Host tokens the embedded enterprise document reuses. It cannot read the host's CSS, so the
      * presenter resolves them here and sends plain channels with the presentation.
@@ -351,6 +744,12 @@ window.__ModuleLoader__.load({
         }
         const mask = read('--dsw-alias-bg-mask-1')
         if (mask) palette.mask = [...mask.slice(0, 3), mask[3] ?? 1]
+        if (document.documentElement.dataset.platform === 'darwin') {
+          const base = read('--dsw-alias-bg-base')
+          const accent = read('--dsw-alias-link')
+          // Share one opaque 5% tint across the native chrome and the embedded banner.
+          if (base && accent) palette.squareBanner = base.slice(0, 3).map((channel, index) => Math.round(channel * 0.95 + accent[index] * 0.05))
+        }
         return palette
       } catch { return undefined } finally { probe.remove() }
     }
@@ -372,16 +771,37 @@ window.__ModuleLoader__.load({
 
     /** One renderer-owned mode/history controller shared by the content and sidebar slots. */
     function createChatNavigation(ctx) {
-      let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, signInPromptOpen: false, approvalsOpen: false, accountDialogOpen: false, settingsSurface: undefined, pageId: undefined, navigation: undefined, workLanding: false, nativeWork: true, panelOpen: false, activePanelId: null }
+      let value = { mode: 'work', connected: false, phase: 'idle', epoch: undefined, items: [], running: [], page: 0, hasMore: false, historyPhase: 'idle', settingsOpen: false, signInPromptOpen: false, approvalsOpen: false, accountDialogOpen: false, settingsSurface: undefined, pageId: undefined, navigation: undefined, workLanding: false, nativeWork: true, panelOpen: false, activePanelId: null }
       const listeners = new Set()
+      const projects = createChatProjects()
+      let openRequest = 0
       let active = false, revision = 0, historyRequest = 0, historyDirty = false
+      let startupStateRetryTimer, startupStateRetryCount = 0
+      // The page can report navigation after the first snapshot. Retry only while the
+      // account is connected and navigation is still absent. An object, including an
+      // empty entry list, means the report has already landed.
+      const startupStateRetryDelays = [250, 1000, 3000]
+      const cancelStartupStateRetry = () => {
+        if (startupStateRetryTimer === undefined) return
+        window.clearTimeout(startupStateRetryTimer)
+        startupStateRetryTimer = undefined
+      }
+      const scheduleStartupStateRetry = () => {
+        if (!active || startupStateRetryTimer !== undefined || startupStateRetryCount >= startupStateRetryDelays.length) return
+        const delay = startupStateRetryDelays[startupStateRetryCount]
+        startupStateRetryCount += 1
+        startupStateRetryTimer = window.setTimeout(() => {
+          startupStateRetryTimer = undefined
+          void readEnterpriseState(true)
+        }, delay)
+      }
       const publish = (patch) => { value = { ...value, ...patch }; listeners.forEach(fn => fn()) }
-      const select = (mode) => {
+      const select = (mode, landingMorph) => {
         if (mode === 'chat' && !value.connected) {
           publish({ signInPromptOpen: true })
           return false
         }
-        publish({ mode, pageId: undefined, signInPromptOpen: false })
+        publish({ mode, pageId: undefined, signInPromptOpen: false, landingMorph })
         return true
       }
       const refreshHistory = async (more = false) => {
@@ -408,7 +828,7 @@ publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page
           if (active && request === historyRequest && historyDirty) { historyDirty = false; void refreshHistory() }
         }
       }
-      const deletion = createSessionDeletion(async (id, epoch) => {
+      const deletion = createSessionRequest(async (id, epoch) => {
         if (epoch !== value.epoch || !value.connected) throw new Error('Chat identity changed.')
         const response = await window.dshEnterpriseChat.remove(id, epoch)
         if (!active || epoch !== value.epoch || response.epoch !== epoch) return
@@ -416,10 +836,27 @@ publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page
         publish({ items: value.items.filter(item => item.id !== id), historyPhase: 'idle' })
         void refreshHistory()
       })
-      const open = async (id) => {
+      const renaming = createSessionRequest(async (id, epoch, name) => {
+        if (epoch !== value.epoch || !value.connected) throw new Error('Chat identity changed.')
+        const response = await window.dshEnterpriseChat.rename(id, name, epoch)
+        if (!active || epoch !== value.epoch || response.epoch !== epoch) return
+        // The server also moves the conversation's update time. History is reread;
+        // project pages and the current search are not, so they take the same change.
+        historyRequest++
+        const updatedAt = new Date().toISOString()
+        publish({ items: value.items.map(item => item.id === id ? { ...item, title: name, updatedAt } : item), historyPhase: 'idle' })
+        projects.renamed(id, name, updatedAt)
+        void refreshHistory()
+      })
+      const open = async (id, projectId) => {
         if (!select('chat')) return
         const epoch = value.epoch
-        try { await window.dshEnterpriseChat.open(id); if (active && epoch === value.epoch) { publish({ conversationId: id }); void refreshHistory() } }
+        const request = ++openRequest
+        try {
+          if (projectId) await window.dshEnterpriseChat.open(id, projectId)
+          else await window.dshEnterpriseChat.open(id)
+          if (active && request === openRequest && epoch === value.epoch) { publish({ conversationId: id, draftProjectId: projectId }); void refreshHistory() }
+        }
         catch { if (active && epoch === value.epoch) void readHostState() }
       }
       // Account notifications also follow ordinary enterprise reads. The host epoch,
@@ -430,10 +867,13 @@ publish({ items: [...new Map(items.map(item => [item.id, item])).values()], page
         const conversationChanged = next.conversationId !== value.conversationId
         const becameReady = next.phase === 'ready' && value.phase !== 'ready'
         const clearHistory = identityChanged || !next.connected
-if (clearHistory) { historyRequest++; historyDirty = false; deletion.reset() }
+if (clearHistory) { historyRequest++; openRequest++; historyDirty = false; deletion.reset(); renaming.reset() }
+        projects.setScope(next.connected ? next.projectScope : undefined, next.epoch)
         publish({
           ...next,
           ...(clearHistory ? { items: [], page: 0, hasMore: false, historyPhase: 'idle' } : {}),
+          // The host omits an empty activity list, so absence must clear the previous one.
+          running: next.connected && Array.isArray(next.running) ? next.running : [],
           signInPromptOpen: next.connected ? false : value.signInPromptOpen,
           pageId: next.navigation?.entries.find(entry => entry.active)?.id,
           mode: next.connected ? signedIn ? 'chat' : value.mode : 'work'
@@ -441,14 +881,28 @@ if (clearHistory) { historyRequest++; historyDirty = false; deletion.reset() }
         if (signedIn) window.dispatchEvent(new CustomEvent('dsh-desktop:close-settings'))
         if (next.connected && next.phase === 'ready' && (refresh || identityChanged || signedIn || conversationChanged || becameReady)) void refreshHistory()
       }
-      const sync = async () => {
+      const readEnterpriseState = async (recover) => {
         const request = ++revision
+        cancelStartupStateRetry()
+        if (!recover) startupStateRetryCount = startupStateRetryDelays.length
         try {
           const next = await window.dshEnterpriseChat?.state()
-          if (!active || request !== revision || !next) return
-          applyState(next, true)
-        } catch { /* A missed focus read must not paint the reconnect page. */ }
+          if (!active || request !== revision) return
+          if (!next) {
+            if (recover) scheduleStartupStateRetry()
+            return
+          }
+          const pendingNavigation = recover && next.connected === true && (next.navigation == null || typeof next.navigation !== 'object')
+          const refreshHistory = !recover || startupStateRetryCount === 0
+          if (!pendingNavigation) startupStateRetryCount = startupStateRetryDelays.length
+          applyState(next, refreshHistory)
+          if (pendingNavigation) scheduleStartupStateRetry()
+        } catch {
+          // A missed focus or account read must not paint the reconnect page.
+          if (active && request === revision && recover) scheduleStartupStateRetry()
+        }
       }
+      const sync = () => { void readEnterpriseState(false) }
       // One guarded read. It does not refresh history; sync() owns that on focus and visibility.
       const readHostState = async () => {
         const request = ++revision
@@ -461,9 +915,26 @@ if (clearHistory) { historyRequest++; historyDirty = false; deletion.reset() }
       return {
         snapshot: () => value,
         subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn) },
-        select, open, refreshHistory, deletion,
+        select, open, refreshHistory, deletion, renaming, projects,
+        startProjectChat(id) {
+          if (!value.connected || !projects.snapshot().projects.some(project => project.id === id)) return
+          projects.reveal(id)
+          ctx.layout.selectPanel(null)
+          void open('new', id)
+        },
+        async moveProjectChat(id, epoch, projectId) {
+          const state = projects.snapshot()
+          if (epoch !== value.epoch || !value.connected || state.phase !== 'ready' || state.assigning.has(id) ||
+            !(value.items.some(item => item.id === id) || Object.hasOwn(state.assignments, id))) return
+          if (projectId === undefined) projects.edit('create', id)
+          else if (await projects.assign(id, projectId) && projectId && value.epoch === epoch) projects.reveal(projectId)
+        },
+        // Every row the sidebar shows can be renamed: history, project pages and search results.
+        requestRename(id, title, epoch) {
+          if (value.connected && epoch === value.epoch && (value.items.some(item => item.id === id) || projects.lists(id))) renaming.request(id, title, epoch)
+        },
         requestDelete(id, title, epoch) {
-          if (value.connected && epoch === value.epoch && value.items.some(item => item.id === id)) deletion.request(id, title, epoch)
+          if (value.connected && epoch === value.epoch && (value.items.some(item => item.id === id) || Object.hasOwn(projects.snapshot().assignments, id))) deletion.request(id, title, epoch)
         },
         bindWorkbench(service) {
           const sync = () => {
@@ -481,20 +952,26 @@ if (clearHistory) { historyRequest++; historyDirty = false; deletion.reset() }
         },
         async openPage(id) {
           if (!value.connected || !value.navigation?.entries.some(entry => entry.id === id)) return
+          openRequest++
           ctx.layout.selectPanel(null)
           publish({ mode: 'chat', pageId: id })
           const epoch = value.epoch
           try { await window.dshEnterpriseChat.openPage(id) }
           catch { if (active && epoch === value.epoch) void readHostState() }
         },
-        choose(mode) {
-          if (!select(mode)) return false
+        choose(mode, landingMorph) {
+          if (!select(mode, landingMorph)) return false
           if (mode === 'chat' && value.conversationId !== 'new') void open('new')
           if (mode === 'work' && (!value.workLanding || value.panelOpen)) ctx.uiWorkspace.startSession()
           return true
         },
+        finishLandingMorph(morph) {
+          if (value.landingMorph === morph) publish({ landingMorph: undefined })
+        },
         start() {
           active = true
+          startupStateRetryCount = 0
+          cancelStartupStateRetry()
           const account = () => { void sync() }
           const visibility = () => { if (!document.hidden) void sync() }
 // Older workspace hosts omit this registration. Failing here used to skip
@@ -549,7 +1026,14 @@ if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
           const unsubscribeSessions = ctx.sessions.list.subscribe(workState)
           const unsubscribeChat = window.dshEnterpriseChat?.subscribe?.((next) => {
             revision++
+            startupStateRetryCount = startupStateRetryDelays.length
+            cancelStartupStateRetry()
             applyState(next)
+          })
+          const unsubscribeProjects = window.dshEnterpriseChat?.onProjectsChanged?.(next => {
+            const previous = projects.snapshot().revision
+            projects.apply(next)
+            if (next.epoch === value.epoch && next.revision !== previous) void refreshHistory()
           })
           workState(); panel()
           window.addEventListener('dsh-desktop:enterprise-account-changed', account)
@@ -559,9 +1043,12 @@ if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
           window.addEventListener('dsh-desktop:settings-surface', settingsSurface)
           window.addEventListener('focus', sync)
           document.addEventListener('visibilitychange', visibility)
-          void sync()
+          void readEnterpriseState(true)
           return () => {
-active = false; deletion.reset(); revision++; historyRequest++; unsubscribe(); unsubscribeSessions(); unsubscribeWork(); unsubscribeChat?.()
+active = false
+startupStateRetryCount = startupStateRetryDelays.length
+cancelStartupStateRetry()
+deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; historyRequest++; unsubscribe(); unsubscribeSessions(); unsubscribeWork(); unsubscribeChat?.(); unsubscribeProjects?.()
             window.removeEventListener('dsh-desktop:enterprise-account-changed', account)
             disposeNavigation()
             if (revealWorkSession && ctx.uiWorkspace.openSession === revealWorkSession) ctx.uiWorkspace.openSession = originalOpenSession
@@ -575,137 +1062,706 @@ active = false; deletion.reset(); revision++; historyRequest++; unsubscribe(); u
         }
       }
     }
-    /** Cloud rows use the same title reveal speed and geometry as Harness sessions. */
-    function CloudHistoryRow({ item, selected, navigation, t, deleteText }) {
-      const [menuOpen, setMenuOpen] = React.useState(false)
-      const title = React.useRef(null)
+    /** Mirror Harness's title reveal without making pointer movement rerender the list. */
+    function useHistoryTitleMarquee(title) {
+      const ref = React.useRef(null)
       const frame = React.useRef(0)
-      const reset = () => {
+      const reset = React.useCallback(() => {
         cancelAnimationFrame(frame.current)
-        if (title.current) title.current.scrollLeft = 0
-      }
-      React.useEffect(() => reset, [item.title])
-      const reveal = () => {
+        const element = ref.current
+        if (!element) return
+        element.scrollLeft = 0
+        element.removeAttribute('data-scrolled')
+        element.removeAttribute('data-clipped')
+      }, [])
+      React.useLayoutEffect(() => reset, [title, reset])
+      const reveal = event => {
+        if (event.pointerType === 'touch') return
         reset()
-        const element = title.current
-        const distance = element.scrollWidth - element.clientWidth
-        if (distance <= 8) return
-        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { element.scrollLeft = distance; return }
-        let start
+        const element = ref.current
+        if (!element) return
+        const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+        let start, distance
         const tick = (now) => {
+          // Measure after the timestamp has yielded its space to the menu trigger.
+          distance ??= element.scrollWidth - element.clientWidth
+          if (distance <= 8) return
           start ??= now
-          element.scrollLeft = Math.min(distance, (now - start) * .03)
-          if (element.scrollLeft < distance) frame.current = requestAnimationFrame(tick)
+          const position = reducedMotion ? distance : Math.min(distance, (now - start) * .03)
+          element.scrollLeft = position
+          element.toggleAttribute('data-scrolled', position > 0)
+          element.toggleAttribute('data-clipped', position < distance)
+          if (position < distance) frame.current = requestAnimationFrame(tick)
         }
         frame.current = requestAnimationFrame(tick)
       }
-      return React.createElement('div', { className: 'dshCloudHistoryRow' },
-        React.createElement('button', { type: 'button', 'data-history-kind': 'chat', className: 'dshHistoryRow', 'aria-current': selected ? 'page' : undefined,
-        title: item.title, onClick: () => navigation.open(item.id), onPointerEnter: reveal, onPointerLeave: reset, onFocus: reveal, onBlur: reset },
-        React.createElement('span', { ref: title }, item.title || t('newChat')),
-        React.createElement('time', { dateTime: new Date(item.updatedAt).toISOString() }, historyTime(item.updatedAt, t))),
-        React.createElement(Menu, {
-          open: menuOpen, onClose: () => setMenuOpen(false), portal: true, align: 'end', autoFocus: true, dense: true,
-          anchor: React.createElement('button', { type: 'button', className: 'dshCloudHistoryActions', 'aria-label': deleteText('actions'), 'aria-haspopup': 'menu', 'aria-expanded': menuOpen, onClick: () => setMenuOpen(open => !open) }, '⋯')
-        }, React.createElement(MenuItemButton, {
-          danger: true, onSelect: () => {
-            const epoch = navigation.snapshot().epoch
-            setMenuOpen(false)
-            setTimeout(() => navigation.requestDelete(item.id, item.title || t('newChat'), epoch), 0)
-          }
-        }, deleteText('menu'))))
+      return { ref, reveal, reset }
+    }
+    function projectMenuKeys(event) {
+      if (event.defaultPrevented || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+        (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft')) return
+      const list = event.target.closest('.dshCloudHistoryMenu')
+      if (!list) return
+      const trigger = list.querySelector('button[aria-haspopup="menu"][aria-expanded="true"]')
+      const submenu = list.querySelector('[role="menu"]')
+      const next = event.key === 'ArrowRight' && event.target === trigger ? submenu?.querySelector('button:not(:disabled)')
+        : event.key === 'ArrowLeft' && submenu?.contains(event.target) ? trigger : null
+      if (next) { event.preventDefault(); next.focus() }
+    }
+    function CloudHistoryRow({ item, selected, navigation, t, projectText, deleteText, now }) {
+      const menu = useSidebarRowMenu()
+      const title = item.title || t('newChat')
+      const marquee = useHistoryTitleMarquee(title)
+      const timeId = React.useId()
+      const statusId = React.useId()
+      // Parents subscribe to navigation; the row reads the same snapshot as its project state.
+      const running = navigation.snapshot().running.includes(item.id)
+      const date = Date.parse(item.updatedAt)
+      const time = Number.isFinite(date) ? relativeTime(date, now) : null
+      const dateTime = time && new Date(date).toISOString()
+      const age = time && t(`time.${time.unit}`, { n: time.n })
+      const projects = navigation.projects.snapshot()
+      const canMove = projects.phase === 'ready' && !projects.assigning.has(item.id)
+      const currentProject = Object.hasOwn(projects.assignments, item.id) ? projects.assignments[item.id] : undefined
+      const actions = []
+      if (menu.open) {
+        actions.push({ id: 'rename', label: t('rename'), icon: React.createElement(IconEditOutlineRegular) })
+        if (projectText) {
+          actions.push({
+            id: 'move', disabled: !canMove,
+            label: React.createElement('span', { className: 'dshChatProjectMenuLabel' }, projectText('move'),
+              React.createElement(IconChevronRightOutlineRegular, { 'aria-hidden': true })),
+            icon: React.createElement(IconFolderOpenRegular),
+            submenu: canMove ? [
+              { id: 'new-project', label: React.createElement('span', { className: 'dshChatProjectMenuCreate' }, projectText('create')), icon: React.createElement(IconPlusOutlineRegular) },
+              ...projects.projects.filter(project => project.id !== currentProject).map(project => ({
+                id: `project:${project.id}`, label: project.name, icon: React.createElement(IconFolderCloseRegular)
+              })),
+              ...(currentProject ? [{ id: 'move-out', label: React.createElement('span', { className: 'dshChatProjectMenuRemove' }, projectText('moveOut')) }] : [])
+            ] : undefined
+          })
+        }
+        actions.push({ id: 'delete', label: deleteText('menu'), icon: React.createElement(IconTrashOutlineRegular), danger: true })
+      }
+      const requestRename = () => {
+        const epoch = navigation.snapshot().epoch
+        setTimeout(() => navigation.requestRename(item.id, item.title || '', epoch), 0)
+      }
+      const select = action => {
+        const epoch = navigation.snapshot().epoch
+        menu.close()
+        // Only rename, deletion and creation need a dialog. Let Menu restore focus before it opens.
+        if (action === 'rename') requestRename()
+        else if (action === 'delete') setTimeout(() => navigation.requestDelete(item.id, title, epoch), 0)
+        else if (action === 'new-project') setTimeout(() => { void navigation.moveProjectChat(item.id, epoch) }, 0)
+        else if (action === 'move-out') void navigation.moveProjectChat(item.id, epoch, null)
+        else if (action.startsWith('project:')) void navigation.moveProjectChat(item.id, epoch, action.slice('project:'.length))
+      }
+      return React.createElement(HoverCard, {
+        anchor: React.createElement('div', {
+          className: 'dshSidebarItem dshCloudHistoryRow', 'data-menu-open': menu.open || undefined, 'data-selected': selected || undefined,
+          onContextMenu: menu.onContextMenu, onKeyDown: event => { menu.onKeyDown(event); projectMenuKeys(event) },
+          onPointerEnter: marquee.reveal, onPointerLeave: marquee.reset
+        },
+          React.createElement('button', {
+            type: 'button', 'data-history-kind': 'chat', className: 'dshHistoryRow', 'aria-current': selected ? 'page' : undefined,
+            'aria-label': title, 'aria-describedby': [running && statusId, time && timeId].filter(Boolean).join(' ') || undefined, onClick: () => navigation.open(item.id)
+          },
+            running && React.createElement('span', { className: 'dshHistoryStatus' },
+              React.createElement(StateDot, { state: 'ongoing' }),
+              React.createElement('span', { id: statusId, className: 'dshVisuallyHidden' }, t('running'))),
+            // Work rows rename on a title double-click too.
+            React.createElement('span', { className: 'dshHistoryTitle', ref: marquee.ref, onDoubleClick: event => { event.stopPropagation(); requestRename() } }, title),
+            time && React.createElement('time', { id: timeId, dateTime }, age)),
+          React.createElement('div', { className: 'dshSidebarItemTools' },
+            React.createElement(Menu, {
+              open: menu.open, onClose: menu.close, closeOnPointerLeave: menu.closeOnPointerLeave, portal: true, align: 'end', autoFocus: menu.fromKeyboard, dense: true,
+              items: actions, onSelect: select, listClassName: 'dshCloudHistoryMenu',
+              anchor: React.createElement('button', { type: 'button', className: 'dshCloudHistoryActions', 'aria-label': `${deleteText('actions')} · ${title}`, 'aria-haspopup': 'menu', 'aria-expanded': menu.open, onClick: menu.toggle },
+                React.createElement(IconEllipsisOutlineRegular, { 'aria-hidden': true }))
+            }))),
+        content: React.createElement('div', { className: 'dshCloudHistoryPreview', 'data-dsh-chat-history-preview': '' },
+          React.createElement('div', null, title),
+          time && React.createElement('time', { dateTime }, time.unit === 'now' ? age : t('time.ago', { t: age })),
+          running && React.createElement('span', { className: 'dshCloudHistoryStatus' }, React.createElement(StateDot, { state: 'ongoing', size: 12 }), t('running'))),
+        openDelayMs: 800, grouped: true, disabled: menu.open
+      })
     }
     /** Cloud identities stay namespaced; project ownership is projected by Harness. */
-    function SharedCollection({ projects, items, mode, query, archivedOnly, searchPending = false, navigation, t, deleteText }) {
+    function SharedCollection({ projects, items, mode, query, archivedOnly, searchPending = false, navigation, t, projectText, deleteText }) {
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
+      const projectState = React.useSyncExternalStore(navigation.projects.subscribe, navigation.projects.snapshot)
       const initialHistoryLoading = state.historyPhase === 'loading' && state.page === 0
-      const resultsPending = initialHistoryLoading || (mode === 'search' && searchPending)
+      const resultsPending = initialHistoryLoading || (mode === 'search' && searchPending) || projectState.search.phase === 'loading'
       const search = query.trim().toLocaleLowerCase()
+      const now = Date.now()
+      React.useEffect(() => {
+        const timer = setTimeout(() => { void navigation.projects.search(archivedOnly || !state.connected ? '' : search) }, search ? 200 : 0)
+        return () => clearTimeout(timer)
+      }, [navigation, search, archivedOnly, state.connected, state.epoch])
+      const showProjects = mode === 'projects' && !archivedOnly && !search
       const local = items.map(item => ({ ...item, key: `work:${item.id}`, kind: 'work' }))
-      const cloud = archivedOnly ? [] : state.items.filter(item => (item.title || t('newChat')).toLocaleLowerCase().includes(search))
-        .map(item => ({ ...item, key: `chat:${item.id}`, kind: 'chat', updatedAt: Date.parse(item.updatedAt) || 0 }))
+      const cloudItems = [...new Map([...state.items, ...(search && projectState.search.query === search ? projectState.search.items : [])].map(item => [item.id, item])).values()]
+      const cloud = archivedOnly ? [] : cloudItems.filter(item => (!showProjects || !Object.hasOwn(projectState.assignments, item.id)) && (item.title || t('newChat')).toLocaleLowerCase().includes(search))
+        .map(conversation => ({ key: `chat:${state.epoch}:${conversation.id}`, kind: 'chat', updatedAt: Date.parse(conversation.updatedAt) || 0, conversation }))
       const rows = [...local, ...cloud].sort((a, b) => Number(!!b.blank) - Number(!!a.blank) || Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt || a.key.localeCompare(b.key))
       return React.createElement('div', { className: 'dshSharedCollection', 'data-mode': state.mode },
         projects(state.mode === 'work'),
+        showProjects && React.createElement(ChatProjects, { navigation, t, projectText, deleteText, now }),
+        projectState.editor && React.createElement(ChatProjectDialog, { key: `${projectState.scope}:${projectState.editor.mode}:${projectState.editor.id || ''}`, store: navigation.projects, state: projectState, t: projectText }),
         React.createElement('section', { className: 'dshRecentHistory', 'aria-label': t(mode === 'projects' ? 'recent' : mode === 'search' ? 'results' : 'all') },
           React.createElement('div', { className: 'dshHistoryHeading' },
             React.createElement('span', null, t(mode === 'projects' ? 'recent' : mode === 'search' ? 'results' : 'all'))),
-          ...rows.map(item => item.kind === 'work'
-            ? React.createElement('div', { key: item.key, 'data-history-kind': 'work' }, item.render(state.mode === 'work'))
-            : React.createElement(CloudHistoryRow, { key: item.key, item, selected: state.mode === 'chat' && !state.pageId && state.conversationId === item.id, navigation, t, deleteText })),
+          rows.length > 0 && React.createElement('div', { className: 'dshRecentHistoryRows' },
+            rows.map(row => row.kind === 'work'
+              ? React.createElement('div', { key: row.key, 'data-history-kind': 'work' }, row.render(state.mode === 'work'))
+              : React.createElement(CloudHistoryRow, { key: row.key, item: row.conversation, now, selected: state.mode === 'chat' && !state.pageId && state.conversationId === row.conversation.id, navigation, t, projectText, deleteText }))),
           state.historyPhase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => navigation.refreshHistory() }, t('historyError')),
+          !showProjects && projectState.error === 'failed' && !projectState.editor && React.createElement('div', { role: 'alert', className: 'dshHistoryNotice' }, projectText('failed')),
           initialHistoryLoading && React.createElement('div', { className: 'dshHistoryNotice', role: 'status' }, t('historyLoading')),
           rows.length === 0 && !resultsPending && React.createElement('div', { className: 'dshHistoryNotice' }, t(search ? 'recentSearchEmpty' : 'recentEmpty')),
-          state.hasMore && !archivedOnly && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: state.historyPhase === 'loading', onClick: () => navigation.refreshHistory(true) }, t('more'))))
+          search && projectState.search.phase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => { void navigation.projects.search(search) } }, projectText('unavailable')),
+          (state.hasMore || (search && projectState.search.nextCursor)) && !archivedOnly && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: state.historyPhase === 'loading' || projectState.search.phase === 'loading', onClick: () => {
+            if (state.hasMore) void navigation.refreshHistory(true)
+            if (search && projectState.search.nextCursor) void navigation.projects.search(search, true)
+          } }, t('more'))))
     }
-    function historyTime(date, t) {
-      const time = new Date(date).getTime()
-      if (!Number.isFinite(time)) return ''
-      const elapsed = Date.now() - time
-      if (elapsed >= 0 && elapsed < 60000) return t('justNow')
-      return new Date(time).toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })
-    }
-    /** Host body portals own modal input; native content yields until the last one closes. */
-    function observeHostDialogs(report) {
-      const selector = '[role="dialog"][aria-modal="true"], [role="alertdialog"][aria-modal="true"], dialog[open]'
-      const portals = new Map()
-      let previous = false
-      let initialized = false
-      let disposed = false
+    /** Track semantic overlays, including inline menus and nested menus, without rescanning streamed content. */
+    function observeHostOverlays(report) {
+      // HoverCard exposes its content, not the portal element. Measure the entire card,
+      // including its padding, when a cloud history preview crosses into the native view.
+      const selector = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [role="tooltip"], dialog, [popover], [data-dsh-host-overlay], :has(> [data-dsh-chat-history-preview])'
+      const elements = new Set()
+      const identities = new WeakMap()
+      const pending = new Set()
+      let style = document.querySelector('style[data-plugin-css="dsh-native-overlay-handoff"]')
+      if (!style) {
+        style = document.createElement('style')
+        style.dataset.pluginCss = 'dsh-native-overlay-handoff'
+        style.textContent = '[data-dsh-native-overlay-pending]{opacity:0!important;pointer-events:none!important}html[data-dsh-native-overlay-handoff] [data-menu-backing]{opacity:0!important}'
+        document.head.append(style)
+      }
+      style.dataset.observers = String(Number(style.dataset.observers || 0) + 1)
+      const release = () => {
+        if (!pending.size) return
+        for (const element of pending) element.removeAttribute('data-dsh-native-overlay-pending')
+        pending.clear()
+        document.documentElement.removeAttribute('data-dsh-native-overlay-handoff')
+      }
+      const intersects = (rect, bounds, surface) => (!surface || !rect.element.contains(surface)) && rect.x < bounds.x + bounds.width && rect.x + rect.width > bounds.x && rect.y < bounds.y + bounds.height && rect.y + rect.height > bounds.y
+      let nextId = 0, modals = [], rectangles = [], previous = '', initialized = false, disposed = false
+      const collect = node => {
+        if (!(node instanceof Element)) return false
+        let added = false
+        for (const element of [...(node.matches(selector) ? [node] : []), ...node.querySelectorAll(selector)]) {
+          if (elements.has(element)) continue
+          elements.add(element); identities.set(element, ++nextId); resize.observe(element); added = true
+        }
+        return added
+      }
       const refresh = () => {
         if (disposed || document.hidden) return
-        const children = new Set([...document.body.children].filter(element => element.id !== 'root' && !element.matches('script, style, link')))
-        for (const [element, observer] of portals) {
-          if (children.has(element)) continue
-          observer.disconnect()
-          portals.delete(element)
+        modals = []; rectangles = []
+        for (const element of elements) {
+          if (!element.isConnected || !element.matches(selector)) {
+            resize.unobserve(element); elements.delete(element); continue
+          }
+          // Our paint gate must not look like a dismissed menu to this observer.
+          if (!element.checkVisibility({ checkVisibilityCSS: true, opacityProperty: !pending.has(element) })) continue
+          const nativeModal = element instanceof HTMLDialogElement && element.matches(':modal')
+          if (element.getAttribute('aria-modal') === 'true' || nativeModal) { modals.push(element); continue }
+          if (element.matches('dialog:not([open])') || element.hasAttribute('popover') && !element.matches(':popover-open')) continue
+          // A persistent inline dialog region is content, not a floating surface.
+          if (element.matches('[role="dialog"], [role="alertdialog"]') && document.getElementById('root')?.contains(element) &&
+            !['absolute', 'fixed'].includes(getComputedStyle(element).position)) continue
+          const rect = element.getBoundingClientRect()
+          if (rect.width > 0 && rect.height > 0) rectangles.push({ element, x: rect.x, y: rect.y, width: rect.width, height: rect.height })
         }
-        for (const element of children) {
-          if (portals.has(element)) continue
-          const observer = new MutationObserver(refresh)
-          observer.observe(element, { childList: true, subtree: true, attributes: true, attributeFilter: ['role', 'aria-modal', 'open', 'hidden', 'style', 'class'] })
-          portals.set(element, observer)
-        }
-        const open = [...children].some(element => {
-          const dialogs = [...(element.matches(selector) ? [element] : []), ...element.querySelectorAll(selector)]
-          return dialogs.some(dialog => dialog.checkVisibility({ checkVisibilityCSS: true }) &&
-            (dialog.getAttribute('aria-modal') === 'true' || dialog.matches(':modal')))
-        })
-        if (open === previous) return
-        previous = open
-        if (initialized) report(open)
+        const signature = JSON.stringify([modals.map(element => identities.get(element)), rectangles.map(({ element, ...rect }) => [identities.get(element), rect])])
+        if (previous === signature) return
+        previous = signature
+        if (initialized) report()
       }
-      const body = new MutationObserver(refresh)
-      body.observe(document.body, { childList: true })
-      document.addEventListener('visibilitychange', refresh)
-      refresh()
-      initialized = true
-      return { isOpen: () => previous, dispose: () => {
-        disposed = true
-        body.disconnect()
-        for (const observer of portals.values()) observer.disconnect()
-        portals.clear()
-        document.removeEventListener('visibilitychange', refresh)
-      } }
+      const resize = new ResizeObserver(refresh)
+      const body = new MutationObserver(records => {
+        if (disposed || document.hidden) return
+        let changed = false
+        for (const record of records) {
+          if (record.type === 'childList') {
+            for (const node of record.addedNodes) changed = collect(node) || changed
+            if (elements.size && (record.removedNodes.length || record.target instanceof Element && record.target.closest(selector))) changed = true
+          } else if (record.target instanceof Element) {
+            if (record.target.matches(selector) && !elements.has(record.target)) changed = collect(record.target) || changed
+            if ([...elements].some(element => element === record.target || record.target.contains(element) || element.contains(record.target))) changed = true
+          }
+        }
+        if (changed) refresh()
+      })
+      // Only added subtrees are searched. Attribute changes outside an active overlay's
+      // ancestry are ignored; there is no per-token full-document query or polling loop.
+      body.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['role', 'aria-modal', 'open', 'popover', 'hidden', 'style', 'class', 'data-dsh-host-overlay'] })
+      const resume = () => { if (!document.hidden) { collect(document.body); refresh() } }
+      document.addEventListener('visibilitychange', resume)
+      window.addEventListener('scroll', refresh, true)
+      window.addEventListener('resize', refresh)
+      collect(document.body); refresh(); initialized = true
+      return {
+        // Settings/approvals may own this very native surface. Only a different
+        // foreground layer should cover their content, including nested confirmations.
+        isModal: surface => modals.some(element => !surface || !element.contains(surface)),
+        intersects: (bounds, surface) => rectangles.some(rect => intersects(rect, bounds, surface)),
+        defer: (bounds, surface) => {
+          // MutationObserver runs before paint. Keep both the surface and its native
+          // menu material out of that first paint until Main confirms the view yielded.
+          for (const rect of rectangles) if (intersects(rect, bounds, surface)) {
+            pending.add(rect.element)
+            rect.element.setAttribute('data-dsh-native-overlay-pending', '')
+          }
+          if (pending.size) document.documentElement.setAttribute('data-dsh-native-overlay-handoff', '')
+          return release
+        },
+        dispose() {
+          if (disposed) return
+          disposed = true; body.disconnect(); resize.disconnect(); elements.clear(); release()
+          const users = Number(style.dataset.observers) - 1
+          if (users) style.dataset.observers = String(users)
+          else style.remove()
+          document.removeEventListener('visibilitychange', resume)
+          window.removeEventListener('scroll', refresh, true); window.removeEventListener('resize', refresh)
+        }
+      }
+    }
+
+    /** Freeze only the backing while host overlays own input; keep the remote document alive. */
+    function createNativeSurfacePresenter(bridge, target) {
+      let latest, revision = 0, cycle = 0, preparing = false, held = false, yielded = false, image, cancelPaint, disposed = false
+      let warmReady, warmPending, warmImage, warmTimer, warmGeneration = 0
+      const releases = new Set()
+      const releaseOverlays = () => { for (const release of releases) release(); releases.clear() }
+      const frameKey = value => JSON.stringify([value.bounds, value.settings, value.theme, value.locale])
+      const clearWarm = retained => {
+        warmGeneration++; warmReady = undefined; warmPending = undefined; clearTimeout(warmTimer)
+        if (warmImage && warmImage !== retained) { cancelPaint?.(); warmImage.remove() }
+        warmImage = undefined
+      }
+      const clear = () => { image?.remove(); image = undefined; held = false; yielded = false; clearWarm() }
+      const backingFor = frame => {
+        const backing = document.createElement('img')
+        backing.dataset.dshNativeFrame = ''
+        backing.alt = ''; backing.setAttribute('aria-hidden', 'true')
+        Object.assign(backing.style, { position: 'absolute', zIndex: '0', pointerEvents: 'none', maxWidth: 'none', userSelect: 'none' })
+        backing.src = frame.dataURL
+        return backing
+      }
+      const decode = async backing => {
+        let timeout
+        try {
+          await Promise.race([backing.decode(), new Promise((_resolve, reject) => { timeout = setTimeout(() => reject(new Error('Backing decode timed out')), 1500) })])
+        } finally { clearTimeout(timeout) }
+      }
+      const warm = () => {
+        if (disposed || document.hidden || !bridge.capture || !latest?.value.visible || latest.occluded || held) return
+        const key = frameKey(latest.value)
+        if (warmReady?.key === key && Date.now() - warmReady.at < 250) return
+        if (warmPending?.key === key) return warmPending.promise
+        clearWarm()
+        const generation = warmGeneration
+        const promise = (async () => {
+          try {
+            const frame = await bridge.capture()
+            if (!frame || disposed || generation !== warmGeneration || key !== frameKey(latest.value)) return
+            const backing = backingFor(frame)
+            await decode(backing)
+            if (disposed || generation !== warmGeneration || key !== frameKey(latest.value)) return
+            warmImage = backing; placeBacking(backing, frame.bounds)
+            await paint()
+            if (disposed || generation !== warmGeneration || key !== frameKey(latest.value)) return
+            warmReady = { frame, backing, key, at: Date.now() }
+            // Only an interaction prepares a frame; no polling or long-lived page cache.
+            warmTimer = setTimeout(() => { if (generation === warmGeneration) clearWarm() }, 500)
+          } catch {
+            // Speculative preparation is optional; opening still has the normal capture path.
+            if (generation === warmGeneration) clearWarm()
+          } finally {
+            if (generation === warmGeneration) warmPending = undefined
+          }
+        })()
+        warmPending = { key, promise }
+        return promise
+      }
+      const paint = () => new Promise(resolve => {
+        let first, second, settled = false
+        const finish = () => {
+          if (settled) return
+          settled = true
+          cancelAnimationFrame(first); cancelAnimationFrame(second); clearTimeout(timeout)
+          cancelPaint = undefined; resolve()
+        }
+        // decode() makes pixels available, but the host must also composite them before
+        // the native sibling disappears. Bound the wait when the window becomes hidden.
+        const timeout = setTimeout(finish, 1500)
+        cancelPaint = finish
+        first = requestAnimationFrame(() => { second = requestAnimationFrame(finish) })
+      })
+      const send = async value => {
+        try { await bridge.present(value); return true }
+        catch { console.warn('[desktop-native-surface] presentation_failed'); return false }
+      }
+      const placeBacking = (backing, bounds) => {
+        const parent = target(latest.value)
+        if (!backing || !parent) return
+        if (backing.parentElement !== parent) parent.append(backing)
+        const rect = parent.getBoundingClientRect()
+        Object.assign(backing.style, { left: `${bounds.x - rect.x}px`, top: `${bounds.y - rect.y}px`, width: `${bounds.width}px`, height: `${bounds.height}px` })
+      }
+      const place = bounds => placeBacking(image, bounds)
+      const present = (value, occluded = false, defer) => {
+        if (disposed) return
+        const restoring = held || latest?.occluded
+        if (latest && frameKey(latest.value) !== frameKey(value)) clearWarm()
+        if (!latest || latest.value.visible !== value.visible || latest.occluded !== occluded || latest.value.settings !== value.settings) cycle++
+        latest = { value, occluded }
+        const request = ++revision
+        if (!value.visible || !occluded) {
+          // Restore the real surface before releasing its backing. A late response must
+          // not remove a newer overlay's frame or revive a view after mode/account changes.
+          if (!value.visible) clear()
+          yielded = false
+          releaseOverlays()
+          if (!value.visible || restoring) cancelPaint?.()
+          if (restoring) clearWarm()
+          return send(value).then(restored => { if (restored && restoring && !disposed && request === revision) clear() })
+        }
+        if (!yielded && defer) releases.add(defer())
+        if (held) {
+          place(value.bounds)
+          const current = cycle
+          void send({ ...value, visible: false }).then(applied => {
+            if (!disposed && current === cycle) { yielded = applied; releaseOverlays() }
+          })
+          return
+        }
+        if (preparing) return
+        preparing = true
+        const captureCycle = cycle
+        void (async () => {
+          let frame
+          try {
+            const key = frameKey(value)
+            if (warmPending?.key === key) await warmPending.promise
+            if (disposed || captureCycle !== cycle || !latest.value.visible || !latest.occluded) return
+            const prepared = warmReady?.key === key && Date.now() - warmReady.at < 250 ? warmReady : undefined
+            frame = prepared?.frame ?? await bridge.capture?.()
+            clearWarm(prepared?.backing)
+            if (disposed || captureCycle !== cycle || !latest.value.visible || !latest.occluded) return
+            if (frame) {
+              const backing = prepared?.backing ?? backingFor(frame)
+              if (!prepared) await decode(backing)
+              if (disposed || captureCycle !== cycle || !latest.value.visible || !latest.occluded) return
+              image = backing; place(frame.bounds)
+              if (!prepared) await paint()
+            }
+          } catch {
+            // Menus remain usable if capture/decoding fails; never retain a stale frame.
+            if (captureCycle === cycle) clear()
+            console.warn('[desktop-native-surface] overlay_backing_failed')
+          } finally {
+            preparing = false
+            if (!disposed && captureCycle !== cycle && latest.value.visible && latest.occluded && !held) present(latest.value, true)
+          }
+          if (disposed || captureCycle !== cycle || !latest.value.visible || !latest.occluded) return
+          held = true
+          const applied = await send({ ...latest.value, visible: false })
+          if (!disposed && captureCycle === cycle) { yielded = applied; releaseOverlays() }
+        })()
+      }
+      return { present, warm, invalidate: clearWarm, dispose() { disposed = true; revision++; cancelPaint?.(); clear(); releaseOverlays() } }
+    }
+    /** Start optional capture before a host control mounts its menu, for pointer and keyboard input. */
+    function observeNativeSurfaceIntent(warm) {
+      const types = ['pointerover', 'pointerout', 'pointerdown', 'focusin', 'keydown', 'contextmenu']
+      let hoverTimer, hovered
+      const prepare = event => {
+        const element = event.target
+        if (!(element instanceof Element) || element.closest('[data-dsh-native-surface]')) return
+        const control = element.closest('button, a[href], input, [role="button"], [role="combobox"], [aria-haspopup]')
+        if (event.type === 'pointerout') {
+          if (control && event.relatedTarget instanceof Element && control.contains(event.relatedTarget)) return
+          clearTimeout(hoverTimer); hovered = undefined
+          return
+        }
+        if (event.type === 'pointerover') {
+          if (!control || control === hovered) return
+          clearTimeout(hoverTimer); hovered = control
+          // Crossing a toolbar must not encode a full page for every icon passed.
+          hoverTimer = setTimeout(warm, 60)
+          return
+        }
+        if (event.type === 'keydown' && !['Enter', ' ', 'ArrowDown', 'ContextMenu', 'F10'].includes(event.key)) return
+        clearTimeout(hoverTimer)
+        if (event.type === 'contextmenu' || control) warm()
+      }
+      for (const type of types) document.addEventListener(type, prepare, true)
+      return () => { clearTimeout(hoverTimer); for (const type of types) document.removeEventListener(type, prepare, true) }
+    }
+    const LANDING_MORPH_DURATION = 300
+    const LANDING_MORPH_EASING = 'cubic-bezier(.25,.65,.35,1)'
+    const CHAT_TEXT_PREPARE_LEAD = 40
+    const landingMotionAllowed = () => !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    const hasWorkLanding = state => state.nativeWork && state.workLanding && !state.panelOpen
+    const hasSharedLanding = state => state.connected && state.phase === 'ready' && state.landing === true &&
+      state.conversationId === 'new' && !state.pageId && hasWorkLanding(state) &&
+      !state.settingsOpen && !state.approvalsOpen && !state.accountDialogOpen
+
+    function afterWorkFirstFrame(callback) {
+      let first, second, timeout, pending = true
+      const cancel = () => {
+        pending = false
+        if (first !== undefined) cancelAnimationFrame(first)
+        if (second !== undefined) cancelAnimationFrame(second)
+        clearTimeout(timeout)
+      }
+      const finish = () => { if (pending) { cancel(); callback() } }
+      first = requestAnimationFrame(() => { if (pending) second = requestAnimationFrame(finish) })
+      timeout = setTimeout(finish, 120)
+      return cancel
+    }
+
+    function animateLandingFooter(card, chat, animate, restore) {
+      // The native composer owns the toolbar. Its model slot and add trigger are stable
+      // anchors even though the InputBar's compiled class names are not.
+      const modelSlot = '[data-slot="conversation.input.model"]'
+      const footer = card.lastElementChild
+      if (!footer?.querySelector(`${modelSlot}, button[aria-haspopup="listbox"]`)) return
+      const { height } = footer.getBoundingClientRect()
+      if (height <= 0) return
+      const model = footer.querySelector(`${modelSlot} button[aria-haspopup="menu"]`)
+      const modelWidth = model?.getBoundingClientRect().width
+      const send = Array.from(footer.lastElementChild?.querySelectorAll('button') ?? []).at(-1)
+      const sendOpacity = send ? getComputedStyle(send).opacity : undefined
+      const gap = Number.parseFloat(getComputedStyle(card).rowGap) || 0
+      card.style.setProperty('--dsh-morph-footer-clearance', `${height + gap}px`)
+      footer.dataset.dshLandingMorphFooter = ''
+      restore.push(() => {
+        delete footer.dataset.dshLandingMorphFooter
+        card.style.removeProperty('--dsh-morph-footer-clearance')
+      })
+
+      if (send && chat.sendOpacity !== undefined && sendOpacity && Number(sendOpacity) !== chat.sendOpacity) {
+        animate(send, { opacity: chat.sendOpacity }, { opacity: sendOpacity })
+      }
+      // Work-only controls recede while the shared add, model and send positions stay put.
+      for (const slot of footer.querySelectorAll('[data-slot="conversation.input.permission"], [data-slot="conversation.input.plan"], [data-slot="conversation.input.left"], [data-slot="conversation.input.right"]')) {
+        for (const control of slot.children) animate(control, { opacity: 0 }, { opacity: 1 })
+      }
+      if (!model || !modelWidth || !chat.model) return
+      const labels = Array.from(model.children).filter(child => child.localName === 'span' && getComputedStyle(child).display !== 'none')
+      const workLabel = labels.map(label => label.textContent.trim()).filter(Boolean).join(' ')
+      if (!workLabel || workLabel === chat.model.label) return
+      const chatLabel = document.createElement('span')
+      chatLabel.dataset.dshLandingMorphModelLabel = ''
+      chatLabel.setAttribute('aria-hidden', 'true')
+      chatLabel.textContent = chat.model.label
+      model.dataset.dshLandingMorphModel = ''
+      model.append(chatLabel)
+      restore.push(() => { chatLabel.remove(); delete model.dataset.dshLandingMorphModel })
+      animate(model, { width: `${chat.model.width}px` }, { width: `${modelWidth}px` })
+      for (const label of labels) animate(label, { opacity: 0 }, { opacity: 1 })
+      animate(chatLabel, { opacity: 1 }, { opacity: 0 })
+    }
+
+    function animateWorkLanding(work, { to, chat }) {
+      const hero = work?.querySelector('[data-content-phase="hero"]')
+      const card = hero?.querySelector('[data-composer-card]')
+      const controls = hero?.querySelector('[data-dsh-hero-controls]')
+      // The two public brand slots share the headline row in the native HeroShell.
+      const title = hero?.querySelector('[data-slot="conversation.hero.brand.title"]')?.parentElement?.parentElement
+      if (!title?.querySelector('[data-slot="conversation.hero.brand.mark"]') || !card || !controls || typeof card.animate !== 'function') return
+      const panel = work.getBoundingClientRect()
+      if (Math.abs(chat.seat.y - panel.y) > 1 || Math.abs(chat.seat.y + chat.seat.height - panel.bottom) > 1 ||
+          Math.abs(chat.seat.x + chat.seat.width - panel.right) > 1) return
+      const fits = rect => rect.width > 0 && rect.height > 0 && rect.x >= panel.x - 1 && rect.y >= panel.y - 1 &&
+        rect.x + rect.width <= panel.right + 1 && rect.y + rect.height <= panel.bottom + 1
+      const native = { composer: card.getBoundingClientRect(), title: title.getBoundingClientRect(), controls: controls.getBoundingClientRect() }
+      if (![native.composer, native.title, native.controls, chat.composer, chat.title, chat.seat].every(fits)) return
+      const box = rect => ({ left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.width}px`, height: `${rect.height}px` })
+      const translate = (x, y) => `${x}px ${y}px`
+      const fromChat = to === 'work'
+      const placeholder = document.createElement('div')
+      placeholder.dataset.dshLandingMorphPlaceholder = ''
+      placeholder.setAttribute('aria-hidden', 'true')
+      Object.assign(placeholder.style, { width: `${native.composer.width}px`, height: `${native.composer.height}px` })
+      const animations = []
+      const restore = []
+      const animate = (element, chatFrame, workFrame) => {
+        animations.push(element.animate(fromChat ? [chatFrame, workFrame] : [workFrame, chatFrame], {
+          duration: LANDING_MORPH_DURATION, easing: LANDING_MORPH_EASING, fill: 'both'
+        }))
+      }
+      const dispose = () => {
+        for (const animation of animations) animation.cancel()
+        for (const cleanup of restore) cleanup()
+        delete card.dataset.dshLandingMorphCard
+        placeholder.remove()
+      }
+      try {
+        animateLandingFooter(card, chat, animate, restore)
+        card.before(placeholder)
+        card.dataset.dshLandingMorphCard = ''
+        // Move the actual card at its own pixel size; the editor and icons never scale.
+        animate(card, box(chat.composer), box(native.composer))
+        animate(title, { translate: translate(
+          chat.title.x + (chat.title.width - native.title.width) / 2 - native.title.x,
+          chat.title.y + (chat.title.height - native.title.height) / 2 - native.title.y
+        ) }, { translate: '0px 0px' })
+        animate(controls, {
+          translate: translate(chat.composer.x - native.composer.x, chat.composer.y - native.controls.y),
+          clipPath: 'inset(0px -8px 100%)', opacity: 0
+        }, { translate: '0px 0px', clipPath: 'inset(0px -8px 0px)', opacity: 1 })
+        const writing = card.querySelector('[data-input-scroll]')
+        if (writing) {
+          // Keep the same editor and placeholder mounted. Only its ink follows the handoff.
+          const frames = fromChat ? [
+            { opacity: 0 }, { opacity: 0, offset: .12, easing: 'ease-out' },
+            { opacity: 1, offset: .67 }, { opacity: 1 }
+          ] : [
+            { opacity: 1, easing: 'ease-out' }, { opacity: .2, offset: .38 },
+            { opacity: 0, offset: .82 }, { opacity: 0 }
+          ]
+          animations.push(writing.animate(frames, { duration: LANDING_MORPH_DURATION, fill: 'both' }))
+        }
+        const cases = hero.querySelector('.dso-dock-root')
+        if (cases) animate(cases, { opacity: 0 }, { opacity: 1 })
+        if (fromChat) {
+          // Lay out frame zero beneath the native Chat view before that view is hidden.
+          for (const animation of animations) { animation.pause(); animation.currentTime = 0 }
+        }
+        return {
+          finished: Promise.all(animations.map(animation => animation.finished)), dispose,
+          play() { for (const animation of animations) animation.play() }
+        }
+      } catch {
+        // A partial setup may be canceled before the combined completion has a consumer.
+        for (const animation of animations) void animation.finished.catch(() => {})
+        dispose()
+        return undefined
+      }
     }
     function DesktopModes({ work, columns, resizeHandle, navigation, t, locale }) {
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
+      const projectState = React.useSyncExternalStore(navigation.projects.subscribe, navigation.projects.snapshot)
+      const projectDialogOpen = projectState.editor !== null
+      const deletionRequest = React.useSyncExternalStore(navigation.deletion.subscribe, navigation.deletion.getSnapshot)
+      const cloudDeleteOpen = deletionRequest !== null
+      const renameRequest = React.useSyncExternalStore(navigation.renaming.subscribe, navigation.renaming.getSnapshot)
+      const cloudRenameOpen = renameRequest !== null
       const { mode, settingsOpen, settingsSurface } = state
+      const candidate = state.landingMorph
+      const morph = candidate?.to === mode && candidate.epoch === state.epoch && hasSharedLanding(state) &&
+        !projectDialogOpen && !cloudDeleteOpen ? candidate : undefined
+      const squarePage = /^\/square\/?$/u.test(state.path ?? '')
+      const usesModuleFrame = squarePage || /^\/(?:knowledge|channel)(?:\/|$)|^\/(?:apps|skills|capabilities)\/?$/u.test(state.path ?? '')
       React.useEffect(() => navigation.start(), [navigation])
+      React.useEffect(() => {
+        if (mode !== 'work') return
+        // Start the enterprise tool handshake before the plus menu opens it.
+        fetch('/api/enterprise.work-tools', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ operation: 'catalog' }) }).catch(() => {})
+      }, [mode])
       const panel = React.useRef(null)
+      const workPanel = React.useRef(null)
+      const surfacePresenter = React.useRef(null)
+      const presentSurface = React.useRef(null)
+      const revealMorph = React.useRef(null)
+      const yieldedWorkMorph = React.useRef(null)
+      const modeIntent = React.useRef(0)
       const [animateWork, setAnimateWork] = React.useState(false)
       const tabs = React.useRef({})
+      React.useEffect(() => {
+        if (mode !== 'work') setAnimateWork(false)
+      }, [mode])
+      React.useEffect(() => () => { modeIntent.current++ }, [])
+      React.useLayoutEffect(() => {
+        if (!morph) {
+          if (state.landingMorph) navigation.finishLandingMorph(state.landingMorph)
+          return
+        }
+        const animation = animateWorkLanding(workPanel.current, morph)
+        const bridge = window.dshEnterpriseChat
+        let stopped = false, finishing = false, handoffTimeout, prepareTimer, incomingText, animationTimeout, cancelPaint
+        const release = () => { if (!stopped) navigation.finishLandingMorph(morph) }
+        const prepareIncoming = () => {
+          if (!incomingText && !stopped && landingMotionAllowed()) {
+            incomingText = bridge?.landingTextMotion?.('in').catch(() => {
+              // The native surface can still be revealed if its editor cannot animate.
+            })
+          }
+          return incomingText
+        }
+        const reveal = () => {
+          if (stopped) return
+          // Retain the last Work frame until the separate native Chat view is shown.
+          revealMorph.current = morph
+          handoffTimeout = setTimeout(release, 150)
+          void Promise.resolve(presentSurface.current?.(true)).then(release, release)
+        }
+        const finish = () => {
+          if (stopped || finishing) return
+          finishing = true
+          if (morph.to === 'work') { release(); return }
+          const prepared = prepareIncoming()
+          if (prepared) void prepared.then(reveal)
+          else reveal()
+        }
+        if (animation && morph.to === 'chat' && bridge?.landingTextMotion) {
+          // Install the first transparent Chat frame during the tail of Work's motion.
+          prepareTimer = setTimeout(() => { void prepareIncoming() }, LANDING_MORPH_DURATION - CHAT_TEXT_PREPARE_LEAD)
+        }
+        const startDeadline = () => { animationTimeout = setTimeout(finish, LANDING_MORPH_DURATION + 90) }
+        if (morph.to === 'work') {
+          cancelPaint = afterWorkFirstFrame(() => {
+            if (stopped || finishing) return
+            yieldedWorkMorph.current = morph
+            let playing = false
+            const play = () => {
+              if (stopped || finishing || playing) return
+              playing = true
+              clearTimeout(handoffTimeout)
+              // Out-of-view geometry skips the morph, but still needs a painted Work surface.
+              if (!animation) return finish()
+              animation.play()
+              startDeadline()
+            }
+            handoffTimeout = setTimeout(play, 150)
+            void Promise.resolve(presentSurface.current?.()).then(play, play)
+          })
+        } else if (animation) startDeadline()
+        if (animation) void animation.finished.then(finish, finish)
+        else if (morph.to === 'chat') queueMicrotask(finish)
+        window.addEventListener('resize', finish)
+        return () => {
+          stopped = true
+          cancelPaint?.()
+          clearTimeout(animationTimeout); clearTimeout(handoffTimeout); clearTimeout(prepareTimer)
+          window.removeEventListener('resize', finish)
+          if (revealMorph.current === morph) revealMorph.current = null
+          if (yieldedWorkMorph.current === morph) yieldedWorkMorph.current = null
+          animation?.dispose()
+        }
+      }, [morph, state.landingMorph, navigation])
+      // Geometry and mode subscriptions can remount without releasing an active backing.
+      // Identity changes and final unmount always destroy it, including in-flight captures.
+      React.useEffect(() => () => { surfacePresenter.current?.dispose(); surfacePresenter.current = null }, [state.epoch])
       React.useEffect(() => {
         const bridge = window.dshEnterpriseChat
         if (!bridge) return
         const appRoot = document.getElementById('root')
+        const macModuleFrame = usesModuleFrame && document.documentElement.dataset.platform === 'darwin'
         let observedLeading
-        let dialogOpen = false
-        const present = () => {
-          const rect = panel.current?.getBoundingClientRect()
+        const presenter = surfacePresenter.current || (surfacePresenter.current = createNativeSurfacePresenter(bridge, value => value.settings
+          ? document.querySelector(`[data-dsh-native-surface="${value.settings}"]`) : panel.current))
+        const present = (landingHandoff) => {
+          const rect = (panel.current?.hidden ? workPanel.current : panel.current)?.getBoundingClientRect()
           if (!rect) return
-          const sidebarRight = document.querySelector('[data-dsh-sidebar-root]')?.getBoundingClientRect().right || 0
-          const contentLeft = Math.max(rect.x, sidebarRight)
           // Native WebContentsView paints above DOM chrome regardless of z-index.
           // macOS moves the sidebar opener into this seat when the rail disappears.
           const leading = document.querySelector('[data-shell-leading]')
@@ -714,17 +1770,36 @@ active = false; deletion.reset(); revision++; historyRequest++; unsubscribe(); u
             observedLeading = leading
             if (leading) resize.observe(leading)
           }
+          // The collapsed sidebar's inner rail still has a rect, but the zero-width
+          // grid column clips it. The content panel tracks the actual grid edge.
+          const sidebarRight = document.querySelector('[data-dsh-sidebar-root]')?.getBoundingClientRect().right || 0
+          const contentLeft = macModuleFrame ? rect.x : Math.max(rect.x, sidebarRight)
           const chrome = leading?.getBoundingClientRect()
-          // Keep the title beside the native controls instead of adding a row.
-          const x = chrome && chrome.bottom > rect.y && chrome.left < rect.right
-            ? Math.max(contentLeft, chrome.right) : contentLeft
-          const y = rect.y
+          const overlapsLeading = chrome && chrome.bottom > rect.y && chrome.left < rect.right && chrome.right > contentLeft
+          // Square keeps its tab height while the buttons move. Its banner paints the
+          // reserved strip in both states. Other module pages only reserve it on overlap.
+          // Chat uses the inline title row and still needs horizontal clearance.
+          const x = overlapsLeading && !macModuleFrame ? chrome.right : contentLeft
+          const reserveTitlebar = macModuleFrame && (squarePage || overlapsLeading)
+          const titlebarHeight = reserveTitlebar ? parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--dsh-frame-top-clearance')) || 48 : 0
+          const y = reserveTitlebar ? Math.min(rect.bottom, Math.max(rect.y, titlebarHeight, overlapsLeading ? chrome.bottom : 0)) : rect.y
+          const palette = hostPalette()
+          // Paint behind the original native controls. The web view stays below them for input.
+          const squareBanner = squarePage && reserveTitlebar ? palette?.squareBanner : undefined
+          panel.current.style.setProperty('--dsh-square-chrome-height', squareBanner ? `${y - rect.y}px` : '')
+          panel.current.style.setProperty('--dsh-square-chrome-fill', squareBanner ? `rgb(${squareBanner.join(' ')})` : '')
           const surfaceOpen = settingsOpen || state.approvalsOpen || state.accountDialogOpen
           const remote = surfaceOpen && state.settingsProtocolVersion === 1 && settingsSurface
 const safeModePageOpen = document.documentElement.hasAttribute('data-dsh-safe-mode-page')
-const hostModalOpen = dialogOpen || appRoot?.inert || document.documentElement.hasAttribute('data-dsh-about-open')
-const palette = hostPalette()
-void bridge.present({ visible: hostModalOpen ? false : (remote ? state.connected && remote.bounds.width > 0 && remote.bounds.height > 0 : mode === 'chat' && !surfaceOpen && !safeModePageOpen), ...(remote ? { settings: remote.section } : {}), ...(palette ? { palette } : {}), bounds: remote ? remote.bounds : { x, y, width: Math.max(0, rect.right - x), height: Math.max(0, rect.y + rect.height - y) }, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light', locale: locale.getSnapshot().active === 'zh' ? 'zh' : 'en' }).catch(() => {})
+const surface = remote ? document.querySelector(`[data-dsh-native-surface="${remote.section}"]`) : panel.current
+// Project dialogs have an explicit lifecycle; yield the native sibling as they open.
+const hostModalOpen = projectDialogOpen || cloudDeleteOpen || cloudRenameOpen || overlays.isModal(surface) || appRoot?.inert || document.documentElement.hasAttribute('data-dsh-about-open')
+const bounds = remote ? remote.bounds : { x, y, width: Math.max(0, rect.right - x), height: Math.max(0, rect.y + rect.height - y) }
+const chatHandoff = mode === 'chat' && morph && revealMorph.current === morph
+const keepChatUntilWorkPaints = morph?.to === 'work' && yieldedWorkMorph.current !== morph
+const chatVisible = ((mode === 'chat' && (!morph || chatHandoff)) || keepChatUntilWorkPaints) && !surfaceOpen && !safeModePageOpen
+const visible = !hostModalOpen && (remote ? state.connected && remote.bounds.width > 0 && remote.bounds.height > 0 : chatVisible)
+return presenter.present({ visible, ...(visible && chatHandoff && landingHandoff === true ? { landingHandoff: true } : {}), ...(remote ? { settings: remote.section } : {}), ...(palette ? { palette } : {}), bounds, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light', locale: locale.getSnapshot().active === 'zh' ? 'zh' : 'en' }, overlays.intersects(bounds, surface), () => overlays.defer(bounds, surface))
         }
         // The native view follows the host's modal interaction boundary.
         // Onboarding makes #root inert while its dialog lives in a body portal.
@@ -734,37 +1809,68 @@ void bridge.present({ visible: hostModalOpen ? false : (remote ? state.connected
 interaction.observe(document.documentElement, { attributes: true, attributeFilter: ['data-dsh-about-open', 'data-dsh-safe-mode-page'] })
         const resize = new ResizeObserver(present)
         if (panel.current) resize.observe(panel.current)
+        if (workPanel.current) resize.observe(workPanel.current)
         const sidebar = document.querySelector('[data-dsh-sidebar-root]')
         if (sidebar) resize.observe(sidebar)
         // The leading seat mounts/unmounts as a direct frame child on collapse.
         // Observe only that boundary, not streaming conversation descendants.
         const chromeLayout = new MutationObserver(present)
-        const frame = panel.current?.closest('.dshModes')?.parentElement
+        const modeSlot = panel.current?.closest('[data-slot="desktop.mode.content"]')
+        const frame = modeSlot?.parentElement ?? panel.current?.closest('.dshModes')?.parentElement
         if (frame) chromeLayout.observe(frame, { childList: true, attributes: true, attributeFilter: ['data-sidebar-collapsed'] })
         const theme = new MutationObserver(present)
         theme.observe(document.body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] })
-        const dialogs = observeHostDialogs(open => { dialogOpen = open; present() })
-        dialogOpen = dialogs.isOpen()
+        const overlays = observeHostOverlays(present)
+        const stopWarmup = observeNativeSurfaceIntent(() => { void presenter.warm() })
         const unsubscribeLocale = locale.subscribe(present)
         window.addEventListener('resize', present)
+        presentSurface.current = present
         present()
         return () => {
-          dialogs.dispose(); interaction.disconnect(); resize.disconnect(); chromeLayout.disconnect(); theme.disconnect(); unsubscribeLocale(); window.removeEventListener('resize', present)
+          if (presentSurface.current === present) presentSurface.current = null
+          stopWarmup(); overlays.dispose(); interaction.disconnect(); resize.disconnect(); chromeLayout.disconnect(); theme.disconnect(); unsubscribeLocale(); window.removeEventListener('resize', present)
         }
-      }, [mode, settingsOpen, state.approvalsOpen, state.accountDialogOpen, settingsSurface, state.connected, state.settingsProtocolVersion, locale])
+      }, [mode, morph, usesModuleFrame, squarePage, settingsOpen, state.approvalsOpen, state.accountDialogOpen, settingsSurface, state.connected, state.epoch, state.settingsProtocolVersion, projectDialogOpen, cloudDeleteOpen, cloudRenameOpen, locale])
+      React.useEffect(() => { surfacePresenter.current?.invalidate() }, [state.path, state.pageId, state.phase])
       React.useEffect(() => () => {
         void window.dshEnterpriseChat?.present({ visible: false, bounds: { x: 0, y: 48, width: 0, height: 0 }, theme: 'light' }).catch(() => {})
       }, [])
       const showModePicker = !settingsOpen && (mode === 'chat'
         ? !state.pageId && state.conversationId === 'new' && state.landing !== false
-        : state.nativeWork && state.workLanding && !state.panelOpen)
-      const select = navigation.choose
+        : hasWorkLanding(state))
+      const chooseMode = (next) => {
+        const before = navigation.snapshot()
+        const request = ++modeIntent.current
+        const commit = chat => {
+          if (!navigation.choose(next, chat ? { to: next, chat, epoch: before.epoch } : undefined)) return false
+          setAnimateWork(!chat && next !== before.mode && next === 'work' && landingMotionAllowed())
+          return true
+        }
+        if (next === before.mode) return true
+        const bridge = window.dshEnterpriseChat
+        if (before.landingMorph || !bridge?.landingGeometry || !landingMotionAllowed() || !hasSharedLanding(before)) return commit()
+        const stillCurrent = () => {
+          const current = navigation.snapshot()
+          return modeIntent.current === request && before.mode === current.mode && before.epoch === current.epoch && before.path === current.path
+        }
+        const measured = async chat => {
+          if (!stillCurrent()) return
+          const canMorph = () => hasSharedLanding(navigation.snapshot()) && landingMotionAllowed()
+          if (chat && next === 'work' && canMorph() && bridge.landingTextMotion) {
+            // Fade the visible Chat text before swapping the editor surface under the card.
+            try { await bridge.landingTextMotion('out') }
+            catch { /* A missed fade must not block switching modes. */ }
+          }
+          if (stillCurrent()) commit(canMorph() ? chat : undefined)
+        }
+        void bridge.landingGeometry().then(measured, () => measured())
+        return true
+      }
       const keyDown = (event) => {
         if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
         event.preventDefault()
-        setAnimateWork(false)
         const next = event.key === 'Home' ? 'chat' : event.key === 'End' ? 'work' : mode === 'chat' ? 'work' : 'chat'
-        if (select(next)) tabs.current[next]?.focus()
+        if (chooseMode(next)) tabs.current[next]?.focus()
       }
       return React.createElement('div', { className: 'dshModes' },
         state.signInPromptOpen && React.createElement(Modal, {
@@ -775,12 +1881,21 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         }, React.createElement('p', { className: 'dshChatSignInDescription' }, t('signInDescription'))),
         showModePicker && React.createElement('header', { className: 'dshModesHeader' },
           React.createElement('div', { role: 'tablist', 'aria-label': t('label'), className: 'dshModesTabs', onKeyDown: keyDown },
-            ...['chat', 'work'].map((key) => React.createElement('button', { key, id: `dsh-mode-${key}`, type: 'button', role: 'tab', 'aria-selected': mode === key, 'aria-controls': `dsh-panel-${key}`, tabIndex: mode === key ? 0 : -1, ref: (node) => { tabs.current[key] = node }, onClick: (event) => { setAnimateWork(event.detail > 0 && key === 'work'); select(key) } }, t(key))))),
-        React.createElement('section', { id: 'dsh-panel-work', role: 'tabpanel', 'aria-label': t('work'), hidden: mode !== 'work', className: 'dshModeBody dshWorkContent', 'data-reveal-controls': animateWork, onTransitionEnd: event => { if (event.propertyName === 'clip-path') setAnimateWork(false) }, style: { gridTemplateColumns: columns } }, work, resizeHandle),
-        React.createElement('section', { ref: panel, id: 'dsh-panel-chat', role: 'tabpanel', 'aria-label': t('chat'), hidden: mode !== 'chat', className: 'dshModeBody' },
+            ...['chat', 'work'].map((key) => React.createElement('button', { key, id: `dsh-mode-${key}`, type: 'button', role: 'tab', 'aria-selected': mode === key, 'aria-controls': `dsh-panel-${key}`, tabIndex: mode === key ? 0 : -1, ref: (node) => { tabs.current[key] = node }, onClick: () => chooseMode(key) }, t(key))))),
+        React.createElement('div', { className: 'dshModeStage' }, React.createElement('section', {
+          ref: workPanel, id: 'dsh-panel-work', role: 'tabpanel', 'aria-label': t('work'), hidden: mode !== 'work' && !morph,
+          inert: mode !== 'work' || morph ? '' : undefined, 'aria-hidden': mode !== 'work' || undefined,
+          'data-keep-landing-layout': hasWorkLanding(state) ? '' : undefined,
+          className: 'dshModeBody dshWorkContent', 'data-reveal-controls': mode === 'work' && animateWork,
+          onAnimationEnd: event => {
+            if (event.animationName === 'dshWorkControlsRise') setAnimateWork(false)
+          },
+          style: { gridTemplateColumns: columns }
+        }, work, resizeHandle),
+        React.createElement('section', { ref: panel, id: 'dsh-panel-chat', 'data-dsh-native-surface': '', role: 'tabpanel', 'aria-label': t('chat'), hidden: mode !== 'chat' || Boolean(morph), className: 'dshModeBody' },
           React.createElement('div', { className: 'dshChatStatus', role: 'status' },
             React.createElement('p', null, state.phase === 'error' ? t('error') : state.phase === 'ready' ? '' : t('loading')),
-            state.connected && state.phase === 'error' && React.createElement('button', { type: 'button', onClick: () => { void window.dshEnterpriseChat.retry().catch(() => {}) } }, t('retry')))))
+            state.connected && state.phase === 'error' && React.createElement('button', { type: 'button', onClick: () => { void window.dshEnterpriseChat.retry().catch(() => {}) } }, t('retry'))))))
     }
     const NAV_ICON_PATHS = {
       new: 'M12 20H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v7M16 16v6m-3-3h6M7 8h10M7 12h5',
@@ -834,13 +1949,19 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
     // their fixed-position containing block attached to the viewport.
     function installDesktopModes(ctx) {
       const navigation = createChatNavigation(ctx)
-      ctx.effect(() => () => navigation.deletion.dispose())
+      ctx.effect(() => () => { navigation.deletion.dispose(); navigation.renaming.dispose() })
       ctx.effect(() => ctx.locale.register(MODES_NS, MODES_COPY), 'desktop: Chat and Work locale')
       ctx.effect(() => ctx.locale.register(CLOUD_DELETE_NS, CLOUD_DELETE_COPY))
+      ctx.effect(() => ctx.locale.register(CLOUD_RENAME_NS, CLOUD_RENAME_COPY))
+      ctx.effect(() => ctx.locale.register(PROJECTS_NS, PROJECTS_COPY))
       ctx.slots.inject('shell.overlay', () => ctx.slots.register({
         name: 'shell.overlay', id: 'desktop-cloud-chat-delete-dialog', locale: CLOUD_DELETE_NS,
         inject: () => ({ deletion: navigation.deletion, t: ctx.locale.bind(CLOUD_DELETE_NS) })
       }, DeleteSessionDialog))
+      ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+        name: 'shell.overlay', id: 'desktop-cloud-chat-rename-dialog', locale: CLOUD_RENAME_NS,
+        inject: () => ({ renaming: navigation.renaming, t: ctx.locale.bind(CLOUD_RENAME_NS) })
+      }, RenameChatDialog))
       ctx.effect(() => {
         const style = document.createElement('style')
         style.dataset.plugin = 'dsh-desktop-client-ui'
@@ -851,26 +1972,129 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           .dshModes{grid-column:2 / -1;min-width:0;min-height:0;width:100%;height:100%;display:flex;flex-direction:column;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary)}
           .dshModesHeader{height:56px;flex:none;display:flex;align-items:center;justify-content:center}
           html[data-platform=darwin] .dshModesHeader{-webkit-app-region:drag}
-          .dshModesTabs{display:flex;padding:3px;border-radius:24px;background:var(--dsw-alias-bg-layer-2);-webkit-app-region:no-drag}
+          .dshModesTabs{position:relative;isolation:isolate;display:grid;grid-template-columns:repeat(2,1fr);padding:3px;border-radius:24px;background:var(--dsw-alias-bg-layer-2);-webkit-app-region:no-drag}
+          /* Keep one indicator mounted so it can slide without delaying the mode change. */
+          .dshModesTabs::before{content:'';position:absolute;inset-block:3px;inset-inline-start:3px;width:calc(50% - 3px);z-index:-1;border-radius:20px;background:var(--dsw-alias-interactive-bg-hover-solid);pointer-events:none;transform:translateX(0);transition:transform 200ms cubic-bezier(.35,0,.25,1)}
+          .dshModesTabs:has(>#dsh-mode-work[aria-selected=true])::before{transform:translateX(100%)}
+          .dshModesTabs:dir(rtl):has(>#dsh-mode-work[aria-selected=true])::before{transform:translateX(-100%)}
           .dshModesTabs button{font:inherit;font-size:13px;min-width:96px;height:30px;padding:0 20px;border:0;border-radius:20px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
-          .dshModesTabs button[aria-selected=true]{background:var(--dsw-alias-interactive-bg-hover-solid);color:var(--dsw-alias-label-primary)}
+          .dshModesTabs button[aria-selected=true]{color:var(--dsw-alias-label-primary)}
           .dshModes button:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
-          .dshModeBody{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}.dshModeBody[hidden]{display:none}
+          .dshModeStage{flex:1;min-width:0;min-height:0;display:grid;grid-template: minmax(0,1fr) / minmax(0,1fr)}
+          .dshModeBody{grid-area:1/1;min-width:0;min-height:0;display:flex;flex-direction:column;position:relative}.dshModeBody[hidden]{display:none}
+          #dsh-panel-chat::before{content:'';position:absolute;inset:0 0 auto;height:var(--dsh-square-chrome-height,0px);background:var(--dsh-square-chrome-fill,transparent);pointer-events:none}
           .dshWorkContent{display:grid;grid-template-rows:minmax(0,1fr);isolation:isolate}.dshWorkContent[hidden]{display:none}
-          .dshWorkContent[data-reveal-controls=true]:not([hidden]) [data-dsh-hero-controls]{clip-path:inset(-8px -8px -8px -8px);transition:clip-path 180ms cubic-bezier(.23,1,.32,1)}
-          @starting-style{.dshWorkContent[data-reveal-controls=true]:not([hidden]) [data-dsh-hero-controls]{clip-path:inset(-8px 100% -8px -8px)}}
-          @media(prefers-reduced-motion:reduce){.dshWorkContent[data-reveal-controls=true] [data-dsh-hero-controls]{transition:none;clip-path:none}}
+          /* Keep Harness's column ResizeObserver at the real width while its landing is behind Chat. */
+          .dshWorkContent[hidden][data-keep-landing-layout]{display:grid;visibility:hidden;opacity:0;pointer-events:none}
+          .dshWorkContent [data-dsh-landing-morph-placeholder]{flex:none;anchor-name:--dso-hero-composer}
+          .dshWorkContent [data-composer-card][data-dsh-landing-morph-card]{position:fixed;max-width:none;min-height:0;margin:0;padding-block-end:var(--dsh-morph-footer-clearance,0px);overflow:clip;z-index:2;anchor-name:none!important}
+          .dshWorkContent [data-dsh-landing-morph-card]:has(>[data-dsh-landing-morph-footer]) > :not([data-dsh-landing-morph-footer]){flex-shrink:1;min-block-size:0;overflow:clip}
+          .dshWorkContent [data-dsh-landing-morph-footer]{position:absolute;inset-inline:0;inset-block-end:0;z-index:1}
+          .dshWorkContent [data-dsh-landing-morph-model]{position:relative;box-sizing:border-box;justify-content:flex-end}
+          .dshWorkContent [data-dsh-landing-morph-model-label]{position:absolute;inset-inline:8px 24px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;pointer-events:none}
+          /* Match the borderless Chat surface. The frame owns the resize handle separately. */
+          html[data-platform=darwin] .dshWorkContent > [data-dsh-layout-center]{border-left:0}
+          .dshWorkContent[data-reveal-controls=true] [data-dsh-hero-controls] {
+            animation: dshWorkControlsRise 240ms cubic-bezier(.25,.5,.35,1);
+          }
+          /* Clip the rising row at its lower edge so it emerges above the composer. */
+          @keyframes dshWorkControlsRise {
+            from { opacity: 0; translate: 0 16px; clip-path: inset(-8px -8px 16px); }
+            72% { opacity: 1; translate: 0 -2px; clip-path: inset(-8px); }
+            to { opacity: 1; translate: 0 0; clip-path: inset(-8px); }
+          }
+          @media(prefers-reduced-motion:reduce){
+            .dshModesTabs::before{transition:none}
+            .dshWorkContent[data-reveal-controls=true] [data-dsh-hero-controls]{animation:none}
+          }
           .dshSharedCollection{min-width:0}
           .dshRecentHistory{margin-top:12px;min-width:0}
-          .dshHistoryHeading{display:flex;align-items:center;justify-content:space-between;padding:4px 8px 12px;color:var(--dsw-alias-label-secondary);font-size:13px}
-          .dshCloudHistoryRow{display:flex;align-items:center;min-width:0}
-          .dshCloudHistoryRow>.dshHistoryRow{flex:1;min-width:0}
-          .dshCloudHistoryActions{border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);width:28px;height:28px;cursor:pointer;font:inherit}
-          .dshCloudHistoryActions:hover,.dshCloudHistoryActions[aria-expanded=true]{background:var(--dsw-alias-interactive-bg-hover)}
-          .dshHistoryRow{box-sizing:border-box;display:flex;align-items:center;gap:6px;width:100%;height:32px;margin-bottom:2px;padding:0 8px 0 28px;border:0;border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;text-align:left;cursor:pointer}
-          .dshHistoryRow:hover,.dshHistoryRow[aria-current=page]{background:var(--dsw-alias-interactive-bg-hover)}
-          .dshHistoryRow span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dshHistoryRow time{color:var(--dsw-alias-label-tertiary);font-size:10px;white-space:nowrap}
-          .dshHistoryRow:is(:hover,:focus-visible) span{text-overflow:clip}.dshHistoryRow:is(:hover,:focus-visible) time{display:none}
+          .dshRecentHistoryRows{display:flex;flex-direction:column;gap:2px}
+          /* Match the native workspace section's title inset, line height and spacing. */
+          .dshHistoryHeading{box-sizing:border-box;display:flex;align-items:center;justify-content:space-between;height:36px;margin-block-end:4px;padding-inline-start:4px;color:var(--dsw-alias-label-tertiary);line-height:20px}
+          .dshChatProjects{margin-top:12px;min-width:0}
+          /* The native list already accounts for the scrollbar. Match the workspace header's trailing button. */
+          .dshChatProjects>.dshHistoryHeading>.dshChatProjectAction{width:28px;height:28px}
+          .dshSidebarItem{position:relative;min-width:0;border-radius:var(--dsw-radius-md)}
+          .dshSidebarItem:is(:hover,[data-selected],[data-menu-open],:has(:focus-visible)){background:var(--dsw-alias-interactive-bg-hover)}
+          .dshSidebarItemTools{position:absolute;inset-block:0;inset-inline-end:8px;display:flex;align-items:center;gap:10px;pointer-events:none}
+          .dshSidebarItemTools :is(.dshChatProjectAction,.dshCloudHistoryActions){opacity:0;pointer-events:none}
+          /* Hidden tools stay in the Tab order. Focus reveals the tools even without a pointer. */
+          .dshSidebarItem:is(:hover,[data-menu-open],:has(:focus-visible)) .dshSidebarItemTools :is(.dshChatProjectAction,.dshCloudHistoryActions){opacity:1;pointer-events:auto}
+          .dshChatProjectToggle,.dshChatProjectCreate,.dshHistoryRow{box-sizing:border-box;display:flex;align-items:center;gap:6px;min-width:0;width:100%;border:0;border-radius:inherit;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;text-align:start;cursor:pointer}
+          .dshChatProjectToggle{height:34px;padding:0 8px}
+          .dshChatProjectToggle svg{flex:none;width:16px;height:16px}
+          .dshChatProjectName,.dshHistoryTitle{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;line-height:20px}
+          .dshChatProjectFolder[data-current]{color:var(--dsw-alias-state-business-primary)}
+          .dshChatProjectToggle .dshChatProjectChevron{display:none;color:var(--dsw-alias-label-caption)}
+          .dshChatProjectToggle[aria-expanded=true] .dshChatProjectChevron{transform:rotate(90deg)}
+          .dshChatProjectHeading:is(:hover,[data-menu-open],:has(:focus-visible)) .dshChatProjectFolder{display:none}
+          .dshChatProjectHeading:is(:hover,[data-menu-open],:has(:focus-visible)) .dshChatProjectChevron{display:block}
+          .dshChatProjectHeading:is(:hover,[data-menu-open],:has(:focus-visible)) .dshChatProjectToggle{padding-inline-end:64px}
+          .dshChatProjectAction,.dshCloudHistoryActions{display:inline-grid;place-items:center;flex:none;width:22px;height:22px;padding:0;border:0;border-radius:var(--dsw-radius-xs);background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer}
+          :is(.dshChatProjectAction,.dshCloudHistoryActions) svg{width:16px;height:16px}
+          :is(.dshChatProjectAction,.dshCloudHistoryActions):is(:hover,[aria-expanded=true]){color:var(--dsw-alias-label-primary)}
+          .dshChatProjectAction:disabled{opacity:.5;cursor:default}
+          .dshChatProjectCreate{width:100%;padding:6px 8px;border-radius:8px;color:var(--dsw-alias-label-secondary)}.dshChatProjectCreate:hover{background:var(--dsw-alias-interactive-bg-hover)}
+          .dshChatProjectEmpty{padding:6px 8px 6px 32px;font-size:12px;color:var(--dsw-alias-label-tertiary)}.dshChatProject .dshHistoryRow{padding-left:32px}
+          .dshChatProjectForm{display:grid;gap:12px}.dshChatProjectForm label{display:grid;gap:6px;color:var(--dsw-alias-label-primary)}
+          .dshChatProjectForm input{box-sizing:border-box;min-width:0;width:100%;padding:8px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font:inherit}
+          .dshChatProjectForm input:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
+          .dshCloudHistoryMenu{anchor-scope:--dsh-chat-project-menu-row}
+          .dshChatProjectMenuLabel{display:flex;align-items:center;justify-content:space-between;gap:8px}
+          .dshChatProjectMenuLabel svg{flex:none;color:var(--dsw-alias-label-tertiary)}
+          .dshCloudHistoryMenu button[aria-haspopup=menu]{anchor-name:--dsh-chat-project-menu-row}
+          .dshCloudHistoryMenu button[aria-haspopup=menu][aria-expanded=true]{background:var(--dsw-alias-interactive-bg-hover)}
+          /* Native submenus are meant for short lists. Fit project lists on screen and
+             bridge the gap from the parent row even when the child menu scrolls. */
+          .dshCloudHistoryMenu [role=menu]{
+            position:fixed;position-anchor:--dsh-chat-project-menu-row;top:anchor(top);bottom:auto;left:calc(anchor(right) + 6px);
+            position-try-fallbacks:flip-block,flip-inline,flip-block flip-inline;margin:0 12px 12px 0;
+            max-width:240px;max-height:min(260px,calc(50dvh - 20px));overflow:auto;overscroll-behavior:contain
+          }
+          .dshCloudHistoryMenu :has(>button[aria-haspopup=menu][aria-expanded=true])::before,
+          .dshCloudHistoryMenu :has(>button[aria-haspopup=menu][aria-expanded=true])::after{content:'';position:absolute;inset-block:0;width:6px}
+          .dshCloudHistoryMenu :has(>button[aria-haspopup=menu][aria-expanded=true])::before{right:100%}
+          .dshCloudHistoryMenu :has(>button[aria-haspopup=menu][aria-expanded=true])::after{left:100%}
+          .dshCloudHistoryMenu [role=menu]>[role=menuitem]{flex:none}
+          /* Menu's submenu accepts only actionable rows. Draw dividers on the
+             following row so there is no extra keyboard stop or duplicate line. */
+          .dshCloudHistoryMenu [role=menu]>button:is(button:has(.dshChatProjectMenuCreate)+button,:has(.dshChatProjectMenuRemove)){
+            position:relative;margin-block-start:7px
+          }
+          .dshCloudHistoryMenu [role=menu]>button:is(button:has(.dshChatProjectMenuCreate)+button,:has(.dshChatProjectMenuRemove))::before{
+            content:'';position:absolute;inset-block-start:-4px;inset-inline:2px;height:1px;
+            background:var(--dsw-alias-border-l2);pointer-events:none
+          }
+          .dshHistoryRow{height:32px;padding:0 8px 0 28px;user-select:none}
+          .dshHistoryTitle{flex:1}
+          .dshHistoryRow time{flex:none;color:var(--dsw-alias-label-tertiary);font-size:10px;white-space:nowrap}
+          .dshCloudHistoryRow:is(:hover,[data-menu-open],:has(:focus-visible)) .dshHistoryRow{padding-inline-end:36px}
+          .dshCloudHistoryRow:is(:hover,[data-menu-open],:has(:focus-visible)) time{display:none}
+          .dshHistoryTitle:is([data-scrolled],[data-clipped]){text-overflow:clip}
+          .dshHistoryTitle[data-scrolled]{mask-image:linear-gradient(90deg,transparent,black 12px)}
+          .dshHistoryTitle[data-clipped]{mask-image:linear-gradient(270deg,transparent,black 12px)}
+          .dshHistoryTitle[data-scrolled][data-clipped]{mask-image:linear-gradient(90deg,transparent,black 12px calc(100% - 12px),transparent)}
+          /* Harness's compact hover card uses a dark surface in both themes. */
+          .dshCloudHistoryPreview{
+            display:grid;gap:4px;overflow-wrap:anywhere;color:var(--dsw-alias-toast-label)
+          }
+          .dshCloudHistoryPreview time{
+            font-size:12px;color:color-mix(in srgb,var(--dsw-alias-toast-label) 80%,transparent)
+          }
+          .dshCloudHistoryStatus{display:flex;align-items:center;gap:6px;font-size:12px;color:inherit}
+          .dshHistoryStatus{position:absolute;inset-block:0;inset-inline-start:8px;width:16px;display:inline-flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary);pointer-events:none}
+          .dshChatProject .dshHistoryStatus{inset-inline-start:12px}
+          .dshVisuallyHidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+          .dshChatRenameInput{box-sizing:border-box;width:100%;height:44px;padding:7px 14px;border:.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-lg);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:14px;line-height:22px;outline:none}
+          .dshChatRenameInput:disabled{color:var(--dsw-alias-label-dimmed)}
+          .dshChatRenameStatus{margin:8px 0 0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+          .dshChatRenameError{margin-top:8px;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary)}.dshChatRenameError p{margin:0}
+          @media(hover:none){
+            .dshSidebarItem .dshSidebarItemTools :is(.dshChatProjectAction,.dshCloudHistoryActions){opacity:1;pointer-events:auto}
+            .dshChatProjectHeading .dshChatProjectToggle{padding-inline-end:64px}
+            .dshCloudHistoryRow .dshHistoryRow{padding-inline-end:36px}
+          }
           .dshHistoryNotice{padding:8px;font:inherit;font-size:12px;color:var(--dsw-alias-label-secondary);background:transparent;border:0;text-align:left}.dshHistoryNotice:is(button){cursor:pointer}
           .dshSharedCollection button:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}
           .dshChatSignInDescription{margin:0;font-size:14px;line-height:1.6;color:var(--dsw-alias-label-secondary)}
@@ -884,7 +2108,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
       ctx.slots.inject('sidebar.primaryNavigation', () => ctx.slots.register({ name: 'sidebar.primaryNavigation', id: 'desktop-primary-navigation', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS) }) }, PrimaryNavigation))
       ctx.slots.inject('sidebar.workspaces.title', () => ctx.slots.register({ name: 'sidebar.workspaces.title', inject: () => ({ t: ctx.locale.bind(MODES_NS) }) }, ({ flat, t }) => t(flat ? 'all' : 'projects')))
       ctx.slots.inject('desktop.mode.content', () => ctx.slots.register({ name: 'desktop.mode.content', id: 'desktop-chat-work', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS), locale: ctx.locale }) }, DesktopModes))
-      ctx.slots.inject('sidebar.workspaces.collection', () => ctx.slots.register({ name: 'sidebar.workspaces.collection', id: 'desktop-shared-collection', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS), deleteText: ctx.locale.bind(CLOUD_DELETE_NS) }) }, SharedCollection))
+      ctx.slots.inject('sidebar.workspaces.collection', () => ctx.slots.register({ name: 'sidebar.workspaces.collection', id: 'desktop-shared-collection', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS), projectText: ctx.locale.bind(PROJECTS_NS), deleteText: ctx.locale.bind(CLOUD_DELETE_NS) }) }, SharedCollection))
       return navigation
     }
 
@@ -1338,7 +2562,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           pending: 'Deleting session…', failed: 'Deletion failed. Please try again.'
         }
       }))
-      const deletion = createSessionDeletion((sessionId) => {
+      const deletion = createSessionRequest((sessionId) => {
         const workspace = ctx.get('uiWorkspace')
         if (!workspace) throw new Error('Workspace navigation is unavailable')
         return workspace.deleteSession(sessionId)
@@ -1374,6 +2598,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           :root { --dsh-page-title-top-spacing:56px; }
           /* Top-level page titles align with the sidebar brand row. Keep
              conversation chrome and detail/dialog headers in their own layout. */
+          [data-plugin-panel] { scrollbar-gutter:stable; }
           [data-plugin-panel] > header[data-window-drag] {
             padding-top:var(--dsh-page-title-top-spacing);
           }

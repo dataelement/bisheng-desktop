@@ -4,8 +4,26 @@ export interface EnterpriseChatPresentation {
   theme: 'light' | 'dark'
   locale?: 'zh' | 'en'
   settings?: EnterpriseSettingsSection
+  /** Keep the outgoing Work frame while the native landing gets a chance to paint. */
+  landingHandoff?: true
   /** Host surfaces and ink resolved from the active Harness theme; absent when they cannot be sampled. */
   palette?: EnterprisePalette
+}
+
+/** Ephemeral compositor backing for host overlays; never persisted or sent to the remote page. */
+export interface EnterpriseChatFrame {
+  dataURL: string
+  bounds: EnterpriseChatPresentation['bounds']
+}
+
+/** Blank Chat geometry in host CSS pixels and optional visual details of its bottom controls. */
+export interface EnterpriseChatLandingGeometry {
+  title: EnterpriseChatPresentation['bounds']
+  composer: EnterpriseChatPresentation['bounds']
+  seat: EnterpriseChatPresentation['bounds']
+  /** Closed selector's selected label, never an input or search value. */
+  model?: { label: string; width: number }
+  sendOpacity?: number
 }
 
 /** Roles the host samples from its own tokens; the embedded document never reads host CSS. */
@@ -15,6 +33,8 @@ export type EnterprisePaletteRole = (typeof ENTERPRISE_PALETTE_ROLES)[number]
 export type EnterprisePalette = Record<EnterprisePaletteRole, readonly [number, number, number]> & {
   /** Composer fill, sampled independently from page and card surfaces. */
   composer?: readonly [number, number, number]
+  /** Opaque tint shared by the macOS window strip and the embedded Square banner. */
+  squareBanner?: readonly [number, number, number]
   /** Mask retains alpha so the host and embedded dialog dim the same underlying content. */
   mask?: readonly [number, number, number, number]
 }
@@ -31,12 +51,13 @@ function parseEnterprisePalette(value: unknown): EnterprisePalette | undefined {
     return [role, [channels[0] as number, channels[1] as number, channels[2] as number]]
   })
   const palette: EnterprisePalette = Object.fromEntries(entries) as Record<EnterprisePaletteRole, readonly [number, number, number]>
-  if (input.composer !== undefined) {
-    const channels = input.composer
+  for (const role of ['composer', 'squareBanner'] as const) {
+    const channels = input[role]
+    if (channels === undefined) continue
     if (!Array.isArray(channels) || channels.length !== 3 || channels.some(channel =>
       typeof channel !== 'number' || !Number.isInteger(channel) || channel < 0 || channel > 255
     )) throw new Error('Invalid Chat palette.')
-    palette.composer = [channels[0], channels[1], channels[2]]
+    palette[role] = [channels[0], channels[1], channels[2]]
   }
   if (input.mask !== undefined) {
     const channels = input.mask
@@ -64,12 +85,18 @@ export interface EnterpriseChatViewState {
   epoch?: number
   landing?: boolean
   conversationId?: string
+  /** Stable, opaque enterprise identity for account-scoped desktop project storage. */
+  projectScope?: string
+  /** Project intent belongs to this particular blank cloud draft. */
+  draftProjectId?: string
   connected?: boolean
   phase: 'idle' | 'loading' | 'ready' | 'error'
   error?: string
   settingsSection?: EnterpriseSettingsSection
   settingsReady?: boolean
   settingsFailure?: 'load' | 'unsupported'
+  /** Cloud conversations the enterprise document reports as generating; absent until it reports any. */
+  running?: string[]
 }
 
 export function parseChatPresentation(value: unknown): EnterpriseChatPresentation {
@@ -80,6 +107,9 @@ export function parseChatPresentation(value: unknown): EnterpriseChatPresentatio
   }
   if (input.locale !== undefined && input.locale !== 'zh' && input.locale !== 'en') {
     throw new Error('Invalid Chat locale.')
+  }
+  if (input.landingHandoff !== undefined && input.landingHandoff !== true) {
+    throw new Error('Invalid Chat landing handoff.')
   }
   const settings = input.settings === undefined ? undefined : parseEnterpriseSettingsSection(input.settings)
   const palette = parseEnterprisePalette(input.palette)
@@ -92,6 +122,7 @@ export function parseChatPresentation(value: unknown): EnterpriseChatPresentatio
     theme: input.theme as 'light' | 'dark',
     locale: input.locale,
     settings,
+    ...(input.landingHandoff ? { landingHandoff: true } : {}),
     ...(palette ? { palette } : {}),
     bounds: { x: Number(bounds.x), y: Number(bounds.y), width: Number(bounds.width), height: Number(bounds.height) }
   }
@@ -114,6 +145,20 @@ export function parseChatPage(value: unknown): number {
 export function parseChatId(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/u.test(value)) throw new Error('Invalid Chat identity.')
   return value
+}
+/** BiSheng stores conversation names in message_session.name, a VARCHAR(255) column. */
+export const CHAT_NAME_MAX_LENGTH = 255
+export function parseChatName(value: unknown): string {
+  if (typeof value !== 'string') throw new Error('Invalid Chat name.')
+  const name = value.trim()
+  if (!name || [...name].length > CHAT_NAME_MAX_LENGTH || /\p{Cc}/u.test(name)) throw new Error('Invalid Chat name.')
+  return name
+}
+const MAX_RUNNING_CONVERSATIONS = 100
+/** Activity is presentation data from the enterprise document, never an authorization signal. */
+export function parseRunningConversations(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > MAX_RUNNING_CONVERSATIONS) throw new Error('Invalid Chat activity.')
+  return [...new Set(value.map(parseChatId))].sort()
 }
 
 export interface EnterpriseNavigationEntry {

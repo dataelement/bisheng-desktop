@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EnterpriseChatView } from '../src/main/enterprise/chat-view'
+import { chatLandingTextMotionScript } from '../src/main/enterprise/chat-landing-text-motion'
 import { EnterprisePlatformError } from '../src/main/enterprise/enterprise-request'
 import { parseChatPresentation } from '../src/shared/enterprise-chat-view'
 import { parseWebSession } from '../src/main/enterprise/web-session'
@@ -9,6 +10,8 @@ const fake = vi.hoisted(() => ({ views: [] as any[], sessions: [] as any[], hang
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events')
   return {
+    // chat-view re-reads projects on browser-window-focus.
+    app: new EventEmitter(),
     session: { fromPartition: () => {
       const isolated = { webRequest: { onCompleted: vi.fn() }, fetch: vi.fn(async (url: string) => url.endsWith('usage-summary') || url.endsWith('quota/effective') ? usageResponse(url) : ({ ok: true, json: async () => ({ data: [{ chat_id: 'cloud-a', name: 'Cloud A', flow_type: 15, update_time: '2026-10-16' }] }) })), cookies: { set: vi.fn(async () => {}) }, clearStorageData: vi.fn(async () => {}), closeAllConnections: vi.fn(async () => {}), setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() }
       fake.sessions.push(isolated)
@@ -17,12 +20,17 @@ vi.mock('electron', async () => {
     shell: { openExternal: vi.fn(async () => {}) },
     WebContentsView: class {
       webContents: any
-      setBounds = vi.fn()
-      setVisible = vi.fn()
+      bounds = { x: 0, y: 0, width: 0, height: 0 }
+      visible = false
+      setBounds = vi.fn((bounds: { x: number; y: number; width: number; height: number }) => { this.bounds = { ...bounds } })
+      setVisible = vi.fn((visible: boolean) => { this.visible = visible })
+      getBounds = () => this.bounds
+      getVisible = () => this.visible
       setBackgroundColor = vi.fn()
       constructor(public options: any) {
         let url = ''
-        this.webContents = Object.assign(new EventEmitter(), { id: fake.views.length + 100, session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), focus: vi.fn(), send: vi.fn(), mainFrame: {}, getURL: () => url, getZoomFactor: () => 1, close: vi.fn(() => { if (fake.emitCloseAsGone) { const contents = this.webContents; setTimeout(() => contents.emit('render-process-gone'), 0) } }), executeJavaScript: vi.fn(async () => {}), insertCSS: vi.fn(async () => 'key'), loadURL: vi.fn(async (next: string) => {
+        let zoom = 1
+        this.webContents = Object.assign(new EventEmitter(), { id: fake.views.length + 100, session: options.webPreferences.session, isDestroyed: () => false, setWindowOpenHandler: vi.fn(), focus: vi.fn(), send: vi.fn(), mainFrame: {}, getURL: () => url, setURL: (next: string) => { url = next }, getZoomFactor: () => zoom, setZoomFactor: vi.fn((value: number) => { zoom = value }), capturePage: vi.fn(async () => ({ isEmpty: () => false, toDataURL: () => 'data:image/png;base64,fixture' })), close: vi.fn(() => { if (fake.emitCloseAsGone) { const contents = this.webContents; setTimeout(() => contents.emit('render-process-gone'), 0) } }), executeJavaScript: vi.fn(async () => {}), executeJavaScriptInIsolatedWorld: vi.fn(async () => {}), insertCSS: vi.fn(async () => 'key'), loadURL: vi.fn(async (next: string) => {
           if (fake.hangLoads) return await new Promise<void>(() => {})
           if (fake.loadFailures > 0) { fake.loadFailures -= 1; throw Object.assign(new Error('load failed'), { code: fake.loadErrorCode }) }
           url = fake.loadLanding ?? next
@@ -43,12 +51,60 @@ function fixture() {
   let state = { connected: true, connectionKey: 'tenant-a' }
   let change: (state: any) => void = () => {}
   const enterprise = { snapshot: () => state, subscribe: (listener: typeof change) => { change = listener; return vi.fn() }, webSession: vi.fn(async () => ({ base: 'https://enterprise.example', cookie: 'test-cookie', cookieName: 'bs_credits_3007', connectionKey: 'tenant-a', expiresAt: Date.now() + 300_000 })) }
-  const owner: any = Object.assign(new EventEmitter(), { isDestroyed: () => false, getContentSize: () => [1100, 800], contentView: { addChildView: vi.fn(), removeChildView: vi.fn() }, webContents: Object.assign(new EventEmitter(), { send: vi.fn(), focus: vi.fn(), getZoomFactor: () => 1 }) })
+  const owner: any = Object.assign(new EventEmitter(), { isDestroyed: () => false, getContentSize: () => [1100, 800], contentView: { addChildView: vi.fn(), removeChildView: vi.fn() }, webContents: Object.assign(new EventEmitter(), { send: vi.fn(), focus: vi.fn(), getZoomFactor: () => 1, isDestroyed: () => false, executeJavaScript: vi.fn(async () => true) }) })
   const host = new EnterpriseChatView(enterprise as any, vi.fn())
   return { host, owner, enterprise, change: (next: typeof state) => { state = next; change(next) } }
 }
 
 describe('enterprise Chat host boundary', () => {
+  it('delivers the viewport to a new module document even when its native bounds are unchanged', async () => {
+    const f = fixture()
+    const url = 'https://enterprise.example/workspace/knowledge?embed=dsh'
+    fake.loadLanding = url
+    try {
+      f.host.present(f.owner, { ...presentation, bounds: { x: 0, y: 48, width: 1100, height: 752 } })
+      await flush()
+      const contents = fake.views[0].webContents
+      contents.emit('did-start-navigation', {}, url, false, true)
+      contents.executeJavaScript.mockClear()
+      contents.emit('did-finish-load')
+      expect(contents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('--dsh-chat-viewport-top: 48px'))
+    } finally { f.host.dispose() }
+  })
+
+  it('inherits host zoom on creation, menu changes, hidden presentation and reconnect', async () => {
+    const f = fixture()
+    let zoom = 0.8
+    f.owner.webContents.getZoomFactor = () => zoom
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      const view = fake.views[0]
+      expect(view.webContents.getZoomFactor()).toBe(0.8)
+      for (const value of [0.7, 1.2, 1]) {
+        zoom = value
+        f.host.syncZoom(f.owner)
+        expect(view.webContents.getZoomFactor()).toBe(value)
+        expect(view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: Math.round(56 * value), width: Math.min(1100, Math.round(1100 * value)), height: Math.min(800 - Math.round(56 * value), Math.round(700 * value)) })
+      }
+      zoom = 1.25
+      f.host.present(f.owner, { ...presentation, visible: false })
+      expect(view.webContents.getZoomFactor()).toBe(1.25)
+      f.host.present(f.owner, presentation)
+      await f.host.open('new')
+      expect(view.webContents.getZoomFactor()).toBe(1.25)
+      f.host.retry()
+      await flush()
+      expect(fake.views[1].webContents.getZoomFactor()).toBe(1.25)
+      zoom = 0.5
+      const other = fixture()
+      try {
+        f.host.syncZoom(other.owner)
+        expect(fake.views[1].webContents.getZoomFactor()).toBe(1.25)
+      } finally { other.host.dispose() }
+    } finally { f.host.dispose() }
+  })
+
   it('reads fixed self-service usage with the isolated session and discards logout races', async () => {
     const f = fixture()
     try {
@@ -136,6 +192,14 @@ describe('enterprise Chat host boundary', () => {
     }
   })
 
+  it('accepts only an explicit true landing handoff flag', () => {
+    expect(parseChatPresentation(presentation)).not.toHaveProperty('landingHandoff')
+    expect(parseChatPresentation({ ...presentation, landingHandoff: true }).landingHandoff).toBe(true)
+    for (const landingHandoff of [false, 'true', null, 1, {}]) {
+      expect(() => parseChatPresentation({ ...presentation, landingHandoff })).toThrow('landing handoff')
+    }
+  })
+
   it('validates the ingress cookie name and supports the existing server default', () => {
     const body = { cookie: 'a'.repeat(40), expires_in: 300 }
     expect(parseWebSession(body, 'https://enterprise.example', 'a').cookieName).toBe('access_token_cookie')
@@ -162,7 +226,8 @@ it('carries host language on first load and updates a hidden document without re
     expect(view.webContents.loadURL).toHaveBeenLastCalledWith('https://enterprise.example/workspace/c/new?embed=dsh&dshTheme=dark&dshLocale=en')
     const loads = view.webContents.loadURL.mock.calls.length
     await f.host.open('new')
-    expect(view.webContents.loadURL).toHaveBeenCalledTimes(loads)
+    // New conversation is a reset action even if the document URL is unchanged.
+    expect(view.webContents.loadURL).toHaveBeenCalledTimes(loads + 1)
     view.webContents.executeJavaScript.mockClear()
     view.webContents.emit('did-navigate-in-page', {}, 'https://enterprise.example/workspace/c/new', true)
     expect(view.webContents.executeJavaScript).toHaveBeenLastCalledWith(expect.stringContaining('dshHostLocale = "en"'))
@@ -194,6 +259,45 @@ it('reads cloud history through a fixed host endpoint and validates selection ag
   } finally { f.host.dispose() }
 })
 
+it('scopes desktop projects to the enterprise identity and routes only validated project drafts', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    expect(f.host.snapshot().projectScope).toBe('tenant-a')
+    await f.host.open('new', '11111111-1111-4111-8111-111111111111')
+    expect(fake.views[0].webContents.loadURL).toHaveBeenLastCalledWith('https://enterprise.example/workspace/c/new?projectId=11111111-1111-4111-8111-111111111111&embed=dsh&dshTheme=dark')
+    expect(f.host.snapshot()).toMatchObject({ draftProjectId: '11111111-1111-4111-8111-111111111111', conversationId: 'new' })
+    await expect(f.host.open('new', '../admin')).rejects.toThrow('identity')
+    await expect(f.host.open('cloud-a', '11111111-1111-4111-8111-111111111111')).rejects.toThrow('new Chat draft')
+    await f.host.open('new')
+    expect(f.host.snapshot().draftProjectId).toBeUndefined()
+    f.host.retry()
+    await flush()
+    expect(f.host.snapshot().projectScope).toBe('tenant-a')
+    f.change({ connected: false, connectionKey: 'tenant-a' })
+    expect(f.host.snapshot().projectScope).toBeUndefined()
+  } finally { f.host.dispose() }
+})
+
+it('requests a fresh project conversation even when the same draft URL is already open', async () => {
+  const f = fixture()
+  const projectId = '11111111-1111-4111-8111-111111111111'
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    await f.host.open('new', projectId)
+    const view = fake.views[0]
+    const loads = view.webContents.loadURL.mock.calls.length
+    view.webContents.executeJavaScript.mockClear()
+    view.webContents.executeJavaScript.mockResolvedValue(true)
+    await f.host.open('new', projectId)
+    expect(view.webContents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining(`path: "/c/new?projectId=${projectId}"`))
+    expect(view.webContents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('resetDraft: true'))
+    expect(view.webContents.loadURL).toHaveBeenCalledTimes(loads)
+  } finally { f.host.dispose() }
+})
+
 it('uses in-document conversation navigation and preserves view geometry while Work is visible', async () => {
   const f = fixture()
   try {
@@ -210,6 +314,7 @@ it('uses in-document conversation navigation and preserves view geometry while W
     f.host.present(f.owner, presentation)
     await f.host.open('cloud-a')
     expect(view.webContents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining("dsh:navigate"))
+    expect(view.webContents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('resetDraft: false'))
     expect(view.webContents.loadURL).toHaveBeenCalledTimes(1)
     expect(f.host.snapshot().phase).toBe('ready')
     expect(fake.views).toHaveLength(1)
@@ -263,10 +368,73 @@ it('pushes landing state from the current remote main frame and rejects stale or
     report(wc.mainFrame, { landing: true, path: '/workspace/c/old' })
     report(wc.mainFrame, { landing: 'true', path: '/workspace/c/new' })
     expect(f.host.snapshot().landing).toBe(false)
+    expect(wc.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
     report(wc.mainFrame, { landing: true, path: '/workspace/c/new' })
     expect(f.host.snapshot().landing).toBe(true)
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(1001, [{ code: expect.stringContaining('"active":true') }])
+    f.host.present(f.owner, { ...presentation, visible: false })
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(1001, [{ code: expect.stringContaining('"active":false') }])
+    f.host.present(f.owner, presentation)
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(1001, [{ code: expect.stringContaining('"active":true') }])
+    report(wc.mainFrame, { landing: false, path: '/workspace/c/new' })
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(1001, [{ code: expect.stringContaining('"active":false') }])
     f.change({ connected: false, connectionKey: 'tenant-a' })
     report(wc.mainFrame, { landing: false, path: '/workspace/c/new' })
+    expect(f.host.snapshot().landing).toBeUndefined()
+  } finally { f.host.dispose() }
+})
+
+it('keeps verified welcome cases when New Chat navigates to the same blank page without another landing report', async () => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    const wc = fake.views[0].webContents
+    await wc.loadURL('https://enterprise.example/workspace/c/new')
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:landing', { landing: true, path: '/workspace/c/new' })
+    wc.executeJavaScript.mockResolvedValueOnce(true)
+    await f.host.open('new')
+    expect(wc.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('resetDraft: true'))
+    wc.emit('did-navigate-in-page', {}, wc.getURL(), true)
+    expect(f.host.snapshot().landing).toBe(true)
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(1)
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(1001, [{ code: expect.stringContaining('"active":true') }])
+  } finally { f.host.dispose() }
+})
+
+it.each(['before', 'after'])('keeps a current-path landing report delivered %s the in-page navigation event and clears it on other routes', async order => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    const wc = fake.views[0].webContents
+    const report = (landing: boolean, path = '/workspace/c/new') => wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:landing', { landing, path })
+    wc.setURL('https://enterprise.example/workspace/c/old')
+    wc.emit('did-navigate-in-page', {}, wc.getURL(), true)
+    report(false, '/workspace/c/old')
+    wc.setURL('https://enterprise.example/workspace/c/new')
+    if (order === 'before') report(true)
+    wc.emit('did-navigate-in-page', {}, wc.getURL(), true)
+    if (order === 'after') report(true)
+    expect(f.host.snapshot().landing).toBe(true)
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(1)
+    report(false)
+    wc.emit('did-navigate-in-page', {}, wc.getURL(), true)
+    expect(f.host.snapshot().landing).toBe(false)
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(1001, [{ code: expect.stringContaining('"active":false') }])
+    report(true)
+    wc.setURL('https://enterprise.example/workspace/c/old')
+    wc.emit('did-navigate-in-page', {}, wc.getURL(), true)
+    expect(f.host.snapshot().landing).toBeUndefined()
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(1001, [{ code: expect.stringContaining('"active":false') }])
+    report(true)
+    expect(f.host.snapshot().landing).toBeUndefined()
+    wc.setURL('https://enterprise.example/workspace/c/new')
+    wc.emit('did-navigate-in-page', {}, wc.getURL(), true)
+    expect(f.host.snapshot().landing).toBeUndefined()
+    report(true)
+    expect(f.host.snapshot().landing).toBe(true)
+    wc.emit('did-start-navigation', {}, wc.getURL(), false, true)
     expect(f.host.snapshot().landing).toBeUndefined()
   } finally { f.host.dispose() }
 })
@@ -320,17 +488,19 @@ it('delivers the host palette to module pages, backs the view with it, and rejec
     const palette = {
       surface: [44, 44, 46], raised: [53, 54, 56], strong: [97, 102, 107],
       labelPrimary: [249, 250, 251], labelSecondary: [207, 211, 214], labelTertiary: [173, 178, 184],
-      borderBase: [69, 69, 71], borderDeep: [78, 78, 79]
+      borderBase: [69, 69, 71], borderDeep: [78, 78, 79], squareBanner: [48, 50, 54]
     }
     f.host.present(f.owner, { ...presentation, palette })
     await flush()
     const view = fake.views[0], wc = view.webContents
-    // Chat routes keep their own deployed theme, so their backing is unchanged.
-    expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#141416')
+    // Chat keeps its backing color in the content seat; the native layer stays transparent.
+    expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#00000000')
+    expect(wc.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('background: #141416'))
     f.host.present(f.owner, { ...presentation, palette, settings: 'desktop-usage' })
     await flush()
     expect(wc.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('--bg-page:44 44 46'))
     expect(wc.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('--text-1:249 250 251'))
+    expect(wc.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('background-color:rgb(48 50 54)'))
     // The module page paints the host surface, so the view backs it with the same color.
     expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#2c2c2e')
     // Approvals open in a Modal on the same layer-2 surface; its pages take the same backing.
@@ -340,7 +510,7 @@ it('delivers the host palette to module pages, backs the view with it, and rejec
       expect(wc.loadURL).toHaveBeenLastCalledWith(`https://enterprise.example/workspace/settings/${section}?dshSettings=1&embed=dsh&dshTheme=dark`)
       expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#2c2c2e')
     }
-    for (const invalid of [{ ...palette, surface: [44, 44] }, { ...palette, surface: [44, 44, 256] }, { ...palette, raised: ['53', 54, 56] }, { ...palette, strong: undefined }, { ...palette, composer: [1, 2] }, { ...palette, composer: [0, 0, 256] }, { ...palette, composer: ['40', 41, 45] }, 'dark']) {
+    for (const invalid of [{ ...palette, surface: [44, 44] }, { ...palette, surface: [44, 44, 256] }, { ...palette, raised: ['53', 54, 56] }, { ...palette, strong: undefined }, { ...palette, composer: [1, 2] }, { ...palette, composer: [0, 0, 256] }, { ...palette, composer: ['40', 41, 45] }, { ...palette, squareBanner: [48, 50, -1] }, 'dark']) {
       expect(() => f.host.present(f.owner, { ...presentation, palette: invalid })).toThrow('Invalid Chat palette.')
     }
   } finally { f.host.dispose() }
@@ -431,6 +601,24 @@ it('opens content-only settings, waits for the current main frame and restores t
     expect(view.setVisible).toHaveBeenLastCalledWith(true)
     expect(fake.views).toHaveLength(1)
     expect(f.host.snapshot().settingsSection).toBeUndefined()
+  } finally { f.host.dispose() }
+})
+
+it('returns from settings to a project draft without requesting a fresh conversation', async () => {
+  const f = fixture()
+  const projectId = '11111111-1111-4111-8111-111111111111'
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    await f.host.open('new', projectId)
+    f.host.present(f.owner, { ...presentation, settings: 'desktop-usage' })
+    await flush()
+    const wc = fake.views[0].webContents
+    wc.executeJavaScript.mockClear()
+    wc.executeJavaScript.mockResolvedValue(true)
+    f.host.present(f.owner, presentation)
+    await flush()
+    expect(wc.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining(`path: "/c/new?projectId=${projectId}", resetDraft: false`))
   } finally { f.host.dispose() }
 })
 
@@ -550,17 +738,88 @@ it.each(['/workspace/c/new', '/workspace/capabilities', '/workspace/skills', '/w
     report(wc.mainFrame, 'true')
     report(wc.mainFrame, true, '/workspace/c/old')
     expect(view.setBounds).toHaveBeenLastCalledWith(region)
+    const viewportDeliveries = () => wc.executeJavaScript.mock.calls.filter(([script]: [string]) => script.includes('dsh-window-dialog-viewport'))
+    const prepared = viewportDeliveries().length
+    expect(prepared).toBeGreaterThan(0)
     report(wc.mainFrame, true)
+    await flush()
     expect(view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 1100, height: 800 })
     expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#00000000')
     expect(wc.focus).toHaveBeenCalledTimes(1)
-    expect(wc.executeJavaScript.mock.calls.some(([script]: [string]) => script.includes('left: 240px; top: 56px'))).toBe(true)
+    expect(viewportDeliveries()).toHaveLength(prepared)
     report(wc.mainFrame, false)
     expect(view.setBounds).toHaveBeenLastCalledWith(region)
-    expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#141416')
+    expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#00000000')
+    expect(viewportDeliveries()).toHaveLength(prepared)
     report(wc.mainFrame, true)
+    await flush()
     wc.emit('did-navigate-in-page', {}, 'https://enterprise.example/workspace/c/other', true)
     expect(view.setBounds).toHaveBeenLastCalledWith(region)
+  } finally { f.host.dispose() }
+})
+
+it('prepares the owner backing before changing native bounds and avoids resetting unchanged native state', async () => {
+  const f = fixture()
+  try {
+    const region = { x: 240, y: 56, width: 860, height: 744 }
+    f.host.present(f.owner, { ...presentation, bounds: region })
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    view.setBounds.mockClear()
+    view.setVisible.mockClear()
+    view.setBackgroundColor.mockClear()
+    f.host.present(f.owner, { ...presentation, bounds: region })
+    expect(view.setBounds).not.toHaveBeenCalled()
+    expect(view.setVisible).not.toHaveBeenCalled()
+    expect(view.setBackgroundColor).not.toHaveBeenCalled()
+    let painted!: (value: boolean) => void
+    f.owner.webContents.executeJavaScript.mockImplementationOnce(() => new Promise(resolve => { painted = resolve }))
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:modal', { open: true, path: '/workspace/' })
+    await flush()
+    expect(f.owner.webContents.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('dsh-chat-dialog-backing'))
+    expect(view.getBounds()).toEqual(region)
+    f.host.present(f.owner, { ...presentation, bounds: region })
+    expect(view.getBounds()).toEqual(region)
+    painted(true)
+    await flush()
+    expect(view.getBounds()).toEqual({ x: 0, y: 0, width: 1100, height: 800 })
+    expect(view.setVisible).not.toHaveBeenCalled()
+    expect(view.setBackgroundColor).not.toHaveBeenCalled()
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:modal', { open: false, path: '/workspace/' })
+    await flush()
+    expect(view.getBounds()).toEqual(region)
+    expect(f.owner.webContents.executeJavaScript).toHaveBeenLastCalledWith(expect.stringContaining('delete window[key]'))
+  } finally { f.host.dispose() }
+})
+
+it('ignores an earlier opening after close and reopen, and drops backing pixels when hidden', async () => {
+  const f = fixture()
+  try {
+    const region = { x: 240, y: 56, width: 860, height: 744 }
+    f.host.present(f.owner, { ...presentation, bounds: region })
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    const report = (open: boolean) => wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:modal', { open, path: '/workspace/' })
+    let first!: (value: boolean) => void
+    let second!: (value: boolean) => void
+    f.owner.webContents.executeJavaScript.mockImplementationOnce(() => new Promise(resolve => { first = resolve }))
+    report(true)
+    await flush()
+    report(false)
+    await flush()
+    f.owner.webContents.executeJavaScript.mockImplementationOnce(() => new Promise(resolve => { second = resolve }))
+    report(true)
+    await flush()
+    first(true)
+    await flush()
+    expect(view.getBounds()).toEqual(region)
+    second(true)
+    await flush()
+    expect(view.getBounds()).toEqual({ x: 0, y: 0, width: 1100, height: 800 })
+    f.host.present(f.owner, { ...presentation, visible: false, bounds: region })
+    await flush()
+    expect(view.getVisible()).toBe(false)
+    expect(f.owner.webContents.executeJavaScript).toHaveBeenLastCalledWith(expect.stringContaining('delete window[key]'))
   } finally { f.host.dispose() }
 })
 
@@ -574,6 +833,240 @@ it('retains host-owned settings bounds when an embedded settings page reports a 
     wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:modal', { open: true, path: '/workspace/settings/desktop-usage' })
     expect(view.setBounds).toHaveBeenLastCalledWith(region)
     expect(view.setBackgroundColor).toHaveBeenLastCalledWith('#141416')
+  } finally { f.host.dispose() }
+})
+
+it('captures only its visible owner surface and converts native bounds to host CSS coordinates', async () => {
+  const f = fixture()
+  try {
+    f.owner.webContents.getZoomFactor = () => 1.25
+    f.host.present(f.owner, { ...presentation, bounds: { x: 240, y: 48, width: 640, height: 560 } })
+    await flush()
+    expect(await f.host.capture({ ...f.owner })).toBeUndefined()
+    expect(await f.host.capture(f.owner)).toEqual({ dataURL: 'data:image/png;base64,fixture', bounds: { x: 240, y: 48, width: 640, height: 560 } })
+    const view = fake.views[0]
+    expect(view.webContents.capturePage).toHaveBeenCalledTimes(1)
+    f.host.present(f.owner, { ...presentation, visible: false })
+    expect(await f.host.capture(f.owner)).toBeUndefined()
+    expect(view.webContents.capturePage).toHaveBeenCalledTimes(1)
+  } finally { f.host.dispose() }
+})
+
+it('measures only a confirmed blank Chat, updating a hidden seat without showing it', async () => {
+  const f = fixture()
+  try {
+    f.owner.webContents.getZoomFactor = () => 1.25
+    fake.loadLanding = 'https://enterprise.example/workspace/c/new?embed=dsh'
+    f.host.present(f.owner, { ...presentation, bounds: { x: 240, y: 48, width: 640, height: 560 } })
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    expect(await f.host.landingGeometry(f.owner)).toBeUndefined()
+    expect(wc.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:landing', { landing: true, path: '/workspace/c/new' })
+    const seat = { x: 200, y: 64, width: 620, height: 500 }
+    f.host.present(f.owner, { ...presentation, visible: false, bounds: seat })
+    view.setVisible.mockClear()
+    wc.executeJavaScriptInIsolatedWorld.mockClear()
+    wc.executeJavaScriptInIsolatedWorld.mockResolvedValueOnce({
+      title: { x: 200, y: 50, width: 220, height: 32 },
+      composer: { x: 10, y: 140, width: 600, height: 140 },
+      model: { label: '  DeepSeek   V3  ', width: 108 },
+      sendOpacity: 0.4
+    })
+    expect(await f.host.landingGeometry({ ...f.owner })).toBeUndefined()
+    expect(await f.host.landingGeometry(f.owner)).toEqual({
+      title: { x: 400, y: 114, width: 220, height: 32 },
+      composer: { x: 210, y: 204, width: 600, height: 140 },
+      seat,
+      model: { label: 'DeepSeek V3', width: 108 },
+      sendOpacity: 0.4
+    })
+    expect(view.setBounds).toHaveBeenLastCalledWith({ x: 250, y: 80, width: 775, height: 625 })
+    expect(view.getVisible()).toBe(false)
+    expect(view.setVisible).not.toHaveBeenCalled()
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenCalledOnce()
+    expect(wc.capturePage).not.toHaveBeenCalled()
+  } finally { f.host.dispose() }
+})
+
+const LANDING_HANDOFF_FRAME_REQUEST = 'requestAnimationFrame(() => requestAnimationFrame('
+
+it('places the native Chat seat before showing it and waits two renderer frames on a landing handoff', async () => {
+  const f = fixture()
+  try {
+    const url = 'https://enterprise.example/workspace/c/new?embed=dsh'
+    fake.loadLanding = url
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    expect(view.setBackgroundColor.mock.invocationCallOrder.at(-1)).toBeLessThan(view.setVisible.mock.invocationCallOrder.at(-1))
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:landing', { landing: true, path: '/workspace/c/new' })
+    f.host.present(f.owner, { ...presentation, visible: false })
+    const frames: Array<() => void> = []
+    wc.executeJavaScriptInIsolatedWorld.mockImplementation((_world: number, [script]: Array<{ code: string }>) => {
+      const code = script?.code
+      if (!code?.includes(LANDING_HANDOFF_FRAME_REQUEST)) return Promise.resolve()
+      expect(view.getVisible()).toBe(true)
+      return Function('location', 'requestAnimationFrame', `return ${code}`)({ href: url }, (callback: () => void) => frames.push(callback))
+    })
+    const bounds = { x: 80, y: 60, width: 900, height: 600 }
+    const finish = vi.fn()
+    const handoff = f.host.presentWithLandingHandoff(f.owner, { ...presentation, bounds, landingHandoff: true }).then(finish)
+    expect(view.getBounds()).toEqual(bounds)
+    expect(view.setBounds.mock.invocationCallOrder.at(-1)).toBeLessThan(view.setVisible.mock.invocationCallOrder.at(-1))
+    expect(frames).toHaveLength(1)
+    frames.shift()?.()
+    await flush()
+    expect(finish).not.toHaveBeenCalled()
+    expect(frames).toHaveLength(1)
+    frames.shift()?.()
+    await handoff
+    expect(finish).toHaveBeenCalledWith(expect.objectContaining({ phase: 'ready', landing: true }))
+  } finally { f.host.dispose() }
+})
+
+it('skips the landing wait for ordinary, hidden, unconfirmed, or navigated presentations', async () => {
+  const f = fixture()
+  try {
+    fake.loadLanding = 'https://enterprise.example/workspace/c/new?embed=dsh'
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    await f.host.presentWithLandingHandoff(f.owner, { ...presentation, landingHandoff: true })
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:landing', { landing: true, path: '/workspace/c/new' })
+    await f.host.presentWithLandingHandoff(f.owner, presentation)
+    await f.host.presentWithLandingHandoff(f.owner, { ...presentation, visible: false, landingHandoff: true })
+    wc.setURL('https://enterprise.example/workspace/c/another')
+    await f.host.presentWithLandingHandoff(f.owner, { ...presentation, landingHandoff: true })
+    expect(wc.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalledWith(1001, [{ code: expect.stringContaining(LANDING_HANDOFF_FRAME_REQUEST) }])
+  } finally { f.host.dispose() }
+})
+
+it('releases Work if the native landing renderer stops scheduling frames', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  try {
+    fake.loadLanding = 'https://enterprise.example/workspace/c/new?embed=dsh'
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:landing', { landing: true, path: '/workspace/c/new' })
+    f.host.present(f.owner, { ...presentation, visible: false })
+    wc.executeJavaScriptInIsolatedWorld.mockImplementation((_world: number, [script]: Array<{ code: string }>) =>
+      script?.code.includes(LANDING_HANDOFF_FRAME_REQUEST) ? new Promise(() => {}) : Promise.resolve())
+    const finish = vi.fn()
+    const handoff = f.host.presentWithLandingHandoff(f.owner, { ...presentation, landingHandoff: true }).then(finish)
+    await elapse(119)
+    expect(finish).not.toHaveBeenCalled()
+    await elapse(1)
+    await handoff
+    expect(finish).toHaveBeenCalledWith(expect.objectContaining({ phase: 'ready', landing: true }))
+    expect(view.getVisible()).toBe(true)
+  } finally { f.host.dispose(); vi.useRealTimers() }
+})
+
+it('prepares Chat text only in the owned landing view, without changing native visibility', async () => {
+  const f = fixture()
+  try {
+    fake.loadLanding = 'https://enterprise.example/workspace/c/new?embed=dsh'
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    await expect(f.host.landingTextMotion(f.owner, 'invalid')).rejects.toThrow('Invalid Chat landing text motion.')
+    await f.host.landingTextMotion(f.owner, 'out')
+    expect(wc.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:landing', { landing: true, path: '/workspace/c/new' })
+    wc.executeJavaScriptInIsolatedWorld.mockClear()
+    view.setVisible.mockClear()
+    await f.host.landingTextMotion({ ...f.owner }, 'out')
+    await f.host.landingTextMotion(f.owner, 'in')
+    expect(wc.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+    await f.host.landingTextMotion(f.owner, 'out')
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenCalledOnce()
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenCalledWith(1001, [{ code: expect.stringContaining(fake.loadLanding) }])
+    expect(view.setVisible).not.toHaveBeenCalled()
+
+    f.host.present(f.owner, { ...presentation, visible: false })
+    wc.executeJavaScriptInIsolatedWorld.mockClear()
+    view.setVisible.mockClear()
+    await f.host.landingTextMotion(f.owner, 'out')
+    expect(wc.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+    await f.host.landingTextMotion(f.owner, 'in')
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenCalledOnce()
+    expect(view.getVisible()).toBe(false)
+    expect(view.setVisible).not.toHaveBeenCalled()
+    wc.setURL('https://enterprise.example/workspace/c/another')
+    await f.host.landingTextMotion(f.owner, 'in')
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenCalledOnce()
+  } finally { f.host.dispose() }
+})
+
+it('holds outgoing Chat text for the handoff, restores it on interruption, and primes incoming text before reveal', async () => {
+  const url = 'https://enterprise.example/workspace/c/new?embed=dsh'
+  const cancel = vi.fn()
+  const animate = vi.fn((_frames: Keyframe[], _options: KeyframeAnimationOptions) => ({
+    cancel, ready: Promise.resolve(), finished: new Promise<void>(() => {})
+  }))
+  const query = vi.fn(() => ({ animate }))
+  const timer = vi.fn((done: () => void) => done())
+  const scope = {}
+  const run = (phase: 'out' | 'in', revision: number, pathname = '/workspace/c/new', reduce = false): unknown => {
+    const code = chatLandingTextMotionScript(url, phase, revision, Date.now() + 10_000)
+    return Function('window', 'document', 'location', 'matchMedia', 'setTimeout', `return ${code}`)(
+      scope, { querySelector: query }, { href: url, pathname }, () => ({ matches: reduce }), timer
+    )
+  }
+  expect(run('out', 1, '/workspace/c/another')).toBeUndefined()
+  expect(run('out', 2, '/workspace/c/new', true)).toBeUndefined()
+  expect(query).not.toHaveBeenCalled()
+  await run('out', 3)
+  expect(query).toHaveBeenLastCalledWith('.dsh-chat-surface .dsh-chat-landing .dsh-chat-composer .dsh-composer-writing')
+  expect(timer).toHaveBeenCalledOnce()
+  const outgoing = animate.mock.calls[0]
+  expect(outgoing?.[0].map(frame => frame.opacity)).toEqual([1, 0, 0, 1])
+  expect(outgoing?.[1].fill).toBeUndefined()
+  expect(run('in', 4)).toBeUndefined()
+  expect(cancel).toHaveBeenCalledOnce()
+  expect(animate).toHaveBeenLastCalledWith([{ opacity: 0 }, { opacity: 1 }], expect.objectContaining({ fill: 'backwards', delay: expect.any(Number) }))
+  expect(run('out', 3)).toBeUndefined()
+  expect(animate).toHaveBeenCalledTimes(2)
+})
+
+it.each(['logout', 'navigation', 'resize', 'malformed geometry'])('discards a blank Chat measurement invalidated by %s', async change => {
+  const f = fixture()
+  try {
+    fake.loadLanding = 'https://enterprise.example/workspace/c/new?embed=dsh'
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:landing', { landing: true, path: '/workspace/c/new' })
+    let finish: (value: unknown) => void = () => {}
+    wc.executeJavaScriptInIsolatedWorld.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const result = f.host.landingGeometry(f.owner)
+    if (change === 'logout') f.change({ connected: false, connectionKey: 'tenant-a' })
+    if (change === 'navigation') wc.setURL('https://enterprise.example/workspace/c/another')
+    if (change === 'resize') f.host.present(f.owner, { ...presentation, bounds: { ...presentation.bounds, width: 800 } })
+    finish({
+      title: { x: 200, y: 50, width: 220, height: 32 },
+      composer: { x: 10, y: 140, width: change === 'malformed geometry' ? 2_000 : 600, height: 140 }
+    })
+    expect(await result).toBeUndefined()
+  } finally { f.host.dispose() }
+})
+
+it.each(['logout', 'navigate', 'resize'])('discards native overlay captures invalidated by %s', async change => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation); await flush()
+    const view = fake.views[0]
+    let finish: (value: unknown) => void = () => {}
+    view.webContents.capturePage.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const frame = f.host.capture(f.owner)
+    if (change === 'logout') f.change({ connected: false, connectionKey: 'tenant-a' })
+    if (change === 'navigate') await view.webContents.loadURL('https://enterprise.example/workspace/knowledge')
+    if (change === 'resize') f.host.present(f.owner, { ...presentation, bounds: { ...presentation.bounds, width: 800 } })
+    finish({ isEmpty: () => false, toDataURL: () => 'stale' })
+    expect(await frame).toBeUndefined()
   } finally { f.host.dispose() }
 })
 
@@ -1087,7 +1580,9 @@ describe('cloud conversation deletion', () => {
       const epoch = f.host.snapshot().epoch
       fake.sessions[0].fetch.mockResolvedValueOnce(new Response(JSON.stringify({ status_code: 200 })))
       expect(await f.host.remove('cloud-a', epoch)).toEqual({ epoch })
-      expect(fake.sessions[0].fetch).toHaveBeenLastCalledWith('https://enterprise.example/api/v1/chat/cloud-a', expect.objectContaining({ method: 'DELETE', redirect: 'error', signal: expect.any(AbortSignal) }))
+      expect(fake.sessions[0].fetch).toHaveBeenCalledWith('https://enterprise.example/api/v1/chat/cloud-a', expect.objectContaining({ method: 'DELETE', redirect: 'error', signal: expect.any(AbortSignal) }))
+      // With no push channel, the committed delete is followed by a project snapshot re-read.
+      await vi.waitFor(() => expect(fake.sessions[0].fetch).toHaveBeenLastCalledWith('https://enterprise.example/api/v1/chat/projects/snapshot', expect.anything()))
       expect(fake.views[0].webContents.loadURL).toHaveBeenLastCalledWith('https://enterprise.example/workspace/c/new?embed=dsh&dshTheme=dark')
       await expect(f.host.open('cloud-a')).rejects.toThrow('current Chat history')
       // A lagging/in-flight list response cannot restore a deleted row or its grant.
@@ -1163,6 +1658,182 @@ describe('cloud conversation deletion', () => {
       await expect(f.host.remove('cloud-a', f.host.snapshot().epoch)).resolves.toBeDefined()
       expect(f.host.snapshot().phase).toBe('ready')
       expect(fake.views[0].webContents.close).not.toHaveBeenCalled()
+    } finally { f.host.dispose() }
+  })
+})
+
+// Rename uses BiSheng's own conversation rename endpoint under the history grant deletion uses.
+describe('cloud conversation rename', () => {
+  it('posts the trimmed name for a listed conversation and tells the open document', async () => {
+    const f = fixture()
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      await f.host.history(1)
+      await f.host.open('cloud-a')
+      const epoch = f.host.snapshot().epoch
+      const fetch = fake.sessions[0].fetch
+      fetch.mockResolvedValueOnce(new Response(JSON.stringify({ status_code: 200 })))
+      await expect(f.host.rename('cloud-a', '  季度复盘  ', epoch)).resolves.toEqual({ epoch })
+      const [url, init] = fetch.mock.lastCall
+      expect(url).toBe('https://enterprise.example/api/v1/chat/conversation/rename')
+      expect(init).toMatchObject({ method: 'POST', redirect: 'error', headers: { 'content-type': 'application/json' }, signal: expect.any(AbortSignal) })
+      expect(JSON.parse(init.body)).toEqual({ conversationId: 'cloud-a', name: '季度复盘' })
+      expect(fake.views[0].webContents.send).toHaveBeenCalledWith('enterprise-chat:conversation-renamed', { conversationId: 'cloud-a' })
+      // Unlike deletion, rename keeps the open document and the conversation's navigation grant.
+      expect(fake.views[0].webContents.loadURL).not.toHaveBeenLastCalledWith(expect.stringContaining('/workspace/c/new'))
+      await expect(f.host.open('cloud-a')).resolves.toBeUndefined()
+    } finally { f.host.dispose() }
+  })
+
+  // The sidebar also offers rename on project pages and search results, which come from this read.
+  it.each([
+    ['a project page', { project_id: '11111111-1111-4111-8111-111111111111' }],
+    ['a search result', { query: 'Older' }]
+  ])('renames a conversation listed only by %s', async (_label, page) => {
+    const f = fixture()
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      const json = (data: unknown) => new Response(JSON.stringify({ status_code: 200, data }), { headers: { 'content-type': 'application/json' } })
+      const fetch = fake.sessions[0].fetch
+      fetch.mockImplementation(async (url: string) => url.includes('/api/v1/chat/projects/snapshot')
+        ? json({ identity: { user_id: 7, tenant_id: 2 }, projects: [{ id: '11111111-1111-4111-8111-111111111111', name: 'Research' }], memberships: [{ chat_id: 'cloud-p', project_id: '11111111-1111-4111-8111-111111111111' }] })
+        : url.includes('/api/v1/chat/projects/conversations')
+          ? json({ data: [{ chat_id: 'cloud-p', name: 'Older', flow_type: 15, update_time: '2026-10-01T00:00:00' }], total: 1, next_cursor: null })
+          : new Response(JSON.stringify({ status_code: 200 })))
+      const epoch = f.host.snapshot().epoch
+      await expect(f.host.rename('cloud-p', 'Renamed', epoch)).rejects.toThrow('current Chat history')
+      expect((await f.host.projectConversations(page, epoch)).items.map(item => item.id)).toEqual(['cloud-p'])
+      await expect(f.host.rename('cloud-p', 'Renamed', epoch)).resolves.toEqual({ epoch })
+      const [url, init] = fetch.mock.lastCall
+      expect(url).toBe('https://enterprise.example/api/v1/chat/conversation/rename')
+      expect(JSON.parse(init.body)).toEqual({ conversationId: 'cloud-p', name: 'Renamed' })
+    } finally { f.host.dispose() }
+  })
+
+  it.each([
+    ['a stale identity', 'cloud-a', 'Name', -1],
+    ['an unlisted conversation', 'unknown', 'Name', undefined],
+    ['a forged identity', '../cloud-a', 'Name', undefined],
+    ['an empty name', 'cloud-a', '   ', undefined],
+    ['a non-string name', 'cloud-a', 42, undefined],
+    ['a control character', 'cloud-a', 'line\nbreak', undefined],
+    ['a name beyond the column', 'cloud-a', '名'.repeat(256), undefined]
+  ])('rejects %s before calling the server', async (_label, id, name, staleEpoch) => {
+    const f = fixture()
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      await f.host.history(1)
+      const fetch = fake.sessions[0].fetch
+      fetch.mockClear()
+      await expect(f.host.rename(id, name, staleEpoch ?? f.host.snapshot().epoch)).rejects.toThrow()
+      expect(fetch).toHaveBeenCalledTimes(0)
+      expect(fake.views[0].webContents.send).not.toHaveBeenCalledWith('enterprise-chat:conversation-renamed', expect.anything())
+    } finally { f.host.dispose() }
+  })
+
+  it('accepts a name at the column limit counted in characters', async () => {
+    const f = fixture()
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      await f.host.history(1)
+      fake.sessions[0].fetch.mockResolvedValueOnce(new Response(JSON.stringify({ status_code: 200 })))
+      const name = '😀'.repeat(255)
+      await f.host.rename('cloud-a', name, f.host.snapshot().epoch)
+      expect(JSON.parse(fake.sessions[0].fetch.mock.lastCall[1].body).name).toBe(name)
+    } finally { f.host.dispose() }
+  })
+
+  it.each([new Response('', { status: 403 }), new Response(JSON.stringify({ status_code: 500 })), new Response('invalid')])('reports a failed rename without notifying the document', async response => {
+    const f = fixture()
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      await f.host.history(1)
+      const epoch = f.host.snapshot().epoch
+      fake.sessions[0].fetch.mockResolvedValueOnce(response)
+      await expect(f.host.rename('cloud-a', 'Name', epoch)).rejects.toThrow()
+      expect(fake.views[0].webContents.send).not.toHaveBeenCalledWith('enterprise-chat:conversation-renamed', expect.anything())
+      fake.sessions[0].fetch.mockResolvedValueOnce(new Response(JSON.stringify({ status_code: 200 })))
+      await expect(f.host.rename('cloud-a', 'Name', epoch)).resolves.toEqual({ epoch })
+    } finally { f.host.dispose() }
+  })
+
+  it('discards a rename response after logout', async () => {
+    const f = fixture()
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      await f.host.history(1)
+      let finish: (response: Response) => void = () => {}
+      fake.sessions[0].fetch.mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve }))
+      const pending = f.host.rename('cloud-a', 'Name', f.host.snapshot().epoch)
+      const rejected = expect(pending).rejects.toThrow('identity changed')
+      f.change({ connected: false, connectionKey: 'tenant-a' })
+      finish(new Response(JSON.stringify({ status_code: 200 })))
+      await rejected
+    } finally { f.host.dispose() }
+  })
+})
+
+// The enterprise document reports which conversations it is still generating.
+describe('cloud conversation activity', () => {
+  async function ready() {
+    const f = fixture()
+    f.host.present(f.owner, presentation)
+    await flush()
+    const wc = fake.views[0].webContents
+    await wc.loadURL('https://enterprise.example/workspace/c/cloud-a')
+    const report = (input: unknown, frame: unknown = wc.mainFrame) => wc.emit('ipc-message', { senderFrame: frame }, 'enterprise-chat:running', input)
+    return { f, wc, report }
+  }
+
+  it('publishes a sorted, unique list from the current main frame', async () => {
+    const { f, report } = await ready()
+    try {
+      expect(f.host.snapshot().running).toBeUndefined()
+      report({ ids: ['cloud-b', 'cloud-a', 'cloud-b'], path: '/workspace/c/cloud-a' })
+      expect(f.host.snapshot().running).toEqual(['cloud-a', 'cloud-b'])
+      expect(f.owner.webContents.send).toHaveBeenLastCalledWith('enterprise-chat:changed', expect.objectContaining({ running: ['cloud-a', 'cloud-b'] }))
+      const sends = f.owner.webContents.send.mock.calls.length
+      report({ ids: ['cloud-a', 'cloud-b'], path: '/workspace/c/cloud-a' })
+      expect(f.owner.webContents.send.mock.calls.length).toBe(sends)
+      report({ ids: [], path: '/workspace/c/cloud-a' })
+      expect(f.host.snapshot().running).toBeUndefined()
+    } finally { f.host.dispose() }
+  })
+
+  // Only the subframe case leaves the main frame, so every other case reaches the path and list checks.
+  it.each([
+    ['a subframe', { ids: ['cloud-x'], path: '/workspace/c/cloud-a' }, 'subframe'],
+    ['another path', { ids: ['cloud-x'], path: '/workspace/c/other' }, 'main'],
+    ['a forged identity', { ids: ['../cloud-x'], path: '/workspace/c/cloud-a' }, 'main'],
+    ['a non-array', { ids: 'cloud-x', path: '/workspace/c/cloud-a' }, 'main'],
+    ['an oversized list', { ids: Array.from({ length: 101 }, (_, i) => `cloud-${i}`), path: '/workspace/c/cloud-a' }, 'main']
+  ])('ignores a report from %s and keeps the previous list', async (_label, input, sender) => {
+    const { f, wc, report } = await ready()
+    try {
+      report({ ids: ['cloud-a'], path: '/workspace/c/cloud-a' })
+      report(input, sender === 'main' ? wc.mainFrame : {})
+      expect(f.host.snapshot().running).toEqual(['cloud-a'])
+    } finally { f.host.dispose() }
+  })
+
+  it('clears activity when the document is replaced or the account signs out', async () => {
+    const { f, wc, report } = await ready()
+    try {
+      report({ ids: ['cloud-a'], path: '/workspace/c/cloud-a' })
+      wc.emit('did-start-navigation', {}, wc.getURL(), true, true)
+      expect(f.host.snapshot().running).toEqual(['cloud-a'])
+      wc.emit('did-start-navigation', {}, wc.getURL(), false, true)
+      expect(f.host.snapshot().running).toBeUndefined()
+      expect(f.owner.webContents.send).toHaveBeenLastCalledWith('enterprise-chat:changed', expect.not.objectContaining({ running: expect.anything() }))
+      report({ ids: ['cloud-a'], path: '/workspace/c/cloud-a' })
+      f.change({ connected: false, connectionKey: 'tenant-a' })
+      expect(f.host.snapshot().running).toBeUndefined()
     } finally { f.host.dispose() }
   })
 })

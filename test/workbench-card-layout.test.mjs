@@ -21,9 +21,9 @@ async function mountCard({ state = 'normal', language = 'zh', listed = true, ori
   dom.window.__ModuleLoader__ = { load({ factory }) {
     client = factory(name => name === 'react' ? React : name === 'react-dom' ? { createPortal } : name === '@deepseek-ai/cordis' ? { Service: { tracker: Symbol('tracker') } } : { Switch: () => null, Toast: () => null })
   } }
-  vm.runInNewContext(code, { window: dom.window, document: dom.window.document, setTimeout, clearTimeout, AbortController })
+  vm.runInNewContext(code.replace('return { apply, inject:', 'return { createCopy, cloudCardCopy, apply, inject:'), { window: dom.window, document: dom.window.document, setTimeout, clearTimeout, AbortController })
   const locale = { active: language }
-  const ctx = { fiber: { entry: { options: { name: 'helper' } } }, locale: { getSnapshot: () => locale, subscribe: () => () => {} } }
+  const ctx = { fiber: { entry: { options: { name: 'helper' } } }, locale: { getSnapshot: () => locale, subscribe: () => () => {}, bind: ns => key => (ns.endsWith('.create') ? client.createCopy : client.cloudCardCopy)[language][key] } }
   const service = new client.Workbenches(ctx, request)
   service.remoteCatalog = listed ? [{ id: 'owner/helper', owner: 'owner', repository: 'helper', name: 'Helper', url: 'https://github.com/owner/helper', category: 'other', categoryName: 'Other', version: state === 'normal' ? '1.0.0' : '1.1.0', distribution: { type: 'npm', name: 'helper', version: '1.1.0' }, description: { zh: 'Description '.repeat(40), en: 'Description '.repeat(40) }, screenshots: [], metrics: { githubStars: { value: 7 }, npmDownloads30d: { value: 12 } } }] : []
   const installed = state !== 'install-failure'

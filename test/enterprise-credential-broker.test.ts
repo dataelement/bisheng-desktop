@@ -67,6 +67,34 @@ async function brokerFetch(
 }
 
 describe('restricted enterprise credential broker', () => {
+  it('rejects cloud launch before requesting or returning a launch ticket', async () => {
+    const { service, broker } = await createRuntime()
+    const cloudRequest = vi.spyOn(service, 'cloudRequest').mockResolvedValue({ ticket: 'synthetic-launch-ticket' })
+    const response = await brokerFetch(broker, '/v1/cloud', {
+      method: 'POST',
+      body: JSON.stringify({ operation: 'launch', appId: 'a'.repeat(32) })
+    })
+
+    expect(response.status).toBe(403)
+    expect(await response.json()).toEqual({ error: 'Use the native cloud workbench view.' })
+    expect(cloudRequest).not.toHaveBeenCalled()
+  })
+
+  it('forwards permitted cloud operations through the credential broker', async () => {
+    const { service, broker } = await createRuntime()
+    const result = { items: [], next_cursor: null }
+    const cloudRequest = vi.spyOn(service, 'cloudRequest').mockResolvedValue(result)
+    const input = { operation: 'list' }
+    const response = await brokerFetch(broker, '/v1/cloud', {
+      method: 'POST',
+      body: JSON.stringify(input)
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual(result)
+    expect(cloudRequest).toHaveBeenCalledExactlyOnceWith(input)
+  })
+
   it('serializes a coded chat rejection as status and errorCode', async () => {
     const { service, broker } = await createRuntime()
     vi.spyOn(service, 'proxyChat').mockRejectedValue(Object.assign(
@@ -103,6 +131,23 @@ describe('restricted enterprise credential broker', () => {
     expect((await brokerFetch(broker, path, { method: 'POST', body: JSON.stringify(body), headers: { origin: 'https://evil.example' } })).status).toBe(403)
     expect((await brokerFetch(broker, path, { method: 'POST', body: JSON.stringify({ padding: 'x'.repeat(8192) }) })).status).toBe(413)
     expect(title).toHaveBeenCalledTimes(1)
+  })
+
+  it('accepts a message rating within its own body limit', async () => {
+    const { service, broker } = await createRuntime()
+    const feedback = vi.spyOn(service, 'reportAuditFeedback').mockResolvedValue({ status: 'UPDATED', event_seq: 12 })
+    const body = {
+      connectionKey: 'test',
+      auditFeedbackEpoch: 1,
+      update: { conversation_id: 'e2e-feedback', message_id: 'msg-1', event_seq: 12, op: 'put', rating: 'negative' }
+    }
+    const path = '/v1/audit/message-feedback'
+    const response = await brokerFetch(broker, path, { method: 'POST', body: JSON.stringify(body) })
+    expect(await response.json()).toEqual({ status: 'UPDATED', event_seq: 12 })
+    expect(feedback).toHaveBeenCalledWith(body, expect.any(AbortSignal))
+    expect((await brokerFetch(broker, path, { method: 'POST', body: JSON.stringify(body), headers: { origin: 'https://evil.example' } })).status).toBe(403)
+    expect((await brokerFetch(broker, path, { method: 'POST', body: JSON.stringify({ padding: 'x'.repeat(16384) }) })).status).toBe(413)
+    expect(feedback).toHaveBeenCalledTimes(1)
   })
   it('rejects browser, host, and non-JSON requests and never returns CORS or tokens', async () => {
     const { broker } = await createRuntime()

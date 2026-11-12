@@ -87,7 +87,7 @@ window.__ModuleLoader__.load({
       const failure = failed || state.settingsFailure || state.phase === 'error'
       const supported = state.settingsProtocolVersion === 1
       const ready = supported && state.settingsSection === section && state.settingsReady
-      return h('div', { ref: target, className: 'dshSettingsRemote', tabIndex: ready ? 0 : -1, role: 'group', 'aria-label': t('openContent'), onFocus: () => { if (ready) void window.dshEnterpriseChat.focusSettings().catch(() => { if (alive.current) setFailed(true) }) }, 'aria-busy': state.connected && supported && !ready && !failure },
+      return h('div', { ref: target, className: 'dshSettingsRemote', 'data-dsh-native-surface': section, tabIndex: ready ? 0 : -1, role: 'group', 'aria-label': t('openContent'), onFocus: () => { if (ready) void window.dshEnterpriseChat.focusSettings().catch(() => { if (alive.current) setFailed(true) }) }, 'aria-busy': state.connected && supported && !ready && !failure },
         !state.connected ? h('div', { className: 'dshSettingsStatus' },
           h('p', null, t('signIn')), h('p', { className: 'dshSettingsHint' }, t('localHint')),
           h('button', { type: 'button', onClick: openAccount }, t('openAccount')))
@@ -435,7 +435,7 @@ window.__ModuleLoader__.load({
       }
       const badge = pending > 0 ? h(AccountBadge, { count: pending }) : null
       const triggerLabel = `${t('accountMenu')}: ${label}${pending > 0 ? ` · ${t('approvalsPending')} ${pending}` : ''}`
-      // The sidebar menu does not cover the native Chat view or own its presentation.
+      // The shared native-surface coordinator handles any overlap with embedded content.
       return h('div', { className: 'dshAccountLauncher', 'data-dsh-account-launcher': '' },
         h(Menu, { open: menuOpen, onClose: () => { if (!busy) setMenuOpen(false) }, side: 'top', align: 'start', portal: true, autoFocus: true, className: 'dshAccountMenuAnchor', listClassName: `dshAccountMenu${wide ? ' dshAccountMenuWide' : ''}`,
           anchor: h('button', { ref: trigger, type: 'button', className: `dshAccountTrigger${wide ? '' : ' dshAccountTriggerRail'}`, 'aria-label': triggerLabel, title: wide ? undefined : label, 'aria-haspopup': 'menu', 'aria-expanded': menuOpen, disabled: settingsOpen || busy, onClick: () => { setMenuOpen(previous => !previous); setActionError(false); void identity.refresh() } },

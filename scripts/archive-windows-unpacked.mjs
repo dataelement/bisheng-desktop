@@ -20,6 +20,20 @@ export async function archiveWindowsUnpacked(
   }
   if (!sourceInfo.isDirectory()) throw new Error(`Windows unpacked source is not a directory: ${sourcePath}`)
 
+  const updateConfig = path.join(sourcePath, 'resources', 'app-update.yml')
+  let updateInfo
+  try {
+    updateInfo = await stat(updateConfig)
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      throw new Error(`Windows unpacked application is missing resources/app-update.yml: ${updateConfig}`, { cause: error })
+    }
+    throw error
+  }
+  if (!updateInfo.isFile() || updateInfo.size === 0) {
+    throw new Error(`Windows unpacked application is missing resources/app-update.yml: ${updateConfig}`)
+  }
+
   await mkdir(path.dirname(archivePath), { recursive: true })
   await rm(archivePath, { force: true })
   await createTar({

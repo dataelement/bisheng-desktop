@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { normalizeEnterpriseServerUrl } from './deep-link.js'
 export { normalizeAuditContext } from './audit-context.js'
 export { parseAuditTitleUpdate } from './audit-title.js'
+export { parseAuditFeedbackUpdate } from './audit-feedback.js'
 
 export const CONTRACT_VERSION = '0.5.0'
 export const CLIENT_ID = 'dsh-desktop'
@@ -24,6 +25,7 @@ export const API_PATHS = Object.freeze({
   chat: '/api/v1/dsh/chat/completions',
   responses: '/api/v1/dsh/responses',
   auditTitle: '/api/v1/dsh/audit/conversations/title',
+  auditFeedback: '/api/v1/dsh/audit/message-feedback',
   usage: '/api/v1/dsh/usage'
 })
 
@@ -123,7 +125,9 @@ export function parseConfig(value) {
   return { enabled: true, client_id: CLIENT_ID, contract_version: contractVersion,
     ...(fields.length ? { audit_context: { fields } } : {}),
     ...(isObject(value.audit_conversation_title) && value.audit_conversation_title.version === 1
-      ? { audit_conversation_title: { version: 1 } } : {}) }
+      ? { audit_conversation_title: { version: 1 } } : {}),
+    ...(isObject(value.audit_message_feedback) && value.audit_message_feedback.version === 1
+      ? { audit_message_feedback: { version: 1 } } : {}) }
 }
 
 export function parseAuthorization(value, base) {
