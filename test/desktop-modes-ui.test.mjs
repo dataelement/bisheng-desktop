@@ -598,8 +598,9 @@ async function mountLandingMorph({ footer = false, textMotion = false } = {}) {
   const recordMotion = (name, frames) => {
     const { promise: finished, resolve, reject } = Promise.withResolvers()
     const cancel = vi.fn(() => reject(new DOMException('Animation cancelled', 'AbortError')))
-    motions.push({ name, frames, resolve, cancel })
-    return { finished, cancel }
+    const pause = vi.fn(), play = vi.fn()
+    motions.push({ name, frames, resolve, cancel, pause, play })
+    return { finished, cancel, pause, play }
   }
   for (const [name, element] of Object.entries(elements)) {
     element.getBoundingClientRect = () => rects[name]
@@ -644,6 +645,53 @@ async function mountLandingMorph({ footer = false, textMotion = false } = {}) {
   await ui.cloudLanding(true)
   return { ui, bridge, workPanel, chatPanel, elements, motions }
 }
+
+it('keeps the hidden Work landing laid out and paints frame zero before hiding Chat', async () => {
+  const { ui, bridge, workPanel, chatPanel, motions } = await mountLandingMorph({ footer: true })
+  const draft = ui.draft()
+  expect(workPanel.parentElement).toBe(chatPanel.parentElement)
+  expect(workPanel.hidden).toBe(true)
+  expect(workPanel.hasAttribute('inert')).toBe(true)
+  expect(getComputedStyle(workPanel).display).toBe('grid')
+  expect(getComputedStyle(workPanel).visibility).toBe('hidden')
+
+  const frames = []
+  vi.stubGlobal('requestAnimationFrame', callback => frames.push(callback))
+  const hide = Promise.withResolvers()
+  bridge.present.mockClear().mockImplementation(({ visible }) => visible ? Promise.resolve() : hide.promise)
+  await ui.click('work')
+  expect(motions.length).toBeGreaterThan(0)
+  expect(motions.every(motion => motion.pause.mock.calls.length === 1 && !motion.play.mock.calls.length)).toBe(true)
+  expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
+  await act(async () => frames.shift()(0))
+  expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
+  await act(async () => frames.shift()(16))
+  expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
+  expect(motions.every(motion => !motion.play.mock.calls.length)).toBe(true)
+  await act(async () => hide.resolve())
+  expect(motions.every(motion => motion.play.mock.calls.length === 1)).toBe(true)
+  await act(async () => motions.forEach(motion => motion.resolve()))
+  expect(workPanel.hasAttribute('inert')).toBe(false)
+  expect(ui.draft()).toBe(draft)
+  expect(draft.value).toContain('third line')
+})
+
+it('paints the Work landing before hiding Chat even when the composer cannot morph', async () => {
+  const { ui, bridge, elements, workPanel, motions } = await mountLandingMorph()
+  elements.card.getBoundingClientRect = () => new DOMRect(340, 0, 600, 172)
+  const frames = []
+  vi.stubGlobal('requestAnimationFrame', callback => frames.push(callback))
+  bridge.present.mockClear()
+
+  await ui.click('work')
+  expect(motions).toHaveLength(0)
+  expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
+  await act(async () => frames.shift()(0))
+  expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
+  await act(async () => frames.shift()(16))
+  expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
+  expect(workPanel.hasAttribute('inert')).toBe(false)
+})
 
 it('fades the current editor text before the native handoff and introduces the destination text after it starts', async () => {
   const { ui, bridge, chatPanel, elements, motions } = await mountLandingMorph({ textMotion: true })
@@ -717,7 +765,7 @@ it('morphs the same Work card and title in both directions while revealing and c
   expect(workPanel.hidden).toBe(false)
   expect(chatPanel.hidden).toBe(true)
   await act(async () => motions.slice(3).forEach(motion => motion.resolve()))
-  expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
+  expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true, landingHandoff: true }))
   expect(placeholder()).not.toBeNull()
   expect(workPanel.hidden).toBe(false)
   await act(async () => reveal.resolve())

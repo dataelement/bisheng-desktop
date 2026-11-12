@@ -31,7 +31,47 @@ try {
     import * as primitives from 'fixture-primitives'
     const dictionaries = new Map(), slots = new Map(), disposers = []
     let language = 'zh'
-    window.fixture = { setLanguage(value) { language = value; render() } }
+    window.fixture = {
+      setLanguage(value) { language = value; render() },
+      previewContrast() {
+        const content = document.querySelector('[data-dsh-chat-history-preview]')
+        const root = document.documentElement
+        const darkTheme = document.body.getAttribute('data-ds-dark-theme')
+        const platform = root.getAttribute('data-platform')
+        const restore = (element, name, value) => value === null ? element.removeAttribute(name) : element.setAttribute(name, value)
+        const canvas = document.createElement('canvas')
+        const pixels = canvas.getContext('2d', { willReadFrequently: true })
+        const luminance = () => {
+          const [r, g, b] = Array.from(pixels.getImageData(0, 0, 1, 1).data.slice(0, 3), value => {
+            const channel = value / 255
+            return channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4
+          })
+          return .2126 * r + .7152 * g + .0722 * b
+        }
+        const contrast = text => {
+          pixels.clearRect(0, 0, 1, 1)
+          pixels.fillStyle = getComputedStyle(content.parentElement).backgroundColor
+          pixels.fillRect(0, 0, 1, 1)
+          const background = luminance()
+          pixels.fillStyle = getComputedStyle(text).color
+          pixels.fillRect(0, 0, 1, 1)
+          const foreground = luminance()
+          return (Math.max(background, foreground) + .05) / (Math.min(background, foreground) + .05)
+        }
+        try {
+          return [null, 'darwin'].flatMap(marker => {
+            restore(root, 'data-platform', marker)
+            return [false, true].map(dark => {
+              document.body.toggleAttribute('data-ds-dark-theme', dark)
+              return { marker, dark, title: contrast(content.firstElementChild), time: contrast(content.querySelector('time')) }
+            })
+          })
+        } finally {
+          restore(root, 'data-platform', platform)
+          restore(document.body, 'data-ds-dark-theme', darkTheme)
+        }
+      }
+    }
     window.__ModuleLoader__ = {load({factory}) {
       const plugin = factory(name => name === 'react' ? React : primitives)
       plugin.apply({
@@ -64,7 +104,8 @@ try {
       resolveDir: dirname(primitivePath)
     }))
   } }] })
-  await writeFile(join(dir, 'index.html'), `<!doctype html><html data-platform="darwin"><meta charset="UTF-8"><link rel="stylesheet" href="renderer.css"><style>
+  const platformMarker = process.platform === 'darwin' ? ' data-platform="darwin"' : ''
+  await writeFile(join(dir, 'index.html'), `<!doctype html><html${platformMarker}><meta charset="UTF-8"><link rel="stylesheet" href="renderer.css"><style>
     ${themeCss}
     body{margin:0;font:14px var(--dsw-font-family);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary)}#root{display:grid;grid-template-columns:260px 1fr;height:100vh}aside{padding:12px}
     </style><div id="root"></div><script src="renderer.js"></script></html>`)
@@ -114,7 +155,7 @@ try {
               // Client-generated id: a retried create returns the existing project.
               if(!projects.some(project=>project.id===action.project_id)) projects.unshift({id:action.project_id,name:action.name})
               outcome.project_id=action.project_id
-              if(action.chat_id) memberships[action.chat_id]=project.id
+              if(action.chat_id) memberships[action.chat_id]=action.project_id
             } else if(action.operation==='rename') projects=projects.map(project=>project.id===action.project_id?{...project,name:action.name}:project)
             else if(action.operation==='delete') {
               projects=projects.filter(project=>project.id!==action.project_id)
@@ -192,6 +233,10 @@ try {
         const preview='[data-dsh-chat-history-preview]'
         await wait(()=>shown(preview))
         assert.ok((await run('document.querySelector("[data-dsh-chat-history-preview]").textContent')).includes(longTitle))
+        const previewContrast=await run('fixture.previewContrast()')
+        for(const colors of previewContrast) {
+          assert.ok(colors.title>=4.5&&colors.time>=4.5,'Preview title and time have readable contrast: '+JSON.stringify(colors))
+        }
         const initialView=owner.contentView.children.find(child=>child.webContents?.getURL().includes('/workspace'))
         assert.equal(initialView.getVisible(),false,'Native Chat yields to the overlapping preview')
         assert.equal(await run('Boolean(document.querySelector("[data-dsh-native-frame]"))'),true,'The native content remains visible as backing under the preview')
@@ -333,6 +378,7 @@ try {
         assert.equal(await run('fixture.navigation.projects.snapshot().assignments["project-created"]'),undefined,'Navigation alone cannot create membership')
         rows.push({chat_id:'project-created',name:'Old project conversation',flow_type:15,flow_id:'',update_time:'2020-01-01'})
         await webAction({operation:'assign',chat_id:'project-created',project_id:projectId})
+        await focusAgain()
         await wait(()=>run('Object.keys(fixture.navigation.projects.snapshot().assignments).includes("project-created")'))
         assert.equal(await run('fixture.navigation.projects.snapshot().assignments["project-created"]'),projectId,'New conversation belongs to its originating project')
         await wait(()=>run('document.querySelector("[data-chat-project]").textContent.includes("Old project conversation")'))
@@ -349,13 +395,17 @@ try {
         await wait(()=>run('document.querySelector("[data-chat-project]").textContent.includes("Recovered after disconnect")'))
         await webAction({operation:'assign',chat_id:'project-created',project_id:null})
         rows.pop()
+        await focusAgain()
         await wait(()=>run('document.querySelectorAll(".dshCloudHistoryActions").length===4'))
         let cases=0
         for(const language of ['zh','en']) for(const dark of [false,true]) {
           owner.webContents.setZoomFactor(dark ? 1.25 : 1)
           await run('fixture.setLanguage('+JSON.stringify(language)+');document.body.toggleAttribute("data-ds-dark-theme",'+dark+')')
           await click('[data-history-kind=chat]')
-          await wait(()=>host.snapshot().conversationId==='cloud-'+cases)
+          await wait(()=>{
+            const state=host.snapshot()
+            return state.conversationId==='cloud-'+cases&&state.phase==='ready'
+          })
           const view=owner.contentView.children.find(child=>child.webContents?.getURL().includes('/workspace'))
           assert.ok(view.getVisible(),'Native chat is visible before confirmation')
           await click('.dshCloudHistoryActions')
@@ -382,13 +432,16 @@ try {
           await wait(()=>view.getVisible())
           cases++
         }
-        const result={cases,projectCases:4,projectPersistence:true,serverMembership:true,bidirectionalSync:true,focusRefresh:true,olderProjectHistory:true,syncLatencyMs,deleted:deleted.size,attempts:[...attempts.values()],platform:process.platform,electron:process.versions.electron,scope:'production UI primitives, project/history controllers, native Chat view and authenticated loopback fixture; no production deployment'}
+        const result={cases,projectCases:4,previewContrast,projectPersistence:true,serverMembership:true,bidirectionalSync:true,focusRefresh:true,olderProjectHistory:true,syncLatencyMs,deleted:deleted.size,attempts:[...attempts.values()],platform:process.platform,electron:process.versions.electron,scope:'production UI primitives, project/history controllers, native Chat view and authenticated loopback fixture; no production deployment'}
         if(${JSON.stringify(output || '')}) {await mkdir(${JSON.stringify(output || '')},{recursive:true});await writeFile(${JSON.stringify(join(output || dir,'result.json'))},JSON.stringify(result,null,2));await writeFile(${JSON.stringify(join(output || dir,'completed.png'))},(await owner.webContents.capturePage()).toPNG())}
         console.log(JSON.stringify(result))
       } finally {host.dispose();owner.destroy();server.closeAllConnections();await new Promise(resolve=>server.close(resolve))}
       app.exit(0)
     }).catch(error=>{console.error(error);app.exit(1)})
-  ` }, bundle: true, platform: 'node', format: 'esm', external: ['electron'], outfile: entry })
+  ` }, bundle: true, platform: 'node', format: 'esm', external: ['electron'], outfile: entry,
+    // The update-card dependency brings in CommonJS packages that require Node builtins.
+    banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" }
+  })
   const env = { ...process.env }
   if (output) { await mkdir(output, {recursive:true}); await copyFile(entry, join(output,'main-source.mjs')) }
   delete env.ELECTRON_RUN_AS_NODE

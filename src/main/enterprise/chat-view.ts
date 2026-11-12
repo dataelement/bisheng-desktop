@@ -20,6 +20,7 @@ import { raiseUpdateCardViewIfShown } from '../update/update-card-view'
 /** Remote Chat gets its own in-memory browser session and a presentation-only preload. */
 const DOCUMENT_LOAD_TIMEOUT_MS = 45_000
 const LANDING_GEOMETRY_TIMEOUT_MS = 120
+const LANDING_HANDOFF_TIMEOUT_MS = 120
 const LANDING_TEXT_MOTION_TIMEOUT_MS = 155
 const INITIAL_BACKOFF_MS = [2_000, 5_000, 10_000]
 const RENEWAL_BACKOFF_MS = [2_000, 5_000, 10_000, 30_000]
@@ -173,6 +174,35 @@ export class EnterpriseChatView {
     this.layout()
     if (this.presentation.visible && this.state.phase !== 'error' && this.enterprise.snapshot().connected && !this.view) void this.connect()
     if (this.view) void this.syncSettings()
+    return this.snapshot()
+  }
+
+  /** The host keeps Work painted until the newly shown Chat renderer has had a frame. */
+  async presentWithLandingHandoff(window: BrowserWindow, input: unknown): Promise<EnterpriseChatViewState> {
+    const state = this.present(window, input)
+    const view = this.view, epoch = this.generation
+    const ready = () => this.owner === window && !window.isDestroyed() && !window.webContents.isDestroyed() &&
+      view && this.view === view && epoch === this.generation && !view.webContents.isDestroyed() && view.getVisible() &&
+      this.presentation?.visible && this.state.phase === 'ready' && this.landing === true && this.landingPath === '/workspace/c/new' &&
+      !this.modalOpen && !this.settingsSection && !this.presentation.settings
+    if (!view || this.presentation?.landingHandoff !== true || !ready()) return state
+    const url = view.webContents.getURL(), page = new URL(url || 'about:blank')
+    const { width, height } = view.getBounds()
+    if (page.origin !== this.origin || page.pathname !== '/workspace/c/new' || width <= 0 || height <= 0) return state
+    const frame = view.webContents.mainFrame
+    const code = `(() => {
+      if (location.href !== ${JSON.stringify(url)}) return;
+      return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    })()`
+    try {
+      // The first callback runs before paint. A second one lets Chromium commit that frame.
+      await loadWithin(view.webContents.executeJavaScriptInIsolatedWorld(CHAT_WELCOME_WORLD, [{ code }]), LANDING_HANDOFF_TIMEOUT_MS)
+    } catch {
+      // A hidden or replaced renderer can stop scheduling frames. Never hold the outgoing Work frame indefinitely.
+      if (ready() && frame === view.webContents.mainFrame && url === view.webContents.getURL()) {
+        this.note('[enterprise-chat] landing_handoff_unavailable')
+      }
+    }
     return this.snapshot()
   }
 
@@ -553,7 +583,7 @@ export class EnterpriseChatView {
     const surfaceReady = this.presentation.settings ? this.settingsSection === this.presentation.settings && this.isSettingsReady() : !onSettingsPath
     const shown = visible && this.state.phase === 'ready' && surfaceReady
     if (!shown || this.presentation.settings) this.discardDialogBacking()
-    if (this.view.getVisible() !== shown) this.view.setVisible(shown)
+    if (!shown && this.view.getVisible()) this.view.setVisible(false)
     this.syncWelcomeCases(shown && !this.presentation.settings)
     // Settings hides the view while changing locale; its navigation labels still need updates.
     if (this.state.phase === 'ready') this.applyLocale()
@@ -593,6 +623,8 @@ export class EnterpriseChatView {
     const backing = this.state.phase === 'ready' && !this.presentation.settings ? '#00000000' : background
     if (this.viewBackground !== backing) { this.view.setBackgroundColor(backing); this.viewBackground = backing }
     if (this.state.phase === 'ready') this.applyTheme()
+    // A newly visible native view can otherwise composite with its previous bounds or backing.
+    if (shown && !this.view.getVisible()) this.view.setVisible(true)
   }
 
   /** Theme reaches the document on every presentation, load and in-page route change. */

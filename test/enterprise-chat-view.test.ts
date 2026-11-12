@@ -192,6 +192,14 @@ describe('enterprise Chat host boundary', () => {
     }
   })
 
+  it('accepts only an explicit true landing handoff flag', () => {
+    expect(parseChatPresentation(presentation)).not.toHaveProperty('landingHandoff')
+    expect(parseChatPresentation({ ...presentation, landingHandoff: true }).landingHandoff).toBe(true)
+    for (const landingHandoff of [false, 'true', null, 1, {}]) {
+      expect(() => parseChatPresentation({ ...presentation, landingHandoff })).toThrow('landing handoff')
+    }
+  })
+
   it('validates the ingress cookie name and supports the existing server default', () => {
     const body = { cookie: 'a'.repeat(40), expires_in: 300 }
     expect(parseWebSession(body, 'https://enterprise.example', 'a').cookieName).toBe('access_token_cookie')
@@ -879,6 +887,82 @@ it('measures only a confirmed blank Chat, updating a hidden seat without showing
     expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenCalledOnce()
     expect(wc.capturePage).not.toHaveBeenCalled()
   } finally { f.host.dispose() }
+})
+
+const LANDING_HANDOFF_FRAME_REQUEST = 'requestAnimationFrame(() => requestAnimationFrame('
+
+it('places the native Chat seat before showing it and waits two renderer frames on a landing handoff', async () => {
+  const f = fixture()
+  try {
+    const url = 'https://enterprise.example/workspace/c/new?embed=dsh'
+    fake.loadLanding = url
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    expect(view.setBackgroundColor.mock.invocationCallOrder.at(-1)).toBeLessThan(view.setVisible.mock.invocationCallOrder.at(-1))
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:landing', { landing: true, path: '/workspace/c/new' })
+    f.host.present(f.owner, { ...presentation, visible: false })
+    const frames: Array<() => void> = []
+    wc.executeJavaScriptInIsolatedWorld.mockImplementation((_world: number, [script]: Array<{ code: string }>) => {
+      const code = script?.code
+      if (!code?.includes(LANDING_HANDOFF_FRAME_REQUEST)) return Promise.resolve()
+      expect(view.getVisible()).toBe(true)
+      return Function('location', 'requestAnimationFrame', `return ${code}`)({ href: url }, (callback: () => void) => frames.push(callback))
+    })
+    const bounds = { x: 80, y: 60, width: 900, height: 600 }
+    const finish = vi.fn()
+    const handoff = f.host.presentWithLandingHandoff(f.owner, { ...presentation, bounds, landingHandoff: true }).then(finish)
+    expect(view.getBounds()).toEqual(bounds)
+    expect(view.setBounds.mock.invocationCallOrder.at(-1)).toBeLessThan(view.setVisible.mock.invocationCallOrder.at(-1))
+    expect(frames).toHaveLength(1)
+    frames.shift()?.()
+    await flush()
+    expect(finish).not.toHaveBeenCalled()
+    expect(frames).toHaveLength(1)
+    frames.shift()?.()
+    await handoff
+    expect(finish).toHaveBeenCalledWith(expect.objectContaining({ phase: 'ready', landing: true }))
+  } finally { f.host.dispose() }
+})
+
+it('skips the landing wait for ordinary, hidden, unconfirmed, or navigated presentations', async () => {
+  const f = fixture()
+  try {
+    fake.loadLanding = 'https://enterprise.example/workspace/c/new?embed=dsh'
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    await f.host.presentWithLandingHandoff(f.owner, { ...presentation, landingHandoff: true })
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:landing', { landing: true, path: '/workspace/c/new' })
+    await f.host.presentWithLandingHandoff(f.owner, presentation)
+    await f.host.presentWithLandingHandoff(f.owner, { ...presentation, visible: false, landingHandoff: true })
+    wc.setURL('https://enterprise.example/workspace/c/another')
+    await f.host.presentWithLandingHandoff(f.owner, { ...presentation, landingHandoff: true })
+    expect(wc.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalledWith(1001, [{ code: expect.stringContaining(LANDING_HANDOFF_FRAME_REQUEST) }])
+  } finally { f.host.dispose() }
+})
+
+it('releases Work if the native landing renderer stops scheduling frames', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  try {
+    fake.loadLanding = 'https://enterprise.example/workspace/c/new?embed=dsh'
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:landing', { landing: true, path: '/workspace/c/new' })
+    f.host.present(f.owner, { ...presentation, visible: false })
+    wc.executeJavaScriptInIsolatedWorld.mockImplementation((_world: number, [script]: Array<{ code: string }>) =>
+      script?.code.includes(LANDING_HANDOFF_FRAME_REQUEST) ? new Promise(() => {}) : Promise.resolve())
+    const finish = vi.fn()
+    const handoff = f.host.presentWithLandingHandoff(f.owner, { ...presentation, landingHandoff: true }).then(finish)
+    await elapse(119)
+    expect(finish).not.toHaveBeenCalled()
+    await elapse(1)
+    await handoff
+    expect(finish).toHaveBeenCalledWith(expect.objectContaining({ phase: 'ready', landing: true }))
+    expect(view.getVisible()).toBe(true)
+  } finally { f.host.dispose(); vi.useRealTimers() }
 })
 
 it('prepares Chat text only in the owned landing view, without changing native visibility', async () => {
