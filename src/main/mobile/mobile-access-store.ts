@@ -64,7 +64,9 @@ export function writeMobileAccessRecord(path: string, record: MobileAccessRecord
   try {
     mkdirSync(dirname(path), { recursive: true })
     writeFileSync(temporary, `${JSON.stringify(document, undefined, 2)}\n`, { mode: 0o600 })
-    if (existsSync(path)) unlinkSync(path)
+    // Node rename replaces an existing file on the same filesystem. Keep the
+    // old identity in place until that atomic replacement succeeds; in particular,
+    // Windows sharing/permission failures must not discard the recoverable copy.
     renameSync(temporary, path)
     return true
   } catch {

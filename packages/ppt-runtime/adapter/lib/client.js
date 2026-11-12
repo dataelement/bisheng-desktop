@@ -229,7 +229,7 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 				this.notify(STAGED_MODE_KEY);
 			}
 			/** Read a selection made outside this composer, such as from the phone. */
-			readRemote(sessionId, client, force = false) {
+			readRemote(sessionId, client, force = false, timeoutMessage = en["templates.loadTimeout"]) {
 				this.inflight ??= /* @__PURE__ */ new Map();
 				this.adopted ??= /* @__PURE__ */ new Set();
 				this.remoteEpoch ??= /* @__PURE__ */ new Map();
@@ -247,7 +247,8 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 					this.remoteReady.delete(sessionId);
 					this.remoteEpoch.set(sessionId, epoch);
 				}
-				const work = client.call("state").then((next) => {
+				// Reuse the bounded loader so a stalled hydration releases singleflight and can retry.
+				const work = loadTemplateState(client, timeoutMessage).then((next) => {
 					if ((this.remoteEpoch.get(sessionId) ?? 0) !== epoch || this.revision(sessionId) !== seenRevision) return "stale";
 					this.setTemplateState(sessionId, next);
 					this.remoteReady.add(sessionId);
@@ -265,7 +266,7 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 				this.remoteInflight.set(sessionId, work);
 				return work;
 			}
-			adopt(sessionId, client) {
+			adopt(sessionId, client, timeoutMessage = en["templates.loadTimeout"]) {
 				this.inflight ??= /* @__PURE__ */ new Map();
 				this.adopted ??= /* @__PURE__ */ new Set();
 				if (!client?.bound || typeof sessionId !== "string" || sessionId.trim().length === 0) return Promise.resolve("idle");
@@ -273,7 +274,7 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 				if (pending) return pending;
 				if (this.adopted.has(sessionId)) return Promise.resolve("done");
 				const staged = this.states.get(STAGED_MODE_KEY);
-				if (!staged?.engaged) return this.readRemote(sessionId, client);
+				if (!staged?.engaged) return this.readRemote(sessionId, client, false, timeoutMessage);
 				const work = this.applyStaged(sessionId, client, staged).finally(() => {
 					if (this.inflight.get(sessionId) === work) this.inflight.delete(sessionId);
 				});
@@ -751,7 +752,7 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 				if (leading !== true || !client?.bound) return;
 				const request = { client, sessionId };
 				let active = true;
-				void mode.adopt(sessionId, client).then((result) => {
+				void mode.adopt(sessionId, client, t("templates.loadTimeout")).then((result) => {
 					if (!active) return;
 					if ((result === "applied" || result === "partial") && mode.snapshot(sessionId).activeMode === "ppt") announcePptMode(sessionId);
 					const current = mode.snapshot(sessionId);
@@ -1137,13 +1138,13 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
             (0, react.useEffect)(() => {
                 if (!props.client?.bound) return;
                 let active = true;
-                props.mode.adopt(props.sessionId, props.client).then(result => {
+                props.mode.adopt(props.sessionId, props.client, props.t("templates.loadTimeout")).then(result => {
                     if (active && ['applied', 'partial'].includes(result) && props.mode.snapshot(props.sessionId).activeMode === 'ppt') announcePptMode(props.sessionId, 'ppt');
                 }).catch(reason => {
                     if (active) props.mode.setError(props.sessionId, reason instanceof Error ? reason.message : String(reason));
                 });
                 return () => { active = false; };
-            }, [props.client, props.mode, props.sessionId]);
+            }, [props.client, props.mode, props.sessionId, props.t]);
             return (0, react_jsx_runtime.jsxs)(react.Fragment, { children: [
                 (0, react_jsx_runtime.jsx)(OfficePptChooser, { ...props, placement: "trigger" }),
                 state.error && state.activeMode === null ? (0, react_jsx_runtime.jsx)("span", { role: "alert", children: state.error }) : null,

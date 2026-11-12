@@ -3586,6 +3586,7 @@ async function bootstrap(): Promise<void> {
   if (!startInSafeMode) void mobileBridge.start().catch(showUnexpectedError)
   mobileAccess = startMobileAccessClient({
     account: () => enterpriseDesktop?.readMobileAccessAccount() ?? {},
+    subscribeAccount: listener => enterpriseDesktop?.subscribeMobileAccessAccount(listener) ?? (() => {}),
     bridge: {
       port: () => mobileBridge.listeningPort(),
       channelToken: () => mobileBridge.remoteChannelToken()

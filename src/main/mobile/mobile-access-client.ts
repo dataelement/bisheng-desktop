@@ -35,9 +35,12 @@ interface AccessSocket {
 interface Connection {
   key: string
   account: MobileAccessAccount
+  record: MobileAccessRecord
   controller: AbortController
   socket?: AccessSocket
   heart?: ReturnType<typeof setInterval>
+  bindTask?: Promise<Response>
+  cleanupTask?: Promise<void>
 }
 
 const OPEN = 1
@@ -45,6 +48,8 @@ const OPERATION_TIMEOUT_MS = 10_000
 
 export function startMobileAccessClient(options: {
   account(): MobileAccessAccount
+  /** Main-process credential handoff; never exposed to a renderer or mobile peer. */
+  subscribeAccount?: (listener: (account: MobileAccessAccount) => void) => () => void
   bridge: MobileAccessBridge
   store: MobileAccessStore
   displayName(): string | undefined
@@ -57,9 +62,13 @@ export function startMobileAccessClient(options: {
   let current: Connection | undefined
   let observedKey = ''
   // A disconnected/failed attach can still leave a successful server-side bind.
-  let boundAccount: MobileAccessAccount | undefined
+  let bound: Connection | undefined
   let retryAt = 0
   let missingPathNoted = false
+  // Only the same account/device must wait: another account can connect independently.
+  const cleanups = new Map<string, Promise<void>>()
+  // Retired connections still own cleanup credentials until their mutations settle.
+  const pendingCleanupConnections = new Set<Connection>()
 
   const owns = (connection: Connection) => !stopped && current === connection &&
     !connection.controller.signal.aborted && mobileAccessAccountKey(options.account()) === connection.key
@@ -81,7 +90,7 @@ export function startMobileAccessClient(options: {
     const stored = options.store.load()
     const next = ensureMobileAccessIdentity(stored)
     if (next.desktopId !== stored.desktopId || next.attachSecret !== stored.attachSecret) {
-      options.store.save(next)
+      if (!options.store.save(next)) throw new Error('Mobile access identity could not be stored.')
     }
     return next
   }
@@ -89,19 +98,54 @@ export function startMobileAccessClient(options: {
   const unbind = async (account: MobileAccessAccount, record: MobileAccessRecord) => {
     if (!account.base || !account.accessToken || !record.desktopId) return
     const controller = new AbortController()
+    // Keep the same-device barrier until the transport actually settles. A
+    // timeout alone cannot prove a server has stopped processing this mutation.
+    const timer = setTimeout(() => controller.abort(), OPERATION_TIMEOUT_MS)
+    timer.unref?.()
     try {
-      await bounded(controller, () => fetchImpl(new URL(MOBILE_UNBIND_PATH, account.base), {
+      const response = await fetchImpl(new URL(MOBILE_UNBIND_PATH, account.base), {
         method: 'POST',
+        redirect: 'error',
         signal: controller.signal,
         headers: {
           authorization: `Bearer ${account.accessToken}`,
           'content-type': 'application/json'
         },
         body: JSON.stringify({ desktopId: record.desktopId })
-      }))
+      })
+      if (!response.ok) options.note?.(`[mobile-access] unbind_rejected status=${response.status}`)
     } catch {
       options.note?.('[mobile-access] unbind_failed')
+    } finally {
+      clearTimeout(timer)
     }
+  }
+
+  const cleanupKey = (account: MobileAccessAccount, record: MobileAccessRecord) =>
+    `${mobileAccessAccountKey(account)}\n${record.desktopId ?? ''}`
+
+  const queueUnbind = (binding: Connection) => {
+    if (binding.cleanupTask) return binding.cleanupTask
+    const key = cleanupKey(binding.account, binding.record)
+    const previous = cleanups.get(key)
+    const work = (previous ?? Promise.resolve()).then(async () => {
+      // Abort only cancels our wait, not a server-side mutation. Join the actual
+      // bind result before cleanup so late success cannot recreate a removed row.
+      if (binding.bindTask) {
+        try { await binding.bindTask } catch {
+          // A failed/aborted bind may still have reached the server; unbind anyway.
+        }
+      }
+      await unbind(binding.account, binding.record)
+    })
+    binding.cleanupTask = work
+    pendingCleanupConnections.add(binding)
+    cleanups.set(key, work)
+    void work.finally(() => {
+      pendingCleanupConnections.delete(binding)
+      if (cleanups.get(key) === work) cleanups.delete(key)
+    })
+    return work
   }
 
   const send = (connection: Connection, frame: Record<string, unknown>) => {
@@ -136,6 +180,7 @@ export function startMobileAccessClient(options: {
       const fetching = fetchImpl(`http://127.0.0.1:${port}${path}`, {
         method,
         headers,
+        redirect: 'error',
         signal: connection.controller.signal,
         ...(body !== undefined ? { body } : {})
       }).then((response) => {
@@ -183,20 +228,33 @@ export function startMobileAccessClient(options: {
     let stage = 'bind'
     const displayName = record.displayName || options.displayName()
     try {
-      const response = await bounded(connection.controller, () => fetchImpl(new URL(MOBILE_BIND_PATH, connection.account.base), {
-        method: 'POST',
-        signal: connection.controller.signal,
-        headers: {
-          authorization: `Bearer ${connection.account.accessToken}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          desktopId: record.desktopId,
-          attachSecret: record.attachSecret,
-          ...(displayName ? { displayName } : {})
-        })
-      }))
+      // A delayed logout must finish before reusing its stable desktop ID.
+      const cleanup = cleanups.get(cleanupKey(connection.account, record))
+      if (cleanup) await untilAborted(connection.controller.signal, cleanup)
       if (!owns(connection)) return
+      const response = await bounded(connection.controller, () => {
+        const task = fetchImpl(new URL(MOBILE_BIND_PATH, connection.account.base), {
+          method: 'POST',
+          // The body contains the persistent attach secret; never forward it to a redirect target.
+          redirect: 'error',
+          signal: connection.controller.signal,
+          headers: {
+            authorization: `Bearer ${connection.account.accessToken}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            desktopId: record.desktopId,
+            attachSecret: record.attachSecret,
+            ...(displayName ? { displayName } : {})
+          })
+        })
+        connection.bindTask = task
+        return task
+      })
+      if (!owns(connection)) {
+        void queueUnbind(connection)
+        return
+      }
       if (response.status === 404 || response.status === 501) {
         if (!missingPathNoted) options.note?.(`[mobile-access] bind_unavailable status=${response.status}`)
         missingPathNoted = true
@@ -209,7 +267,7 @@ export function startMobileAccessClient(options: {
         fail(connection, 20_000)
         return
       }
-      boundAccount = connection.account
+      bound = connection
       stage = 'attach'
       const url = new URL(MOBILE_ATTACH_PATH, connection.account.base)
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -231,7 +289,19 @@ export function startMobileAccessClient(options: {
       if (current !== connection || stopped || mobileAccessAccountKey(options.account()) !== connection.key) return
       options.note?.(`[mobile-access] ${stage}_failed`)
       retire()
+      if (connection.bindTask) void queueUnbind(connection)
       retryAt = Date.now() + 20_000
+    }
+  }
+
+  const updateCredentials = (account: MobileAccessAccount) => {
+    const key = mobileAccessAccountKey(account)
+    if (!key) return
+    const connections = new Set(pendingCleanupConnections)
+    if (current) connections.add(current)
+    if (bound) connections.add(bound)
+    for (const connection of connections) {
+      if (connection.key === key) connection.account = { ...account }
     }
   }
 
@@ -241,24 +311,42 @@ export function startMobileAccessClient(options: {
     const key = mobileAccessAccountKey(account)
     if (key !== observedKey) {
       const previous = retire()
-      const previousAccount = boundAccount ?? previous?.account
-      boundAccount = undefined
+      const previousBound = bound
+      bound = undefined
       observedKey = key
       retryAt = 0
       missingPathNoted = false
-      // Unbind must not block the next identity's bind/attach.
-      if (previousAccount) void unbind(previousAccount, options.store.load())
+      // Queue by account/device; unrelated identities need not wait for remote cleanup.
+      if (previousBound) void queueUnbind(previousBound)
+      if (previous && previous !== previousBound) void queueUnbind(previous)
     }
+    // Token refresh does not change ownership, but cleanup must use fresh credentials.
+    updateCredentials(account)
     if (!key || Date.now() < retryAt) return
     if (current) {
       if (!current.socket || current.socket.readyState === OPEN) return
       retire()
     }
-    const connection: Connection = { key, account, controller: new AbortController() }
+    let record: MobileAccessRecord
+    try {
+      record = identity()
+    } catch {
+      // Do not create a server-side binding that cannot be recovered after restart.
+      options.note?.('[mobile-access] identity_store_failed')
+      retryAt = Date.now() + 20_000
+      return
+    }
+    const connection: Connection = { key, account, record, controller: new AbortController() }
     current = connection
-    void connect(connection, identity())
+    void connect(connection, record)
   }
 
+  // The retiring credential arrives before the getter becomes signed out.
+  // Ownership checks still use the authoritative getter, never this event alone.
+  const unsubscribe = options.subscribeAccount?.(account => {
+    updateCredentials(account)
+    sync()
+  })
   sync()
   const watch = setInterval(sync, 2_000)
   watch.unref?.()
@@ -268,10 +356,22 @@ export function startMobileAccessClient(options: {
       if (stopped) return
       stopped = true
       clearInterval(watch)
+      unsubscribe?.()
+      // stop() can run before the watcher observes the latest token refresh.
+      const account = { ...options.account() }
+      updateCredentials(account)
       const previous = retire()
-      const previousAccount = boundAccount ?? previous?.account
-      boundAccount = undefined
-      if (previousAccount) await unbind(previousAccount, options.store.load())
+      const previousBound = bound
+      bound = undefined
+      if (previousBound) void queueUnbind(previousBound)
+      if (previous && previous !== previousBound) void queueUnbind(previous)
+      const controller = new AbortController()
+      try {
+        await bounded(controller, () => Promise.all(cleanups.values()))
+      } catch {
+        // Shutdown stays bounded even for a transport that ignores cancellation.
+        options.note?.('[mobile-access] cleanup_wait_timeout')
+      }
     }
   }
 

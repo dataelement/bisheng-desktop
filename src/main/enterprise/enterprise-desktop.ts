@@ -1,4 +1,5 @@
 import type { CloudAuthorize } from './cloud-workbench'
+import type { MobileAccessAccount } from '../mobile/mobile-access-protocol'
 import type { EnterpriseWebSession } from './web-session'
 import { join } from 'node:path'
 import { parseThirdPartyPolicy } from 'dsh-desktop-enterprise/contract'
@@ -18,12 +19,8 @@ import {
 export interface EnterpriseDesktopRuntime {
   cloudRequest(input: unknown): Promise<unknown>
   snapshot(): EnterprisePublicState
-  readMobileAccessAccount(): {
-    base?: string
-    accessToken?: string
-    userId?: string
-    tenantId?: string
-  }
+  readMobileAccessAccount(): MobileAccessAccount
+  subscribeMobileAccessAccount(listener: (account: MobileAccessAccount) => void): () => void
   webSession(connectionKey: string): Promise<EnterpriseWebSession>
   subscribe(listener: (state: EnterprisePublicState) => void): () => void
   readThirdPartyPolicy(): Promise<{ allowThirdPartyPlugins: boolean, allowThirdPartyWorkbenches: boolean }>
@@ -89,6 +86,7 @@ export async function startEnterpriseDesktop(options: {
     cloudRequest: input => service.cloudRequest(input),
     snapshot: () => service.snapshot(),
     readMobileAccessAccount: () => service.readMobileAccessAccount(),
+    subscribeMobileAccessAccount: listener => service.subscribeMobileAccessAccount(listener),
     webSession: (key) => service.webSession(key),
     subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener) } },
     async readThirdPartyPolicy() {

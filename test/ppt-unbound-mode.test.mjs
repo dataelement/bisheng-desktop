@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const adapter = await readFile(path.resolve('packages/ppt-runtime/adapter/lib/client.js'), 'utf8')
 const core = await readFile(path.resolve('packages/ppt-runtime/core/lib/client.js'), 'utf8')
@@ -21,7 +21,17 @@ function normalizedStoreSource(source) {
     )
 }
 
-const stores = [adapter, core].map(source => new Function(`${slice(source, 'const STAGED_MODE_KEY', 'function useMode')}\nreturn OfficePptHeroStore;`)())
+// Run the actual store with its production loader, including the browser timer boundary.
+const stores = [adapter, core].map(source => new Function('window', 'en', `
+  ${slice(source, 'const TEMPLATE_LOAD_TIMEOUT_MS', 'const FALLBACK_TEMPLATE_PREVIEW_PAGE_COUNT')}
+  ${slice(source, 'const STAGED_MODE_KEY', 'function useMode')}
+  ${slice(source, 'function loadTemplateState', 'function deselectTemplate')}
+  return OfficePptHeroStore;
+`)({ setTimeout: (...args) => setTimeout(...args), clearTimeout: timer => clearTimeout(timer) }, {
+  'templates.loadTimeout': 'Template loading timed out. Try again.'
+}))
+
+afterEach(() => vi.useRealTimers())
 const [Store] = stores
 
 function deferred() {
@@ -353,6 +363,47 @@ describe.each(stores.map((Store, index) => [index === 0 ? 'adapter' : 'core', St
     presentationMode: 'ppt',
     selectedTemplateId: 'remote-a'
   }
+
+  it('times out a stalled hydration, surfaces the error and permits a fresh adoption', async () => {
+    vi.useFakeTimers()
+    const mode = new Store()
+    const held = deferred()
+    const signals = []
+    const rpc = {
+      bound: true,
+      call(endpoint, payload, signal) {
+        expect(endpoint).toBe('state')
+        expect(payload).toEqual({})
+        signals.push(signal)
+        return signals.length === 1 ? held.promise : Promise.resolve(remote)
+      }
+    }
+    const initial = mode.adopt('session-a', rpc, '模板加载超时，请重试')
+    expect(mode.adopt('session-a', rpc)).toBe(initial)
+    expect(signals[0]).toBeInstanceOf(AbortSignal)
+    await vi.advanceTimersByTimeAsync(7_999)
+    expect(mode.inflight.get('session-a')).toBe(initial)
+    expect(signals[0].aborted).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(initial).resolves.toBe('failed')
+    expect(signals[0].aborted).toBe(true)
+    expect(mode.snapshot('session-a').error).toBe('模板加载超时，请重试')
+    expect(mode.inflight.has('session-a')).toBe(false)
+    expect(mode.remoteInflight.has('session-a')).toBe(false)
+    expect(mode.adopted.has('session-a')).toBe(false)
+    expect(mode.remoteReady.has('session-a')).toBe(false)
+
+    await expect(mode.adopt('session-a', rpc)).resolves.toBe('applied')
+    expect(signals).toHaveLength(2)
+    expect(mode.snapshot('session-a').selectedId).toBe('remote-a')
+    expect(mode.snapshot('session-a').error).toBe('')
+    // A transport ignoring abort must not replace the successful retry with stale data.
+    held.resolve({ ...remote, selectedTemplateId: 'local-b' })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(mode.snapshot('session-a').selectedId).toBe('remote-a')
+    expect(vi.getTimerCount()).toBe(0)
+  })
 
   it.each(['select', 'mode', 'deselect'])('ignores late success after a local %s and permits recovery', async action => {
     const mode = new Store()
