@@ -4,6 +4,8 @@ export interface EnterpriseChatPresentation {
   theme: 'light' | 'dark'
   locale?: 'zh' | 'en'
   settings?: EnterpriseSettingsSection
+  /** Keep the outgoing Work frame while the native landing gets a chance to paint. */
+  landingHandoff?: true
   /** Host surfaces and ink resolved from the active Harness theme; absent when they cannot be sampled. */
   palette?: EnterprisePalette
 }
@@ -108,6 +110,9 @@ export function parseChatPresentation(value: unknown): EnterpriseChatPresentatio
   if (input.locale !== undefined && input.locale !== 'zh' && input.locale !== 'en') {
     throw new Error('Invalid Chat locale.')
   }
+  if (input.landingHandoff !== undefined && input.landingHandoff !== true) {
+    throw new Error('Invalid Chat landing handoff.')
+  }
   const settings = input.settings === undefined ? undefined : parseEnterpriseSettingsSection(input.settings)
   const palette = parseEnterprisePalette(input.palette)
   const bounds = input.bounds as Record<string, unknown> | undefined
@@ -119,6 +124,7 @@ export function parseChatPresentation(value: unknown): EnterpriseChatPresentatio
     theme: input.theme as 'light' | 'dark',
     locale: input.locale,
     settings,
+    ...(input.landingHandoff ? { landingHandoff: true } : {}),
     ...(palette ? { palette } : {}),
     bounds: { x: Number(bounds.x), y: Number(bounds.y), width: Number(bounds.width), height: Number(bounds.height) }
   }

@@ -1508,9 +1508,24 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
     const LANDING_MORPH_EASING = 'cubic-bezier(.25,.65,.35,1)'
     const CHAT_TEXT_PREPARE_LEAD = 40
     const landingMotionAllowed = () => !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    const hasWorkLanding = state => state.nativeWork && state.workLanding && !state.panelOpen
     const hasSharedLanding = state => state.connected && state.phase === 'ready' && state.landing === true &&
-      state.conversationId === 'new' && !state.pageId && state.nativeWork && state.workLanding && !state.panelOpen &&
+      state.conversationId === 'new' && !state.pageId && hasWorkLanding(state) &&
       !state.settingsOpen && !state.approvalsOpen && !state.accountDialogOpen
+
+    function afterWorkFirstFrame(callback) {
+      let first, second, timeout, pending = true
+      const cancel = () => {
+        pending = false
+        if (first !== undefined) cancelAnimationFrame(first)
+        if (second !== undefined) cancelAnimationFrame(second)
+        clearTimeout(timeout)
+      }
+      const finish = () => { if (pending) { cancel(); callback() } }
+      first = requestAnimationFrame(() => { if (pending) second = requestAnimationFrame(finish) })
+      timeout = setTimeout(finish, 120)
+      return cancel
+    }
 
     function animateLandingFooter(card, chat, animate, restore) {
       // The native composer owns the toolbar. Its model slot and add trigger are stable
@@ -1617,7 +1632,14 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
         }
         const cases = hero.querySelector('.dso-dock-root')
         if (cases) animate(cases, { opacity: 0 }, { opacity: 1 })
-        return { finished: Promise.all(animations.map(animation => animation.finished)), dispose }
+        if (fromChat) {
+          // Lay out frame zero beneath the native Chat view before that view is hidden.
+          for (const animation of animations) { animation.pause(); animation.currentTime = 0 }
+        }
+        return {
+          finished: Promise.all(animations.map(animation => animation.finished)), dispose,
+          play() { for (const animation of animations) animation.play() }
+        }
       } catch {
         // A partial setup may be canceled before the combined completion has a consumer.
         for (const animation of animations) void animation.finished.catch(() => {})
@@ -1650,6 +1672,7 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
       const surfacePresenter = React.useRef(null)
       const presentSurface = React.useRef(null)
       const revealMorph = React.useRef(null)
+      const yieldedWorkMorph = React.useRef(null)
       const modeIntent = React.useRef(0)
       const [animateWork, setAnimateWork] = React.useState(false)
       const tabs = React.useRef({})
@@ -1664,7 +1687,7 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
         }
         const animation = animateWorkLanding(workPanel.current, morph)
         const bridge = window.dshEnterpriseChat
-        let stopped = false, finishing = false, handoffTimeout, prepareTimer, incomingText
+        let stopped = false, finishing = false, handoffTimeout, prepareTimer, incomingText, animationTimeout, cancelPaint
         const release = () => { if (!stopped) navigation.finishLandingMorph(morph) }
         const prepareIncoming = () => {
           if (!incomingText && !stopped && landingMotionAllowed()) {
@@ -1679,7 +1702,7 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
           // Retain the last Work frame until the separate native Chat view is shown.
           revealMorph.current = morph
           handoffTimeout = setTimeout(release, 150)
-          void Promise.resolve(presentSurface.current?.()).then(release, release)
+          void Promise.resolve(presentSurface.current?.(true)).then(release, release)
         }
         const finish = () => {
           if (stopped || finishing) return
@@ -1693,15 +1716,35 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
           // Install the first transparent Chat frame during the tail of Work's motion.
           prepareTimer = setTimeout(() => { void prepareIncoming() }, LANDING_MORPH_DURATION - CHAT_TEXT_PREPARE_LEAD)
         }
-        const timeout = setTimeout(finish, LANDING_MORPH_DURATION + 90)
+        const startDeadline = () => { animationTimeout = setTimeout(finish, LANDING_MORPH_DURATION + 90) }
+        if (morph.to === 'work') {
+          cancelPaint = afterWorkFirstFrame(() => {
+            if (stopped || finishing) return
+            yieldedWorkMorph.current = morph
+            let playing = false
+            const play = () => {
+              if (stopped || finishing || playing) return
+              playing = true
+              clearTimeout(handoffTimeout)
+              // Out-of-view geometry skips the morph, but still needs a painted Work surface.
+              if (!animation) return finish()
+              animation.play()
+              startDeadline()
+            }
+            handoffTimeout = setTimeout(play, 150)
+            void Promise.resolve(presentSurface.current?.()).then(play, play)
+          })
+        } else if (animation) startDeadline()
         if (animation) void animation.finished.then(finish, finish)
-        else queueMicrotask(finish)
+        else if (morph.to === 'chat') queueMicrotask(finish)
         window.addEventListener('resize', finish)
         return () => {
           stopped = true
-          clearTimeout(timeout); clearTimeout(handoffTimeout); clearTimeout(prepareTimer)
+          cancelPaint?.()
+          clearTimeout(animationTimeout); clearTimeout(handoffTimeout); clearTimeout(prepareTimer)
           window.removeEventListener('resize', finish)
           if (revealMorph.current === morph) revealMorph.current = null
+          if (yieldedWorkMorph.current === morph) yieldedWorkMorph.current = null
           animation?.dispose()
         }
       }, [morph, state.landingMorph, navigation])
@@ -1716,7 +1759,7 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
         let observedLeading
         const presenter = surfacePresenter.current || (surfacePresenter.current = createNativeSurfacePresenter(bridge, value => value.settings
           ? document.querySelector(`[data-dsh-native-surface="${value.settings}"]`) : panel.current))
-        const present = () => {
+        const present = (landingHandoff) => {
           const rect = (panel.current?.hidden ? workPanel.current : panel.current)?.getBoundingClientRect()
           if (!rect) return
           // Native WebContentsView paints above DOM chrome regardless of z-index.
@@ -1752,7 +1795,11 @@ const surface = remote ? document.querySelector(`[data-dsh-native-surface="${rem
 // Project dialogs have an explicit lifecycle; yield the native sibling as they open.
 const hostModalOpen = projectDialogOpen || cloudDeleteOpen || cloudRenameOpen || overlays.isModal(surface) || appRoot?.inert || document.documentElement.hasAttribute('data-dsh-about-open')
 const bounds = remote ? remote.bounds : { x, y, width: Math.max(0, rect.right - x), height: Math.max(0, rect.y + rect.height - y) }
-return presenter.present({ visible: hostModalOpen ? false : (remote ? state.connected && remote.bounds.width > 0 && remote.bounds.height > 0 : mode === 'chat' && (!morph || revealMorph.current === morph) && !surfaceOpen && !safeModePageOpen), ...(remote ? { settings: remote.section } : {}), ...(palette ? { palette } : {}), bounds, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light', locale: locale.getSnapshot().active === 'zh' ? 'zh' : 'en' }, overlays.intersects(bounds, surface), () => overlays.defer(bounds, surface))
+const chatHandoff = mode === 'chat' && morph && revealMorph.current === morph
+const keepChatUntilWorkPaints = morph?.to === 'work' && yieldedWorkMorph.current !== morph
+const chatVisible = ((mode === 'chat' && (!morph || chatHandoff)) || keepChatUntilWorkPaints) && !surfaceOpen && !safeModePageOpen
+const visible = !hostModalOpen && (remote ? state.connected && remote.bounds.width > 0 && remote.bounds.height > 0 : chatVisible)
+return presenter.present({ visible, ...(visible && chatHandoff && landingHandoff === true ? { landingHandoff: true } : {}), ...(remote ? { settings: remote.section } : {}), ...(palette ? { palette } : {}), bounds, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light', locale: locale.getSnapshot().active === 'zh' ? 'zh' : 'en' }, overlays.intersects(bounds, surface), () => overlays.defer(bounds, surface))
         }
         // The native view follows the host's modal interaction boundary.
         // Onboarding makes #root inert while its dialog lives in a body portal.
@@ -1790,7 +1837,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
       }, [])
       const showModePicker = !settingsOpen && (mode === 'chat'
         ? !state.pageId && state.conversationId === 'new' && state.landing !== false
-        : state.nativeWork && state.workLanding && !state.panelOpen)
+        : hasWorkLanding(state))
       const chooseMode = (next) => {
         const before = navigation.snapshot()
         const request = ++modeIntent.current
@@ -1835,9 +1882,10 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         showModePicker && React.createElement('header', { className: 'dshModesHeader' },
           React.createElement('div', { role: 'tablist', 'aria-label': t('label'), className: 'dshModesTabs', onKeyDown: keyDown },
             ...['chat', 'work'].map((key) => React.createElement('button', { key, id: `dsh-mode-${key}`, type: 'button', role: 'tab', 'aria-selected': mode === key, 'aria-controls': `dsh-panel-${key}`, tabIndex: mode === key ? 0 : -1, ref: (node) => { tabs.current[key] = node }, onClick: () => chooseMode(key) }, t(key))))),
-        React.createElement('section', {
+        React.createElement('div', { className: 'dshModeStage' }, React.createElement('section', {
           ref: workPanel, id: 'dsh-panel-work', role: 'tabpanel', 'aria-label': t('work'), hidden: mode !== 'work' && !morph,
-          inert: morph ? '' : undefined, 'aria-hidden': mode !== 'work' || undefined,
+          inert: mode !== 'work' || morph ? '' : undefined, 'aria-hidden': mode !== 'work' || undefined,
+          'data-keep-landing-layout': hasWorkLanding(state) ? '' : undefined,
           className: 'dshModeBody dshWorkContent', 'data-reveal-controls': mode === 'work' && animateWork,
           onAnimationEnd: event => {
             if (event.animationName === 'dshWorkControlsRise') setAnimateWork(false)
@@ -1847,7 +1895,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         React.createElement('section', { ref: panel, id: 'dsh-panel-chat', 'data-dsh-native-surface': '', role: 'tabpanel', 'aria-label': t('chat'), hidden: mode !== 'chat' || Boolean(morph), className: 'dshModeBody' },
           React.createElement('div', { className: 'dshChatStatus', role: 'status' },
             React.createElement('p', null, state.phase === 'error' ? t('error') : state.phase === 'ready' ? '' : t('loading')),
-            state.connected && state.phase === 'error' && React.createElement('button', { type: 'button', onClick: () => { void window.dshEnterpriseChat.retry().catch(() => {}) } }, t('retry')))))
+            state.connected && state.phase === 'error' && React.createElement('button', { type: 'button', onClick: () => { void window.dshEnterpriseChat.retry().catch(() => {}) } }, t('retry'))))))
     }
     const NAV_ICON_PATHS = {
       new: 'M12 20H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v7M16 16v6m-3-3h6M7 8h10M7 12h5',
@@ -1932,9 +1980,12 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           .dshModesTabs button{font:inherit;font-size:13px;min-width:96px;height:30px;padding:0 20px;border:0;border-radius:20px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer}
           .dshModesTabs button[aria-selected=true]{color:var(--dsw-alias-label-primary)}
           .dshModes button:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
-          .dshModeBody{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}.dshModeBody[hidden]{display:none}
+          .dshModeStage{flex:1;min-width:0;min-height:0;display:grid;grid-template: minmax(0,1fr) / minmax(0,1fr)}
+          .dshModeBody{grid-area:1/1;min-width:0;min-height:0;display:flex;flex-direction:column;position:relative}.dshModeBody[hidden]{display:none}
           #dsh-panel-chat::before{content:'';position:absolute;inset:0 0 auto;height:var(--dsh-square-chrome-height,0px);background:var(--dsh-square-chrome-fill,transparent);pointer-events:none}
           .dshWorkContent{display:grid;grid-template-rows:minmax(0,1fr);isolation:isolate}.dshWorkContent[hidden]{display:none}
+          /* Keep Harness's column ResizeObserver at the real width while its landing is behind Chat. */
+          .dshWorkContent[hidden][data-keep-landing-layout]{display:grid;visibility:hidden;opacity:0;pointer-events:none}
           .dshWorkContent [data-dsh-landing-morph-placeholder]{flex:none;anchor-name:--dso-hero-composer}
           .dshWorkContent [data-composer-card][data-dsh-landing-morph-card]{position:fixed;max-width:none;min-height:0;margin:0;padding-block-end:var(--dsh-morph-footer-clearance,0px);overflow:clip;z-index:2;anchor-name:none!important}
           .dshWorkContent [data-dsh-landing-morph-card]:has(>[data-dsh-landing-morph-footer]) > :not([data-dsh-landing-morph-footer]){flex-shrink:1;min-block-size:0;overflow:clip}
@@ -2024,9 +2075,14 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           .dshHistoryTitle[data-scrolled]{mask-image:linear-gradient(90deg,transparent,black 12px)}
           .dshHistoryTitle[data-clipped]{mask-image:linear-gradient(270deg,transparent,black 12px)}
           .dshHistoryTitle[data-scrolled][data-clipped]{mask-image:linear-gradient(90deg,transparent,black 12px calc(100% - 12px),transparent)}
-          .dshCloudHistoryPreview{display:grid;gap:4px;overflow-wrap:anywhere;color:var(--dsw-alias-label-primary)}
-          .dshCloudHistoryPreview time{font-size:12px;color:var(--dsw-alias-label-tertiary)}
-          .dshCloudHistoryStatus{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dsw-alias-label-secondary)}
+          /* Harness's compact hover card uses a dark surface in both themes. */
+          .dshCloudHistoryPreview{
+            display:grid;gap:4px;overflow-wrap:anywhere;color:var(--dsw-alias-toast-label)
+          }
+          .dshCloudHistoryPreview time{
+            font-size:12px;color:color-mix(in srgb,var(--dsw-alias-toast-label) 80%,transparent)
+          }
+          .dshCloudHistoryStatus{display:flex;align-items:center;gap:6px;font-size:12px;color:inherit}
           .dshHistoryStatus{position:absolute;inset-block:0;inset-inline-start:8px;width:16px;display:inline-flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary);pointer-events:none}
           .dshChatProject .dshHistoryStatus{inset-inline-start:12px}
           .dshVisuallyHidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}

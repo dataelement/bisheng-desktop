@@ -360,9 +360,17 @@ window.__ModuleLoader__.load({
         window.dispatchEvent(new CustomEvent('dsh-desktop:enterprise-account-changed', { detail: { actionStarted: true } }))
         const actionEpoch = current.actionEpoch
         try {
-          await accountRequest('logout', request.signal)
-          if (actionEpoch !== current.actionEpoch) return
-          const next = await accountRequest('state', request.signal)
+          const disconnected = await accountRequest('logout', request.signal)
+          if (request.signal.aborted || actionEpoch !== current.actionEpoch) return
+          let next
+          try {
+            next = await accountRequest('state', request.signal)
+          } catch {
+            if (request.signal.aborted || actionEpoch !== current.actionEpoch) return
+            // The validated disconnected mutation already completed; a failed display
+            // read must not retain the old identity or report that sign-out failed.
+            next = disconnected
+          }
           if (current.alive && !request.signal.aborted && actionEpoch === current.actionEpoch) {
             // Invalidate foreground reads started while logout was in flight.
             current.request?.abort(); current.revision++

@@ -228,7 +228,59 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 				this.states.delete(STAGED_MODE_KEY);
 				this.notify(STAGED_MODE_KEY);
 			}
-			adopt(sessionId, client) {
+			/** Read a selection made outside this composer, such as from the phone. */
+			readRemote(sessionId, client, force = false, timeoutMessage = en["templates.loadTimeout"]) {
+				this.inflight ??= /* @__PURE__ */ new Map();
+				this.adopted ??= /* @__PURE__ */ new Set();
+				this.remoteEpoch ??= /* @__PURE__ */ new Map();
+				this.remoteReady ??= /* @__PURE__ */ new Set();
+				this.remoteReadyRevision ??= /* @__PURE__ */ new Map();
+				this.remoteInflight ??= /* @__PURE__ */ new Map();
+				if (!client?.bound || typeof sessionId !== "string" || sessionId.trim().length === 0) return Promise.resolve("idle");
+				if (!force && this.remoteReady.has(sessionId) && this.remoteReadyRevision.get(sessionId) === this.revision(sessionId)) return Promise.resolve("ready");
+				const pending = this.inflight.get(sessionId);
+				// A forced read may replace a remote read, but must not interrupt staged adoption.
+				if (pending && (!force || this.remoteInflight.get(sessionId) !== pending)) return pending;
+				// Local chooser actions invalidate both success and failure from this hydration.
+				const seenRevision = this.revision(sessionId);
+				const epoch = force ? (this.remoteEpoch.get(sessionId) ?? 0) + 1 : this.remoteEpoch.get(sessionId) ?? 0;
+				if (force) {
+					this.remoteReady.delete(sessionId);
+					this.remoteEpoch.set(sessionId, epoch);
+				}
+				// Reuse the bounded loader so a stalled hydration releases singleflight and can retry.
+				this.setLoading(sessionId, true);
+				const work = loadTemplateState(client, timeoutMessage).then((next) => {
+					if ((this.remoteEpoch.get(sessionId) ?? 0) !== epoch || this.revision(sessionId) !== seenRevision) return "stale";
+					if (!force && this.snapshot(sessionId).engaged) this.applyLoadedTemplates(sessionId, client, seenRevision, next);
+					else this.setTemplateState(sessionId, next);
+					this.remoteReady.add(sessionId);
+					this.remoteReadyRevision.set(sessionId, seenRevision);
+					this.adopted.add(sessionId);
+					return "applied";
+				}).catch((reason) => {
+					if ((this.remoteEpoch.get(sessionId) ?? 0) !== epoch || this.revision(sessionId) !== seenRevision) return "stale";
+					this.setError(sessionId, reason instanceof Error ? reason.message : String(reason));
+					return "failed";
+				}).finally(() => {
+					if (this.inflight.get(sessionId) === work) this.inflight.delete(sessionId);
+					if (this.remoteInflight.get(sessionId) === work) this.remoteInflight.delete(sessionId);
+				});
+				this.inflight.set(sessionId, work);
+				this.remoteInflight.set(sessionId, work);
+				return work;
+			}
+			/** Bound chooser/footer reads share adoption, request ownership and application. */
+			loadTemplates(sessionId, client, timeoutMessage = en["templates.loadTimeout"]) {
+				const work = this.adopted?.has(sessionId) ? this.readRemote(sessionId, client, false, timeoutMessage) : this.adopt(sessionId, client, timeoutMessage);
+				return work.then((result) => {
+					// A mode click may join an older request. Once it settles, reload at the
+					// current revision; cancelling staged mode also still needs a catalog.
+					if ((result === "stale" || result === "idle") && client?.bound && this.snapshot(sessionId).error === "") return this.readRemote(sessionId, client, false, timeoutMessage);
+					return result;
+				});
+			}
+			adopt(sessionId, client, timeoutMessage = en["templates.loadTimeout"]) {
 				this.inflight ??= /* @__PURE__ */ new Map();
 				this.adopted ??= /* @__PURE__ */ new Set();
 				if (!client?.bound || typeof sessionId !== "string" || sessionId.trim().length === 0) return Promise.resolve("idle");
@@ -236,10 +288,7 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 				if (pending) return pending;
 				if (this.adopted.has(sessionId)) return Promise.resolve("done");
 				const staged = this.states.get(STAGED_MODE_KEY);
-				if (!staged?.engaged) {
-					this.adopted.add(sessionId);
-					return Promise.resolve("idle");
-				}
+				if (!staged?.engaged) return this.readRemote(sessionId, client, false, timeoutMessage);
 				const work = this.applyStaged(sessionId, client, staged).finally(() => {
 					if (this.inflight.get(sessionId) === work) this.inflight.delete(sessionId);
 				});
@@ -706,8 +755,6 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 		function OfficePptOpeningTemplateCard({ client, mode, sessionId, leading, t }) {
 			ensureOpeningTemplateStyles();
 			const state = useMode(mode, sessionId);
-			const bindingRef = (0, react.useRef)({ client, sessionId });
-			bindingRef.current = { client, sessionId };
 			const [open, setOpen] = (0, react.useState)(false);
 			const [page, setPage] = (0, react.useState)(0);
 			const buttonRef = (0, react.useRef)(null);
@@ -715,26 +762,13 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 			const openedRef = (0, react.useRef)(false);
 			(0, react.useEffect)(() => {
 				if (leading !== true || !client?.bound) return;
-				const request = { client, sessionId };
 				let active = true;
-				void mode.adopt(sessionId, client).then((result) => {
+				void mode.adopt(sessionId, client, t("templates.loadTimeout")).then((result) => {
 					if (!active) return;
 					if ((result === "applied" || result === "partial") && mode.snapshot(sessionId).activeMode === "ppt") announcePptMode(sessionId);
 					const current = mode.snapshot(sessionId);
-					if (current.templates.length > 0 || current.error !== "") return;
-					const seenRevision = mode.revision(sessionId);
-					mode.setLoading(sessionId, true);
-					loadTemplateState(client, t("templates.loadTimeout")).then((next) => {
-						if (!active) return;
-						const latest = bindingRef.current;
-						mode.applyLoadedTemplates(latest.sessionId, latest.client, seenRevision, next, request);
-					}).catch((reason) => {
-						if (!active) return;
-						const latest = bindingRef.current;
-						if (latest.client !== request.client || modeKey(latest.sessionId) !== modeKey(request.sessionId)) return;
-						if (mode.revision(request.sessionId) !== seenRevision) return;
-						mode.setError(request.sessionId, reason instanceof Error ? reason.message : String(reason));
-					});
+					if (current.selectedId != null || current.error !== "") return;
+					void mode.loadTemplates(sessionId, client, t("templates.loadTimeout"));
 				});
 				return () => {
 					active = false;
@@ -849,9 +883,9 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 				})]
 			})] });
 		}
-		/** Selected-template reference shown only while the standard Session is blank. */
+		/** Selected-template thumbnail. After the first message the template is pinned under that bubble. */
 		function OfficePptStandardInputAccessory(props) {
-			if (props.session == null || !props.session.blank) return null;
+			if (props.session == null || props.session.blank !== true) return null;
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(OfficePptInputAccessory, { ...props });
 		}
 		/** Monochrome presentation screen used by both PPT mode controls. */
@@ -878,6 +912,10 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
 			const catalogRevision = mode.revision(sessionId);
 			(0, react.useEffect)(() => {
 				if (!loadTemplates || state.templates.length > 0 || state.error !== "") return;
+				if (client?.bound) {
+					void mode.loadTemplates(sessionId, client, t("templates.loadTimeout"));
+					return;
+				}
 				const request = { client, sessionId };
 				const seenRevision = catalogRevision;
 				mode.setLoading(sessionId, true);
@@ -1103,13 +1141,13 @@ button[data-desktop-ppt]:focus-visible{outline:2px solid var(--dsw-alias-label-p
             (0, react.useEffect)(() => {
                 if (!props.client?.bound) return;
                 let active = true;
-                props.mode.adopt(props.sessionId, props.client).then(result => {
+                props.mode.adopt(props.sessionId, props.client, props.t("templates.loadTimeout")).then(result => {
                     if (active && ['applied', 'partial'].includes(result) && props.mode.snapshot(props.sessionId).activeMode === 'ppt') announcePptMode(props.sessionId, 'ppt');
                 }).catch(reason => {
                     if (active) props.mode.setError(props.sessionId, reason instanceof Error ? reason.message : String(reason));
                 });
                 return () => { active = false; };
-            }, [props.client, props.mode, props.sessionId]);
+            }, [props.client, props.mode, props.sessionId, props.t]);
             return (0, react_jsx_runtime.jsxs)(react.Fragment, { children: [
                 (0, react_jsx_runtime.jsx)(OfficePptChooser, { ...props, placement: "trigger" }),
                 state.error && state.activeMode === null ? (0, react_jsx_runtime.jsx)("span", { role: "alert", children: state.error }) : null,

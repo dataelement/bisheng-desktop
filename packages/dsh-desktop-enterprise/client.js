@@ -778,10 +778,19 @@ window.__ModuleLoader__.load({
             window.dispatchEvent(new CustomEvent(ACCOUNT_CHANGED_EVENT))
             return payload
           }
-          const latest = await api('/api/enterprise.state', undefined, signal)
+          let latest
+          try {
+            latest = await api('/api/enterprise.state', undefined, signal)
+          } catch (cause) {
+            if (signal?.aborted || actionEpoch !== accountActionEpoch) throw staleAccountAction()
+            // A confirmed sign-out must clear the identity even if its display read fails.
+            // Connected refresh/manual snapshots are not safe substitutes for a fresh read.
+            if (path !== '/api/enterprise.logout' || payload.connected !== false) throw cause
+            latest = payload
+          }
           if (signal?.aborted || actionEpoch !== accountActionEpoch) throw staleAccountAction()
           window.dispatchEvent(new CustomEvent(ACCOUNT_CHANGED_EVENT))
-          // Authorization responses retain their URL schema; state-changing handlers get only a fresh read.
+          // Prefer authoritative current state; only confirmed logout has a safe fallback.
           if (typeof payload.connected === 'boolean') return latest
         }
         return payload

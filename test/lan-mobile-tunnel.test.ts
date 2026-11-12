@@ -297,96 +297,33 @@ describe('LanMobileBridge tunnel state and endpoints', () => {
     expect(toggleOffJson.active).toBe(false)
   })
 
-  it('starts Pinggy and stops Cloudflare when the user asks for a backup link', async () => {
-    const stopped: string[] = []
+  it('does not start Cloudflare or Pinggy when remote mode is requested', async () => {
+    let started = false
     const bridge = new LanMobileBridge({
       harnessUrl: () => 'http://127.0.0.1:3000',
       port: 0,
-      createCloudflareTunnel: async () =>
-        fakeTunnel('cloudflare', 'https://primary.trycloudflare.com', () =>
-          stopped.push('cloudflare')
-        ),
-      createPinggyTunnel: async () => fakeTunnel('pinggy', 'https://fallback.a.pinggy.link')
+      createCloudflareTunnel: async () => {
+        started = true
+        return fakeTunnel('cloudflare', 'https://primary.trycloudflare.com')
+      },
+      createPinggyTunnel: async () => {
+        started = true
+        return fakeTunnel('pinggy', 'https://fallback.a.pinggy.link')
+      }
     })
     bridges.push(bridge)
     const snapshot = await bridge.start()
-    await bridge.toggleTunnel(true)
-    expect(bridge.snapshot().tunnelProvider).toBe('cloudflare')
+    const enabled = await bridge.toggleTunnel(true)
+    expect(started).toBe(false)
+    expect(enabled.tunnelActive).toBe(false)
+    expect(enabled.tunnelProvider).toBeUndefined()
+    await expect(bridge.fallbackToPinggy()).rejects.toThrow('Third-party remote tunnels are disabled.')
     const cookie = await authorizeDesktop(bridge)
-
     const response = await fetch(`http://127.0.0.1:${snapshot.port}/desktop/tunnel/fallback`, {
       method: 'POST',
       headers: { cookie }
     })
-    expect(response.status).toBe(200)
-    const body = await response.json()
-    expect(body.ok).toBe(true)
-    expect(body.active).toBe(true)
-    expect(body.provider).toBe('pinggy')
-    expect(body.url).toBe('https://fallback.a.pinggy.link')
-    expect(body.pairingUrl).toContain('https://fallback.a.pinggy.link/pair?token=')
-    expect(stopped).toEqual(['cloudflare'])
-  })
-
-  it('keeps Cloudflare when the Pinggy backup link cannot start', async () => {
-    const stopped: string[] = []
-    const bridge = new LanMobileBridge({
-      harnessUrl: () => 'http://127.0.0.1:3000',
-      port: 0,
-      createCloudflareTunnel: async () =>
-        fakeTunnel('cloudflare', 'https://primary.trycloudflare.com', () =>
-          stopped.push('cloudflare')
-        ),
-      createPinggyTunnel: async () => {
-        throw new Error('OpenSSH missing')
-      }
-    })
-    bridges.push(bridge)
-    await bridge.start()
-    await bridge.toggleTunnel(true)
-
-    const snapshot = await bridge.fallbackToPinggy()
-    expect(snapshot.tunnelActive).toBe(true)
-    expect(snapshot.tunnelProvider).toBe('cloudflare')
-    expect(snapshot.tunnelUrl).toBe('https://primary.trycloudflare.com')
-    expect(snapshot.tunnelError).toBe('OpenSSH missing')
-    expect(stopped).toEqual([])
-  })
-
-  it('rejects backup-link fallback unless an unconnected Cloudflare tunnel is active', async () => {
-    const bridge = new LanMobileBridge({
-      harnessUrl: () => 'http://127.0.0.1:3000',
-      port: 0,
-      forceCloudflareFailure: true,
-      createPinggyTunnel: async () => fakeTunnel('pinggy', 'https://forced.a.pinggy.link')
-    })
-    bridges.push(bridge)
-    const snapshot = await bridge.start()
-    const cookie = await authorizeDesktop(bridge)
-
-    const lanRes = await fetch(`http://127.0.0.1:${snapshot.port}/desktop/tunnel/fallback`, {
-      method: 'POST',
-      headers: { cookie }
-    })
-    expect(lanRes.status).toBe(400)
-
-    await bridge.toggleTunnel(true)
-    expect(bridge.snapshot().tunnelProvider).toBe('pinggy')
-    const pinggyRes = await fetch(`http://127.0.0.1:${snapshot.port}/desktop/tunnel/fallback`, {
-      method: 'POST',
-      headers: { cookie }
-    })
-    expect(pinggyRes.status).toBe(400)
-
-    await bridge.toggleTunnel(false)
-    const token = new URL(bridge.snapshot().pairingUrl!).searchParams.get('token')
-    await fetch(`http://127.0.0.1:${snapshot.port}/pair?token=${token}`, { redirect: 'manual' })
-
-    const connectedRes = await fetch(`http://127.0.0.1:${snapshot.port}/desktop/tunnel/fallback`, {
-      method: 'POST',
-      headers: { cookie }
-    })
-    expect(connectedRes.status).toBe(409)
+    expect(response.status).toBe(410)
   })
 })
 function fakeTunnel(
@@ -557,171 +494,25 @@ describe('cloudflared download integrity', () => {
   })
 })
 
-describe('LanMobileBridge toggle concurrency', () => {
-  it('ignores concurrent tunnel toggles while a launch is already in flight', async () => {
-    const bridge = new LanMobileBridge({
-      harnessUrl: () => 'http://127.0.0.1:3000',
-      port: 0
-    })
-    bridges.push(bridge)
-    await bridge.start()
-
-    let launches = 0
-    Object.assign(bridge as unknown as Record<string, unknown>, {
-      launchTunnel: async () => {
-        launches += 1
-        await new Promise((resolve) => setTimeout(resolve, 30))
-      }
-    })
-
-    const [first, second] = await Promise.all([
-      bridge.toggleTunnel(true),
-      bridge.toggleTunnel(true)
-    ])
-
-    expect(launches).toBe(1)
-    expect(first.tunnelActive).toBe(true)
-    expect(second.tunnelLoading).toBe(true)
-    expect(second.tunnelActive).toBe(false)
-    expect(bridge.snapshot().tunnelActive).toBe(true)
-  })
-})
-
-describe('LanMobileBridge launch lifecycle', () => {
-  it('stops a tunnel spawned by a launch that disables mid-flight', async () => {
-    const bridge = new LanMobileBridge({
-      harnessUrl: () => 'http://127.0.0.1:3000',
-      port: 0
-    })
-    bridges.push(bridge)
-    await bridge.start()
-
-    const stopped: string[] = []
-    let releaseLaunch: (() => void) | undefined
-    Object.assign(bridge as unknown as Record<string, unknown>, {
-      launchTunnel: () =>
-        new Promise<void>((resolve) => {
-          releaseLaunch = () => {
-            Object.assign(bridge as unknown as Record<string, unknown>, {
-              tunnelInstance: {
-                url: 'https://raced.trycloudflare.com',
-                process: {},
-                stop: async () => {
-                  stopped.push('raced')
-                }
-              }
-            })
-            resolve()
-          }
-        })
-    })
-
-    const enabling = bridge.toggleTunnel(true)
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    const disabling = bridge.toggleTunnel(false)
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    releaseLaunch!()
-    await Promise.all([enabling, disabling])
-
-    expect(stopped).toEqual(['raced'])
-    const snapshot = bridge.snapshot()
-    expect(snapshot.tunnelActive).toBe(false)
-    expect(snapshot.tunnelLoading).toBe(false)
-  })
-
-  it('retries after a failed launch and resets the loading flag', async () => {
-    const bridge = new LanMobileBridge({
-      harnessUrl: () => 'http://127.0.0.1:3000',
-      port: 0
-    })
-    bridges.push(bridge)
-    await bridge.start()
-
-    let launches = 0
-    Object.assign(bridge as unknown as Record<string, unknown>, {
-      launchTunnel: async () => {
-        launches += 1
-        if (launches === 1) throw new Error('binary download failed')
-        Object.assign(bridge as unknown as Record<string, unknown>, {
-          tunnelInstance: {
-            url: 'https://second.trycloudflare.com',
-            process: {},
-            stop: async () => undefined
-          }
-        })
-      }
-    })
-
-    const failed = await bridge.toggleTunnel(true)
-    expect(failed.tunnelActive).toBe(false)
-    expect(failed.tunnelLoading).toBe(false)
-    expect(failed.tunnelError).toBe('binary download failed')
-
-    const retried = await bridge.toggleTunnel(true)
-    expect(launches).toBe(2)
-    expect(retried.tunnelActive).toBe(true)
-    expect(retried.tunnelLoading).toBe(false)
-  })
-
-  it('waits for an in-flight launch during stop() and kills its tunnel', async () => {
-    const bridge = new LanMobileBridge({
-      harnessUrl: () => 'http://127.0.0.1:3000',
-      port: 0
-    })
-    bridges.push(bridge)
-    await bridge.start()
-
-    const stopped: string[] = []
-    let releaseLaunch: (() => void) | undefined
-    Object.assign(bridge as unknown as Record<string, unknown>, {
-      launchTunnel: () =>
-        new Promise<void>((resolve) => {
-          releaseLaunch = () => {
-            Object.assign(bridge as unknown as Record<string, unknown>, {
-              tunnelInstance: {
-                url: 'https://late.trycloudflare.com',
-                process: {},
-                stop: async () => {
-                  stopped.push('late')
-                }
-              }
-            })
-            resolve()
-          }
-        })
-    })
-
-    const enabling = bridge.toggleTunnel(true)
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    const stopping = bridge.stop()
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    releaseLaunch!()
-    await Promise.all([enabling, stopping])
-
-    expect(stopped).toEqual(['late'])
-    expect(bridge.snapshot()).toEqual({ running: false, connected: false })
-  })
-
-  it('reports HTTP 409 for an enable toggle while a launch is in flight', async () => {
+describe('LanMobileBridge remote mode', () => {
+  it('does not call the tunnel launcher when internet mode is turned on', async () => {
     const bridge = new LanMobileBridge({
       harnessUrl: () => 'http://127.0.0.1:3000',
       port: 0
     })
     bridges.push(bridge)
     const snapshot = await bridge.start()
-    const cookie = await authorizeDesktop(bridge)
-
-    let releaseLaunch: (() => void) | undefined
+    let launches = 0
     Object.assign(bridge as unknown as Record<string, unknown>, {
-      launchTunnel: () =>
-        new Promise<void>((resolve) => {
-          releaseLaunch = resolve
-        })
+      launchTunnel: async () => {
+        launches += 1
+      }
     })
-
-    void bridge.toggleTunnel(true)
-    await new Promise((resolve) => setTimeout(resolve, 20))
-
+    const enabled = await bridge.toggleTunnel(true)
+    expect(launches).toBe(0)
+    expect(enabled.tunnelActive).toBe(false)
+    expect(enabled.tunnelLoading).toBe(false)
+    const cookie = await authorizeDesktop(bridge)
     const response = await fetch(`http://127.0.0.1:${snapshot.port}/desktop/tunnel/toggle`, {
       method: 'POST',
       headers: {
@@ -731,12 +522,10 @@ describe('LanMobileBridge launch lifecycle', () => {
       },
       body: JSON.stringify({ enable: true })
     })
-    expect(response.status).toBe(409)
+    expect(response.status).toBe(200)
     const body = await response.json()
-    expect(body.error).toMatch(/already in progress/i)
-
-    releaseLaunch!()
-    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(body.active).toBe(false)
+    expect(body.error).toContain('signed-in BiSheng')
   })
 })
 describe('LanMobileBridge shutdown with live connections', () => {

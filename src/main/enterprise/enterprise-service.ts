@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { EnterpriseProfileState, type ProfileRefreshReason } from './profile-state'
+import type { MobileAccessAccount } from '../mobile/mobile-access-protocol'
 import { parseWorkSkillRequest, readSkillBytes } from './work-skills'
 import { parseWorkResourceRequest, readResourceJson } from './work-resources'
 import { parseWorkMcpRequest, sendWorkMcp } from './work-mcp'
@@ -190,6 +191,8 @@ export class EnterpriseService {
   private readonly authVersionPrefix = randomUUID()
   private authEpoch = 0
   private authEnabled = false
+  /** Main-process-only credential handoff; never included in public state or IPC. */
+  private readonly mobileAccessListeners = new Set<(account: MobileAccessAccount) => void>()
   private auditFields: AuditContextField[] = []
   private auditRefreshGeneration = 0
   private auditTitleAvailable = false
@@ -245,6 +248,34 @@ export class EnterpriseService {
     })()
     this.profileInFlight = task
     try { return await task } finally { if (this.profileInFlight === task) this.profileInFlight = undefined }
+  }
+
+  subscribeMobileAccessAccount(listener: (account: MobileAccessAccount) => void): () => void {
+    this.mobileAccessListeners.add(listener)
+    this.notifyMobileAccessListener(listener, this.readMobileAccessAccount())
+    return () => { this.mobileAccessListeners.delete(listener) }
+  }
+
+  private notifyMobileAccessListener(listener: (account: MobileAccessAccount) => void, account: MobileAccessAccount): void {
+    try { listener({ ...account }) }
+    catch { this.note('mobile_access_listener_failed') }
+  }
+
+  private publishMobileAccessAccount(): void {
+    const account = this.readMobileAccessAccount()
+    for (const listener of this.mobileAccessListeners) this.notifyMobileAccessListener(listener, account)
+  }
+
+  readMobileAccessAccount(): MobileAccessAccount {
+    // Mobile access must honor local logout immediately, even while remote
+    // revocation is pending, and must not outlive the enterprise session.
+    if (!this.authState().connected) return {}
+    return {
+      ...(this.session?.base ? { base: this.session.base } : {}),
+      ...(this.session?.access_token ? { accessToken: this.session.access_token } : {}),
+      ...(this.session?.user?.id ? { userId: this.session.user.id } : {}),
+      ...(this.session?.tenant?.id ? { tenantId: this.session.tenant.id } : {})
+    }
   }
 
   async readState(): Promise<EnterprisePublicState> {
@@ -696,6 +727,8 @@ export class EnterpriseService {
       if (this.epoch !== expectedEpoch) return
       this.vaultGeneration = stored.generation
       this.session = stored.session
+      // Refresh can be followed by logout before the mobile client's watcher runs.
+      this.publishMobileAccessAccount()
       this.clearError()
       // Leave phase as refreshing; syncCatalog flips to connected after usage.
     } catch {
@@ -892,12 +925,16 @@ export class EnterpriseService {
   }
 
   private invalidateAuthSession(): void {
+    // Hand off the latest still-authorized cleanup credential before hiding it.
+    // The getter remains authoritative: expired or already-revoked sessions emit {}.
+    this.publishMobileAccessAccount()
     this.authEpoch += 1
     this.profile.clear()
     this.profileInFlight = undefined
     for (const controller of this.authenticatedControllers) controller.abort(enterpriseSessionChangedAbortReason())
     this.authEnabled = false
     this.authTransport.invalidate()
+    this.publishMobileAccessAccount()
   }
 
   async authRequest(plugin: { pluginId: string; instanceId: string }, input: unknown, signal: AbortSignal): Promise<Response> {
@@ -1688,6 +1725,8 @@ export class EnterpriseService {
   }
 
   private publish(): void {
+    // Credential changes are independent of the token-free public signature.
+    this.publishMobileAccessAccount()
     const snapshot = this.snapshot()
     const signature = publicStateSignature(snapshot)
     if (signature === this.lastPublicSignature) return

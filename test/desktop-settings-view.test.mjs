@@ -883,6 +883,139 @@ it('rejects a delayed action across logout using the actual API helper and both 
 
 const confirmButton = () => document.querySelector('[data-dsh-logout-confirm]')
 
+it.each(['section', 'launcher'])('completes %s logout when its confirmed POST succeeds but the state GET fails', async owner => {
+  const f = await fixture()
+  const Section = await enterpriseSection(f)
+  if (owner === 'section') await f.mount(Section, { t: key => key })
+  else {
+    await f.render('settings.launcher', { wide: true })
+    await click(document.querySelector('.dshAccountTrigger'))
+    await click(menuItem('退出登录'))
+  }
+  const publications = vi.fn()
+  window.addEventListener('dsh-desktop:enterprise-account-changed', publications)
+  f.request.mockImplementation(async path => {
+    if (path === '/api/enterprise.logout') return responseFor({ connected: false, revision: 2 })
+    throw new Error('Local state unavailable after completed logout')
+  })
+  await click(owner === 'section' ? document.querySelector('.dshEnterpriseLogout') : confirmButton())
+  expect(f.request.mock.calls.at(-1)[0]).toBe('/api/enterprise.state')
+  expect(document.querySelector('[role=alert], .dshEnterpriseError')).toBeNull()
+  expect(document.querySelector('.dshEnterpriseIdentity')).toBeNull()
+  if (owner === 'section') expect(document.querySelector('.dshEnterpriseInput')).not.toBeNull()
+  else {
+    expect(document.querySelector('[role=dialog]')).toBeNull()
+    expect(document.querySelector('.dshAccountTrigger').textContent).toContain('未登录')
+    expect(document.querySelector('.dshAccountTrigger').disabled).toBe(false)
+  }
+  expect(publications.mock.calls.some(([event]) => !event.detail?.actionStarted)).toBe(true)
+})
+
+it.each(['section', 'launcher'])('keeps the fresh authoritative GET over the %s logout payload', async owner => {
+  const f = await fixture()
+  const Section = await enterpriseSection(f)
+  if (owner === 'section') await f.mount(Section, { t: key => key })
+  else {
+    await f.render('settings.launcher', { wide: true })
+    await click(document.querySelector('.dshAccountTrigger'))
+    await click(menuItem('退出登录'))
+  }
+  f.request.mockImplementation(async path => responseFor(path === '/api/enterprise.logout'
+    ? { connected: false } : signedInProfile('Current authoritative identity')))
+  await click(owner === 'section' ? document.querySelector('.dshEnterpriseLogout') : confirmButton())
+  expect(document.querySelector(owner === 'section' ? '.dshEnterpriseIdentity' : '.dshAccountTrigger').textContent).toContain('Current authoritative identity')
+})
+
+it.each(['section', 'launcher'])('does not apply %s logout fallback after another account action supersedes its GET', async owner => {
+  const f = await fixture()
+  const Section = await enterpriseSection(f)
+  const launcher = f.registrations.find(row => row.options.name === 'settings.launcher')
+  await f.mount(() => React.createElement(React.Fragment, null,
+    React.createElement(launcher.Component, { ...launcher.options.inject?.(), wide: true }),
+    React.createElement(Section, { t: key => key })))
+  if (owner === 'launcher') {
+    await click(document.querySelector('.dshAccountTrigger'))
+    await click(menuItem('退出登录'))
+  }
+  let rejectRead, heldSignal
+  const original = f.request.getMockImplementation()
+  let hold = true
+  f.request.mockImplementation((path, options) => {
+    if (path === '/api/enterprise.state' && hold) {
+      hold = false; heldSignal = options.signal
+      return new Promise((_resolve, reject) => { rejectRead = reject })
+    }
+    return original(path, options)
+  })
+  await click(owner === 'section' ? document.querySelector('.dshEnterpriseLogout') : confirmButton())
+  expect(rejectRead).toBeTypeOf('function')
+  f.setAccount(signedInProfile('New account action'))
+  await act(async () => {
+    window.dispatchEvent(new window.CustomEvent('dsh-desktop:enterprise-account-changed', { detail: { actionStarted: true } }))
+    accountEvent()
+  })
+  const publications = vi.fn()
+  window.addEventListener('dsh-desktop:enterprise-account-changed', publications)
+  // The logout GET is deliberately allowed to fail late even if transport ignores cancellation.
+  await act(async () => rejectRead(new Error('Obsolete display read failed')))
+  // Section actions have no AbortSignal; the launcher has a live action signal.
+  expect(heldSignal?.aborted ?? false).toBe(false)
+  expect(document.querySelector('.dshEnterpriseIdentity').textContent).toContain('New account action')
+  expect(document.querySelector('.dshAccountTrigger').textContent).toContain('New account action')
+  expect(publications).not.toHaveBeenCalled()
+  expect(document.querySelector('[role=alert], .dshEnterpriseError')).toBeNull()
+})
+
+it('does not publish an aborted enterprise logout fallback even when transport ignores cancellation', async () => {
+  const f = await fixture()
+  await enterpriseSection(f)
+  const controller = new AbortController()
+  let rejectRead
+  f.request.mockImplementation(path => path === '/api/enterprise.logout'
+    ? Promise.resolve(responseFor({ connected: false }))
+    : new Promise((_resolve, reject) => { rejectRead = reject }))
+  const publications = vi.fn()
+  window.addEventListener('dsh-desktop:enterprise-account-changed', publications)
+  const pending = f.enterpriseApi('/api/enterprise.logout', {}, controller.signal).catch(error => error)
+  await act(async () => {})
+  controller.abort()
+  rejectRead(new Error('Aborted display read'))
+  expect((await pending).staleAccountAction).toBe(true)
+  expect(publications).toHaveBeenCalledOnce() // actionStarted only, never fallback completion
+})
+
+it.each(['/api/enterprise.refresh', '/api/enterprise.login.manual'])('does not replace a failed authoritative GET with a connected %s snapshot', async path => {
+  const f = await fixture()
+  await enterpriseSection(f)
+  f.request.mockImplementation(async requested => {
+    if (requested === path) return responseFor(signedInProfile('Possibly obsolete mutation snapshot'))
+    throw new Error('Authoritative state unavailable')
+  })
+  const publications = vi.fn()
+  window.addEventListener('dsh-desktop:enterprise-account-changed', publications)
+  await expect(f.enterpriseApi(path, {})).rejects.toThrow('Authoritative state unavailable')
+  expect(publications).toHaveBeenCalledOnce() // actionStarted only
+})
+
+it('does not publish a launcher logout fallback after unmount aborts the action', async () => {
+  const f = await fixture()
+  await f.render('settings.launcher', { wide: true })
+  await click(document.querySelector('.dshAccountTrigger'))
+  await click(menuItem('退出登录'))
+  let rejectRead, signal
+  f.request.mockImplementation((path, options) => path === '/api/enterprise.logout'
+    ? Promise.resolve(responseFor({ connected: false }))
+    : new Promise((_resolve, reject) => { signal = options.signal; rejectRead = reject }))
+  await click(confirmButton())
+  await f.mount(() => null)
+  expect(signal.aborted).toBe(true)
+  const publications = vi.fn()
+  window.addEventListener('dsh-desktop:enterprise-account-changed', publications)
+  await act(async () => rejectRead(new Error('Unmounted display read')))
+  expect(publications).not.toHaveBeenCalled()
+  expect(document.querySelector('.dshAccountLauncher')).toBeNull()
+})
+
 it('confirms logout before it runs and leaves the account signed in when cancelled', async () => {
   const f = await fixture()
   const visibility = vi.fn()
