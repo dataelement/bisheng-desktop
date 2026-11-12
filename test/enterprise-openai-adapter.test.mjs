@@ -841,6 +841,21 @@ describe('BiSheng OpenAI adapter', () => {
     expect(internal.error.failure.code).not.toBe('SERVER')
   })
 
+  it('F015: classifies an unpriced BiSheng model as its own platform failure, not a generic server error', async () => {
+    const body = {
+      error: { message: 'Model pricing is not configured; contact the administrator', type: 'service_unavailable_error', code: 'model_pricing_missing' }
+    }
+    const direct = await finishFrom(new Response(JSON.stringify(body), { status: 503, headers: { 'content-type': 'application/json' } }))
+    // The local chat proxy forwards the platform code as errorCode.
+    const proxied = await finishFrom(new Response(JSON.stringify({ ...body, errorCode: 'model_pricing_missing' }), {
+      status: 503, headers: { 'content-type': 'application/json' }
+    }))
+    for (const result of [direct, proxied]) {
+      expect(result.error.failure.code).toBe('model_pricing_missing')
+      expect(result.error.failure.code).not.toBe('SERVER')
+    }
+  })
+
   it('keeps a JSON request id when the response header is absent', async () => {
     const result = await finishFrom(new Response(JSON.stringify({
       error: { message: 'Monthly token limit reached', code: 'monthly_token_limit_exceeded' },

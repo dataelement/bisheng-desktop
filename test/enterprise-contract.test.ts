@@ -343,6 +343,29 @@ describe('BiSheng compatible client API mock', () => {
     }
   })
 
+  it('keeps valid credit ratio hints and drops malformed ones without dropping the model', () => {
+    const base = { id: 'bisheng:7', capabilities: { streaming: true, tools: true, reasoning_content: false } }
+    for (const hint of [
+      { ratio: '3.00', base: false, free: false },
+      { ratio: '1.00', base: true, free: false },
+      { ratio: '<0.01', base: false, free: false },
+      { ratio: null, base: false, free: true },
+      { ratio: null, base: true, free: false }
+    ]) {
+      expect(parseModels({ object: 'list', data: [{ ...base, pricing_hint: { ...hint, extra: 'ignored' } }] })[0]?.pricing_hint)
+        .toEqual(hint)
+    }
+    for (const invalid of [null, 'x', {}, { ratio: 3, base: false, free: false }, { ratio: '3', base: false, free: false },
+      { ratio: '-1.00', base: false, free: false }, { ratio: '3.00x', base: false, free: false },
+      { ratio: '3.00', base: 'no', free: false }, { ratio: '3.00', base: false }]) {
+      const [model] = parseModels({ object: 'list', data: [{ ...base, pricing_hint: invalid }] })
+      expect(model?.id).toBe('bisheng:7')
+      expect(model).not.toHaveProperty('pricing_hint')
+    }
+    // Servers before F015 send no hint at all.
+    expect(parseModels({ object: 'list', data: [base] })[0]).not.toHaveProperty('pricing_hint')
+  })
+
   it('skips invalid models without failing the whole list', () => {
     expect(parseModelsLenient({
       object: 'list',

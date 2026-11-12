@@ -1,8 +1,8 @@
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-trajectory/lib/client.js b/node_modules/@deepseek-ai/dsh-client-ui-trajectory/lib/client.js
-index b4e6061..7042543 100644
+index b4e6061..ac4086f 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-trajectory/lib/client.js
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-trajectory/lib/client.js
-@@ -190,6 +190,38 @@ window.__ModuleLoader__.load({
+@@ -190,6 +190,39 @@ window.__ModuleLoader__.load({
  			"details.error": "错误",
  			"details.lastAttemptError": "上次尝试错误",
  			"details.failure.auth": "API 密钥无效",
@@ -23,6 +23,7 @@ index b4e6061..7042543 100644
 +			"details.failure.usageUnavailable": "本次调用的用量记录暂无法确认，请勿重复发送；可稍后查看用量或联系管理员。",
 +			"details.failure.contextLength": "当前对话内容超过模型上下文限制，请缩短内容或新建会话。",
 +			"details.failure.modelNotAllowed": "当前模型未获授权或已不可用，请刷新模型列表或联系管理员。",
++			"details.failure.modelPricingMissing": "该模型尚未配置价格，暂时无法使用，请联系管理员。",
 +			"details.failure.invalidRequest": "请求参数不正确，请检查后重试。",
 +			"details.failure.unsupportedParameter": "当前模型不支持此参数，请调整模型设置。",
 +			"details.failure.authorizationUnavailable": "平台授权服务暂不可用，请稍后重试。",
@@ -41,7 +42,7 @@ index b4e6061..7042543 100644
  			"details.retry": "重试",
  			"details.retryDelay": "重试延迟",
  			"details.result": "结果",
-@@ -385,6 +417,38 @@ window.__ModuleLoader__.load({
+@@ -385,6 +418,39 @@ window.__ModuleLoader__.load({
  			"details.error": "Error",
  			"details.lastAttemptError": "Last attempt error",
  			"details.failure.auth": "API key is invalid",
@@ -62,6 +63,7 @@ index b4e6061..7042543 100644
 +			"details.failure.usageUnavailable": "Usage for this request could not be confirmed. Do not send it again; check usage later or contact an administrator.",
 +			"details.failure.contextLength": "This conversation exceeds the model context limit. Shorten it or start a new chat.",
 +			"details.failure.modelNotAllowed": "This model is not authorized or is unavailable. Refresh the model list or contact your administrator.",
++			"details.failure.modelPricingMissing": "This model has no price configured yet, so it can't be used. Contact your administrator.",
 +			"details.failure.invalidRequest": "The request parameters are invalid. Check them and try again.",
 +			"details.failure.unsupportedParameter": "This model does not support this parameter. Adjust the model settings.",
 +			"details.failure.authorizationUnavailable": "The authorization service is temporarily unavailable. Try again later.",
@@ -80,7 +82,7 @@ index b4e6061..7042543 100644
  			"details.retry": "Retry",
  			"details.retryDelay": "Retry delay",
  			"details.result": "Result",
-@@ -3863,8 +3927,58 @@ window.__ModuleLoader__.load({
+@@ -3863,8 +3929,59 @@ window.__ModuleLoader__.load({
  			if (state === "running") return t("status.pending");
  			return t("status.completed");
  		}
@@ -93,6 +95,7 @@ index b4e6061..7042543 100644
 +				case "usage_unavailable": return "details.failure.usageUnavailable";
 +				case "context_length_exceeded": return "details.failure.contextLength";
 +				case "model_not_allowed": return "details.failure.modelNotAllowed";
++				case "model_pricing_missing": return "details.failure.modelPricingMissing";
 +				case "invalid_request": return "details.failure.invalidRequest";
 +				case "unsupported_parameter": return "details.failure.unsupportedParameter";
 +				case "authorization_unavailable": return "details.failure.authorizationUnavailable";

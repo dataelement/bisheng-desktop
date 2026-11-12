@@ -51,7 +51,7 @@ describe('DSH Desktop enterprise package', () => {
 
   it('keeps model information without per-model quotas and uses shared credits for availability', async () => {
     const client = await readFile(path.join(projectRoot, 'packages/dsh-desktop-enterprise/client.js'), 'utf8')
-    const names = ['modelDisplayParts', 'isModelAvailable', 'renderModelRow']
+    const names = ['modelDisplayParts', 'isModelAvailable', 'pricingHintBadge', 'renderModelRow']
     const functions = names.map(name => client.match(new RegExp(`    function ${name}\\([^]*?\\n    \\}`))?.[0])
     expect(functions.every(Boolean)).toBe(true)
     const require = createRequire(import.meta.url)
@@ -72,6 +72,17 @@ describe('DSH Desktop enterprise package', () => {
       expect(html).not.toContain('dshEnterpriseModelUsage')
       expect(html).not.toContain('%')
     }
+    // F015: the server's credit ratio follows the provider, with base and free spelled out.
+    const state = { modelsAvailable: true, usage: { used: 25, limit: 100, quota_state: 'available' } }
+    const row = (pricing_hint?: unknown) => renderToStaticMarkup(render({ ...model, pricing_hint }, state, 'en', (key: string) => key))
+    expect(row({ ratio: '3.00', base: false, free: false })).toContain('title="ratioHint">3.00x</span>')
+    expect(row({ ratio: '1.00', base: true, free: false })).toContain('>1.00x · ratioBase</span>')
+    expect(row({ ratio: null, base: false, free: true })).toContain('>ratioFree</span>')
+    for (const hint of [undefined, { ratio: null, base: false, free: false }]) {
+      expect(row(hint)).not.toContain('dshEnterpriseModelRatio')
+    }
+    expect(renderToStaticMarkup(render({ id: 'bare', display_name: 'Bare', pricing_hint: { ratio: '0.50', base: false, free: false } }, state, 'en', (key: string) => key)))
+      .toContain('class="dshEnterpriseModelDetails"')
     expect(client).not.toContain('modelUsageProgress')
     expect(client).not.toContain('modelUsagePercentage')
     expect(client).not.toContain('.dshEnterpriseModelUsage')

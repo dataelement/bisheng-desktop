@@ -182,6 +182,16 @@ function parseModelReasoning(value) {
   return { efforts, ...(value.defaultEffort === undefined ? {} : { defaultEffort: value.defaultEffort }) }
 }
 
+// Server-formatted ratio against the tenant base model: two decimals, or "<0.01".
+const PRICING_RATIO_PATTERN = /^(?:<0\.01|(?:0|[1-9]\d{0,11})\.\d{2})$/
+
+/** Credit ratio hint for display only; billing stays on the server. Invalid hints are dropped, never the model. */
+function parsePricingHint(value) {
+  if (!isObject(value) || typeof value.base !== 'boolean' || typeof value.free !== 'boolean') return undefined
+  if (value.ratio !== null && (typeof value.ratio !== 'string' || !PRICING_RATIO_PATTERN.test(value.ratio))) return undefined
+  return { ratio: value.ratio, base: value.base, free: value.free }
+}
+
 function parseModelEntry(entry, seen) {
   if (!isObject(entry) || !isObject(entry.capabilities)) return undefined
   if (typeof entry.id !== 'string' || entry.id.length === 0 || entry.id.length > 512) return undefined
@@ -206,6 +216,7 @@ function parseModelEntry(entry, seen) {
   }
   seen.add(entry.id)
   const usage = isObject(entry.usage) ? parseUsageLenient(entry.usage) : undefined
+  const pricingHint = parsePricingHint(entry.pricing_hint)
   return {
     id: entry.id,
     object: typeof entry.object === 'string' && entry.object.length > 0 ? entry.object : 'model',
@@ -220,6 +231,7 @@ function parseModelEntry(entry, seen) {
       reasoning_content: entry.capabilities.reasoning_content,
       ...(entry.capabilities.responses === undefined ? {} : { responses: entry.capabilities.responses })
     },
+    ...(pricingHint ? { pricing_hint: pricingHint } : {}),
     ...(usage && usage.source !== 'unavailable' ? { usage } : {})
   }
 }

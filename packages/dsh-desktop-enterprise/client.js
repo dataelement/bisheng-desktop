@@ -12,6 +12,9 @@ window.__ModuleLoader__.load({
     const ENTERPRISE_SECTION_ID = 'enterprise-account'
     const LEARN_MORE_URL = 'https://dshdesktop.com/zh/enterprise/deployment/'
     const OPEN_SETTINGS_SECTION_EVENT = 'dsh-desktop:open-settings-section'
+    // Mirrors BISHENG_PROVIDER_ROUTE in index.js; the client bundle cannot import the server entry.
+    const BISHENG_PROVIDER_ROUTE = 'bisheng-enterprise'
+    const MODEL_LABEL_SLOT = 'conversation.input.model.label'
     const NS = 'settings.desktopEnterprise'
     const SAFETY_NS = 'enterprise.contentSafety'
     const safetyCopy = {
@@ -80,6 +83,9 @@ window.__ModuleLoader__.load({
       learnMore: '了解企业版',
       vision: '视觉',
       visionHint: '企业已开启图片输入',
+      ratioBase: '基准',
+      ratioFree: '免费',
+      ratioHint: '积分倍率：按输入与输出 3:1 估算，相对企业设置的基准模型；实际按每次用量扣积分。',
       usageLabel: '剩余积分',
       creditsHelp: 'Chat 和 Work 共用积分，每月重置。',
       ticket: '一次性登录码',
@@ -147,6 +153,9 @@ window.__ModuleLoader__.load({
       learnMore: 'Learn about Enterprise',
       vision: 'Vision',
       visionHint: 'Image input enabled by your enterprise',
+      ratioBase: 'Base',
+      ratioFree: 'Free',
+      ratioHint: 'Credit ratio, estimated at 3:1 input to output against the base model set by your organization. Each call is charged by its actual usage.',
       usageLabel: 'Credits remaining',
       creditsHelp: 'Chat and Work share credits, reset monthly.',
       ticket: 'One-time code',
@@ -466,6 +475,20 @@ window.__ModuleLoader__.load({
         .dshEnterpriseModelVision svg {
           flex: none;
         }
+        .dshEnterpriseModelRatio {
+          color: var(--dsw-alias-label-secondary);
+          font-size: 12px;
+          line-height: 18px;
+          font-variant-numeric: tabular-nums;
+          white-space: nowrap;
+        }
+        .dshEnterpriseModelLabel {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          white-space: nowrap;
+          vertical-align: baseline;
+        }
         .dshEnterpriseModels.paused {
           opacity: .5;
         }
@@ -714,14 +737,83 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function bindEnterpriseModelSync() {
+    /**
+     * F015 credit-ratio hints of the signed-in account's BiSheng models, keyed by catalog model id.
+     * Fed by the foreground catalog refresh, whose response is the full account state.
+     */
+    function createPricingHintStore() {
+      let hints = new Map()
+      let version = 0
+      const listeners = new Set()
+      return {
+        ingest(state) {
+          const next = new Map()
+          if (state?.connected === true && Array.isArray(state.models)) {
+            for (const model of state.models) {
+              if (typeof model?.id === 'string' && model.pricing_hint) next.set(model.id, model.pricing_hint)
+            }
+          }
+          const unchanged = next.size === hints.size && [...next].every(([id, hint]) => {
+            const current = hints.get(id)
+            return current?.ratio === hint.ratio && current.base === hint.base && current.free === hint.free
+          })
+          if (unchanged) return
+          hints = next
+          version += 1
+          for (const listener of [...listeners]) listener()
+        },
+        get: (id) => hints.get(id),
+        get size() { return hints.size },
+        version: () => version,
+        subscribe(listener) {
+          listeners.add(listener)
+          return () => { listeners.delete(listener) }
+        }
+      }
+    }
+
+    function PricingModelLabel({ provider, model, t, hints }) {
+      // Mounted labels follow price or base-model changes picked up by the next catalog refresh.
+      React.useSyncExternalStore(hints.subscribe, hints.version)
+      const badge = provider?.id === BISHENG_PROVIDER_ROUTE ? pricingHintBadge(hints.get(model.id), t) : null
+      if (!badge) return model.name
+      const { Tag } = require('@deepseek-ai/dsh-client-ui-primitives')
+      return h('span', { className: 'dshEnterpriseModelLabel' }, h('span', null, model.name), h(Tag, { tone: badge.tone }, badge.text))
+    }
+
+    /**
+     * Show the credit ratio after BiSheng model names in the Work model picker. The label slot is
+     * single-kind and the bundled DeepSeek 1017 badge holds the default priority 0, so this entry uses -1
+     * (the lowest priority renders). It is registered only while the account has ratio hints: signed out,
+     * on an older BiSheng server, or without enterprise models the slot is released and the badge returns.
+     */
+    function bindModelPricingLabel(ctx, hints) {
+      let release
+      const update = () => {
+        if (hints.size > 0 && !release) {
+          release = ctx.slots.inject(MODEL_LABEL_SLOT, () => ctx.slots.register({
+            name: MODEL_LABEL_SLOT, locale: NS, priority: -1
+          }, (props) => h(PricingModelLabel, { ...props, hints })))
+        } else if (hints.size === 0 && release) {
+          release()
+          release = undefined
+        }
+      }
+      const unsubscribe = hints.subscribe(update)
+      update()
+      return () => { unsubscribe(); release?.(); release = undefined }
+    }
+
+    function bindEnterpriseModelSync(onState) {
       let pending, disposed = false, resync = false
       const sync = () => {
         if (disposed || document.visibilityState !== 'visible' || pending) return
         const controller = new AbortController()
         const timeout = window.setTimeout(() => controller.abort(), 30_000)
         pending = { controller, timeout }
-        void api('/api/enterprise.models.refresh', {}, controller.signal).catch(error => {
+        void api('/api/enterprise.models.refresh', {}, controller.signal).then(state => {
+          if (!disposed) onState?.(state)
+        }).catch(error => {
           if (!disposed && !controller.signal.aborted) console.warn('[enterprise-models] Catalog refresh failed', error)
         }).finally(() => {
           window.clearTimeout(timeout)
@@ -919,6 +1011,16 @@ window.__ModuleLoader__.load({
         && usage.used < usage.limit
     }
 
+    /** Short credit-ratio text for a server hint, or null when no ratio can be shown. */
+    function pricingHintBadge(hint, t) {
+      if (!hint) return null
+      if (hint.free) return { text: t('ratioFree'), tone: 'success' }
+      if (!hint.ratio) return null
+      return hint.base
+        ? { text: `${hint.ratio}x · ${t('ratioBase')}`, tone: 'info' }
+        : { text: `${hint.ratio}x`, tone: 'neutral' }
+    }
+
     function renderModelRow(model, state, language, t) {
       const display = modelDisplayParts(model.display_name)
       const usage = state.usage
@@ -926,6 +1028,10 @@ window.__ModuleLoader__.load({
         ? h('span', { className: 'dshEnterpriseModelVision', title: t('visionHint') },
           createVisionIcon(),
           t('vision'))
+        : null
+      const badge = pricingHintBadge(model.pricing_hint, t)
+      const ratio = badge
+        ? h('span', { className: 'dshEnterpriseModelRatio', title: t('ratioHint') }, badge.text)
         : null
 
       return h('li', { key: model.id },
@@ -936,9 +1042,10 @@ window.__ModuleLoader__.load({
               className: 'dshEnterpriseModelStatus', role: 'img',
               title: t('modelAvailable'), 'aria-label': t('modelAvailable')
             }) : null),
-          display.provider || vision ? h('span', { className: 'dshEnterpriseModelDetails' },
+          display.provider || vision || ratio ? h('span', { className: 'dshEnterpriseModelDetails' },
             display.provider ? h('span', { className: 'dshEnterpriseModelProvider' }, display.provider) : null,
-            vision) : null))
+            vision,
+            ratio) : null))
     }
 
     function EnterpriseSection({ t, renderSlot }) {
@@ -1245,7 +1352,9 @@ window.__ModuleLoader__.load({
       accountTranslate = t
       ctx.effect(() => ctx.locale.register('settings.enterpriseMarket', { zh: marketZh, en: marketEn }), 'enterprise-market: translations')
       marketTranslate = ctx.locale.bind('settings.enterpriseMarket')
-      ctx.effect(() => bindEnterpriseModelSync(), 'enterprise: foreground model catalog sync')
+      const pricingHints = createPricingHintStore()
+      ctx.effect(() => bindEnterpriseModelSync(pricingHints.ingest), 'enterprise: foreground model catalog sync')
+      ctx.effect(() => bindModelPricingLabel(ctx, pricingHints), 'enterprise: credit ratio in the Work model picker')
       ctx.effect(() => bindEnterpriseMarketTab(ctx), 'enterprise-market: account-bound plugins tab')
       ctx.effect(() => {
         const bridge = window.dshDesktopEnterprise

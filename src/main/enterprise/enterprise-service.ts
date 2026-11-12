@@ -88,6 +88,8 @@ export interface EnterprisePublicModel {
     vision?: boolean
     responses?: boolean
   }
+  /** F015 display-only credit ratio; absent from older BiSheng servers. */
+  pricing_hint?: { ratio: string | null; base: boolean; free: boolean }
 }
 
 export interface EnterprisePublicState {
@@ -222,7 +224,8 @@ export class EnterpriseService {
         id: model.id,
         display_name: model.display_name,
         ...(model.reasoning === undefined ? {} : { reasoning: structuredClone(model.reasoning) }),
-        capabilities: { ...model.capabilities }
+        capabilities: { ...model.capabilities },
+        ...(model.pricing_hint === undefined ? {} : { pricing_hint: { ...model.pricing_hint } })
       })),
       modelsAvailable: this.modelsAvailable && (this.phase === 'connected' || this.phase === 'refreshing'),
       ...(this.session?.base ? { base: this.session.base } : {}),
@@ -692,7 +695,8 @@ export class EnterpriseService {
         id: model.id,
         display_name: model.display_name,
         ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
-        capabilities: model.capabilities
+        capabilities: model.capabilities,
+        ...(model.pricing_hint === undefined ? {} : { pricing_hint: model.pricing_hint })
       }))
       this.modelsAvailable = this.models.length > 0
       const seededUsage: Record<string, EnterprisePublicUsage> = {}
@@ -742,7 +746,8 @@ export class EnterpriseService {
         id: model.id,
         display_name: model.display_name,
         ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
-        capabilities: model.capabilities
+        capabilities: model.capabilities,
+        ...(model.pricing_hint === undefined ? {} : { pricing_hint: model.pricing_hint })
       }))
       this.modelsAvailable = this.models.length > 0
       if (this.phase === 'degraded') this.phase = 'connected'

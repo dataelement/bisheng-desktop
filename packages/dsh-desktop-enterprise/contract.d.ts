@@ -23,6 +23,14 @@ export interface EnterpriseModelReasoning {
   defaultEffort?: string
 }
 
+/** Display-only credit ratio against the tenant base model (input:output estimated at 3:1). */
+export interface EnterprisePricingHint {
+  /** Two decimals such as "3.00", "<0.01", or null when no ratio can be shown. */
+  ratio: string | null
+  base: boolean
+  free: boolean
+}
+
 export interface EnterpriseModel {
   id: string
   object: string
@@ -31,6 +39,7 @@ export interface EnterpriseModel {
   display_name: string
   reasoning?: EnterpriseModelReasoning
   capabilities: { streaming: boolean; tools: boolean; reasoning_content: boolean; vision?: boolean; responses?: boolean }
+  pricing_hint?: EnterprisePricingHint
   usage?: {
     source: 'live' | 'persisted' | 'unavailable'
     quota_state: 'available' | 'exhausted' | 'unavailable'
