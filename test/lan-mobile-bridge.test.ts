@@ -1257,9 +1257,9 @@ describe('snapshot keeps tunnel state after the pairing token is consumed', () =
     })
     expect(toggle.status).toBe(200)
     const toggleJson = await toggle.json()
-    expect(toggleJson.ok).toBe(true)
-    expect(toggleJson.active).toBe(true)
-    expect(toggleJson.url).toBe('https://post-pair.trycloudflare.com')
+    expect(toggleJson.ok).toBe(false)
+    expect(toggleJson.active).toBe(false)
+    expect(toggleJson.error).toContain('signed-in BiSheng')
   })
 
   it('serves the desktop page with a fresh pairing token after approval or expiry', async () => {
@@ -1696,7 +1696,7 @@ describe('LAN vs tunnel pairing authorization', () => {
       body: JSON.stringify({ enable: true })
     })
     expect(toggled.status).toBe(200)
-    expect(await toggled.json()).toMatchObject({ active: true, unexpectedlyClosed: false })
+    expect(await toggled.json()).toMatchObject({ active: false, unexpectedlyClosed: true })
     expect(events.at(-1)).toBe(false)
   })
 
@@ -1927,5 +1927,162 @@ describe('workspace follow snapshot', () => {
     }))
     const removed = await until((value) => value.items.length === 1)
     expect(removed.items.map((item) => item.workspaceId)).toEqual(['w1'])
+  })
+})
+
+describe('work tab mobile rpc', () => {
+  it('forwards the desktop work routes and keeps unknown methods closed', async () => {
+    const seen: { url?: string; body: Buffer; contentType?: string }[] = []
+    const harness = createServer(async (request, response) => {
+      if (request.method === 'GET') {
+        response.statusCode = 404
+        response.end()
+        return
+      }
+      const chunks: Buffer[] = []
+      for await (const chunk of request) chunks.push(Buffer.from(chunk))
+      const body = Buffer.concat(chunks)
+      seen.push({
+        url: request.url,
+        body,
+        contentType: request.headers['content-type']
+      })
+      response.setHeader('content-type', 'application/json')
+      if (request.url?.startsWith('/api/session/uploadFileBinary')) {
+        response.end(JSON.stringify({ ok: true, value: { receiptId: 'receipt-1', file: { secret: true } } }))
+        return
+      }
+      if (request.url === '/api/enterprise.work-skills') {
+        const requestBody = JSON.parse(body.toString('utf8')) as { operation?: string }
+        if (requestBody.operation === 'validate') {
+          response.statusCode = 400
+          response.end(JSON.stringify({ error: 'Connect your enterprise account in Settings.' }))
+          return
+        }
+        response.end(JSON.stringify({ skills: [{ name: 'writing', displayName: '写作' }] }))
+        return
+      }
+      if (request.url === '/api/enterprise.work-resources') {
+        response.end(JSON.stringify({ spaces: [{ id: 7, name: '制度' }] }))
+        return
+      }
+      if (request.url === '/api/office-templates') {
+        const envelope = JSON.parse(body.toString('utf8')) as { rpcId: string }
+        response.end(JSON.stringify({
+          type: 'server-response',
+          rpcId: envelope.rpcId,
+          result: { ok: true, value: { mode: 'word', templates: [] } }
+        }))
+        return
+      }
+      if (request.url === '/dsh-ppt/presentation/mode') {
+        const envelope = JSON.parse(body.toString('utf8')) as { rpcId: string }
+        response.end(JSON.stringify({
+          type: 'server-response',
+          rpcId: envelope.rpcId,
+          result: { ok: true, value: { status: 'ok', data: { presentationMode: 'ppt' } } }
+        }))
+        return
+      }
+      response.statusCode = 404
+      response.end(JSON.stringify({ error: 'missing' }))
+    })
+    servers.push(harness)
+    await new Promise<void>((resolve) => harness.listen(0, '127.0.0.1', resolve))
+    const harnessPort = (harness.address() as AddressInfo).port
+    const bridge = new LanMobileBridge({
+      harnessUrl: () => `http://127.0.0.1:${harnessPort}`
+    })
+    bridges.push(bridge)
+    const { port, cookie } = await pairBridge(bridge)
+
+    const skills = await mobileRpc(port, cookie, 'work.skills', { operation: 'catalog' })
+    expect(skills.status).toBe(200)
+    expect(await skills.json()).toEqual({
+      ok: true,
+      value: { skills: [{ name: 'writing', displayName: '写作' }] }
+    })
+
+    const disconnected = await mobileRpc(port, cookie, 'work.skills', {
+      operation: 'validate',
+      names: ['writing']
+    })
+    expect(disconnected.status).toBe(400)
+    expect(await disconnected.json()).toEqual({
+      ok: false,
+      error: 'Connect your enterprise account in Settings.'
+    })
+
+    const knowledge = await mobileRpc(port, cookie, 'work.knowledge', {
+      operation: 'select',
+      sessionId: 'session-1',
+      spaceIds: [7]
+    })
+    expect(knowledge.status).toBe(200)
+    expect(JSON.parse(seen.find((item) => item.url === '/api/enterprise.work-resources')!.body.toString('utf8'))).toEqual({
+      operation: 'select',
+      sessionId: 'session-1',
+      spaceIds: [7]
+    })
+
+    const office = await mobileRpc(port, cookie, 'office.call', {
+      endpoint: 'mode',
+      sessionId: 'session-1',
+      mode: 'word'
+    })
+    expect(office.status).toBe(200)
+    expect(await office.json()).toMatchObject({ ok: true, value: { mode: 'word' } })
+    expect(JSON.parse(seen.find((item) => item.url === '/api/office-templates')!.body.toString('utf8'))).toMatchObject({
+      type: 'client-request',
+      method: 'office-templates',
+      payload: { endpoint: 'mode', sessionId: 'session-1', mode: 'word' }
+    })
+    expect(JSON.parse(seen.find((item) => item.url === '/api/office-templates')!.body.toString('utf8')).payload.args).toBeUndefined()
+
+    const ppt = await mobileRpc(port, cookie, 'ppt.call', {
+      endpoint: 'presentation/mode',
+      sessionId: 'session-1',
+      mode: 'ppt'
+    })
+    expect(ppt.status).toBe(200)
+    expect(await ppt.json()).toEqual({ ok: true, value: { presentationMode: 'ppt' } })
+    expect(JSON.parse(seen.find((item) => item.url === '/dsh-ppt/presentation/mode')!.body.toString('utf8'))).toMatchObject({
+      payload: { sessionId: 'session-1', mode: 'ppt' }
+    })
+
+    const file = Buffer.from('hello')
+    const started = await mobileRpc(port, cookie, 'session.uploadStart', {
+      sessionId: 'session-1',
+      name: 'note.txt',
+      totalBytes: file.length
+    })
+    expect(started.status).toBe(200)
+    const uploadId = (await started.json()).value.uploadId as string
+    const chunk = await mobileRpc(port, cookie, 'session.uploadChunk', {
+      uploadId,
+      index: 0,
+      data: file.toString('base64')
+    })
+    expect(chunk.status).toBe(200)
+    const finished = await mobileRpc(port, cookie, 'session.uploadFinish', { uploadId })
+    expect(finished.status).toBe(200)
+    expect(await finished.json()).toEqual({ ok: true, value: { receiptId: 'receipt-1' } })
+    const uploaded = seen.find((item) => item.url?.startsWith('/api/session/uploadFileBinary'))
+    expect(uploaded?.contentType).toBe('application/octet-stream')
+    expect(uploaded?.body.equals(file)).toBe(true)
+    expect(uploaded?.url).toContain('sessionId=session-1')
+    expect(uploaded?.url).toContain('name=note.txt')
+
+    const before = seen.length
+    const oversized = await mobileRpc(port, cookie, 'session.uploadStart', {
+      sessionId: 'session-1',
+      name: 'big.bin',
+      totalBytes: 8 * 1024 * 1024 + 1
+    })
+    expect(oversized.status).toBe(400)
+    expect(seen).toHaveLength(before)
+
+    const closed = await mobileRpc(port, cookie, 'host.openPath', { path: '/tmp/secret' })
+    expect(closed.status).toBe(403)
   })
 })

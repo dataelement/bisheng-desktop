@@ -750,6 +750,73 @@ describe('enterprise service login loop', () => {
   })
 })
 
+describe('enterprise mobile access authorization', () => {
+  it('hands off refreshed credentials synchronously before logout revokes mobile access', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    const { service } = await createService()
+    await completeBrowserLogin(origin, (await service.startLogin(origin)).authorizationUrl)
+    await waitFor(() => service.snapshot().modelsAvailable)
+    const events: Array<ReturnType<EnterpriseService['readMobileAccessAccount']>> = []
+    const unsubscribe = service.subscribeMobileAccessAccount(account => { events.push(account) })
+    const oldToken = events.at(-1)?.accessToken
+    expect(oldToken).toEqual(expect.any(String))
+    await service.refresh()
+    const fresh = service.readMobileAccessAccount()
+    expect(fresh.accessToken).toEqual(expect.any(String))
+    expect(fresh.accessToken).not.toBe(oldToken)
+    expect(events.at(-1)).toEqual(fresh)
+    events.length = 0
+    // No mobile watcher tick between refresh and logout. The departing credential
+    // must be delivered before the authoritative getter starts returning {}.
+    const logout = service.logout()
+    expect(events).toEqual([fresh, {}])
+    expect(service.readMobileAccessAccount()).toEqual({})
+    expect(JSON.stringify(service.snapshot())).not.toContain(fresh.accessToken)
+    unsubscribe()
+    await logout
+    expect(events).toEqual([fresh, {}])
+  })
+
+  it('revokes desktop access before remote logout completes and when the session expires', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    let now = Date.now()
+    let finishLogout: (() => void) | undefined
+    const { service, vault } = await createService(async (url, init) => {
+      if (new URL(url).pathname.endsWith('/logout')) {
+        await new Promise<void>(resolve => { finishLogout = resolve })
+        return Response.json({})
+      }
+      return fetch(url, init)
+    }, { now: () => now })
+    await completeBrowserLogin(origin, (await service.startLogin(origin)).authorizationUrl)
+    await waitFor(() => service.snapshot().modelsAvailable)
+    const account = service.readMobileAccessAccount()
+    expect(account).toMatchObject({ base: origin, accessToken: expect.any(String), userId: expect.any(String) })
+    const session = (await vault.read()).session
+    expect(session?.session_expires_at).toBeTruthy()
+    const validNow = now
+    now = Date.parse(session?.session_expires_at ?? '') + 1
+    expect(service.readMobileAccessAccount()).toEqual({})
+    const expiredEvents: Array<ReturnType<EnterpriseService['readMobileAccessAccount']>> = []
+    const unsubscribeExpired = service.subscribeMobileAccessAccount(value => { expiredEvents.push(value) })
+    expect(expiredEvents).toEqual([{}])
+    unsubscribeExpired()
+    now = validNow
+    expect(service.readMobileAccessAccount()).toEqual(account)
+    const logout = service.logout()
+    // Local revocation is synchronous; it must not depend on the logout server.
+    expect(service.readMobileAccessAccount()).toEqual({})
+    await waitFor(() => finishLogout !== undefined)
+    finishLogout?.()
+    await logout
+    expect(service.readMobileAccessAccount()).toEqual({})
+  })
+})
+
 describe('enterprise market credential boundary', () => {
   it('uses generic host auth without replaying 401 and preserves versions across refresh', async () => {
     const platform = createMockEnterpriseServer({ port: 0 })
