@@ -20,6 +20,19 @@ contextBridge.exposeInMainWorld('dshChatPresentation', Object.freeze({
     ipcRenderer.on('enterprise-chat:projects-changed', receive)
     return () => ipcRenderer.removeListener('enterprise-chat:projects-changed', receive)
   },
+  onConversationRenamed(listener: unknown): () => void {
+    if (typeof listener !== 'function') throw new TypeError('Rename listener must be a function.')
+    const receive = (_event: Electron.IpcRendererEvent, detail: unknown): void => {
+      const id = detail && typeof detail === 'object' ? (detail as { conversationId?: unknown }).conversationId : undefined
+      if (typeof id === 'string') listener(id)
+    }
+    ipcRenderer.on('enterprise-chat:conversation-renamed', receive)
+    return () => ipcRenderer.removeListener('enterprise-chat:conversation-renamed', receive)
+  },
+  /** Conversations whose replies or tasks are still running in this document. */
+  reportRunning(ids: unknown): void {
+    ipcRenderer.send('enterprise-chat:running', { ids, path: window.location.pathname })
+  },
   reportNavigation(navigation: unknown): void {
     ipcRenderer.send('enterprise-chat:navigation', { navigation, path: window.location.pathname })
   },

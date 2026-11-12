@@ -329,7 +329,11 @@ try {
           assert.equal(await toolVisible(filedTool),true,'Tab exposes the otherwise hidden menu trigger')
           await key(' ',32,'Space')
           await wait(()=>shown('[role=menu]'))
-          if(!await run('document.activeElement.matches(".dshCloudHistoryMenu button[aria-haspopup=menu]")')) await key('Home',36)
+          if(!await run('document.activeElement.matches(".dshCloudHistoryMenu button[aria-haspopup=menu]")')) {
+            await key('Home',36)
+            // The conversation menu now starts with Rename, followed by the project submenu.
+            await key('ArrowDown',40)
+          }
           await wait(()=>run('document.activeElement.matches(".dshCloudHistoryMenu button[aria-haspopup=menu]")'))
           await wait(()=>shown(projectSubmenu))
           assert.deepEqual(await submenuRows(),[

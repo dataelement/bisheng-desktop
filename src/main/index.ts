@@ -1738,7 +1738,7 @@ function registerHarnessHandlers(): void {
     }
   })
 
-  for (const channel of ['enterprise-chat:present', 'enterprise-chat:capture', 'enterprise-chat:landing-geometry', 'enterprise-chat:landing-text-motion', 'enterprise-chat:state', 'enterprise-chat:retry', 'enterprise-chat:usage', 'enterprise-chat:history', 'enterprise-chat:open', 'enterprise-chat:remove', 'enterprise-chat:open-page', 'enterprise-chat:focus-settings', 'enterprise-chat:projects-state', 'enterprise-chat:project-action', 'enterprise-chat:project-conversations']) ipcMain.removeHandler(channel)
+  for (const channel of ['enterprise-chat:present', 'enterprise-chat:capture', 'enterprise-chat:landing-geometry', 'enterprise-chat:landing-text-motion', 'enterprise-chat:state', 'enterprise-chat:retry', 'enterprise-chat:usage', 'enterprise-chat:history', 'enterprise-chat:open', 'enterprise-chat:remove', 'enterprise-chat:rename', 'enterprise-chat:open-page', 'enterprise-chat:focus-settings', 'enterprise-chat:projects-state', 'enterprise-chat:project-action', 'enterprise-chat:project-conversations']) ipcMain.removeHandler(channel)
   ipcMain.handle('enterprise-chat:projects-state', (event) => {
     assertTrustedMainWindowEvent(event)
     return enterpriseChat?.projectsState()
@@ -1802,6 +1802,11 @@ function registerHarnessHandlers(): void {
     assertTrustedMainWindowEvent(event)
     if (!enterpriseChat) throw new Error('Enterprise Chat unavailable.')
     return enterpriseChat.remove(id, epoch)
+  })
+  ipcMain.handle('enterprise-chat:rename', (event, id: unknown, name: unknown, epoch: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    if (!enterpriseChat) throw new Error('Enterprise Chat unavailable.')
+    return enterpriseChat.rename(id, name, epoch)
   })
   ipcMain.removeHandler('harness:restart')
   ipcMain.handle('harness:restart', async (event) => {
