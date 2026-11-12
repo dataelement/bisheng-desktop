@@ -208,6 +208,29 @@ describe('restricted enterprise credential broker', () => {
     expect(state.headers.get('access-control-allow-origin')).toBeNull()
   })
 
+  it('validates profile refresh reasons before invoking the service and retains broker security', async () => {
+    const { broker, service } = await createRuntime()
+    const refresh = vi.spyOn(service, 'refreshProfile').mockResolvedValue(service.snapshot())
+    const path = '/v1/profile/refresh'
+    expect((await fetch(new URL(path, broker.url), { method: 'POST', body: '{}' })).status).toBe(401)
+    expect((await brokerFetch(broker, path, { method: 'GET' })).status).toBe(405)
+    expect((await brokerFetch(broker, path, { method: 'POST', body: '{"reason":"account"}', headers: { origin: 'https://evil.example' } })).status).toBe(403)
+    for (const body of [{}, { reason: null }, { reason: 1 }, { reason: '' }, { reason: 'poll' },
+      { reason: 'ACCOUNT' }, { reason: 'account', base: 'https://evil.example' }, [], null]) {
+      const response = await brokerFetch(broker, path, { method: 'POST', body: JSON.stringify(body) })
+      expect(response.status, JSON.stringify(body)).toBe(400)
+    }
+    expect(refresh).not.toHaveBeenCalled()
+    for (const reason of ['account', 'foreground', 'image'] as const) {
+      const response = await brokerFetch(broker, path, { method: 'POST', body: JSON.stringify({ reason }) })
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual(service.snapshot())
+      expect(refresh).toHaveBeenLastCalledWith(reason)
+      expect(response.headers.get('cache-control')).toBe('no-store')
+    }
+    expect(refresh).toHaveBeenCalledTimes(3)
+  })
+
   it('authorizes metadata refresh through the narrow broker route', async () => {
     const { broker, service } = await createRuntime()
     const refresh = vi.spyOn(service, 'refreshModels')

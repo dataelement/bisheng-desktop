@@ -13,7 +13,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 const source = await readFile(new URL('../packages/dsh-desktop-settings/client.js', import.meta.url), 'utf8')
 const usageData = ({ storage, ...summary }) => ({ summary: { status: 'ready', data: summary }, storage: { status: 'ready', data: storage } })
 let cleanup
-afterEach(async () => { await cleanup?.(); cleanup = undefined; vi.unstubAllGlobals() })
+afterEach(async () => { await cleanup?.(); cleanup = undefined; vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 async function fixture(language = 'zh', settingsProtocolVersion = 1, signedIn = true) {
   const dom = new JSDOM('<html><head></head><body><div id="root"></div></body></html>', { url: 'http://localhost/' })
@@ -235,12 +235,12 @@ it.each(['zh', 'en'])('shows recovery with the other About actions without discl
 it('shows enterprise models natively and embeds no account page in Account and security', async () => {
   const f = await fixture()
   f.setAccount({ connected: true, modelsAvailable: true, user: { username: 'employee' }, models: [{ id: 'example-model', display_name: 'Example provider / Example model' }] })
-  const code = (await readFile(new URL('../packages/dsh-desktop-enterprise/client.js', import.meta.url), 'utf8')).replace('exports.apply = apply', 'exports.EnterpriseSection = EnterpriseSection\n    exports.apply = apply')
+  const code = (await readFile(new URL('../packages/dsh-desktop-enterprise/client.js', import.meta.url), 'utf8')).replace('exports.apply = apply', 'exports.api = api\n    exports.EnterpriseSection = EnterpriseSection\n    exports.apply = apply')
   const definitions = new Map()
   // Both plugins use the actual loader and Locale runtime; preserve their lifecycle contract.
   window.__ModuleLoader__.load = next => { definitions.set(next.id, next) }
   const localeCode = await readFile(new URL('../node_modules/@deepseek-ai/dsh-client-locale/lib/client.js', import.meta.url), 'utf8')
-  vm.runInNewContext(localeCode + '\n' + code, { window, document, fetch: f.request, CustomEvent: window.CustomEvent, localStorage: window.localStorage })
+  vm.runInNewContext(localeCode + '\n' + code, { window, document, fetch: f.request, CustomEvent: window.CustomEvent, AbortController, localStorage: window.localStorage })
   const enterprise = definitions.get('dsh-desktop-enterprise').factory(id => {
     if (id === 'react') return React
     if (id === '@deepseek-ai/dsh-client-ui-primitives') return { Button: ({ variant, size, ...props }) => React.createElement('button', { ...props, 'data-native-variant': variant, 'data-native-size': size }) }
@@ -534,7 +534,487 @@ it('offers sign-in while signed out and keeps device settings and phone pairing 
   expect(navigate.mock.calls.at(-1)[0].detail.id).toBe('enterprise-account')
 })
 
+// Load the production account section alongside the launcher without mounting unrelated services.
+async function enterpriseSection(f) {
+  let definition
+  window.__ModuleLoader__.load = next => { definition = next }
+  const code = (await readFile(new URL('../packages/dsh-desktop-enterprise/client.js', import.meta.url), 'utf8')).replace('exports.apply = apply', 'exports.api = api\n    exports.EnterpriseSection = EnterpriseSection\n    exports.apply = apply')
+  vm.runInNewContext(code, { window, document, fetch: f.request, CustomEvent: window.CustomEvent, AbortController, localStorage: window.localStorage })
+  const exports = definition.factory(id => {
+    if (id === 'react') return React
+    if (id === '@deepseek-ai/dsh-client-ui-primitives') return { Button: ({ variant, size, ...props }) => React.createElement('button', props) }
+    throw new Error(id)
+  })
+  f.enterpriseApi = exports.api
+  return exports.EnterpriseSection
+}
+const accountEvent = state => window.dispatchEvent(new window.CustomEvent('dsh-desktop:enterprise-account-changed', { detail: { state } }))
+const responseFor = state => ({ ok: true, json: async () => state })
+
+it('opens a successful login authorization despite its own native view epoch changes', async () => {
+  const f = await fixture('zh', 1, false)
+  const Section = await enterpriseSection(f)
+  const launcher = f.registrations.find(row => row.options.name === 'settings.launcher')
+  await f.mount(() => React.createElement(React.Fragment, null,
+    React.createElement(launcher.Component, { ...launcher.options.inject?.(), wide: true }),
+    React.createElement(Section, { t: key => key })))
+  await act(async () => f.update({ epoch: 1, connected: false, accountRevision: 1 }))
+  const opened = vi.spyOn(window, 'open').mockImplementation(() => null)
+  let finish
+  const original = f.request.getMockImplementation()
+  f.request.mockImplementation((path, options) => {
+    if (path === '/api/enterprise.base.inspect') return Promise.resolve(responseFor({ base: 'https://example.test' }))
+    if (path === '/api/enterprise.login.start') return new Promise(resolve => { finish = resolve })
+    return original(path, options)
+  })
+  // Use the real API path with the real native subscription; the button consumes this same URL contract.
+  let pending
+  await act(async () => { pending = f.enterpriseApi('/api/enterprise.login.start', { base: 'https://example.test' }).then(result => window.open(result.authorizationUrl, '_blank', 'noopener,noreferrer')) })
+  await act(async () => f.update({ epoch: 2, connected: false, accountRevision: 2 }))
+  await act(async () => {
+    finish(responseFor({ authorizationUrl: 'https://example.test/desktop-login', expiresIn: 60 }))
+    await pending
+  })
+  expect(opened).toHaveBeenCalledExactlyOnceWith('https://example.test/desktop-login', '_blank', 'noopener,noreferrer')
+})
+
+it('still rejects a pending authorization when the user explicitly logs out', async () => {
+  const f = await fixture('zh', 1, false)
+  const Section = await enterpriseSection(f)
+  const launcher = f.registrations.find(row => row.options.name === 'settings.launcher')
+  await f.mount(() => React.createElement(React.Fragment, null,
+    React.createElement(launcher.Component, { ...launcher.options.inject?.(), wide: true }),
+    React.createElement(Section, { t: key => key })))
+  let finish
+  const original = f.request.getMockImplementation()
+  f.request.mockImplementation((path, options) => path === '/api/enterprise.login.start'
+    ? new Promise(resolve => { finish = resolve }) : original(path, options))
+  let pending
+  await act(async () => { pending = f.enterpriseApi('/api/enterprise.login.start', {}).catch(error => error) })
+  await act(async () => f.enterpriseApi('/api/enterprise.logout', {}))
+  await act(async () => finish(responseFor({ authorizationUrl: 'https://example.test/desktop-login' })))
+  expect((await pending).staleAccountAction).toBe(true)
+})
+
+it.each(['/api/enterprise.login.start', '/api/enterprise.deep-link.confirm'])('returns %s authorization without depending on local state availability', async path => {
+  const f = await fixture('zh', 1, false)
+  await enterpriseSection(f)
+  const authorization = { authorizationUrl: 'https://example.test/desktop-login', expiresIn: 60 }
+  f.request.mockImplementation(async requested => {
+    if (requested === path) return responseFor(authorization)
+    throw new Error('local state unavailable')
+  })
+  await expect(f.enterpriseApi(path, { base: 'https://example.test' })).resolves.toEqual(authorization)
+  expect(f.request.mock.calls.map(([requested]) => requested)).toEqual([path])
+})
+const signedInProfile = (name, avatar) => ({ connected: true, phase: 'connected', user: { display_name: name, avatar } })
+
+it('publishes profile results without self-aborting, synchronizes both owners and aborts obsolete reads', async () => {
+  const f = await fixture()
+  const Section = await enterpriseSection(f)
+  const launcher = f.registrations.find(row => row.options.name === 'settings.launcher')
+  const publications = vi.fn()
+  window.addEventListener('dsh-desktop:enterprise-account-changed', publications)
+  await f.mount(() => React.createElement(React.Fragment, null,
+    React.createElement(launcher.Component, { ...launcher.options.inject?.(), wide: true }),
+    React.createElement(Section, { t: key => key })))
+  expect(publications).toHaveBeenCalledOnce()
+  const sectionRead = f.request.mock.calls.find(([path]) => path === '/api/enterprise.profile.refresh')
+  expect(sectionRead[1].method).toBe('POST')
+  expect(JSON.parse(sectionRead[1].body)).toEqual({ reason: 'account' })
+  // The launcher receives this publication; only the publishing section ignores its own source.
+  expect(sectionRead[1].signal.aborted).toBe(false)
+  const pending = []
+  const slowRead = (_path, options) => new Promise(resolve => pending.push({ signal: options.signal, resolve }))
+  f.request.mockImplementationOnce(slowRead).mockImplementationOnce(slowRead)
+  await act(async () => window.dispatchEvent(new window.CustomEvent('dsh-desktop:enterprise-account-changed')))
+  expect(pending).toHaveLength(2)
+  f.setAccount(signedInProfile('新身份'))
+  await act(async () => accountEvent(signedInProfile('不可信快照')))
+  expect(pending.every(read => read.signal.aborted)).toBe(true)
+  // Deliberately let the transport ignore AbortSignal: revision guards must still win.
+  await act(async () => pending.forEach(read => read.resolve(responseFor(signedInProfile('过期身份')))))
+  expect(document.querySelector('.dshAccountTrigger').textContent).toContain('新身份')
+  expect(document.querySelector('.dshEnterpriseIdentity').textContent).toContain('新身份')
+  expect(document.body.textContent).not.toContain('过期身份')
+  f.setAccount(signedInProfile('菜单刷新'))
+  await click(document.querySelector('.dshAccountTrigger'))
+  expect(document.querySelector('.dshEnterpriseIdentity').textContent).toContain('菜单刷新')
+  const launcherRead = f.request.mock.calls.findLast(([path]) => path === '/api/enterprise.profile.refresh')
+  expect(JSON.parse(launcherRead[1].body)).toEqual({ reason: 'account' })
+  expect(launcherRead[1].signal.aborted).toBe(false)
+  expect(publications).toHaveBeenCalledTimes(4) // initial, payload-free notification, external state, menu refresh
+})
+
+it('falls back to local account state when opening profile refresh fails and polls only local state at 30 seconds', async () => {
+  const f = await fixture()
+  const Section = await enterpriseSection(f)
+  f.request.mockRejectedValueOnce(new Error('platform offline'))
+  await f.mount(Section, { t: key => key })
+  expect(f.request.mock.calls.map(([path]) => path)).toEqual(['/api/enterprise.profile.refresh', '/api/enterprise.state'])
+  expect(document.querySelector('.dshEnterpriseIdentity').textContent).toContain('张三')
+  expect(document.querySelector('[role=alert]')).toBeNull()
+  // Window timers own account polling, rather than the fixture's host timers.
+  const interval = vi.spyOn(window, 'setInterval')
+  await f.mount(() => null)
+  await f.mount(Section, { t: key => key })
+  const poll = interval.mock.calls.find(([, ms]) => ms === 30000)?.[0]
+  expect(poll).toBeTypeOf('function')
+  f.request.mockClear()
+  await act(async () => poll())
+  expect(f.request.mock.calls.map(([path]) => path)).toEqual(['/api/enterprise.state'])
+})
+
+it('renders image fallbacks, deduplicates broken src refreshes and tries changed avatar URLs in both owners', async () => {
+  const f = await fixture()
+  f.setAccount(signedInProfile('头像用户', 'https://example.test/one.png'))
+  const Section = await enterpriseSection(f)
+  const launcher = f.registrations.find(row => row.options.name === 'settings.launcher')
+  await f.mount(() => React.createElement(React.Fragment, null,
+    React.createElement(launcher.Component, { ...launcher.options.inject?.(), wide: true }),
+    React.createElement(Section, { t: key => key })))
+  await click(document.querySelector('.dshAccountTrigger'))
+  const images = [...document.querySelectorAll('.dshAccountAvatar img, .dshEnterpriseAvatar img')]
+  expect(images).toHaveLength(3)
+  images.forEach(image => expect(image.getAttribute('referrerpolicy')).toBe('no-referrer'))
+  f.request.mockRejectedValue(new Error('offline'))
+  f.request.mockClear()
+  await act(async () => images.forEach(image => image.dispatchEvent(new window.Event('error'))))
+  expect(document.querySelectorAll('.dshAccountAvatar img, .dshEnterpriseAvatar img')).toHaveLength(0)
+  expect(f.request.mock.calls.filter(([, options]) => JSON.parse(options.body).reason === 'image')).toHaveLength(2)
+  expect(document.querySelector('.dshEnterpriseAvatar').textContent).toBe('头像')
+  expect(document.querySelector('.dshAccountAvatar').textContent).toBe('头像')
+  expect(document.querySelector('[role=alert]')).toBeNull()
+  // A remounted menu avatar may retry the same URL, but must not request the platform again.
+  await click(document.querySelector('.dshAccountTrigger'))
+  await click(document.querySelector('.dshAccountTrigger'))
+  f.request.mockClear()
+  await act(async () => document.querySelector('.dshAccountMenuIdentity img').dispatchEvent(new window.Event('error')))
+  expect(f.request).not.toHaveBeenCalled()
+  f.request.mockImplementation(async () => responseFor(signedInProfile('头像用户', 'https://example.test/two.png')))
+  await act(async () => accountEvent(signedInProfile('头像用户', 'https://example.test/two.png')))
+  expect(document.querySelectorAll('img[src="https://example.test/two.png"]')).toHaveLength(3)
+  f.request.mockClear()
+  await act(async () => document.querySelectorAll('img').forEach(image => image.dispatchEvent(new window.Event('error'))))
+  expect(f.request.mock.calls.filter(([path]) => path === '/api/enterprise.profile.refresh')).toHaveLength(2)
+})
+
+it('keeps a usable launcher identity when foreground freshness fails and refreshes only when the menu opens', async () => {
+  const f = await fixture()
+  await f.render('settings.launcher', { wide: true })
+  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+  f.request.mockRejectedValueOnce(new Error('platform offline'))
+  await act(async () => window.dispatchEvent(new window.Event('focus')))
+  expect(document.querySelector('.dshAccountTrigger').textContent).toContain('张三')
+  await click(document.querySelector('.dshAccountTrigger'))
+  expect(document.querySelector('[role=alert]')).toBeNull()
+  const requests = f.request.mock.calls.length
+  await click(document.querySelector('.dshAccountTrigger'))
+  expect(f.request).toHaveBeenCalledTimes(requests)
+})
+
+it('does not resurrect an obsolete account section or start its failure fallback after unmount', async () => {
+  const f = await fixture()
+  const Section = await enterpriseSection(f)
+  let fail
+  f.request.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject }))
+  await f.mount(Section, { t: key => key })
+  const pending = f.request.mock.calls.at(-1)[1].signal
+  await f.mount(() => null)
+  expect(pending.aborted).toBe(true)
+  await act(async () => fail(new Error('late profile failure')))
+  expect(f.request).toHaveBeenCalledOnce()
+  await act(async () => accountEvent(signedInProfile('旧实例')))
+  expect(document.querySelector('.dshEnterpriseIdentity')).toBeNull()
+})
+
+it('refreshes visible foreground only and releases both foreground listeners and pending requests on unmount', async () => {
+  const f = await fixture()
+  await f.render('settings.launcher', { wide: true })
+  f.request.mockClear()
+  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+  await act(async () => { window.dispatchEvent(new window.Event('focus')); document.dispatchEvent(new window.Event('visibilitychange')) })
+  expect(f.request).not.toHaveBeenCalled()
+  Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+  let finish
+  f.request.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+  await act(async () => window.dispatchEvent(new window.Event('focus')))
+  const first = f.request.mock.calls.at(-1)[1]
+  expect(JSON.parse(first.body)).toEqual({ reason: 'foreground' })
+  await act(async () => document.dispatchEvent(new window.Event('visibilitychange')))
+  expect(first.signal.aborted).toBe(false) // Concurrent foreground signals coalesce.
+  const pending = f.request.mock.calls.at(-1)[1].signal
+  await f.mount(() => null)
+  expect(pending.aborted).toBe(true)
+  const count = f.request.mock.calls.length
+  await act(async () => { finish(responseFor(signedInProfile('卸载后'))); window.dispatchEvent(new window.Event('focus')); document.dispatchEvent(new window.Event('visibilitychange')) })
+  expect(f.request).toHaveBeenCalledTimes(count)
+})
+
+it('reads a completed startup profile on accountRevision without changing identity', async () => {
+  const f = await fixture()
+  await f.render('settings.launcher', { wide: true })
+  await act(async () => f.update({ epoch: 1, connected: true, accountRevision: 1 }))
+  f.setAccount(signedInProfile('预热完成', 'https://example.test/warm.png'))
+  await act(async () => f.update({ epoch: 1, connected: true, accountRevision: 2 }))
+  expect(document.querySelector('.dshAccountTrigger img').src).toBe('https://example.test/warm.png')
+})
+
+it('retries the same image URL after explicit success but never loops after image refresh', async () => {
+  const f = await fixture()
+  f.setAccount(signedInProfile('头像用户', 'https://example.test/same.png'))
+  const Section = await enterpriseSection(f)
+  const launcher = f.registrations.find(row => row.options.name === 'settings.launcher')
+  await f.mount(() => React.createElement(React.Fragment, null,
+    React.createElement(launcher.Component, { ...launcher.options.inject?.(), wide: true }),
+    React.createElement(Section, { t: key => key })))
+  f.request.mockClear()
+  await act(async () => document.querySelectorAll('img').forEach(image => image.dispatchEvent(new window.Event('error'))))
+  expect(document.querySelectorAll('img')).toHaveLength(0)
+  expect(f.request.mock.calls.filter(([, options]) => options?.body && JSON.parse(options.body).reason === 'image')).toHaveLength(2)
+  await click(document.querySelector('.dshAccountTrigger'))
+  expect(document.querySelectorAll('img[src="https://example.test/same.png"]')).toHaveLength(3)
+  f.request.mockClear()
+  await act(async () => document.querySelectorAll('img').forEach(image => image.dispatchEvent(new window.Event('error'))))
+  expect(document.querySelectorAll('img')).toHaveLength(0)
+  const count = f.request.mock.calls.length
+  await act(async () => {})
+  expect(f.request).toHaveBeenCalledTimes(count)
+})
+
+it('does not let a 30-second local poll cancel a pending profile POST', async () => {
+  const f = await fixture()
+  f.setAccount(signedInProfile('Old', 'https://example.test/old.png'))
+  const Section = await enterpriseSection(f)
+  const interval = vi.spyOn(window, 'setInterval')
+  await f.mount(Section, { t: key => key })
+  const poll = interval.mock.calls.find(([, ms]) => ms === 30000)[0]
+  let finish
+  f.request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  await act(async () => document.querySelector('img').dispatchEvent(new window.Event('error')))
+  const pending = f.request.mock.calls.at(-1)[1].signal
+  const count = f.request.mock.calls.length
+  await act(async () => poll())
+  expect(pending.aborted).toBe(false)
+  expect(f.request).toHaveBeenCalledTimes(count)
+  f.setAccount(signedInProfile('New', 'https://example.test/new.png'))
+  await act(async () => finish(responseFor(signedInProfile('New', 'https://example.test/new.png'))))
+  expect(document.querySelector('.dshEnterpriseIdentity').textContent).toContain('New')
+})
+
+it('defers accountRevision reads while a profile is pending and preserves explicit retry intent', async () => {
+  const f = await fixture()
+  f.setAccount(signedInProfile('头像用户', 'https://example.test/same.png'))
+  await f.render('settings.launcher', { wide: true })
+  await act(async () => f.update({ epoch: 1, connected: true, accountRevision: 1 }))
+  let finish
+  f.request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  await act(async () => document.querySelector('img').dispatchEvent(new window.Event('error')))
+  const pending = f.request.mock.calls.at(-1)[1].signal
+  await act(async () => f.update({ epoch: 1, connected: true, accountRevision: 2 }))
+  expect(pending.aborted).toBe(false)
+  await click(document.querySelector('.dshAccountTrigger'))
+  await act(async () => finish(responseFor(signedInProfile('头像用户', 'https://example.test/same.png'))))
+  expect(document.querySelectorAll('img[src="https://example.test/same.png"]')).toHaveLength(2)
+})
+
+it.each(['section', 'launcher'])('merges explicit retry into pending %s image refresh and recovers both owners once', async owner => {
+  const f = await fixture()
+  f.setAccount(signedInProfile('头像用户', 'https://example.test/same.png'))
+  const Section = await enterpriseSection(f)
+  const launcher = f.registrations.find(row => row.options.name === 'settings.launcher')
+  await f.mount(() => React.createElement(React.Fragment, null,
+    React.createElement(launcher.Component, { ...launcher.options.inject?.(), wide: true }),
+    React.createElement(Section, { t: key => key })))
+  let finish
+  const original = f.request.getMockImplementation()
+  let hold = true
+  f.request.mockImplementation((path, options) => {
+    if (path === '/api/enterprise.profile.refresh' && JSON.parse(options.body).reason === 'image' && hold) {
+      hold = false
+      return new Promise(resolve => { finish = resolve })
+    }
+    return original(path, options)
+  })
+  const first = owner === 'section' ? '.dshEnterpriseAvatar img' : '.dshAccountTrigger img'
+  const second = owner === 'section' ? '.dshAccountTrigger img' : '.dshEnterpriseAvatar img'
+  await act(async () => document.querySelector(first).dispatchEvent(new window.Event('error')))
+  await act(async () => document.querySelector(second).dispatchEvent(new window.Event('error')))
+  expect(document.querySelectorAll('img')).toHaveLength(0)
+  if (owner === 'launcher') {
+    await click(document.querySelector('.dshAccountTrigger'))
+  } else {
+    // The launcher's explicit foreground success invalidates the section while its image POST is held.
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+    await act(async () => window.dispatchEvent(new window.Event('focus')))
+  }
+  await act(async () => finish(responseFor(signedInProfile('头像用户', 'https://example.test/same.png'))))
+  if (owner === 'section') await click(document.querySelector('.dshAccountTrigger'))
+  expect(document.querySelectorAll('img[src="https://example.test/same.png"]')).toHaveLength(3)
+  f.request.mockClear()
+  await act(async () => document.querySelectorAll('img').forEach(image => image.dispatchEvent(new window.Event('error'))))
+  expect(document.querySelectorAll('img')).toHaveLength(0)
+  const count = f.request.mock.calls.length
+  await act(async () => {})
+  expect(f.request).toHaveBeenCalledTimes(count)
+})
+
+it('rejects a delayed action across logout using the actual API helper and both account UIs', async () => {
+  const f = await fixture()
+  f.setAccount({ ...signedInProfile('Alice'), revision: 1 })
+  const Section = await enterpriseSection(f)
+  const launcher = f.registrations.find(row => row.options.name === 'settings.launcher')
+  await f.mount(() => React.createElement(React.Fragment, null,
+    React.createElement(launcher.Component, { ...launcher.options.inject?.(), wide: true }),
+    React.createElement(Section, { t: key => key })))
+  let finish
+  const original = f.request.getMockImplementation()
+  f.request.mockImplementation((path, options) => path === '/api/enterprise.refresh'
+    ? new Promise(resolve => { finish = resolve }) : original(path, options))
+  let action
+  await act(async () => { action = f.enterpriseApi('/api/enterprise.refresh', {}).catch(error => error) })
+  f.setAccount({ connected: false, revision: 2 })
+  await act(async () => f.enterpriseApi('/api/enterprise.logout', {}))
+  await act(async () => finish(responseFor({ ...signedInProfile('Alice'), revision: 1 })))
+  expect((await action).staleAccountAction).toBe(true)
+  expect(document.querySelector('.dshEnterpriseIdentity')).toBeNull()
+  expect(document.querySelector('.dshAccountTrigger').textContent).not.toContain('Alice')
+})
+
 const confirmButton = () => document.querySelector('[data-dsh-logout-confirm]')
+
+it.each(['section', 'launcher'])('completes %s logout when its confirmed POST succeeds but the state GET fails', async owner => {
+  const f = await fixture()
+  const Section = await enterpriseSection(f)
+  if (owner === 'section') await f.mount(Section, { t: key => key })
+  else {
+    await f.render('settings.launcher', { wide: true })
+    await click(document.querySelector('.dshAccountTrigger'))
+    await click(menuItem('退出登录'))
+  }
+  const publications = vi.fn()
+  window.addEventListener('dsh-desktop:enterprise-account-changed', publications)
+  f.request.mockImplementation(async path => {
+    if (path === '/api/enterprise.logout') return responseFor({ connected: false, revision: 2 })
+    throw new Error('Local state unavailable after completed logout')
+  })
+  await click(owner === 'section' ? document.querySelector('.dshEnterpriseLogout') : confirmButton())
+  expect(f.request.mock.calls.at(-1)[0]).toBe('/api/enterprise.state')
+  expect(document.querySelector('[role=alert], .dshEnterpriseError')).toBeNull()
+  expect(document.querySelector('.dshEnterpriseIdentity')).toBeNull()
+  if (owner === 'section') expect(document.querySelector('.dshEnterpriseInput')).not.toBeNull()
+  else {
+    expect(document.querySelector('[role=dialog]')).toBeNull()
+    expect(document.querySelector('.dshAccountTrigger').textContent).toContain('未登录')
+    expect(document.querySelector('.dshAccountTrigger').disabled).toBe(false)
+  }
+  expect(publications.mock.calls.some(([event]) => !event.detail?.actionStarted)).toBe(true)
+})
+
+it.each(['section', 'launcher'])('keeps the fresh authoritative GET over the %s logout payload', async owner => {
+  const f = await fixture()
+  const Section = await enterpriseSection(f)
+  if (owner === 'section') await f.mount(Section, { t: key => key })
+  else {
+    await f.render('settings.launcher', { wide: true })
+    await click(document.querySelector('.dshAccountTrigger'))
+    await click(menuItem('退出登录'))
+  }
+  f.request.mockImplementation(async path => responseFor(path === '/api/enterprise.logout'
+    ? { connected: false } : signedInProfile('Current authoritative identity')))
+  await click(owner === 'section' ? document.querySelector('.dshEnterpriseLogout') : confirmButton())
+  expect(document.querySelector(owner === 'section' ? '.dshEnterpriseIdentity' : '.dshAccountTrigger').textContent).toContain('Current authoritative identity')
+})
+
+it.each(['section', 'launcher'])('does not apply %s logout fallback after another account action supersedes its GET', async owner => {
+  const f = await fixture()
+  const Section = await enterpriseSection(f)
+  const launcher = f.registrations.find(row => row.options.name === 'settings.launcher')
+  await f.mount(() => React.createElement(React.Fragment, null,
+    React.createElement(launcher.Component, { ...launcher.options.inject?.(), wide: true }),
+    React.createElement(Section, { t: key => key })))
+  if (owner === 'launcher') {
+    await click(document.querySelector('.dshAccountTrigger'))
+    await click(menuItem('退出登录'))
+  }
+  let rejectRead, heldSignal
+  const original = f.request.getMockImplementation()
+  let hold = true
+  f.request.mockImplementation((path, options) => {
+    if (path === '/api/enterprise.state' && hold) {
+      hold = false; heldSignal = options.signal
+      return new Promise((_resolve, reject) => { rejectRead = reject })
+    }
+    return original(path, options)
+  })
+  await click(owner === 'section' ? document.querySelector('.dshEnterpriseLogout') : confirmButton())
+  expect(rejectRead).toBeTypeOf('function')
+  f.setAccount(signedInProfile('New account action'))
+  await act(async () => {
+    window.dispatchEvent(new window.CustomEvent('dsh-desktop:enterprise-account-changed', { detail: { actionStarted: true } }))
+    accountEvent()
+  })
+  const publications = vi.fn()
+  window.addEventListener('dsh-desktop:enterprise-account-changed', publications)
+  // The logout GET is deliberately allowed to fail late even if transport ignores cancellation.
+  await act(async () => rejectRead(new Error('Obsolete display read failed')))
+  // Section actions have no AbortSignal; the launcher has a live action signal.
+  expect(heldSignal?.aborted ?? false).toBe(false)
+  expect(document.querySelector('.dshEnterpriseIdentity').textContent).toContain('New account action')
+  expect(document.querySelector('.dshAccountTrigger').textContent).toContain('New account action')
+  expect(publications).not.toHaveBeenCalled()
+  expect(document.querySelector('[role=alert], .dshEnterpriseError')).toBeNull()
+})
+
+it('does not publish an aborted enterprise logout fallback even when transport ignores cancellation', async () => {
+  const f = await fixture()
+  await enterpriseSection(f)
+  const controller = new AbortController()
+  let rejectRead
+  f.request.mockImplementation(path => path === '/api/enterprise.logout'
+    ? Promise.resolve(responseFor({ connected: false }))
+    : new Promise((_resolve, reject) => { rejectRead = reject }))
+  const publications = vi.fn()
+  window.addEventListener('dsh-desktop:enterprise-account-changed', publications)
+  const pending = f.enterpriseApi('/api/enterprise.logout', {}, controller.signal).catch(error => error)
+  await act(async () => {})
+  controller.abort()
+  rejectRead(new Error('Aborted display read'))
+  expect((await pending).staleAccountAction).toBe(true)
+  expect(publications).toHaveBeenCalledOnce() // actionStarted only, never fallback completion
+})
+
+it.each(['/api/enterprise.refresh', '/api/enterprise.login.manual'])('does not replace a failed authoritative GET with a connected %s snapshot', async path => {
+  const f = await fixture()
+  await enterpriseSection(f)
+  f.request.mockImplementation(async requested => {
+    if (requested === path) return responseFor(signedInProfile('Possibly obsolete mutation snapshot'))
+    throw new Error('Authoritative state unavailable')
+  })
+  const publications = vi.fn()
+  window.addEventListener('dsh-desktop:enterprise-account-changed', publications)
+  await expect(f.enterpriseApi(path, {})).rejects.toThrow('Authoritative state unavailable')
+  expect(publications).toHaveBeenCalledOnce() // actionStarted only
+})
+
+it('does not publish a launcher logout fallback after unmount aborts the action', async () => {
+  const f = await fixture()
+  await f.render('settings.launcher', { wide: true })
+  await click(document.querySelector('.dshAccountTrigger'))
+  await click(menuItem('退出登录'))
+  let rejectRead, signal
+  f.request.mockImplementation((path, options) => path === '/api/enterprise.logout'
+    ? Promise.resolve(responseFor({ connected: false }))
+    : new Promise((_resolve, reject) => { signal = options.signal; rejectRead = reject }))
+  await click(confirmButton())
+  await f.mount(() => null)
+  expect(signal.aborted).toBe(true)
+  const publications = vi.fn()
+  window.addEventListener('dsh-desktop:enterprise-account-changed', publications)
+  await act(async () => rejectRead(new Error('Unmounted display read')))
+  expect(publications).not.toHaveBeenCalled()
+  expect(document.querySelector('.dshAccountLauncher')).toBeNull()
+})
 
 it('confirms logout before it runs and leaves the account signed in when cancelled', async () => {
   const f = await fixture()

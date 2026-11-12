@@ -252,8 +252,9 @@ window.__ModuleLoader__.load({
     }
     /** Reuse the host enterprise endpoints; neither credentials nor account storage live here. */
     async function accountRequest(operation, signal) {
-      const path = operation === 'logout' ? '/api/enterprise.logout' : '/api/enterprise.state'
-      const response = await fetch(path, { credentials: 'same-origin', signal, ...(operation === 'logout' ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' } : {}) })
+      const profile = ['account', 'foreground', 'image'].includes(operation)
+      const path = profile ? '/api/enterprise.profile.refresh' : operation === 'logout' ? '/api/enterprise.logout' : '/api/enterprise.state'
+      const response = await fetch(path, { credentials: 'same-origin', signal, ...(profile || operation === 'logout' ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(profile ? { reason: operation } : {}) } : {}) })
       const result = await response.json()
       if (!response.ok || !result || typeof result !== 'object' || typeof result.connected !== 'boolean' || result.ok === false || (operation === 'logout' && result.connected)) throw new Error('Enterprise account request failed')
       return result
@@ -263,26 +264,81 @@ window.__ModuleLoader__.load({
       const [account, setAccount] = useState()
       const [error, setError] = useState(false)
       const [busy, setBusy] = useState(false)
-      const lifetime = useRef({ alive: true, revision: 0, request: undefined })
-      const refresh = React.useCallback(async () => {
+      const lifetime = useRef({ alive: true, revision: 0, request: undefined, failure: null, actionEpoch: 0 })
+      const [imageAttempt, setImageAttempt] = useState(0)
+      const refresh = React.useCallback(async (reason) => {
         const current = lifetime.current
+        if (current.profile) {
+          current.readAfterProfile = true
+          current.retryImage ||= reason === 'account' || reason === 'foreground'
+          return current.profile
+        }
         current.request?.abort()
         const request = new AbortController(), revision = ++current.revision
         current.request = request
-        try {
-          const next = await accountRequest('state', request.signal)
-          if (current.alive && revision === current.revision) { setAccount(next); setError(false) }
-        } catch {
-          if (current.alive && revision === current.revision && !request.signal.aborted) setError(true)
+        const task = (async () => {
+          try {
+            const next = await accountRequest(reason || 'state', request.signal)
+            if (current.alive && !request.signal.aborted && revision === current.revision) {
+              if (Number.isFinite(next.revision) && next.revision < (current.serverRevision ?? -1)) return
+              current.serverRevision = next.revision
+              const identity = `${next.connectionKey || next.base || ''}:${next.user?.id || ''}:${next.connected}`
+              if (current.identity !== identity || current.avatar !== next.user?.avatar) current.failure = null
+              current.identity = identity; current.avatar = next.user?.avatar
+              setAccount(next); setError(false)
+              const retryImage = reason === 'account' || reason === 'foreground' || current.retryImage
+              if (retryImage) { current.failure = null; current.retryImage = false; setImageAttempt(value => value + 1) }
+              if (reason) window.dispatchEvent(new CustomEvent('dsh-desktop:enterprise-account-changed', { detail: { source: current, retryImage } }))
+            }
+          } catch {
+            // Freshness failures must not replace a usable identity with a connection error.
+            if (!reason && current.alive && revision === current.revision && !request.signal.aborted) setError(true)
+          }
+        })()
+        if (reason) current.profile = task
+        try { return await task } finally {
+          if (current.profile === task) {
+            current.profile = null
+            if (current.readAfterProfile && current.alive) { current.readAfterProfile = false; void refresh() }
+          }
         }
       }, [])
       useEffect(() => {
         lifetime.current.alive = true
-        const changed = () => { void refresh() }
-        let identity
+        const changed = event => {
+          const current = lifetime.current
+          if (event.detail?.source === current) return
+          if (event.detail?.actionStarted) {
+            current.actionEpoch++
+            current.request?.abort(); current.revision++; current.profile = null
+            return
+          }
+          current.retryImage ||= event.detail?.retryImage === true
+          void refresh()
+        }
+        // The identity launcher is always mounted; account pages must not duplicate these listeners.
+        const foreground = () => { if (document.visibilityState === 'visible') void refresh('foreground') }
+        window.addEventListener('focus', foreground)
+        document.addEventListener('visibilitychange', foreground)
+        let identity, notification, accountRevision
         const unsubscribe = window.dshEnterpriseChat?.subscribe(next => {
           const key = `${next.epoch}:${next.connected}`
-          if (key === identity) return
+          const version = `${key}:${next.accountRevision}`
+          if (version === notification) return
+          notification = version
+          if (Number.isFinite(accountRevision) && next.accountRevision < accountRevision) lifetime.current.serverRevision = undefined
+          accountRevision = next.accountRevision
+          if (key !== identity) {
+            if (identity !== undefined) {
+              setAccount({ connected: false })
+              // View epochs also change during this very login/logout. Invalidate reads,
+              // not the user action that caused the native transition.
+              window.dispatchEvent(new CustomEvent('dsh-desktop:enterprise-account-changed', { detail: { source: lifetime.current, identityChanged: true } }))
+            }
+            lifetime.current.serverRevision = undefined
+            lifetime.current.request?.abort(); lifetime.current.revision++; lifetime.current.profile = null
+            lifetime.current.failure = null
+          }
           identity = key
           if (!next.connected) setAccount({ connected: false })
           void refresh()
@@ -292,6 +348,7 @@ window.__ModuleLoader__.load({
         return () => {
           lifetime.current.alive = false; lifetime.current.revision++; lifetime.current.request?.abort(); lifetime.current.action?.abort()
           unsubscribe?.(); window.removeEventListener('dsh-desktop:enterprise-account-changed', changed)
+          window.removeEventListener('focus', foreground); document.removeEventListener('visibilitychange', foreground)
         }
       }, [refresh])
       const logout = async () => {
@@ -300,12 +357,37 @@ window.__ModuleLoader__.load({
         const request = new AbortController()
         current.action = request
         setBusy(true)
+        window.dispatchEvent(new CustomEvent('dsh-desktop:enterprise-account-changed', { detail: { actionStarted: true } }))
+        const actionEpoch = current.actionEpoch
         try {
-          const next = await accountRequest('logout', request.signal)
-          if (current.alive) { setAccount(next); setError(false); window.dispatchEvent(new CustomEvent('dsh-desktop:enterprise-account-changed')) }
-        } finally { if (current.alive) setBusy(false) }
+          const disconnected = await accountRequest('logout', request.signal)
+          if (request.signal.aborted || actionEpoch !== current.actionEpoch) return
+          let next
+          try {
+            next = await accountRequest('state', request.signal)
+          } catch {
+            if (request.signal.aborted || actionEpoch !== current.actionEpoch) return
+            // The validated disconnected mutation already completed; a failed display
+            // read must not retain the old identity or report that sign-out failed.
+            next = disconnected
+          }
+          if (current.alive && !request.signal.aborted && actionEpoch === current.actionEpoch) {
+            // Invalidate foreground reads started while logout was in flight.
+            current.request?.abort(); current.revision++
+            setAccount(next); setError(false)
+            window.dispatchEvent(new CustomEvent('dsh-desktop:enterprise-account-changed', { detail: { source: current } }))
+          }
+        } catch (cause) {
+          if (current.alive && actionEpoch === current.actionEpoch) throw cause
+        } finally { if (current.action === request) { current.action = undefined; if (current.alive) setBusy(false) } }
       }
-      return { account, error, busy, refresh, logout }
+      const imageFailed = src => {
+        const current = lifetime.current
+        if (current.failure?.src === src && Date.now() - current.failure.at < 60_000) return
+        current.failure = { src, at: Date.now() }
+        void refresh('image')
+      }
+      return { account, error, busy, refresh, logout, imageFailed, imageAttempt }
     }
 
     function ApprovalsDialog({ open, onClose, t }) {
@@ -317,8 +399,12 @@ window.__ModuleLoader__.load({
         open && h(ApprovalsPanel, { onClose, t }))
     }
 
-    function AccountAvatar({ name }) {
-      return h('span', { className: 'dshAccountAvatar', 'aria-hidden': 'true' }, name ? Array.from(name).slice(0, 2).join('').toLocaleUpperCase() : h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5 }, h('circle', { cx: 12, cy: 8, r: 4 }), h('path', { d: 'M4 22v-2a8 8 0 0 1 16 0v2' })))
+    function AccountAvatar({ name, src, attempt, onImageError }) {
+      const [failed, setFailed] = useState(null)
+      useEffect(() => setFailed(null), [src, attempt])
+      return h('span', { className: 'dshAccountAvatar', 'aria-hidden': 'true' }, src && failed !== src
+        ? h('img', { key: `${src}:${attempt}`, src, alt: '', referrerPolicy: 'no-referrer', style: { width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }, onError: () => { setFailed(src); onImageError(src) } })
+        : name ? Array.from(name).slice(0, 2).join('').toLocaleUpperCase() : h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5 }, h('circle', { cx: 12, cy: 8, r: 4 }), h('path', { d: 'M4 22v-2a8 8 0 0 1 16 0v2' })))
     }
 
     function AccountMenuIcon({ kind }) {
@@ -438,10 +524,10 @@ window.__ModuleLoader__.load({
       // The shared native-surface coordinator handles any overlap with embedded content.
       return h('div', { className: 'dshAccountLauncher', 'data-dsh-account-launcher': '' },
         h(Menu, { open: menuOpen, onClose: () => { if (!busy) setMenuOpen(false) }, side: 'top', align: 'start', portal: true, autoFocus: true, className: 'dshAccountMenuAnchor', listClassName: `dshAccountMenu${wide ? ' dshAccountMenuWide' : ''}`,
-          anchor: h('button', { ref: trigger, type: 'button', className: `dshAccountTrigger${wide ? '' : ' dshAccountTriggerRail'}`, 'aria-label': triggerLabel, title: wide ? undefined : label, 'aria-haspopup': 'menu', 'aria-expanded': menuOpen, disabled: settingsOpen || busy, onClick: () => { setMenuOpen(previous => !previous); setActionError(false); void identity.refresh() } },
-            h('span', { className: 'dshAccountAvatarWrap' }, h(AccountAvatar, { name }), badge),
+          anchor: h('button', { ref: trigger, type: 'button', className: `dshAccountTrigger${wide ? '' : ' dshAccountTriggerRail'}`, 'aria-label': triggerLabel, title: wide ? undefined : label, 'aria-haspopup': 'menu', 'aria-expanded': menuOpen, disabled: settingsOpen || busy, onClick: () => { setMenuOpen(previous => !previous); setActionError(false); if (!menuOpen) void identity.refresh('account') } },
+            h('span', { className: 'dshAccountAvatarWrap' }, h(AccountAvatar, { name, src: connected ? identity.account?.user?.avatar : null, attempt: identity.imageAttempt, onImageError: identity.imageFailed }), badge),
             wide && h('span', { className: 'dshAccountTriggerCopy' }, h('span', null, label)), wide && h(IconChevronDownOutlineRegular)) },
-          h('div', { className: 'dshAccountMenuIdentity' }, h(AccountAvatar, { name }), h('div', null, h('strong', null, label), h('small', null, t(connected ? 'enterpriseAccount' : 'signInHint'))),
+          h('div', { className: 'dshAccountMenuIdentity' }, h(AccountAvatar, { name, src: connected ? identity.account?.user?.avatar : null, attempt: identity.imageAttempt, onImageError: identity.imageFailed }), h('div', null, h('strong', null, label), h('small', null, t(connected ? 'enterpriseAccount' : 'signInHint'))),
             connected && h('div', { className: 'dshAccountMenuCredits', role: 'status' }, h('strong', null, credits ?? '—'), h('small', null, t(credits === null ? 'creditsUnavailable' : 'creditsRemaining')))),
           h(MenuItemButton, { icon: h(IconSettingsOutlineRegular), shortcut: settingsShortcut, disabled: busy, onSelect: () => { setMenuOpen(false); openSettings() } }, t('settings')),
           connected && h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'account' }), disabled: busy, onSelect: openAccountSettings }, t('accountSettings')),

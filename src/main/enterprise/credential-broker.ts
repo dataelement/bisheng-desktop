@@ -13,6 +13,7 @@ export const ENTERPRISE_ALLOW_INSECURE_LOOPBACK_ENV = 'DSH_DESKTOP_ENTERPRISE_AL
 
 const JSON_ROUTES = new Map<string, 'GET' | 'POST'>([
   ['/v1/state', 'GET'],
+  ['/v1/profile/refresh', 'POST'],
   ['/v1/cloud', 'POST'],
   ['/v1/login/start', 'POST'],
   ['/v1/login/manual', 'POST'],
@@ -232,6 +233,15 @@ export async function startEnterpriseCredentialBroker(
           return
         }
         sendJson(response, 200, await service.submitManualTicket(body.identityTicket))
+        return
+      }
+      if (path === '/v1/profile/refresh') {
+        const reason = (body as { reason?: unknown } | null)?.reason
+        if (!isExactObject(body, ['reason']) || (reason !== 'account' && reason !== 'foreground' && reason !== 'image')) {
+          sendJson(response, 400, { error: 'Invalid profile refresh reason.' })
+          return
+        }
+        sendJson(response, 200, await service.refreshProfile(reason))
         return
       }
       if (path === '/v1/refresh' || path === '/v1/models/refresh') {
