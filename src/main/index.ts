@@ -1771,7 +1771,7 @@ function registerHarnessHandlers(): void {
   })
   ipcMain.handle('enterprise-chat:present', (event, presentation: unknown) => {
     assertTrustedMainWindowEvent(event)
-    return enterpriseChat?.present(mainWindow!, presentation) ?? { phase: 'idle', connected: false }
+    return enterpriseChat?.presentWithLandingHandoff(mainWindow!, presentation) ?? { phase: 'idle', connected: false }
   })
   ipcMain.handle('enterprise-chat:state', (event) => {
     assertTrustedMainWindowEvent(event)
