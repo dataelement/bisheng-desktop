@@ -364,6 +364,115 @@ describe.each(stores.map((Store, index) => [index === 0 ? 'adapter' : 'core', St
     selectedTemplateId: 'remote-a'
   }
 
+  it.each(['chooser-first', 'adoption-first'])('shares initialization across both UI paths (%s)', async order => {
+    const mode = new Store()
+    const held = deferred()
+    const rpc = client(() => held.promise)
+    const chooser = () => mode.loadTemplates('session-a', rpc)
+    const adoption = () => mode.adopt('session-a', rpc)
+    const first = order === 'chooser-first' ? chooser() : adoption()
+    const second = order === 'chooser-first' ? adoption() : chooser()
+    // There is no independent A response left that can overwrite this B response.
+    expect(rpc.calls).toHaveLength(1)
+    held.resolve({ ...remote, selectedTemplateId: 'local-b' })
+    await Promise.all([first, second])
+    expect(mode.snapshot('session-a').selectedId).toBe('local-b')
+    expect(mode.snapshot('session-a').activeMode).toBe('ppt')
+    expect(mode.revision('session-a')).toBe(0)
+    expect(mode.adopted.has('session-a')).toBe(true)
+    expect(mode.remoteReady.has('session-a')).toBe(true)
+    await mode.loadTemplates('session-a', rpc)
+    await mode.adopt('session-a', rpc)
+    expect(rpc.calls).toHaveLength(1)
+  })
+
+  it.each(['chooser-first', 'adoption-first'])('rejects an older shared result after a fresh forced read (%s)', async order => {
+    const mode = new Store()
+    const old = deferred()
+    const fresh = deferred()
+    const rpc = client(() => rpc.calls.length === 1 ? old.promise : fresh.promise)
+    const first = order === 'chooser-first' ? mode.loadTemplates('session-a', rpc) : mode.adopt('session-a', rpc)
+    const joined = order === 'chooser-first' ? mode.adopt('session-a', rpc) : mode.loadTemplates('session-a', rpc)
+    const forced = mode.readRemote('session-a', rpc, true)
+    fresh.resolve({ ...remote, selectedTemplateId: 'local-b' })
+    await forced
+    old.resolve(remote)
+    await expect(first).resolves.toBe(order === 'chooser-first' ? 'ready' : 'stale')
+    await expect(joined).resolves.toBe(order === 'chooser-first' ? 'stale' : 'ready')
+    expect(mode.snapshot('session-a').selectedId).toBe('local-b')
+    expect(mode.remoteReady.has('session-a')).toBe(true)
+    await mode.loadTemplates('session-a', rpc)
+    expect(rpc.calls).toHaveLength(2)
+  })
+
+  it('shares staged adoption with a chooser mounted first', async () => {
+    const mode = new Store()
+    const held = deferred()
+    let selected = null
+    const rpc = client((endpoint, payload) => {
+      if (endpoint === 'state' && rpc.calls.length === 1) return held.promise
+      if (endpoint === 'template/select') selected = payload.templateId
+      return { ...remote, selectedTemplateId: selected, presentationMode: selected ? 'ppt' : null }
+    })
+    mode.select(undefined, remote.templates[1], 'ppt')
+    const chooser = mode.loadTemplates('session-a', rpc)
+    const adoption = mode.adopt('session-a', rpc)
+    held.resolve({ ...remote, presentationMode: null, selectedTemplateId: null })
+    await Promise.all([chooser, adoption])
+    expect(rpc.calls.map(call => call.endpoint)).toEqual(['state', 'template/select', 'state'])
+    expect(mode.snapshot('session-a').selectedId).toBe('local-b')
+  })
+
+  it('caches an empty catalog without changing revision and refreshes after a local mode action', async () => {
+    const mode = new Store()
+    const rpc = client(() => ({ templates: [], presentationMode: null, selectedTemplateId: null }))
+    await mode.loadTemplates('session-a', rpc)
+    await mode.loadTemplates('session-a', rpc)
+    expect(rpc.calls).toHaveLength(1)
+    expect(mode.revision('session-a')).toBe(0)
+    mode.setMode('session-a', 'ppt')
+    await mode.loadTemplates('session-a', rpc)
+    expect(rpc.calls).toHaveLength(2)
+    expect(mode.revision('session-a')).toBe(1)
+    expect(mode.snapshot('session-a').activeMode).toBe('ppt')
+    expect(mode.snapshot('session-a').loading).toBe(false)
+  })
+
+  it.each(['mode', 'deselect'])('reloads a shared catalog invalidated by local %s without losing the local intent', async action => {
+    const mode = new Store()
+    const old = deferred()
+    const rpc = client(() => rpc.calls.length === 1 ? old.promise : { templates: [], presentationMode: null, selectedTemplateId: null })
+    const initial = mode.loadTemplates('session-a', rpc)
+    if (action === 'mode') mode.setMode('session-a', 'ppt')
+    else mode.deselect('session-a', 'ppt')
+    const reload = mode.loadTemplates('session-a', rpc)
+    old.resolve(remote)
+    await Promise.all([initial, reload])
+    expect(rpc.calls).toHaveLength(2)
+    expect(mode.snapshot('session-a').templates).toEqual([])
+    expect(mode.snapshot('session-a').selectedId).toBeNull()
+    expect(mode.snapshot('session-a').activeMode).toBe('ppt')
+    expect(mode.snapshot('session-a').loading).toBe(false)
+    expect(mode.remoteReadyRevision.get('session-a')).toBe(mode.revision('session-a'))
+  })
+
+  it('retries failed shared chooser initialization and respects an active Office mode', async () => {
+    const mode = new Store()
+    const rpc = client(() => {
+      if (rpc.calls.length === 1) throw new Error('temporary state failure')
+      return { ...remote, documentMode: 'word', selectedTemplateId: 'document-template' }
+    })
+    await expect(mode.loadTemplates('session-a', rpc)).resolves.toBe('failed')
+    expect(mode.remoteReady.has('session-a')).toBe(false)
+    expect(mode.snapshot('session-a').error).toBe('temporary state failure')
+    mode.setMode('session-a', 'ppt')
+    await expect(mode.loadTemplates('session-a', rpc)).resolves.toBe('applied')
+    expect(mode.snapshot('session-a').activeMode).toBeNull()
+    expect(mode.snapshot('session-a').selectedId).toBeNull()
+    expect(mode.snapshot('session-a').error).toBe('')
+    expect(mode.snapshot('session-a').loading).toBe(false)
+  })
+
   it('times out a stalled hydration, surfaces the error and permits a fresh adoption', async () => {
     vi.useFakeTimers()
     const mode = new Store()

@@ -344,8 +344,10 @@ describe('opening PPT template card', () => {
 
     expect(types).toMatch(/'conversation\.chat\.userMessageFooter': \{\s*kind: 'list';\s*scope: 'session';/)
     expect(adapter).toContain('name: "conversation.chat.userMessageFooter"')
-    expect(card).toContain('loadTemplateState')
-    expect(card).toContain('applyLoadedTemplates')
+    // Footer hydration must join the same store-owned request as the chooser.
+    expect(card).toContain('mode.loadTemplates')
+    expect(card).not.toContain('loadTemplateState')
+    expect(card).not.toContain('applyLoadedTemplates')
     expect(card).toContain('mode.adopt')
     expect(card).toContain('showModal()')
     expect(card).toContain('data-ppt-opening-template')

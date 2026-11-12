@@ -221,9 +221,10 @@ window.__ModuleLoader__.load({
 				this.adopted ??= /* @__PURE__ */ new Set();
 				this.remoteEpoch ??= /* @__PURE__ */ new Map();
 				this.remoteReady ??= /* @__PURE__ */ new Set();
+				this.remoteReadyRevision ??= /* @__PURE__ */ new Map();
 				this.remoteInflight ??= /* @__PURE__ */ new Map();
 				if (!client?.bound || typeof sessionId !== "string" || sessionId.trim().length === 0) return Promise.resolve("idle");
-				if (!force && this.remoteReady.has(sessionId)) return Promise.resolve("ready");
+				if (!force && this.remoteReady.has(sessionId) && this.remoteReadyRevision.get(sessionId) === this.revision(sessionId)) return Promise.resolve("ready");
 				const pending = this.inflight.get(sessionId);
 				// A forced read may replace a remote read, but must not interrupt staged adoption.
 				if (pending && (!force || this.remoteInflight.get(sessionId) !== pending)) return pending;
@@ -235,10 +236,13 @@ window.__ModuleLoader__.load({
 					this.remoteEpoch.set(sessionId, epoch);
 				}
 				// Reuse the bounded loader so a stalled hydration releases singleflight and can retry.
+				this.setLoading(sessionId, true);
 				const work = loadTemplateState(client, timeoutMessage).then((next) => {
 					if ((this.remoteEpoch.get(sessionId) ?? 0) !== epoch || this.revision(sessionId) !== seenRevision) return "stale";
-					this.setTemplateState(sessionId, next);
+					if (!force && this.snapshot(sessionId).engaged) this.applyLoadedTemplates(sessionId, client, seenRevision, next);
+					else this.setTemplateState(sessionId, next);
 					this.remoteReady.add(sessionId);
+					this.remoteReadyRevision.set(sessionId, seenRevision);
 					this.adopted.add(sessionId);
 					return "applied";
 				}).catch((reason) => {
@@ -252,6 +256,16 @@ window.__ModuleLoader__.load({
 				this.inflight.set(sessionId, work);
 				this.remoteInflight.set(sessionId, work);
 				return work;
+			}
+			/** Bound chooser/footer reads share adoption, request ownership and application. */
+			loadTemplates(sessionId, client, timeoutMessage = en["templates.loadTimeout"]) {
+				const work = this.adopted?.has(sessionId) ? this.readRemote(sessionId, client, false, timeoutMessage) : this.adopt(sessionId, client, timeoutMessage);
+				return work.then((result) => {
+					// A mode click may join an older request. Once it settles, reload at the
+					// current revision; cancelling staged mode also still needs a catalog.
+					if ((result === "stale" || result === "idle") && client?.bound && this.snapshot(sessionId).error === "") return this.readRemote(sessionId, client, false, timeoutMessage);
+					return result;
+				});
 			}
 			adopt(sessionId, client, timeoutMessage = en["templates.loadTimeout"]) {
 				this.inflight ??= /* @__PURE__ */ new Map();
@@ -718,6 +732,10 @@ window.__ModuleLoader__.load({
 			const catalogRevision = mode.revision(sessionId);
 			(0, react.useEffect)(() => {
 				if (!loadTemplates || state.templates.length > 0 || state.error !== "") return;
+				if (client?.bound) {
+					void mode.loadTemplates(sessionId, client, t("templates.loadTimeout"));
+					return;
+				}
 				const request = { client, sessionId };
 				const seenRevision = catalogRevision;
 				mode.setLoading(sessionId, true);
