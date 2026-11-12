@@ -21,7 +21,15 @@ function normalizedStoreSource(source) {
     )
 }
 
-const Store = new Function(`${slice(adapter, 'const STAGED_MODE_KEY', 'function useMode')}\nreturn OfficePptHeroStore;`)()
+const stores = [adapter, core].map(source => new Function(`${slice(source, 'const STAGED_MODE_KEY', 'function useMode')}\nreturn OfficePptHeroStore;`)())
+const [Store] = stores
+
+function deferred() {
+  let resolve
+  let reject
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no })
+  return { promise, resolve, reject }
+}
 const createOfficePptClient = new Function(`${slice(adapter, 'function createOfficePptClient', 'const standardInject')}\nreturn createOfficePptClient;`)()
 
 function client(handler) {
@@ -336,6 +344,99 @@ describe('unbound PPT mode', () => {
     expect(state.templates).toEqual([{ id: 'built-in-a', origin: 'built-in' }])
     expect(state.selectedTemplateId).toBeNull()
     expect(calls).toEqual([{ route: '/dsh-ppt', endpoint: 'template/catalog', payload: {} }])
+  })
+})
+
+describe.each(stores.map((Store, index) => [index === 0 ? 'adapter' : 'core', Store]))('%s remote PPT hydration', (_name, Store) => {
+  const remote = {
+    templates: [{ id: 'remote-a' }, { id: 'local-b' }],
+    presentationMode: 'ppt',
+    selectedTemplateId: 'remote-a'
+  }
+
+  it.each(['select', 'mode', 'deselect'])('ignores late success after a local %s and permits recovery', async action => {
+    const mode = new Store()
+    const held = deferred()
+    const rpc = client(() => held.promise)
+    const initial = mode.adopt('session-a', rpc)
+    // The chooser can finish its independent catalog read before initialization.
+    mode.setTemplates('session-a', remote.templates)
+    if (action === 'select') mode.select('session-a', remote.templates[1], 'ppt')
+    if (action === 'mode') mode.setMode('session-a', null)
+    if (action === 'deselect') mode.deselect('session-a', 'ppt')
+    const local = mode.snapshot('session-a')
+    held.resolve(remote)
+    await expect(initial).resolves.toBe('stale')
+    expect(mode.snapshot('session-a')).toBe(local)
+    expect(mode.adopted.has('session-a')).toBe(false)
+    expect(mode.remoteReady.has('session-a')).toBe(false)
+    rpc.call = async () => remote
+    await expect(mode.adopt('session-a', rpc)).resolves.toBe('applied')
+    expect(mode.snapshot('session-a').selectedId).toBe('remote-a')
+  })
+
+  it.each(['select', 'mode', 'deselect'])('ignores late failure after a local %s and permits recovery', async action => {
+    const mode = new Store()
+    const held = deferred()
+    const rpc = client(() => held.promise)
+    const initial = mode.readRemote('session-a', rpc)
+    if (action === 'select') mode.select('session-a', remote.templates[1], 'ppt')
+    if (action === 'mode') mode.setMode('session-a', 'ppt')
+    if (action === 'deselect') mode.deselect('session-a', 'ppt')
+    const local = mode.snapshot('session-a')
+    held.reject(new Error('late initialization failure'))
+    await expect(initial).resolves.toBe('stale')
+    expect(mode.snapshot('session-a')).toBe(local)
+    expect(mode.adopted.has('session-a')).toBe(false)
+    expect(mode.remoteReady.has('session-a')).toBe(false)
+    rpc.call = async () => remote
+    await expect(mode.adopt('session-a', rpc)).resolves.toBe('applied')
+  })
+
+  it.each(['success', 'failure'])('starts a fresh forced read and deduplicates it while an old %s settles', async outcome => {
+    const mode = new Store()
+    const old = deferred()
+    const fresh = deferred()
+    const rpc = client(() => rpc.calls.length === 1 ? old.promise : fresh.promise)
+    const initial = mode.readRemote('session-a', rpc)
+    expect(mode.readRemote('session-a', rpc)).toBe(initial)
+    const forced = mode.readRemote('session-a', rpc, true)
+    expect(forced).not.toBe(initial)
+    expect(rpc.calls).toHaveLength(2)
+    expect(mode.readRemote('session-a', rpc)).toBe(forced)
+    if (outcome === 'success') old.resolve(remote)
+    else old.reject(new Error('superseded failure'))
+    await expect(initial).resolves.toBe('stale')
+    expect(mode.readRemote('session-a', rpc)).toBe(forced)
+    expect(mode.adopted.has('session-a')).toBe(false)
+    expect(mode.remoteReady.has('session-a')).toBe(false)
+    fresh.resolve({ ...remote, selectedTemplateId: 'local-b' })
+    await expect(forced).resolves.toBe('applied')
+    expect(mode.snapshot('session-a').selectedId).toBe('local-b')
+    expect(mode.inflight.has('session-a')).toBe(false)
+    expect(mode.remoteInflight.has('session-a')).toBe(false)
+    await expect(mode.readRemote('session-a', rpc)).resolves.toBe('ready')
+    expect(rpc.calls).toHaveLength(2)
+  })
+
+  it('does not interrupt staged adoption with a forced read', async () => {
+    const mode = new Store()
+    const held = deferred()
+    let selected = null
+    const rpc = client((endpoint, payload) => {
+      if (endpoint === 'state' && rpc.calls.length === 1) return held.promise
+      if (endpoint === 'template/select') selected = payload.templateId
+      return { ...remote, selectedTemplateId: selected, presentationMode: selected ? 'ppt' : null }
+    })
+    mode.select(undefined, remote.templates[1], 'ppt')
+    const migration = mode.adopt('session-a', rpc)
+    expect(mode.readRemote('session-a', rpc, true)).toBe(migration)
+    expect(rpc.calls).toHaveLength(1)
+    held.resolve({ ...remote, presentationMode: null, selectedTemplateId: null })
+    await expect(migration).resolves.toBe('applied')
+    expect(rpc.calls.map(call => call.endpoint)).toEqual(['state', 'template/select', 'state'])
+    expect(mode.snapshot('session-a').selectedId).toBe('local-b')
+    expect(mode.snapshot(undefined).selectedId).toBeNull()
   })
 })
 

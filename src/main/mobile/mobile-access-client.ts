@@ -32,7 +32,16 @@ interface AccessSocket {
   readyState: number
 }
 
+interface Connection {
+  key: string
+  account: MobileAccessAccount
+  controller: AbortController
+  socket?: AccessSocket
+  heart?: ReturnType<typeof setInterval>
+}
+
 const OPEN = 1
+const OPERATION_TIMEOUT_MS = 10_000
 
 export function startMobileAccessClient(options: {
   account(): MobileAccessAccount
@@ -40,41 +49,32 @@ export function startMobileAccessClient(options: {
   store: MobileAccessStore
   displayName(): string | undefined
   fetchImpl?: typeof fetch
-  connectSocket?: (url: string) => Promise<AccessSocket>
+  connectSocket?: (url: string, signal?: AbortSignal) => Promise<AccessSocket>
   note?: (message: string) => void
 }): MobileAccessClient {
   const fetchImpl = options.fetchImpl ?? fetch
   let stopped = false
-  let socket: AccessSocket | undefined
-  let attachedKey = ''
-  let heart: ReturnType<typeof setInterval> | undefined
-  let retryTimer: ReturnType<typeof setTimeout> | undefined
-  let generation = 0
-  let missingPathNoted = false
+  let current: Connection | undefined
+  let observedKey = ''
+  // A disconnected/failed attach can still leave a successful server-side bind.
   let boundAccount: MobileAccessAccount | undefined
+  let retryAt = 0
+  let missingPathNoted = false
 
-  const clearRetry = () => {
-    if (retryTimer) clearTimeout(retryTimer)
-    retryTimer = undefined
+  const owns = (connection: Connection) => !stopped && current === connection &&
+    !connection.controller.signal.aborted && mobileAccessAccountKey(options.account()) === connection.key
+
+  const close = (connection: Connection) => {
+    connection.controller.abort()
+    if (connection.heart) clearInterval(connection.heart)
+    connection.socket?.close()
   }
 
-  const closeSocket = () => {
-    const current = socket
-    socket = undefined
-    attachedKey = ''
-    if (heart) clearInterval(heart)
-    heart = undefined
-    current?.close()
-  }
-
-  const schedule = (delayMs: number) => {
-    if (stopped) return
-    clearRetry()
-    retryTimer = setTimeout(() => {
-      retryTimer = undefined
-      void sync()
-    }, delayMs)
-    retryTimer.unref?.()
+  const retire = () => {
+    const previous = current
+    current = undefined
+    if (previous) close(previous)
+    return previous
   }
 
   const identity = (): MobileAccessRecord => {
@@ -88,24 +88,31 @@ export function startMobileAccessClient(options: {
 
   const unbind = async (account: MobileAccessAccount, record: MobileAccessRecord) => {
     if (!account.base || !account.accessToken || !record.desktopId) return
+    const controller = new AbortController()
     try {
-      await fetchImpl(new URL(MOBILE_UNBIND_PATH, account.base), {
+      await bounded(controller, () => fetchImpl(new URL(MOBILE_UNBIND_PATH, account.base), {
         method: 'POST',
+        signal: controller.signal,
         headers: {
           authorization: `Bearer ${account.accessToken}`,
           'content-type': 'application/json'
         },
         body: JSON.stringify({ desktopId: record.desktopId })
-      })
+      }))
     } catch {
       options.note?.('[mobile-access] unbind_failed')
     }
   }
 
-  const forward = async (account: MobileAccessAccount, frame: Record<string, unknown>) => {
+  const send = (connection: Connection, frame: Record<string, unknown>) => {
+    if (!owns(connection) || connection.socket?.readyState !== OPEN) return
+    connection.socket.send(JSON.stringify(frame))
+  }
+
+  const forward = async (connection: Connection, frame: Record<string, unknown>) => {
     const port = options.bridge.port()
     const id = typeof frame.id === 'string' ? frame.id : ''
-    if (!port || !id) return
+    if (!port || !id || !owns(connection)) return
     const method = typeof frame.method === 'string' ? frame.method : 'GET'
     const path = typeof frame.path === 'string' ? frame.path : '/'
     const body = typeof frame.body === 'string' ? frame.body : undefined
@@ -119,97 +126,68 @@ export function startMobileAccessClient(options: {
     if (userId) headers[REMOTE_USER_HEADER] = userId
     if (tenantId) headers[REMOTE_TENANT_HEADER] = tenantId
     if (body !== undefined) headers['content-type'] = 'application/json'
-    let response: Response
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+    const cancelReader = () => {
+      // Cancellation is best effort: a custom stream may itself never settle.
+      void reader?.cancel().catch(() => options.note?.('[mobile-access] reader_cancel_failed'))
+    }
+    connection.controller.signal.addEventListener('abort', cancelReader, { once: true })
     try {
-      response = await fetchImpl(`http://127.0.0.1:${port}${path}`, {
+      const fetching = fetchImpl(`http://127.0.0.1:${port}${path}`, {
         method,
         headers,
+        signal: connection.controller.signal,
         ...(body !== undefined ? { body } : {})
-      })
-    } catch {
-      socket?.send(JSON.stringify({ type: 'response', id, status: 502, headers: {}, body: '' }))
-      return
-    }
-    const contentType = response.headers.get('content-type') ?? ''
-    if (contentType.includes('text/event-stream') && response.body) {
-      socket?.send(JSON.stringify({
-        type: 'response-start',
-        id,
-        status: response.status,
-        headers: { 'content-type': contentType }
-      }))
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      try {
-        while (!stopped) {
-          const chunk = await reader.read()
-          if (chunk.done) break
-          socket?.send(JSON.stringify({
-            type: 'response-chunk',
-            id,
-            data: decoder.decode(chunk.value, { stream: true })
-          }))
+      }).then((response) => {
+        // A transport may ignore abort and resolve after its owner was retired.
+        if (!owns(connection)) {
+          void response.body?.cancel().catch(() => options.note?.('[mobile-access] body_cancel_failed'))
         }
-      } finally {
-        socket?.send(JSON.stringify({ type: 'response-end', id }))
+        return response
+      })
+      const response = await untilAborted(connection.controller.signal, fetching)
+      if (!owns(connection)) return
+      const contentType = response.headers.get('content-type') ?? ''
+      if (contentType.includes('text/event-stream') && response.body) {
+        reader = response.body.getReader()
+        send(connection, { type: 'response-start', id, status: response.status, headers: { 'content-type': contentType } })
+        const decoder = new TextDecoder()
+        while (owns(connection)) {
+          const chunk = await untilAborted(connection.controller.signal, reader.read())
+          if (chunk.done) break
+          send(connection, { type: 'response-chunk', id, data: decoder.decode(chunk.value, { stream: true }) })
+        }
+        send(connection, { type: 'response-end', id })
+      } else {
+        const text = await untilAborted(connection.controller.signal, response.text())
+        send(connection, { type: 'response', id, status: response.status, headers: { 'content-type': contentType }, body: text })
       }
-      return
+    } catch {
+      if (owns(connection)) {
+        options.note?.('[mobile-access] forward_failed')
+        send(connection, { type: 'response', id, status: 502, headers: {}, body: '' })
+      }
+    } finally {
+      connection.controller.signal.removeEventListener('abort', cancelReader)
+      cancelReader()
     }
-    socket?.send(JSON.stringify({
-      type: 'response',
-      id,
-      status: response.status,
-      headers: { 'content-type': contentType },
-      body: await response.text()
-    }))
   }
 
-  const attach = async (account: MobileAccessAccount, record: MobileAccessRecord, key: string, epoch: number) => {
-    const url = new URL(MOBILE_ATTACH_PATH, account.base)
-    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-    const opened = options.connectSocket
-      ? await options.connectSocket(url.toString())
-      : await openWebSocket(url.toString())
-    if (stopped || epoch !== generation) {
-      opened.close()
-      return
-    }
-    socket = opened
-    attachedKey = key
-    boundAccount = account
-    opened.send(JSON.stringify({
-      type: 'attach',
-      desktopId: record.desktopId,
-      attachSecret: record.attachSecret
-    }))
-    heart = setInterval(() => {
-      if (socket?.readyState === OPEN) socket.send(JSON.stringify({ type: 'ping' }))
-    }, MOBILE_ACCESS_HEARTBEAT_MS)
-    heart.unref?.()
+  const fail = (connection: Connection, delay: number) => {
+    if (!owns(connection)) return
+    retire()
+    retryAt = Date.now() + delay
   }
 
-  const sync = async () => {
-    if (stopped) return
-    const epoch = ++generation
-    const account = options.account()
-    const key = mobileAccessAccountKey(account)
-    const record = identity()
-    if (!key || (boundAccount && mobileAccessAccountKey(boundAccount) !== key)) {
-      const previous = boundAccount
-      boundAccount = undefined
-      closeSocket()
-      if (previous) await unbind(previous, record)
-      if (!key) return
-    }
-    if (socket && attachedKey === key && socket.readyState === OPEN) return
-    closeSocket()
+  const connect = async (connection: Connection, record: MobileAccessRecord) => {
+    let stage = 'bind'
     const displayName = record.displayName || options.displayName()
-    let bindStatus = 0
     try {
-      const response = await fetchImpl(new URL(MOBILE_BIND_PATH, account.base), {
+      const response = await bounded(connection.controller, () => fetchImpl(new URL(MOBILE_BIND_PATH, connection.account.base), {
         method: 'POST',
+        signal: connection.controller.signal,
         headers: {
-          authorization: `Bearer ${account.accessToken}`,
+          authorization: `Bearer ${connection.account.accessToken}`,
           'content-type': 'application/json'
         },
         body: JSON.stringify({
@@ -217,90 +195,143 @@ export function startMobileAccessClient(options: {
           attachSecret: record.attachSecret,
           ...(displayName ? { displayName } : {})
         })
-      })
-      bindStatus = response.status
-    } catch {
-      options.note?.('[mobile-access] bind_failed')
-      schedule(20_000)
-      return
-    }
-    if (stopped || epoch !== generation) return
-    if (bindStatus === 404 || bindStatus === 501) {
-      if (!missingPathNoted) {
+      }))
+      if (!owns(connection)) return
+      if (response.status === 404 || response.status === 501) {
+        if (!missingPathNoted) options.note?.(`[mobile-access] bind_unavailable status=${response.status}`)
         missingPathNoted = true
-        options.note?.(`[mobile-access] bind_unavailable status=${bindStatus}`)
+        fail(connection, 60_000)
+        return
       }
-      schedule(60_000)
-      return
-    }
-    missingPathNoted = false
-    if (bindStatus < 200 || bindStatus >= 300) {
-      options.note?.(`[mobile-access] bind_rejected status=${bindStatus}`)
-      schedule(20_000)
-      return
-    }
-    try {
-      await attach(account, record, key, epoch)
+      missingPathNoted = false
+      if (!response.ok) {
+        options.note?.(`[mobile-access] bind_rejected status=${response.status}`)
+        fail(connection, 20_000)
+        return
+      }
+      boundAccount = connection.account
+      stage = 'attach'
+      const url = new URL(MOBILE_ATTACH_PATH, connection.account.base)
+      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+      const opening = options.connectSocket
+        ? options.connectSocket(url.toString(), connection.controller.signal)
+        : openWebSocket(url.toString(), connection)
+      // Hooks predating AbortSignal may resolve after cancellation; never retain that socket.
+      void opening.then((opened) => {
+        if (!owns(connection)) opened.close()
+      }, () => undefined)
+      const opened = await bounded(connection.controller, () => opening)
+      if (!owns(connection)) { opened.close(); return }
+      connection.socket = opened
+      send(connection, { type: 'attach', desktopId: record.desktopId, attachSecret: record.attachSecret })
+      connection.heart = setInterval(() => send(connection, { type: 'ping' }), MOBILE_ACCESS_HEARTBEAT_MS)
+      connection.heart.unref?.()
     } catch {
-      options.note?.('[mobile-access] attach_failed')
-      schedule(20_000)
+      // Timeout aborts the operation too, but only the owner may change retry state.
+      if (current !== connection || stopped || mobileAccessAccountKey(options.account()) !== connection.key) return
+      options.note?.(`[mobile-access] ${stage}_failed`)
+      retire()
+      retryAt = Date.now() + 20_000
     }
   }
 
-  void sync()
-  const watch = setInterval(() => {
-    void sync()
-  }, 2_000)
+  const sync = () => {
+    if (stopped) return
+    const account = { ...options.account() }
+    const key = mobileAccessAccountKey(account)
+    if (key !== observedKey) {
+      const previous = retire()
+      const previousAccount = boundAccount ?? previous?.account
+      boundAccount = undefined
+      observedKey = key
+      retryAt = 0
+      missingPathNoted = false
+      // Unbind must not block the next identity's bind/attach.
+      if (previousAccount) void unbind(previousAccount, options.store.load())
+    }
+    if (!key || Date.now() < retryAt) return
+    if (current) {
+      if (!current.socket || current.socket.readyState === OPEN) return
+      retire()
+    }
+    const connection: Connection = { key, account, controller: new AbortController() }
+    current = connection
+    void connect(connection, identity())
+  }
+
+  sync()
+  const watch = setInterval(sync, 2_000)
   watch.unref?.()
 
   return {
     async stop() {
+      if (stopped) return
       stopped = true
       clearInterval(watch)
-      clearRetry()
-      const account = options.account()
-      const record = options.store.load()
-      closeSocket()
-      if (mobileAccessAccountKey(account)) await unbind(account, record)
+      const previous = retire()
+      const previousAccount = boundAccount ?? previous?.account
+      boundAccount = undefined
+      if (previousAccount) await unbind(previousAccount, options.store.load())
     }
   }
 
-  function openWebSocket(url: string): Promise<AccessSocket> {
+  function openWebSocket(url: string, connection: Connection): Promise<AccessSocket> {
     return new Promise((resolve, reject) => {
       const opened = new WebSocket(url)
+      const abort = () => opened.terminate()
+      connection.controller.signal.addEventListener('abort', abort, { once: true })
       const wrapped: AccessSocket = {
         send: (data) => opened.send(data),
-        close: () => opened.close(),
-        get readyState() {
-          return opened.readyState
-        }
+        close: () => opened.terminate(),
+        get readyState() { return opened.readyState }
       }
       opened.once('open', () => resolve(wrapped))
       opened.once('error', () => reject(new Error('Mobile access socket failed.')))
       opened.on('message', (data) => {
-        if (socket !== wrapped) return
+        if (!owns(connection) || connection.socket !== wrapped) return
         let frame: Record<string, unknown>
         try {
           const parsed: unknown = JSON.parse(data.toString())
           if (!isPlainObject(parsed)) return
           frame = parsed
-        } catch {
-          return
-        }
+        } catch { return }
         if (frame.type === 'rejected') {
           options.note?.('[mobile-access] attach_rejected')
-          closeSocket()
-          schedule(20_000)
-          return
+          fail(connection, 20_000)
+        } else if (frame.type === 'request') {
+          void forward(connection, frame)
         }
-        if (frame.type === 'request') void forward(options.account(), frame)
       })
       opened.on('close', () => {
-        if (socket !== wrapped || stopped) return
-        closeSocket()
-        schedule(5_000)
+        connection.controller.signal.removeEventListener('abort', abort)
+        fail(connection, 5_000)
       })
     })
+  }
+}
+
+// Race even injected transports that ignore AbortSignal, so shutdown and ownership
+// changes have a bounded exit independent of a remote server's cooperation.
+function untilAborted<T>(signal: AbortSignal, operation: Promise<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      signal.removeEventListener('abort', abort)
+      reject(new Error('Mobile access operation cancelled.'))
+    }
+    // Always observe the original promise, including an already-cancelled race.
+    operation.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
+    if (signal.aborted) { abort(); return }
+    signal.addEventListener('abort', abort, { once: true })
+  })
+}
+
+async function bounded<T>(controller: AbortController, operation: () => Promise<T>): Promise<T> {
+  const timer = setTimeout(() => controller.abort(), OPERATION_TIMEOUT_MS)
+  timer.unref?.()
+  try {
+    return await untilAborted(controller.signal, operation())
+  } finally {
+    clearTimeout(timer)
   }
 }
 

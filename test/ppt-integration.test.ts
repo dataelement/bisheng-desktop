@@ -180,8 +180,9 @@ describe('DSH PPT built-in plugin', () => {
       }
       const client = entries.get('package/lib/client.js')!.toString()
       expect(client).not.toContain('data:image/jpeg;base64,')
-      // The adapter adds about 1.4 KB for the welcome-page slot and shared template scrolling.
-      expect(Buffer.byteLength(client)).toBeLessThan(name === 'adapter' ? 122_000 : 120_000)
+      // Keep a bounded text-only bundle: hydration ownership/revision guards add under 1 KB.
+      // The adapter also owns the welcome-page slot and shared template scrolling.
+      expect(Buffer.byteLength(client)).toBeLessThan(name === 'adapter' ? 123_000 : 121_000)
       const urls = [...client.matchAll(/\/dsh-ppt\/previews\/([a-f0-9]{64})\.jpg/gu)]
       expect(urls).toHaveLength(192)
       for (const url of urls) expect(allowed.has(url[1]!)).toBe(true)

@@ -221,29 +221,35 @@ window.__ModuleLoader__.load({
 				this.adopted ??= /* @__PURE__ */ new Set();
 				this.remoteEpoch ??= /* @__PURE__ */ new Map();
 				this.remoteReady ??= /* @__PURE__ */ new Set();
+				this.remoteInflight ??= /* @__PURE__ */ new Map();
 				if (!client?.bound || typeof sessionId !== "string" || sessionId.trim().length === 0) return Promise.resolve("idle");
 				if (!force && this.remoteReady.has(sessionId)) return Promise.resolve("ready");
+				const pending = this.inflight.get(sessionId);
+				// A forced read may replace a remote read, but must not interrupt staged adoption.
+				if (pending && (!force || this.remoteInflight.get(sessionId) !== pending)) return pending;
+				// Local chooser actions invalidate both success and failure from this hydration.
+				const seenRevision = this.revision(sessionId);
 				const epoch = force ? (this.remoteEpoch.get(sessionId) ?? 0) + 1 : this.remoteEpoch.get(sessionId) ?? 0;
 				if (force) {
 					this.remoteReady.delete(sessionId);
 					this.remoteEpoch.set(sessionId, epoch);
 				}
-				const pending = this.inflight.get(sessionId);
-				if (pending && (this.remoteEpoch.get(sessionId) ?? 0) === epoch) return pending;
 				const work = client.call("state").then((next) => {
-					if ((this.remoteEpoch.get(sessionId) ?? 0) !== epoch) return "stale";
+					if ((this.remoteEpoch.get(sessionId) ?? 0) !== epoch || this.revision(sessionId) !== seenRevision) return "stale";
 					this.setTemplateState(sessionId, next);
 					this.remoteReady.add(sessionId);
 					this.adopted.add(sessionId);
 					return "applied";
 				}).catch((reason) => {
-					if ((this.remoteEpoch.get(sessionId) ?? 0) !== epoch) return "stale";
+					if ((this.remoteEpoch.get(sessionId) ?? 0) !== epoch || this.revision(sessionId) !== seenRevision) return "stale";
 					this.setError(sessionId, reason instanceof Error ? reason.message : String(reason));
 					return "failed";
 				}).finally(() => {
 					if (this.inflight.get(sessionId) === work) this.inflight.delete(sessionId);
+					if (this.remoteInflight.get(sessionId) === work) this.remoteInflight.delete(sessionId);
 				});
 				this.inflight.set(sessionId, work);
+				this.remoteInflight.set(sessionId, work);
 				return work;
 			}
 			adopt(sessionId, client) {
