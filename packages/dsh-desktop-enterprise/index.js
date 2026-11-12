@@ -26,6 +26,7 @@ export const BISHENG_PROVIDER_ROUTE = 'bisheng-enterprise'
 
 const LOCAL_PATHS = Object.freeze({
   state: '/api/enterprise.state',
+  refreshProfile: '/api/enterprise.profile.refresh',
   inspectBase: '/api/enterprise.base.inspect',
   start: '/api/enterprise.login.start',
   manual: '/api/enterprise.login.manual',
@@ -373,6 +374,14 @@ export function apply(ctx) {
     })
   }
   registerJsonRoute(connection, LOCAL_PATHS.state, ['GET'], async () => readBrokerState())
+  registerJsonRoute(connection, LOCAL_PATHS.refreshProfile, ['POST'], async request => {
+    const body = await readJson(request)
+    if (!body || !['account', 'foreground', 'image'].includes(body.reason) || Object.keys(body).some(key => key !== 'reason')) {
+      throw Object.assign(new Error('Invalid profile refresh reason.'), { status: 400 })
+    }
+    await brokerJson('/v1/profile/refresh', { reason: body.reason })
+    return readBrokerState()
+  })
   registerJsonRoute(connection, LOCAL_PATHS.inspectBase, ['POST'], async (request) => {
     const body = await readJson(request)
     return inspectedBase(normalizeEnterpriseServerUrl(String(body?.base ?? ''), inspectUrlOptions()))

@@ -81,6 +81,8 @@ export interface EnterpriseChatViewState {
   navigation?: EnterpriseNavigation
   path?: string
   epoch?: number
+  /** Account metadata can change without changing the native view epoch or connection. */
+  accountRevision?: number
   landing?: boolean
   conversationId?: string
   /** Stable, opaque enterprise identity for account-scoped desktop project storage. */

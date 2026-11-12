@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { EnterpriseProfileState, type ProfileRefreshReason } from './profile-state'
 import { parseWorkSkillRequest, readSkillBytes } from './work-skills'
 import { parseWorkResourceRequest, readResourceJson } from './work-resources'
 import { parseWorkMcpRequest, sendWorkMcp } from './work-mcp'
@@ -58,6 +59,7 @@ export type EnterprisePhase =
   | 'error'
 
 export interface EnterprisePublicIdentity {
+  avatar?: string | null
   id?: string
   username?: string
   display_name?: string
@@ -161,6 +163,8 @@ interface PendingLogin {
 export class EnterpriseService {
   private cloudService: CloudWorkbenchService | undefined
   private mutation: Promise<unknown> = Promise.resolve()
+  private readonly profile = new EnterpriseProfileState()
+  private profileInFlight: Promise<EnterprisePublicState> | undefined
   private refreshInFlight: Promise<EnterprisePublicState> | undefined
   private epoch = 0
   private revision = 0
@@ -200,6 +204,49 @@ export class EnterpriseService {
     }
   }
 
+  /** Event-triggered metadata refresh, deliberately independent from state polling. */
+  async refreshProfile(reason: ProfileRefreshReason = 'account'): Promise<EnterprisePublicState> {
+    if (!this.authState().connected) return this.snapshot()
+    if (this.profileInFlight) return this.profileInFlight
+    if (!this.profile.due(reason, this.now())) return this.snapshot()
+    const epoch = this.epoch
+    const sessionVersion = this.authEpoch
+    const base = this.session?.base
+    const userId = this.session?.user?.id
+    const tenantId = this.session?.tenant?.id
+    if (!base || !userId || !tenantId) return this.snapshot()
+    const controller = new AbortController()
+    this.authenticatedControllers.add(controller)
+    this.profile.begin(this.now())
+    const current = () => this.epoch === epoch && this.authEpoch === sessionVersion && !controller.signal.aborted
+    const task = (async () => {
+      try {
+        const accessToken = await this.ensureAccess(epoch)
+        if (!current()) return this.snapshot()
+        const result = await requestEnterpriseJson(this.options.fetchImpl, base, '/api/v1/dsh/profile', {
+          ...this.platformRequestOptions(), accessToken, signal: controller.signal, timeoutMs: 10_000
+        })
+        if (current()) {
+          this.profile.apply(result.body, base, userId, tenantId, this.now())
+          this.publish()
+        }
+      } catch (error) {
+        if (current()) {
+          const status = error instanceof EnterprisePlatformError ? error.status : undefined
+          this.profile.fail(status === 404 || status === 405)
+          // A profile fetch/parse failure does not change account phase or model availability.
+          // ensureAccess still owns the normal expiry/revocation semantics of the credentials.
+          this.note('profile_refresh_failed', { status })
+        }
+      } finally {
+        this.authenticatedControllers.delete(controller)
+      }
+      return this.snapshot()
+    })()
+    this.profileInFlight = task
+    try { return await task } finally { if (this.profileInFlight === task) this.profileInFlight = undefined }
+  }
+
   async readState(): Promise<EnterprisePublicState> {
     await this.expirePendingLoginIfDue()
     return this.snapshot()
@@ -226,7 +273,7 @@ export class EnterpriseService {
       })),
       modelsAvailable: this.modelsAvailable && (this.phase === 'connected' || this.phase === 'refreshing'),
       ...(this.session?.base ? { base: this.session.base } : {}),
-      ...(publicIdentity(this.session?.user) ? { user: publicIdentity(this.session?.user) } : {}),
+      ...(publicIdentity(this.profile.user ?? this.session?.user) ? { user: publicIdentity(this.profile.user ?? this.session?.user) } : {}),
       ...(publicIdentity(this.session?.tenant) ? { tenant: publicIdentity(this.session?.tenant) } : {}),
       ...(this.usage ? { usage: { ...this.usage } } : {}),
       ...(Object.keys(this.modelUsage).length > 0 ? { modelUsage: { ...this.modelUsage } } : {}),
@@ -254,6 +301,7 @@ export class EnterpriseService {
       this.clearError()
       this.publish()
       void this.refreshModels(true)
+      void this.refreshProfile()
     } catch (error) {
       this.session = null
       this.allowPrivateHttpForSession = false
@@ -565,6 +613,7 @@ export class EnterpriseService {
       await this.commitSession(token as EnterpriseCredentialSession, expectedEpoch)
       if (this.authEpoch === pending.authEpoch && this.session?.access_token) this.authEnabled = true
       await this.syncCatalog(expectedEpoch, { includeUsage: true })
+      void this.refreshProfile()
       this.note('login_committed', { originHash: hashEnterpriseOrigin(pending.base) })
       try {
         await this.options.activateDesktop?.()
@@ -844,6 +893,9 @@ export class EnterpriseService {
 
   private invalidateAuthSession(): void {
     this.authEpoch += 1
+    this.profile.clear()
+    this.profileInFlight = undefined
+    for (const controller of this.authenticatedControllers) controller.abort(enterpriseSessionChangedAbortReason())
     this.authEnabled = false
     this.authTransport.invalidate()
   }
@@ -1710,6 +1762,7 @@ async function readMarketErrorCode(response: Response): Promise<string | undefin
 function publicIdentity(value?: EnterprisePublicIdentity): EnterprisePublicIdentity | undefined {
   if (!value) return undefined
   const identity: EnterprisePublicIdentity = {
+    ...(value.avatar === undefined ? {} : { avatar: value.avatar }),
     ...(value.id ? { id: value.id } : {}),
     ...(value.username ? { username: value.username } : {}),
     ...(value.display_name ? { display_name: value.display_name } : {}),
