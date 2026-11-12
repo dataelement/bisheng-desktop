@@ -841,7 +841,7 @@ describe('BiSheng OpenAI adapter', () => {
     expect(internal.error.failure.code).not.toBe('SERVER')
   })
 
-  it('F015: classifies an unpriced BiSheng model as its own platform failure, not a generic server error', async () => {
+  it('F016: classifies an unpriced BiSheng model as its own platform failure, not a generic server error', async () => {
     const body = {
       error: { message: 'Model pricing is not configured; contact the administrator', type: 'service_unavailable_error', code: 'model_pricing_missing' }
     }

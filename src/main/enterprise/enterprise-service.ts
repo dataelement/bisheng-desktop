@@ -88,7 +88,7 @@ export interface EnterprisePublicModel {
     vision?: boolean
     responses?: boolean
   }
-  /** F015 display-only credit ratio; absent from older BiSheng servers. */
+  /** F016 display-only credit ratio; absent from older BiSheng servers. */
   pricing_hint?: { ratio: string | null; base: boolean; free: boolean }
 }
 

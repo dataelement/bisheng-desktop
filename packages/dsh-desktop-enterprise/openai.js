@@ -300,7 +300,7 @@ const CHAT_PLATFORM_CODES = new Set([
   'quota_unavailable',
   'usage_unavailable',
   'model_not_allowed',
-  // F015 (BiSheng 26176): the model has no price yet; older servers never send it.
+  // F016 (BiSheng 26176): the model has no price yet; older servers never send it.
   'model_pricing_missing',
   'invalid_request',
   'unsupported_parameter',

@@ -71,7 +71,7 @@ describe('provider error classification patches', () => {
     expect(patch).toContain('case "upstream_error": return "message.failure.upstreamError";')
     expect(patch).toContain('case "monthly_token_limit_exceeded": return "message.failure.monthlyTokenLimit";')
     expect(patch).toContain('case "quota_unavailable": return "message.failure.quotaUnavailable";')
-    // F015 (BiSheng 26176): a model without a price is refused until the administrator fixes it.
+    // F016 (BiSheng 26176): a model without a price is refused until the administrator fixes it.
     expect(patch).toContain('case "model_pricing_missing": return "message.failure.modelPricingMissing";')
     expect(patch).toContain('"message.failure.modelPricingMissing": "该模型尚未配置价格，暂时无法使用，请联系管理员。"')
     expect(patch).toContain('"message.failure.modelPricingMissing": "This model has no price configured yet, so it can\'t be used. Contact your administrator."')

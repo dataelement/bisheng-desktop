@@ -194,7 +194,7 @@ describe('enterprise service login loop', () => {
     expect(service.snapshot().models[0]?.reasoning).toEqual(reasoning)
   })
 
-  it('F015: carries credit ratio hints through login, catalog refresh and detached public snapshots', async () => {
+  it('F016: carries credit ratio hints through login, catalog refresh and detached public snapshots', async () => {
     const platform = createMockEnterpriseServer({ port: 0 })
     const origin = await platform.listen()
     cleanups.push(async () => platform.close())

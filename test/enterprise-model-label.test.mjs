@@ -6,7 +6,7 @@ import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 
-// F015: the credit ratio after BiSheng model names in the Work model picker.
+// F016: the credit ratio after BiSheng model names in the Work model picker.
 // jsdom replaces the global URL, so resolve the bundle path without it.
 const source = readFileSync(path.join(import.meta.dirname, '../packages/dsh-desktop-enterprise/client.js'), 'utf8')
 function slice(from, to) {
@@ -112,7 +112,7 @@ it('adds the ratio to BiSheng models and leaves every other label as the catalog
     provider, model: { id, name: `Model ${id}` }, placement: 'option', selected: false, t, hints: store
   }))
   expect(render(bisheng, 'bisheng:1').innerHTML).toBe('<span class="dshEnterpriseModelLabel"><span>Model bisheng:1</span><em data-tone="neutral">3.00x</em></span>')
-  expect(render(bisheng, 'bisheng:2').textContent).toBe('Model bisheng:21.00x · ratioBase')
+  expect(render(bisheng, 'bisheng:2').innerHTML).toBe('<span class="dshEnterpriseModelLabel"><span>Model bisheng:2</span><em data-tone="info">1.00x</em></span>')
   expect(render(bisheng, 'bisheng:3').querySelector('em')?.textContent).toBe('ratioFree')
   expect(render(bisheng, 'bisheng:4').innerHTML).toBe('Model bisheng:4')
   expect(render(bisheng, 'bisheng:9').innerHTML).toBe('Model bisheng:9')

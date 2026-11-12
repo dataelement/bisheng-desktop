@@ -738,7 +738,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * F015 credit-ratio hints of the signed-in account's BiSheng models, keyed by catalog model id.
+     * F016 credit-ratio hints of the signed-in account's BiSheng models, keyed by catalog model id.
      * Fed by the foreground catalog refresh, whose response is the full account state.
      */
     function createPricingHintStore() {
@@ -775,7 +775,9 @@ window.__ModuleLoader__.load({
     function PricingModelLabel({ provider, model, t, hints }) {
       // Mounted labels follow price or base-model changes picked up by the next catalog refresh.
       React.useSyncExternalStore(hints.subscribe, hints.version)
-      const badge = provider?.id === BISHENG_PROVIDER_ROUTE ? pricingHintBadge(hints.get(model.id), t) : null
+      const hint = provider?.id === BISHENG_PROVIDER_ROUTE ? hints.get(model.id) : undefined
+      // The picker is narrow: the base model reads a plain "1.00x" here; the account page names it.
+      const badge = hint && !hint.free && hint.ratio ? { text: `${hint.ratio}x`, tone: hint.base ? 'info' : 'neutral' } : pricingHintBadge(hint, t)
       if (!badge) return model.name
       const { Tag } = require('@deepseek-ai/dsh-client-ui-primitives')
       return h('span', { className: 'dshEnterpriseModelLabel' }, h('span', null, model.name), h(Tag, { tone: badge.tone }, badge.text))

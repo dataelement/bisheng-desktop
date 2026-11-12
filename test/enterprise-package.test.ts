@@ -72,7 +72,7 @@ describe('DSH Desktop enterprise package', () => {
       expect(html).not.toContain('dshEnterpriseModelUsage')
       expect(html).not.toContain('%')
     }
-    // F015: the server's credit ratio follows the provider, with base and free spelled out.
+    // F016: the server's credit ratio follows the provider, with base and free spelled out.
     const state = { modelsAvailable: true, usage: { used: 25, limit: 100, quota_state: 'available' } }
     const row = (pricing_hint?: unknown) => renderToStaticMarkup(render({ ...model, pricing_hint }, state, 'en', (key: string) => key))
     expect(row({ ratio: '3.00', base: false, free: false })).toContain('title="ratioHint">3.00x</span>')

@@ -362,7 +362,7 @@ describe('BiSheng compatible client API mock', () => {
       expect(model?.id).toBe('bisheng:7')
       expect(model).not.toHaveProperty('pricing_hint')
     }
-    // Servers before F015 send no hint at all.
+    // Servers before F016 send no hint at all.
     expect(parseModels({ object: 'list', data: [base] })[0]).not.toHaveProperty('pricing_hint')
   })
 
