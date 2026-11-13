@@ -14,7 +14,6 @@ window.__ModuleLoader__.load({
     const OPEN_SETTINGS_SECTION_EVENT = 'dsh-desktop:open-settings-section'
     // Mirrors BISHENG_PROVIDER_ROUTE in index.js; the client bundle cannot import the server entry.
     const BISHENG_PROVIDER_ROUTE = 'bisheng-enterprise'
-    const MODEL_LABEL_SLOT = 'conversation.input.model.label'
     const NS = 'settings.desktopEnterprise'
     const SAFETY_NS = 'enterprise.contentSafety'
     const safetyCopy = {
@@ -482,13 +481,6 @@ window.__ModuleLoader__.load({
           font-variant-numeric: tabular-nums;
           white-space: nowrap;
         }
-        .dshEnterpriseModelLabel {
-          display: inline-flex;
-          align-items: center;
-          gap: 4px;
-          white-space: nowrap;
-          vertical-align: baseline;
-        }
         .dshEnterpriseModels.paused {
           opacity: .5;
         }
@@ -763,6 +755,7 @@ window.__ModuleLoader__.load({
           for (const listener of [...listeners]) listener()
         },
         get: (id) => hints.get(id),
+        entries: () => hints.entries(),
         get size() { return hints.size },
         version: () => version,
         subscribe(listener) {
@@ -772,38 +765,57 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function PricingModelLabel({ provider, model, t, hints }) {
-      // Mounted labels follow price or base-model changes picked up by the next catalog refresh.
-      React.useSyncExternalStore(hints.subscribe, hints.version)
-      const hint = provider?.id === BISHENG_PROVIDER_ROUTE ? hints.get(model.id) : undefined
-      // The picker is narrow: the base model reads a plain "1.00x" here; the account page names it.
-      const badge = hint && !hint.free && hint.ratio ? { text: `${hint.ratio}x`, tone: hint.base ? 'info' : 'neutral' } : pricingHintBadge(hint, t)
-      if (!badge) return model.name
-      const { Tag } = require('@deepseek-ai/dsh-client-ui-primitives')
-      return h('span', { className: 'dshEnterpriseModelLabel' }, h('span', null, model.name), h(Tag, { tone: badge.tone }, badge.text))
+    // Tag primitive palettes (dsh-client-ui-primitives Tag.module.css), applied to generated content.
+    const RATIO_TONES = {
+      neutral: 'background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-secondary);',
+      info: 'background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 10%, transparent); color: var(--dsw-alias-state-business-primary);',
+      success: 'background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 10%, transparent); color: var(--dsw-alias-state-success-primary);'
+    }
+    const MODEL_RATIO_STYLE_ID = 'dsh-desktop-enterprise-model-ratio'
+
+    /** A CSS string literal; ids and copy come from the server and the locale, never raw into CSS. */
+    function cssString(value) {
+      return `"${String(value).replace(/[\\"]/g, '\\$&').replace(/[\n\r\f]/g, ' ')}"`
+    }
+
+    /** Ratio badges for BiSheng model names, keyed by the picker's provider and model attributes. */
+    function modelRatioCss(hints, t) {
+      const owner = `[data-provider-id=${cssString(BISHENG_PROVIDER_ROUTE)}]`
+      const rules = []
+      for (const [id, hint] of hints.entries()) {
+        // The picker is narrow: the base model reads a plain "1.00x" here; the account page names it.
+        const badge = hint && !hint.free && hint.ratio ? { text: `${hint.ratio}x`, tone: hint.base ? 'info' : 'neutral' } : pricingHintBadge(hint, t)
+        if (!badge) continue
+        rules.push(`${owner}[data-model-id=${cssString(id)}]::after { content: ${cssString(badge.text)}; ${RATIO_TONES[badge.tone]} }`)
+      }
+      if (!rules.length) return ''
+      return `${owner}[data-model-id]::after { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px; font-size: 11px; line-height: 17px; font-weight: 500; white-space: nowrap; vertical-align: baseline; font-variant-numeric: tabular-nums; }\n${rules.join('\n')}`
     }
 
     /**
      * Show the credit ratio after BiSheng model names in the Work model picker. The label slot is
-     * single-kind and the bundled DeepSeek 1017 badge holds the default priority 0, so this entry uses -1
-     * (the lowest priority renders). It is registered only while the account has ratio hints: signed out,
-     * on an older BiSheng server, or without enterprise models the slot is released and the badge returns.
+     * single-kind and the bundled DeepSeek 1017 badge lives there, so the ratio does not take the slot:
+     * the picker wraps every name in `data-provider-id` / `data-model-id`, which its README offers for
+     * styling without replacing the component. Both badges therefore show; signed out, on an older
+     * BiSheng server, or without enterprise models the style is empty.
      */
-    function bindModelPricingLabel(ctx, hints) {
-      let release
+    function bindModelPricingLabel(locale, hints) {
+      const t = locale.bind(NS)
       const update = () => {
-        if (hints.size > 0 && !release) {
-          release = ctx.slots.inject(MODEL_LABEL_SLOT, () => ctx.slots.register({
-            name: MODEL_LABEL_SLOT, locale: NS, priority: -1
-          }, (props) => h(PricingModelLabel, { ...props, hints })))
-        } else if (hints.size === 0 && release) {
-          release()
-          release = undefined
+        let style = document.getElementById(MODEL_RATIO_STYLE_ID)
+        if (!style) {
+          style = document.createElement('style')
+          style.id = MODEL_RATIO_STYLE_ID
+          style.setAttribute('data-plugin-css', 'dsh-desktop-enterprise')
+          document.head.appendChild(style)
         }
+        const css = modelRatioCss(hints, t)
+        if (style.textContent !== css) style.textContent = css
       }
-      const unsubscribe = hints.subscribe(update)
+      const unsubscribeHints = hints.subscribe(update)
+      const unsubscribeLocale = locale.subscribe?.(update)
       update()
-      return () => { unsubscribe(); release?.(); release = undefined }
+      return () => { unsubscribeHints(); unsubscribeLocale?.(); document.getElementById(MODEL_RATIO_STYLE_ID)?.remove() }
     }
 
     function bindEnterpriseModelSync(onState) {
@@ -1356,7 +1368,7 @@ window.__ModuleLoader__.load({
       marketTranslate = ctx.locale.bind('settings.enterpriseMarket')
       const pricingHints = createPricingHintStore()
       ctx.effect(() => bindEnterpriseModelSync(pricingHints.ingest), 'enterprise: foreground model catalog sync')
-      ctx.effect(() => bindModelPricingLabel(ctx, pricingHints), 'enterprise: credit ratio in the Work model picker')
+      ctx.effect(() => bindModelPricingLabel(ctx.locale, pricingHints), 'enterprise: credit ratio in the Work model picker')
       ctx.effect(() => bindEnterpriseMarketTab(ctx), 'enterprise-market: account-bound plugins tab')
       ctx.effect(() => {
         const bridge = window.dshDesktopEnterprise

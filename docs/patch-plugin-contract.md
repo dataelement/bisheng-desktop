@@ -402,7 +402,7 @@ Work 欢迎页的案例和参考模板跟随输入框进入同一会话滚动区
 
 毕昇 `/api/v1/dsh/models` 为每个模型增加可选的 `pricing_hint`（`ratio`、`base`、`free`），表示相对租户基准模型的积分倍率，按输入与输出 3:1 估算，只用于展示；扣费仍由服务端按每次调用的实际用量计算。`contract.js` 只接受两位小数或 `<0.01` 的倍率，格式不对时丢弃该提示，不丢弃模型；旧服务端不返回该字段，桌面照常工作。主进程 `EnterpriseService` 把提示随模型目录发布到公开状态；账号页模型列表在服务商名称后显示倍率（基准、免费另有文字）。
 
-Work 模型下拉框使用 `dsh-client-ui-model-selection` 声明的 `conversation.input.model.label`。该插槽是 single 类型，随包的 `dsh-client-ui-deepseek-model-label-1017` 以默认优先级 0 注册；插槽按优先级升序只渲染一项，同优先级重复注册会抛错。企业插件以 `priority: -1` 注册，只给毕昇企业服务商（路由 `bisheng-enterprise`）下带提示的模型追加倍率标签，其他模型返回原目录名称。注册只在当前账号的模型目录带有倍率提示时存在：未登录、连接旧服务端或没有企业模型时释放插槽，1017 标签照常显示。已知代价：企业账号登录且同时使用 DeepSeek 官方账号时，deepseek-flash 的 1017 标签被遮住。提示数据来自现有前台目录刷新（启动、回到前台、账号变化），刷新结果更新已挂载的标签。上游把该插槽改为可组合（chain/list）或提供等价的模型附加信息接缝后，改用正式接缝并取消遮挡。
+Work 模型下拉框的模型名由 `dsh-client-ui-model-selection` 渲染，外层固定带 `data-provider-id` 和 `data-model-id`。名字本身走 `conversation.input.model.label`，这是 single 类型的插槽，随包的 `dsh-client-ui-deepseek-model-label-1017` 已在其中注册。企业插件不占这个插槽：它按包 README 给出的方式，只用这两个属性定位，注入一段样式（`#dsh-desktop-enterprise-model-ratio`），在毕昇企业服务商（`bisheng-enterprise`）下带倍率提示的模型名后面用 `::after` 显示倍率标签。标签配色照搬 Tag 原语，模型 ID 和文案都以 CSS 字符串转义后写入。所以 DeepSeek 的 1017 标签和倍率标签可以同时出现，不再互相遮挡（2026-11-13 Callum 定）。未登录、连接旧服务端或没有企业模型时样式为空；提示随现有前台目录刷新（启动、回到前台、账号变化）更新，语言切换时重新生成；插件卸载时删除样式。已知局限：倍率是生成内容，屏幕阅读器可能不朗读，触发按钮的无障碍名称也不包含倍率。上游以后若把插槽改为可组合（chain/list），或提供模型附加信息的正式接缝，再改用正式接缝。
 
 服务端对没有价格记录的模型返回 HTTP 503、`code: model_pricing_missing`（毕昇错误码 26176）。`openai.js` 将其列为平台错误码；`dsh-client-ui-chat` 与 `dsh-client-ui-trajectory` 的现有平台错误本地化补丁各增加一条对应的中英文提示。没有新增补丁文件。随上游提供平台错误码本地化接缝时一并移除。
 
