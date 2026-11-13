@@ -48,7 +48,12 @@ it('synchronizes at startup and on demand without a periodic catalog request', a
     await api.sync()
     const count = () => f.messages.filter(message => message.method === 'tools/list').length
     expect(count()).toBe(1)
+    await api.sync()
+    expect(count()).toBe(1)
     await vi.advanceTimersByTimeAsync(120_000)
+    expect(count()).toBe(1)
+    const catalog = await (await routes[0].fetch(new Request('http://localhost/api/enterprise.work-tools', { method: 'POST', body: JSON.stringify({ operation: 'catalog' }) }))).json()
+    expect(catalog.tools).toEqual([{ name: 'mcp__bisheng__customer_query', label: 'Customer lookup', description: 'Search customers' }])
     expect(count()).toBe(1)
     await routes[0].fetch(new Request('http://localhost/api/enterprise.work-tools', { method: 'POST', body: JSON.stringify({ operation: 'refresh' }) }))
     expect(count()).toBe(2)

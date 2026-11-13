@@ -1,0 +1,570 @@
+{
+  "source": {
+    "title": "BISHENG 3.0 提示词集",
+    "revision": 124
+  },
+  "chat": [
+    {
+      "id": "confirm-event",
+      "title": {
+        "zh": "写一封方案确认邮件",
+        "en": "Draft an event confirmation email"
+      },
+      "description": {
+        "zh": "把准备进展、回复期限和确认项写清楚。",
+        "en": "Clarify progress, response deadlines and decisions."
+      },
+      "prompt": "起草一封邀请合作方确认活动方案的邮件，成稿要能直接复制发送：给出明确主题；首段交代方案已完成哪些准备、目前等待哪项确认；第二段写清期待收到答复的具体日期与时刻；第三段把对方的回复压缩为少量确认项，例如场地、人数和议程是否有异议。语气友好、要求清楚，联系人姓名及日期时间用空白占位。",
+      "deepResearch": false
+    },
+    {
+      "id": "ai-brief",
+      "title": {
+        "zh": "看看今天的 AI 动态",
+        "en": "Catch up on AI news"
+      },
+      "description": {
+        "zh": "3 条以内官方消息，附发布时间与原始来源。",
+        "en": "Summarize up to three updates from official sources."
+      },
+      "prompt": "检索过去 24 小时官方发布的 AI 行业动态，最多选 3 项，逐项说明发生了什么、相较此前有哪些新变化，以及接下来值得跟踪的事项。以便于浏览的 Markdown 信息卡或表格交付。每项必须附相关机构或企业官网的原始发布链接和精确到小时的发布时间，不使用转载或聚合页作来源；合格信息不足 3 项就按实际数量提供，无法联网时明确告知。",
+      "deepResearch": false
+    },
+    {
+      "id": "enterprise-agents",
+      "title": {
+        "zh": "调研企业智能体应用",
+        "en": "Research enterprise AI agents"
+      },
+      "description": {
+        "zh": "看真实落地场景，分清已上线、演示与待核实。",
+        "en": "Compare documented deployments and their limitations."
+      },
+      "prompt": "调研企业智能体在供应链运营、人力服务和财务共享中的真实使用情况，联网寻找有代表性的企业案例。用 Markdown 表格呈现场景、部署范围与进度、已披露成效、证据链接和来源日期。将案例标为“已证实投入使用”“仅发布或演示”“证据不足”，没有公开效果数据的直接注明，不推算收益。最后归纳这些场景投入运行所需的条件及当前主要局限。",
+      "deepResearch": true
+    },
+    {
+      "id": "headphones",
+      "title": {
+        "zh": "对比高端降噪耳机",
+        "en": "Compare noise-canceling headphones"
+      },
+      "description": {
+        "zh": "同维度比较产品差异，分开用户反馈与宣传。",
+        "en": "Compare models using consistent criteria and evidence."
+      },
+      "prompt": "研究高端无线降噪耳机，梳理不同产品的关键差异，交付一张横轴为品牌及具体型号、纵轴为比较维度的表格。统一比较降噪方案、电池续航、佩戴与重量、易损耗配件更换成本、售后保障；未公开或无法核实的参数一律写“未披露”，不要靠估算补齐。表格下另列差异证据：哪些由可追溯的用户使用反馈支持，哪些只来自品牌宣传，避免把广告表述当成实测结论。",
+      "deepResearch": true
+    },
+    {
+      "id": "commercial-space",
+      "title": {
+        "zh": "研究商业航天的商业模式",
+        "en": "Research commercial space revenue"
+      },
+      "description": {
+        "zh": "围绕收入闭环，用证据区分商用与试点。",
+        "en": "Distinguish commercial operations from pilot programs."
+      },
+      "prompt": "研究商业航天产业，判断哪些环节已有证据支持持续收入，哪些仍以验证项目或试点为主。交付 Markdown 研究简报：开头用一句话给出核心判断；正文按运载与卫星制造、地面设施、卫星数据与通信运营三部分，分别梳理商业模式已跑通和仍未跑通的环节，并紧邻判断列出证据；结尾给出 2—3 个后续可观察、能支持或推翻判断的信号。重要结论逐条标注来源链接与日期，严格区分付费商用项目和试验示范项目；媒体引用的规模数字只能作为检索线索，不能直接支撑结论。无法确认的内容标注【数据待核】并说明缺少哪类材料。篇幅服从论证完整性，不以缩短篇幅为由省略关键证据。",
+      "deepResearch": false
+    },
+    {
+      "id": "booking-scope",
+      "title": {
+        "zh": "梳理预约登记需求",
+        "en": "Scope an appointment tracker"
+      },
+      "description": {
+        "zh": "确认需求，划定首版范围。",
+        "en": "Clarify needs and identify what belongs in the first release."
+      },
+      "prompt": "把下面这段业务想法整理成可供产品和研发对齐的首版需求草案，不联网。业务材料：“我们有三间培训教室，员工经常重复预订。希望做个预约登记工具，能查看空闲、提交预约和取消；行政每周看一次使用情况。现在只有一位行政同事维护，先在两周内做一个能试用的版本，不想接入复杂审批，也暂不对外开放。”请按“问题与目标—用户角色—首版流程—纳入／暂缓事项—待确认问题”五部分输出 Markdown；用表格列出不超过 6 项首版功能及其验收条件，验收条件要能判断是否完成。只根据材料陈述事实，补充推断标为【假设】，不要自行确定登录方式、技术方案或权限规则；最后按影响范围的大小列出最多 3 个优先澄清问题，不先追问，先给出草案。",
+      "deepResearch": false
+    },
+    {
+      "id": "support-feedback",
+      "title": {
+        "zh": "归并客服反馈",
+        "en": "Organize customer feedback"
+      },
+      "description": {
+        "zh": "把零散反馈整理成结构化问题清单。",
+        "en": "Group repeated issues into a clear, structured summary."
+      },
+      "prompt": "仅依据下列 5 条客服记录，生成一份可直接放入 Markdown 的问题归并表，不联网、不推断后台原因。记录：A01｜11月3日｜陈同学｜“导出后中文标题变成方块，正文正常，Mac 上遇到的。”；A02｜11月3日｜林同学｜“同一份报告导出的标题乱码，Windows 是否也有还没测。”；A03｜11月4日｜周同学｜“我希望能一键复制图表的数据。”；A04｜11月4日｜陈同学｜“上次说的导出标题问题还在，换了一台 Mac 也是如此。”；A05｜11月5日｜吴同学｜“页面很慢”，未说明设备或发生步骤。表格列出问题类别、合并后的描述、原始记录 ID、已知环境、记录条数和仍缺的信息；把疑似同类的反馈归并，同时保留每个原始 ID 的追溯关系。A04 是跟进记录，不能据此新增一名反馈用户；记录条数与独立反馈人数分开统计，不能证明同一问题的不要强行合并。最后列出 3 个最值得补采的信息，不擅自承诺修复时间或标定严重程度。",
+      "deepResearch": false
+    },
+    {
+      "id": "team-event",
+      "title": {
+        "zh": "比较团队交流会方案",
+        "en": "Compare team event options"
+      },
+      "description": {
+        "zh": "对照备选方案，说明取舍理由。",
+        "en": "Weigh the options and explain the tradeoffs."
+      },
+      "prompt": "根据给定约束，为一次团队交流会比较方案并给出建议，不需要联网。已知：24 人参加，预算上限 6000 元，工作日可用时间 14:00—18:00；至少 60 分钟用于小组讨论，场地需可投屏，不能安排户外活动。方案 A：办公室，场地免费、可投屏，茶歇每人 80 元；方案 B：附近活动室，14:00—17:00 租金 2800 元，可投屏，茶歇每人 100 元；方案 C：酒店会议室，14:00—18:00 租金 4500 元，可投屏，最低餐饮消费 2000 元。以上报价均含税，无其他已知费用。先用一张表比较可用时长、已知总费用、预算余量、硬约束满足情况与主要取舍；再给出首选及理由，并为首选排一份包含讨论时间的简短议程。预算不足的方案明确排除；舒适度、交通便利等未提供的信息标为“待确认”，不要当成事实，也不要为缺失信息虚构评分。",
+      "deepResearch": false
+    },
+    {
+      "id": "museum-collections",
+      "title": {
+        "zh": "研究博物馆数字馆藏",
+        "en": "Compare digital museum collections"
+      },
+      "description": {
+        "zh": "对照馆藏开放方式与使用条件。",
+        "en": "Research how museums make their collections accessible."
+      },
+      "prompt": "研究大都会艺术博物馆、荷兰国立博物馆和史密森学会的数字馆藏开放方式，回答“公众与开发者分别能获取什么、以什么条件使用、有哪些实际限制”。优先检索各机构当前有效的开放数据页面、开发者文档与版权或使用条款，不用第三方汇总代替原始规则。交付 Markdown 对照表，统一比较可访问资源、获取途径、授权范围、是否需要注册或密钥、调用或下载限制、适用例外；区分作品、图片与元数据的许可，不把部分开放误写为全部开放。每个关键结论紧邻附一手链接、页面发布日期或更新日期，以及本次访问日期；页面未标日期就注明“未标注”，无法确认的写“待核实”，不要估算接口限额。表后分别用一段解释研究者查阅与开发者构建展示应用时的使用条件，并把机构明确规定与自己的适配判断分开。若规则在不同页面间冲突，列出冲突与需核实之处；无法联网则说明，不能假装完成查证。",
+      "deepResearch": true
+    },
+    {
+      "id": "urban-cooling",
+      "title": {
+        "zh": "研究城市降温措施",
+        "en": "Research urban cooling measures"
+      },
+      "description": {
+        "zh": "比较实际效果，标注适用条件。",
+        "en": "Compare evidence about effects and where each measure works."
+      },
+      "prompt": "研究城市公共空间降温中的三类措施：增加树荫、铺设高反射路面、建设遮阳设施。优先查找近 5 年有公开方法与结果的实地研究或城市评估，各选 1—2 个代表案例，比较其测得的效果、实施条件与局限；较早的重要基准研究可以补充，但要注明年份。交付 Markdown 研究简报：先给三条核心发现，再用同一张表列出地点、措施、对照或基准、测量指标与条件、主要结果、维护或实施限制、一手来源及日期，最后给出按场地条件选择措施时的核查问题。优先采用研究论文原文、城市政府或项目评估原始报告，注明发布日期与检索日期；气温、地表温度和人体热舒适指标须分开，不把不同指标或不同测量条件下的降幅直接排高低。没有披露的成本或长期效果写“未披露”，不要补算；明确区分实测事实、作者解释与自己的归纳，说明证据不足或结果冲突。无法联网时明确说明，不编造案例与数字。",
+      "deepResearch": true
+    }
+  ],
+  "work": [
+    {
+      "id": "luma-launch",
+      "title": {
+        "zh": "策划 Luma 新品发布会",
+        "en": "Design a Luma launch deck"
+      },
+      "description": {
+        "zh": "用产品大图与场景叙事，制作 10—12 页发布 PPT。",
+        "en": "Build a visual product launch presentation."
+      },
+      "prompt": "围绕“Luma 智能空气管家新品发布”制作一份面向城市家庭的旗舰产品发布 PPT，塑造一款可自主感知并管理室内空气的智能设备。核心能力包括多维空气检测、颗粒物与异味净化、温湿度联动、分房间场景识别、静音运行、滤芯寿命监测、儿童与宠物场景适配、能耗管理和手机远程控制。叙事从“为什么好空气需要被持续管理”展开，依次呈现产品主张、工业设计、核心硬件、传感系统、调节策略、真实居住场景，以及它与传统空气净化器的体验差别，最终说明设备如何从被动过滤工具变成主动运行的家庭空气管家。控制在 10—12 页，主要使用产品大图、气流路径、传感器结构、使用前后对照、场景示意与参数重点，避免长段文字。以暖白、石墨灰和浅苔绿构建安静、精密的科技展厅风格，穿插半透明材质和细线示意图，用问题、能力揭示、场景验证和收束形成发布节奏。需要使用 AI 生成配图，模拟参数须明确标注，不冒充实测。",
+      "category": "PPT",
+      "officeMode": "ppt"
+    },
+    {
+      "id": "setouchi-travel",
+      "title": {
+        "zh": "做一份濑户内海旅行指南",
+        "en": "Create a Setouchi travel guide"
+      },
+      "description": {
+        "zh": "串联岛屿艺术、地方饮食与 7—10 天路线。",
+        "en": "Bring regional culture and a practical itinerary into a deck."
+      },
+      "prompt": "围绕“濑户内海慢旅行：岛屿艺术、港町建筑与地方饮食”制作一份具有文化旅行刊物质感的目的地研究 PPT。主动联网搜集最新旅行资料及目的地信息，重点介绍高松、直岛、丰岛、小豆岛、尾道和仓敷，从美术馆、城市肌理、地方历史、餐饮与海岛景观展现区域特色。结合地中美术馆、丰岛美术馆、栗林公园、仓敷美观地区、渡轮航线，以及乌冬、橄榄制品和濑户内海鲜等代表体验，设计一条 7—10 天路线，说明各地最佳体验、交通衔接、适合停留时长与行程节奏。全篇 10—12 页，以区域地图、岛屿摄影、建筑赏析、美食画面、行程时间轴和目的地对照为主，文字尽量精炼。视觉采用米白纸色、海雾蓝、炭黑与少量朱红，以留白、图注和摄影跨页形成安静的地方文化手册风格，兼顾可执行的攻略和连续的视觉叙事。需要用 AI 生成配图，生成画面标为示意，地点与交通信息以核实资料为准。",
+      "category": "PPT",
+      "officeMode": "ppt"
+    },
+    {
+      "id": "data-infrastructure",
+      "title": {
+        "zh": "梳理数据基础设施趋势",
+        "en": "Brief data infrastructure trends"
+      },
+      "description": {
+        "zh": "研究实时数据、湖仓、治理与面向 AI 的数据服务。",
+        "en": "Compare technology trends in an evidence-based deck."
+      },
+      "prompt": "基于我在客户端已选择的 PPT 模板，沿用其结构和版式，制作一份近一年企业数据基础设施趋势分析 PPT，供技术战略研讨及管理层评审使用。联网研究实时数据平台、湖仓一体、数据治理、隐私计算、语义层和面向 AI 的数据服务，概括新进展、业务价值与未来走向。通过趋势矩阵、厂商能力对照和市场预测组织信息，预测需标注来源与日期，明确主要判断及其依据。",
+      "category": "PPT",
+      "officeMode": "ppt",
+      "template": "PPT 模板"
+    },
+    {
+      "id": "customer-success-review",
+      "title": {
+        "zh": "做一份年度复盘 PPT",
+        "en": "Make an annual review deck"
+      },
+      "description": {
+        "zh": "讲清年度成果、客户项目与下一年行动。",
+        "en": "Present team outcomes and next year’s plan."
+      },
+      "prompt": "基于我在客户端已选择的 PPT 模板，沿用其结构和版式，制作一份 10 页的客户成功团队年度复盘 PPT，依次覆盖年度目标、重点客户项目、交付与续约成果、问题复盘和下一年度计划。尚未提供的数据及案例细节使用占位符。每页围绕一个明确结论，内容包括关键指标、客户项目、交付里程碑和季度行动路线图，清楚呈现团队贡献、业务结果与能力成长。",
+      "category": "PPT",
+      "officeMode": "ppt",
+      "template": "PPT 模板"
+    },
+    {
+      "id": "security-notice",
+      "title": {
+        "zh": "起草信息安全培训通知",
+        "en": "Draft a security training notice"
+      },
+      "description": {
+        "zh": "保留公文格式，未知安排统一标为待填写。",
+        "en": "Use a formal notice layout with placeholders for missing details."
+      },
+      "prompt": "基于已选的「公文写作 · 通知」模板，把以下事项整理为可编辑 DOCX 通知：星河科技拟面向全体员工举办一次信息安全培训，内容包括账号与设备安全、敏感信息处理、钓鱼邮件识别；要求员工提前完成自查，培训后参加随堂测试。培训日期、地点、报名方式、联系人、发文字号与签发日期尚未确定，统一用【待填写】保留，不自行补造。沿用模板的红色发文机构标志、文号、分隔线、居中标题、正文层级、署名日期、页码和版记；正文按培训安排、参加要求、准备事项分层表达。替换全部示例单位及旧内容，不把模板案例当成真实发文。完成后核对版头、分页与页脚，交付原生可编辑 Word 文件。",
+      "category": "Word",
+      "officeMode": "word",
+      "template": "公文写作 · 通知"
+    },
+    {
+      "id": "event-minutes",
+      "title": {
+        "zh": "把讨论整理成会议纪要",
+        "en": "Turn discussion into meeting minutes"
+      },
+      "description": {
+        "zh": "区分已定事项、责任分工与待确认问题。",
+        "en": "Separate decisions, owners and open questions."
+      },
+      "prompt": "基于已选的「会议纪要 · 发布会筹备」模板，将下面的客户交流会讨论记录整理为可编辑 DOCX 纪要。记录：计划下月举行客户交流会，具体日期待销售团队确认；市场组负责邀请名单，本周五前发第一版；产品组准备两段演示，下周三前完成内部彩排；现场是否增加体验区尚未决定，需先确认场地与设备预算；会后应收集客户反馈，但问卷负责人还未明确。按会议基本信息、主要工作安排、主题议题、行动表和后续确认组织，区分已定事项与待确认事项，保留决定背后的条件和依赖。行动表沿用任务与交付要求、责任分工、期限三列；相对期限按记录保留，不在缺少会议日期时擅自换算，未知负责人和信息填“未明确”。保持模板的原生标题、表格、页码与整体版式，篇幅随材料确定，不机械凑够示例页数或行动数量；核对分页后交付 Word 文件。",
+      "category": "Word",
+      "officeMode": "word",
+      "template": "会议纪要 · 发布会筹备"
+    },
+    {
+      "id": "tea-market",
+      "title": {
+        "zh": "写一份无糖茶市场研究报告",
+        "en": "Write a tea market research report"
+      },
+      "description": {
+        "zh": "核验公开资料，制作含图表与来源的报告。",
+        "en": "Create a Word report with charts and verifiable sources."
+      },
+      "prompt": "基于已选的「中国现制咖啡市场调研报告」模板，制作面向消费行业研究人员的中国即饮无糖茶市场研究 DOCX。研究期采用最近一个资料较完整的自然年度，明确资料截止日期；联网收集可核验的公开披露，重点分析品牌与渠道布局、产品价格带、消费场景、竞争变化及经营表现。借鉴模板的研究章节与 A4 报告版式，以关键判断、正文分析、对照表和 4 张匹配新主题的数据图表组织内容，末页集中列出来源链接及发布日期；正文、标题和表格保持 Word 原生可编辑，图表可使用清晰图片，不承诺图片图表可直接编辑数据。所有咖啡行业示例事实、旧图表与来源都要替换，逐图核对与新数据一致；区分公开事实、分析判断和假设测算，未披露的数据明确标注，不编造市场规模。参考模板约 7 页的节奏，必要时为完整证据调整篇幅，逐页检查后交付 DOCX。",
+      "category": "Word",
+      "officeMode": "word",
+      "template": "中国现制咖啡市场调研报告"
+    },
+    {
+      "id": "subscription-analysis",
+      "title": {
+        "zh": "生成年度经营分析 Excel",
+        "en": "Build an annual operating workbook"
+      },
+      "description": {
+        "zh": "联动经营、客户留存与三种增长情景。",
+        "en": "Analyze revenue, retention and growth scenarios."
+      },
+      "prompt": "基于已选的「年度经营与客户分析」模板，制作一个订阅软件公司的年度经营复盘 XLSX。本次没有提供真实数据，请构造一组内部一致的全年模拟经营与客户批次数据，并在首页和数据页醒目标注“模拟数据，仅供演示”。保留经营总览、增长测算、增长质量、客户留存、月度经营数据、客户批次数据六张工作表的联动结构，围绕 MRR 增减、产品收入结构、客户留存和增长情景组织分析。沿用模板的原生公式、11 个原生图表、客户批次热力图及三种预测情景，用蓝绿与陶土色突出重点；日度新增 MRR 如由月度总额分配生成，明确拆分假设，确保月度汇总一致，并更新 7 日均线。说明金额单位和指标口径，核对客户数、MRR 变动、留存及情景测算之间的勾稽关系；替换模板示例公司与旧数据，完整重算并检查各表与图表后交付可编辑 XLSX。",
+      "category": "Excel",
+      "officeMode": "excel",
+      "template": "年度经营与客户分析"
+    },
+    {
+      "id": "port-review",
+      "title": {
+        "zh": "复盘港口月度作业",
+        "en": "Review monthly port operations"
+      },
+      "description": {
+        "zh": "从每日明细分析吞吐、航线与作业效率。",
+        "en": "Analyze throughput, routes and operating efficiency."
+      },
+      "prompt": "基于已选的「青岚港货物流向与作业效率」模板，制作“海岚港 2026 年 10 月作业复盘”XLSX。当前无真实记录，请生成覆盖该月每天的模拟装卸数据，并显著标注模拟性质；一条记录表示一次进港卸货或出港装货作业，保留原始明细并核对日期、货类、航线、方向、吨数、箱量与作业耗时的完整性。沿用港口总览、货类与航线、作业效率、日度汇总、作业明细五张工作表，以及模板的 8 张原生图表和公式关系，分析吞吐波动、进出港结构、主要航线和作业效率。吨数与 TEU 分开统计，不相加；装卸总量以作业口径解释，缺失或重复记录需列出检查结果，不静默删除。将全部日期、公式边界、图表横轴及核对值调整到本月范围，检查明细到汇总的一致性，重算并预览后交付可编辑 XLSX。",
+      "category": "Excel",
+      "officeMode": "excel",
+      "template": "青岚港货物流向与作业效率"
+    },
+    {
+      "id": "enzyme-quality",
+      "title": {
+        "zh": "分析酶活性实验质控",
+        "en": "Check enzyme assay quality"
+      },
+      "description": {
+        "zh": "核对三批次、288 孔模拟读数与统计口径。",
+        "en": "Review simulated batches and quality metrics."
+      },
+      "prompt": "基于已选的「荧光酶活性筛选与批次质控」模板，制作一份酶活性剂量筛选与批次质量检查 XLSX。没有真实实验数据，请构造 3 个独立模拟批次、每批 96 孔、每剂量 8 个技术重复的完整 288 孔数据，设置明确的空白与溶剂对照；全部标注“模拟实验，仅用于方法演示”，不外推真实实验结论。保留实验总览、剂量响应、板内质控、原始读数四张工作表，按本板空白和溶剂对照归一化，再用三个批次均值计算跨批次样本标准差，不能把技术重复视作独立批次。利用模板的原生图表和三板条件格式热力图呈现剂量响应、技术重复 CV 与异常位置，保留全部原始读数。CV 的 15% 仅设为可调整的演示阈值，不当作通用合格标准；计算 50% 响应区间前检查曲线方向，遇到回升明确提示逐段复核。重算并核对归一化、统计公式、图表范围和质控标记后，交付可编辑 XLSX。",
+      "category": "Excel",
+      "officeMode": "excel",
+      "template": "荧光酶活性筛选与批次质控"
+    },
+    {
+      "id": "emergency-design",
+      "title": {
+        "zh": "设计家庭应急准备科普图",
+        "en": "Design a family preparedness graphic"
+      },
+      "description": {
+        "zh": "先确认受众、重点和风格，再组织图文。",
+        "en": "Define the audience, message and visual style."
+      },
+      "prompt": "生成一张家庭应急准备科普图。在开始设计前，先向我确认三件事：主要给谁看（独居青年／有孩子的家庭／长者家庭）、重点讲哪些应急准备（物资、联络或撤离等）、希望采用什么画面风格。根据回答再组织图文层级与视觉方案。",
+      "category": "设计",
+      "officeMode": "normal"
+    },
+    {
+      "id": "reading-night",
+      "title": {
+        "zh": "设计城市读书夜主视觉",
+        "en": "Design a reading-night campaign"
+      },
+      "description": {
+        "zh": "把活动主题转成可用于传播的视觉。",
+        "en": "Create a visual identity for a community reading event."
+      },
+      "prompt": "为虚构活动“城市读书夜”生成一张可用于社交平台发布的竖版活动主视觉图。活动设定：面向下班后想轻松交流的城市读者，主题是“交换一本书，认识一个人”，地点为“街角书房”，时间统一写“周五 19:30”，不补造日期、地址或报名二维码。画面用打开的书、夜色中的窗和少量人物剪影表达温暖的晚间相聚，采用深靛蓝与柔和暖黄，保持主体明确和文字可读。图中只放活动名、主题、地点和时间这四组短文案，避免小字堆叠；不得出现真实品牌标志。直接生成完整主视觉图片，完成后核对中文是否正确、四组文字是否完整；若生成文字无法可靠呈现，明确说明，不把乱码当成成品。",
+      "category": "设计",
+      "officeMode": "normal"
+    },
+    {
+      "id": "bottle-concept",
+      "title": {
+        "zh": "设计保温杯概念图",
+        "en": "Visualize a portable bottle concept"
+      },
+      "description": {
+        "zh": "用一组画面展示产品外观与使用场景。",
+        "en": "Explore a product concept across a set of visuals."
+      },
+      "prompt": "为一款虚构的无标识便携保温杯生成 3 张风格一致的产品概念图：第一张为纯净背景的完整产品展示，第二张为办公桌上的使用场景，第三张为背包侧袋中的通勤场景。产品设定保持一致：圆柱形杯身、浅砂色哑光表面、深灰杯盖、细窄提环，不添加品牌 Logo、文字或未经提供的功能结构。三张图均使用 1:1 比例、自然柔光和克制的暖中性色，材质、杯盖形态及比例一致，场景图中产品清楚可辨。交付 3 张图片，按“产品展示／办公／通勤”区分，并检查不同图片是否出现外形漂移。这些是设计概念示意，不附加保温时长、材质认证等无法核实的性能宣称。",
+      "category": "设计",
+      "officeMode": "normal"
+    },
+    {
+      "id": "weekly-tech",
+      "title": {
+        "zh": "订阅每周科技动态简报",
+        "en": "Set up a weekly tech briefing"
+      },
+      "description": {
+        "zh": "每周五 16:30，精选 5 条附来源的科技消息。",
+        "en": "Draft a weekly briefing task with sources."
+      },
+      "prompt": "请创建一个按本地时区运行的定时任务：每周五 16:30 发送科技行业新动态简报，精选 5 条，每条用一句话概括并附原始来源链接。核实不到来源就明确写“来源未查到”，不要补造。创建成功后只回复一行，写明下次触发的本地日期和时间。",
+      "category": "定时任务",
+      "officeMode": "normal"
+    },
+    {
+      "id": "project-reminder",
+      "title": {
+        "zh": "设置项目收尾提醒",
+        "en": "Set up a project wrap-up reminder"
+      },
+      "description": {
+        "zh": "工作日 17:30，检查进展、未结事项和明日准备。",
+        "en": "Prepare an end-of-day checklist and schedule."
+      },
+      "prompt": "设置每周一至周五本地时间 17:30 的项目收尾提醒，提醒我检查当日进展、未结事项和明日准备材料。若已给出真实项目日程与待办，就据此列出具体检查项；没有相关内容时，提供这三类通用检查清单，不虚构任务。完成创建后告知下一次提醒的本地日期与时间。",
+      "category": "定时任务",
+      "officeMode": "normal"
+    },
+    {
+      "id": "pomodoro-timer",
+      "title": {
+        "zh": "开发一个番茄时钟",
+        "en": "Build a Pomodoro timer"
+      },
+      "description": {
+        "zh": "实现 25 分钟专注倒计时，支持暂停、重置和 10 秒演示。",
+        "en": "Build a 25-minute countdown with pause, reset and a 10-second demo."
+      },
+      "prompt": "开发一个番茄时钟网页。默认显示 25:00，提供“开始”“暂停”“重置”三个按钮。暂停后点击“开始”可从剩余时间继续，倒计时归零时显示“专注结束”。提供“10 秒演示”按钮，点击后立即开始 10 秒倒计时。验收时启动演示，确认暂停时数字保持不变，继续后能倒数到 00:00 并显示“专注结束”，最后点击“重置”回到 25:00。交付一个可直接在浏览器打开的 index.html 文件。",
+      "category": "开发",
+      "officeMode": "normal"
+    },
+    {
+      "id": "action-hub",
+      "title": {
+        "zh": "做一个团队行动管家",
+        "en": "Build a team decision tracker"
+      },
+      "description": {
+        "zh": "汇集记录、决策与行动项，支持检索和问答。",
+        "en": "Organize decisions, references and action items."
+      },
+      "prompt": "创建一个“团队决策与行动管家”Web 应用，让团队记录分散的讨论结论、参考资料和行动项。应用应自动分类、概括内容并关联相同项目或主题，支持关键词检索、基于已有记录的智能问答、关键决策提取和待办梳理；还可汇总某一阶段的决策变化、执行进展及下一步行动建议。将数据保存在云端，接入大模型，完成可访问的上线发布。界面围绕记录、查找和推进执行组织，未知人员与日期不要自行补造。",
+      "category": "开发",
+      "officeMode": "normal"
+    },
+    {
+      "id": "equipment-loans",
+      "title": {
+        "zh": "开发设备借还登记工具",
+        "en": "Build an equipment loan tracker"
+      },
+      "description": {
+        "zh": "记录共享设备的借出、归还和状态。",
+        "en": "Track shared equipment checkout and return."
+      },
+      "prompt": "创建一个可在浏览器中交互的共享设备借还登记 Web 工具，供小团队演示设备流转，不接真实员工数据，也不要求账号、外部接口或上线部署。主要流程：查看设备清单和可借状态，选择设备填写借用人、借出日期与预计归还日期，确认借出；在借出记录中执行归还，设备恢复可借。提供按设备状态和关键词筛选，展示当前借出及逾期数量。使用浏览器本地存储保存演示记录，刷新后仍可查看；提供导出 JSON 及二次确认后重置演示数据的入口。内置 6 台标为“演示”的设备，含可借、借出未逾期和已逾期记录，借用人用“演示用户甲”等虚构姓名。验收：已借出的设备不能再次借出，必填项缺失或归还日期早于借出日期时阻止提交，归还后统计同步更新；逾期按浏览器当前本地日期判断并注明。完成后提供可打开的应用及简短操作说明，明确本地存储不支持多人实时共享。",
+      "category": "开发",
+      "officeMode": "normal"
+    },
+    {
+      "id": "agenda-planner",
+      "title": {
+        "zh": "开发培训议程编排工具",
+        "en": "Build an agenda planner"
+      },
+      "description": {
+        "zh": "编排培训环节并核对时长。",
+        "en": "Arrange training sessions and check their duration."
+      },
+      "prompt": "开发一个培训议程编排 Web 工具，供组织者在浏览器中调整课程顺序并检查时间是否排得下，不需要接入日历、账号或外部服务。用户先设置活动开始与结束时间，再添加、编辑、删除议程项，填写主题、类型、时长和讲师；支持用上移／下移按钮调整顺序，自动计算每项开始与结束时间、总时长及剩余或超出时长。提供课程、讨论、休息三种类型，并可复制整份议程为纯文本。内置一份明确标为“演示”的议程：活动14:00—17:00，开场10分钟、主题分享40分钟、小组讨论45分钟、休息15分钟、案例练习50分钟、总结20分钟，讲师用虚构姓名。验收：初始示例总长180分钟且恰好排满；将任一项增加10分钟后明确提示超时10分钟，调整顺序后所有时间重新计算；时长为空、非正数或结束时间早于开始时间时给出错误提示。仅支持同一天内的议程，在界面说明该范围；交付可运行的应用及简短使用说明，不自动发布上线。",
+      "category": "开发",
+      "officeMode": "normal"
+    },
+    {
+      "id": "break-even",
+      "title": {
+        "zh": "算清工作坊的保本人数",
+        "en": "Calculate workshop break-even"
+      },
+      "description": {
+        "zh": "用可调整参数测算成本、毛益与保本点。",
+        "en": "Use adjustable inputs and formulas to find the break-even point."
+      },
+      "prompt": "制作一份用于线下工作坊定价的 XLSX 盈亏平衡测算表。分为输入区与测算区：输入区包含场地与讲师等固定成本、每位学员的报名价格和人均材料等变动成本；测算区通过公式给出单位贡献毛益、保本报名人数与保本营业额。报名价格不高于人均变动成本时，显示清楚的不可保本提示，不返回负数结果。输入参数变化后自动重新计算；保本人数需向上取整，并注明计算口径。",
+      "category": "分析数据",
+      "officeMode": "excel"
+    },
+    {
+      "id": "launch-tracker",
+      "title": {
+        "zh": "跟踪新品上市的完整流程",
+        "en": "Track a product launch"
+      },
+      "description": {
+        "zh": "按阶段、状态和前置依赖管理任务。",
+        "en": "Track phases, owners, dates and dependencies."
+      },
+      "prompt": "生成一个 XLSX 新品上市任务管理表，用于跟踪从需求验证到上市复盘的完整流程。字段包含任务名称、阶段、负责人、开始日期、截止日期、当前状态和前置依赖。按状态用公式汇总任务完成情况，空白行不纳入统计。以轻量、清楚的排版区分阶段和重点，附 3 行明确标注“示例”的任务数据，并核对示例对应的统计结果。",
+      "category": "分析数据",
+      "officeMode": "excel"
+    },
+    {
+      "id": "audit-checklist",
+      "title": {
+        "zh": "准备零售企业审计资料",
+        "en": "Prepare a retail audit checklist"
+      },
+      "description": {
+        "zh": "覆盖门店、函证、库存与合同，标出易延误项。",
+        "en": "Organize supporting documents and flag likely delays."
+      },
+      "prompt": "为连锁零售企业制作年报审计准备清单，以表格覆盖财务报表、银行及往来函证、门店收入与采购成本、库存与固定资产、税务申报、租赁及其他合同、内部控制材料。每项列明资料名称、负责人、截止时间、检查重点和完成状态，并突出跨门店收集、盘点和函证等容易延误的事项。有具体业务信息时直接适配；资料不足时先提供通用零售企业版本，不推测负责人或日期，相关栏位留空。交付后在聊天中询问是否需要补充电商渠道、会员储值等特殊事项。",
+      "category": "金融服务",
+      "officeMode": "normal"
+    },
+    {
+      "id": "restaurant-calculator",
+      "title": {
+        "zh": "做一个餐饮财务计算器",
+        "en": "Build a restaurant ratio calculator"
+      },
+      "description": {
+        "zh": "输入经营数据，查看比率、公式与缺项提示。",
+        "en": "Calculate key ratios and explain missing inputs."
+      },
+      "prompt": "制作一个可独立打开的单文件 HTML 餐饮经营财务计算器。输入项为营业收入、净利润、平均总资产、期末总资产和负债总额，输出净利率、总资产收益率及资产负债率。每项结果旁展示公式，输入缺失或对应分母为零时不给出数值，并提示需要补充或修正的项目。内置一组明确标为“教学示例”的门店经营数据，逐项核对计算结果。",
+      "category": "金融服务",
+      "officeMode": "normal"
+    },
+    {
+      "id": "interview-template",
+      "title": {
+        "zh": "整理客户需求访谈",
+        "en": "Create an interview notes template"
+      },
+      "description": {
+        "zh": "用统一结构记录需求、取舍和后续行动。",
+        "en": "Capture needs, decisions and follow-up actions."
+      },
+      "prompt": "编写一份客户需求访谈记录模板，包含访谈摘要、关键需求与使用情境、备选方案及取舍、已确认结论和后续行动。没有访谈正文时，用一个简短的虚构示例演示填写方式，并显著标注“示例”；提供正文后只据原文归纳，不补写客户未说过的观点。行动表列出任务、负责人和截止时间，原文未交代的填“未明确”。使用层次清楚的 Markdown 排版，突出关键结论并配行动项表格，末尾邀请用户提供访谈记录。",
+      "category": "创作文档",
+      "officeMode": "normal"
+    },
+    {
+      "id": "plant-card",
+      "title": {
+        "zh": "做一页植物养护知识卡",
+        "en": "Design a plant care reference card"
+      },
+      "description": {
+        "zh": "用观察笔记风格，把资料变成图文知识卡。",
+        "en": "Turn reference material into a visual single-page guide."
+      },
+      "prompt": "把用户提供的资料整理成一页 HTML 知识卡，采用植物观察笔记的设计语言，以铅笔线条、绿色重点批注和紧凑分区组织知识。暂未提供资料时，以室内观叶植物养护为示例，通过对比插图解释光照不足、浇水过量与空气干燥造成的表现，配上观察指标和处理建议；加入标本标签式边框，并清楚标注“示例”。完成后询问用户准备整理哪类资料、偏好实物照片还是示意插画，提示可粘贴正文或上传材料。",
+      "category": "创作文档",
+      "officeMode": "normal"
+    }
+  ],
+  "batches": {
+    "chat": [
+      [
+        "confirm-event",
+        "ai-brief",
+        "enterprise-agents",
+        "headphones"
+      ],
+      [
+        "booking-scope",
+        "support-feedback",
+        "museum-collections",
+        "urban-cooling"
+      ],
+      [
+        "team-event",
+        "commercial-space",
+        "confirm-event",
+        "museum-collections"
+      ]
+    ],
+    "work": [
+      [
+        "customer-success-review",
+        "event-minutes",
+        "subscription-analysis",
+        "pomodoro-timer"
+      ],
+      [
+        "luma-launch",
+        "tea-market",
+        "port-review",
+        "weekly-tech"
+      ],
+      [
+        "setouchi-travel",
+        "security-notice",
+        "enzyme-quality",
+        "reading-night"
+      ],
+      [
+        "data-infrastructure",
+        "break-even",
+        "bottle-concept",
+        "action-hub"
+      ],
+      [
+        "customer-success-review",
+        "launch-tracker",
+        "project-reminder",
+        "equipment-loans"
+      ],
+      [
+        "luma-launch",
+        "event-minutes",
+        "audit-checklist",
+        "agenda-planner"
+      ],
+      [
+        "setouchi-travel",
+        "subscription-analysis",
+        "restaurant-calculator",
+        "interview-template"
+      ],
+      [
+        "data-infrastructure",
+        "emergency-design",
+        "port-review",
+        "plant-card"
+      ]
+    ]
+  }
+}

@@ -13,6 +13,8 @@ export const ENTERPRISE_ALLOW_INSECURE_LOOPBACK_ENV = 'DSH_DESKTOP_ENTERPRISE_AL
 
 const JSON_ROUTES = new Map<string, 'GET' | 'POST'>([
   ['/v1/state', 'GET'],
+  ['/v1/profile/refresh', 'POST'],
+  ['/v1/cloud', 'POST'],
   ['/v1/login/start', 'POST'],
   ['/v1/login/manual', 'POST'],
   ['/v1/refresh', 'POST'],
@@ -21,6 +23,7 @@ const JSON_ROUTES = new Map<string, 'GET' | 'POST'>([
   ['/v1/chat', 'POST'],
   ['/v1/responses', 'POST'],
   ['/v1/audit/conversations/title', 'POST'],
+  ['/v1/audit/message-feedback', 'POST'],
   ['/v1/market', 'POST'],
   ['/v1/workbench/verify', 'POST'],
   ['/v1/workbench/materialize', 'POST'],
@@ -102,6 +105,16 @@ export async function startEnterpriseCredentialBroker(
       return
     }
     try {
+      if (path === '/v1/cloud') {
+        const body = await readJsonBody(request, ENTERPRISE_BROKER_JSON_LIMIT)
+        // Launch tickets are consumed only by the main-process view controller.
+        if ((body as { operation?: unknown }).operation === 'launch') {
+          sendJson(response, 403, { error: 'Use the native cloud workbench view.' })
+          return
+        }
+        sendJson(response, 200, await service.cloudRequest(body))
+        return
+      }
       if (path === '/v1/state') {
         sendJson(response, 200, await service.readState())
         return
@@ -123,13 +136,20 @@ export async function startEnterpriseCredentialBroker(
         }
         return
       }
-      const body = await readJsonBody(request, path === '/v1/audit/conversations/title' ? 8192 : ENTERPRISE_BROKER_JSON_LIMIT)
-      if (path === '/v1/audit/conversations/title') {
+      const bodyLimit = path === '/v1/audit/conversations/title'
+        ? 8192
+        : path === '/v1/audit/message-feedback' ? 16384 : ENTERPRISE_BROKER_JSON_LIMIT
+      const body = await readJsonBody(request, bodyLimit)
+      if (path === '/v1/audit/conversations/title' || path === '/v1/audit/message-feedback') {
         const controller = new AbortController()
         const abort = () => { if (!response.writableFinished) controller.abort() }
         request.on('aborted', abort)
         response.on('close', abort)
-        try { sendJson(response, 200, await service.reportAuditTitle(body, controller.signal)) }
+        try {
+          sendJson(response, 200, await (path === '/v1/audit/message-feedback'
+            ? service.reportAuditFeedback(body, controller.signal)
+            : service.reportAuditTitle(body, controller.signal)))
+        }
         finally { request.off('aborted', abort); response.off('close', abort) }
         return
       }
@@ -213,6 +233,15 @@ export async function startEnterpriseCredentialBroker(
           return
         }
         sendJson(response, 200, await service.submitManualTicket(body.identityTicket))
+        return
+      }
+      if (path === '/v1/profile/refresh') {
+        const reason = (body as { reason?: unknown } | null)?.reason
+        if (!isExactObject(body, ['reason']) || (reason !== 'account' && reason !== 'foreground' && reason !== 'image')) {
+          sendJson(response, 400, { error: 'Invalid profile refresh reason.' })
+          return
+        }
+        sendJson(response, 200, await service.refreshProfile(reason))
         return
       }
       if (path === '/v1/refresh' || path === '/v1/models/refresh') {

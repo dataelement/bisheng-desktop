@@ -92,7 +92,8 @@ it('uses the saved availability in the first actual model request of a new sessi
 it('refreshes immediately after save and waits past a pre-save catalog response', async () => {
   const f = await fixture()
   const hold = f.holdNext()
-  const background = f.api.sync()
+  // A ready account skips sync() until an explicit refresh starts another catalog read.
+  const background = f.api.sync({ force: true })
   await hold.started.promise
   f.setEnabled(false)
   const refreshed = f.refresh()
@@ -122,7 +123,7 @@ it('clears stale registrations on catalog failure and retries on the next reques
 it('discards catalog responses after logout or plugin disposal', async () => {
   for (const action of ['logout', 'dispose']) {
     const f = await fixture(), hold = f.holdNext()
-    const pending = f.api.sync()
+    const pending = f.api.sync({ force: true })
     const rejected = expect(pending).rejects.toThrow()
     await hold.started.promise
     if (action === 'logout') f.logout()

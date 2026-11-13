@@ -15,8 +15,15 @@ it('publishes the About foreground and preserves focus across rerenders, close a
   origin.focus()
   for (let attempt = 0; attempt < 2; attempt++) {
     const close = document.createElement('button')
+    const focusOptions: unknown[] = []
+    const focus = close.focus.bind(close)
+    close.focus = ((options?: FocusOptions) => {
+      focusOptions.push(options)
+      focus(options)
+    }) as typeof close.focus
     shadow.replaceChildren(close)
     presentation.show(close)
+    expect(focusOptions.at(-1)).toMatchObject({ focusVisible: false })
     expect(document.documentElement.hasAttribute('data-dsh-about-open')).toBe(true)
     expect(shadow.activeElement).toBe(close)
     const nextClose = document.createElement('button')

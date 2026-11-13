@@ -104,7 +104,9 @@ describe('BISHENG client slot occupants', () => {
     })
 
     expect(plugin.inject).toEqual(['slots', 'locale', 'remote', 'remote.session', 'sessions', 'uiWorkspace', 'layout'])
+    // Overlays: Work session deletion, cloud Chat deletion and cloud Chat rename.
     expect(registrations.map(({ config }) => config.name)).toEqual([
+      'shell.overlay',
       'shell.overlay',
       'shell.overlay',
       'sidebar.primaryNavigation',

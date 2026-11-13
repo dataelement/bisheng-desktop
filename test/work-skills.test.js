@@ -24,11 +24,29 @@ describe('enterprise Work skill provider', () => {
     expect(loaded.content).toContain('unavailable in the current tool catalog')
     expect(loaded.content).not.toContain('bisheng_tool_7')
   })
+  it('uses the enterprise display label for discovery while keeping isolated invocation keys', async () => {
+    const { skills, request } = await setup()
+    request.mockResolvedValue([
+      { id: 35, name: 'gov-doc-writing', display_name: '公文写作', description: 'Draft official documents', content_hash: 'a'.repeat(64) },
+      { id: 36, name: 'gov-doc-writing', display_name: '公文写作副本', description: '', content_hash: 'a'.repeat(64) }
+    ])
+    const rows = await skills.catalog()
+    expect(rows[0].name).toMatch(/^gov-doc-writing-bisheng-[a-f0-9]{24}-35$/)
+    expect(rows[1].name).toMatch(/^gov-doc-writing-bisheng-[a-f0-9]{24}-36$/)
+    expect(rows.map(row => row.displayName)).toEqual(['公文写作', '公文写作副本'])
+    expect(rows[1].description).toBe('公文写作副本')
+    expect(rows[0].name).not.toBe(rows[1].name)
+  })
+  it.each(['', '公文写作', 'Office Skill', 'office_skill', '-office', 'office--skill', 'office\n'])('falls back safely for a non-invocable bundle name %j', name => {
+    expect(enterpriseSkillName('a'.repeat(64), 7, name)).toBe(`bisheng-${'a'.repeat(24)}-7`)
+  })
   it('keeps local names independent and loads the complete verified bundle', async () => {
     const { skills } = await setup()
     const [row] = await skills.catalog()
     expect(row.name).not.toBe('office')
-    expect(row.name).toMatch(/^bisheng-[a-f0-9]+-7$/)
+    expect(row.name).toMatch(/^office-bisheng-[a-f0-9]{24}-7$/)
+    expect(row.locator.originalName).toBe('office')
+    expect(row.locator.displayName).toBe('Office')
     const loaded = await skills.load(row.name)
     expect(loaded.content).toContain('Enterprise instructions')
     expect(loaded.content).toContain('mcp__bisheng__customer_query')
@@ -87,6 +105,9 @@ it('invalidates skills on explicit catalog and identity changes, not a timer', a
     const response = await route.fetch(new Request('http://localhost/api/enterprise.work-skills', { method: 'POST', body: JSON.stringify({ operation: 'catalog' }) }))
     expect(response.status).toBe(200)
     expect(invalidate).toHaveBeenCalledTimes(1)
+    const callsAfterRefresh = fixture.request.mock.calls.length
+    await provider.list({ signal: abort.signal })
+    expect(fixture.request.mock.calls.length).toBe(callsAfterRefresh)
     api.clear()
     expect(invalidate).toHaveBeenCalledTimes(2)
     abort.abort()
@@ -110,6 +131,8 @@ it('coexists with a same-named local skill in the actual Harness registry', asyn
     const catalog = await ctx.skills.list()
     expect(catalog).toHaveLength(2)
     const enterprise = catalog.find(row => row.provider === 'bisheng-enterprise')
+    expect(enterprise.name).toMatch(/^office-bisheng-[a-f0-9]{24}-7$/)
+    expect(enterprise.displayName).toBe('Office')
     expect((await ctx.skills.get('office')).content).toBe('Local instructions')
     const loaded = await ctx.skills.get(enterprise.name)
     expect(renderSkillContent(loaded)).toContain('Enterprise instructions')

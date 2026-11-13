@@ -1,8 +1,24 @@
+import { readFile } from 'node:fs/promises'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { clientRequestSchema } from '@deepseek-ai/dsh-client-connection'
 import { renderSkillContent } from '@deepseek-ai/dsh-skill'
 
 const PLUGIN = 'dsh-desktop-office-composer'
+let casesPromise
+const workCases = () => casesPromise ??= readFile(new URL('../welcome-cases.json', import.meta.url), 'utf8')
+  .then(raw => {
+    const { work, batches } = JSON.parse(raw)
+    return { cases: work, batches: batches.work }
+  })
+  .catch(error => { casesPromise = undefined; throw error })
+
+function caseTemplate(item, templates) {
+  if (!item.template || !['word', 'excel'].includes(item.officeMode)) return undefined
+  const matches = templates.filter(template => template.mode === item.officeMode && template.title === item.template)
+  if (matches.length !== 1) return undefined
+  const { id, mode, revision } = matches[0]
+  return { id, mode, revision }
+}
 const sourcePlugin = source => source?.plugin ?? source?.kind?.replace(/^plugin:/, '')
 const businessNames = template => template?.businessSkills ?? (template?.businessSkill ? [template.businessSkill] : [])
 export function selectedTemplate(library, state) {
@@ -70,6 +86,7 @@ export function registerOfficeRoutes(ctx, library, modes) {
         if (!payload || JSON.stringify(payload).length > 16384) throw new Error('Use a bounded Office request')
         const { sessionId } = payload
         const ok = value => ({ ok: true, value })
+        if (endpoint === 'welcome-cases') return ok(await workCases())
         if (endpoint === 'preview') {
           if (payload.revision !== library.entry(payload.templateId).revision) throw new Error('The example was updated; reload the catalogue')
           return ok(await library.preview(payload.templateId, payload.page))
@@ -77,7 +94,16 @@ export function registerOfficeRoutes(ctx, library, modes) {
         if (endpoint === 'catalog' || (endpoint === 'state' && !sessionId)) return ok({ templates: await library.list(), mode: null })
         if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.length > 512) throw new Error('Choose an active session')
         if (!modes) throw new Error('The document composer service is unavailable')
-        if (endpoint === 'mode') await modes.select(sessionId, payload.mode)
+        let templates
+        if (endpoint === 'case-mode') {
+          const { cases } = await workCases()
+          const item = typeof payload.caseId === 'string' && cases.find(item => item.id === payload.caseId)
+          if (!item) throw new Error('Choose a published Work case')
+          templates = await library.list()
+          const template = caseTemplate(item, templates)
+          signal?.throwIfAborted()
+          await modes.selectCaseMode(sessionId, item.officeMode, template, item.officeMode === 'ppt' && !!item.template)
+        } else if (endpoint === 'mode') await modes.select(sessionId, payload.mode)
         else if (endpoint === 'select') {
           const template = library.entry(payload.templateId)
           if (payload.revision !== template.revision) throw new Error('The example was updated; reload the catalogue')
@@ -86,8 +112,8 @@ export function registerOfficeRoutes(ctx, library, modes) {
         else if (endpoint !== 'state') throw new Error('Unknown Office operation')
         const state = await modes.state(sessionId)
         const selected = selectedTemplate(library, state)
-        return ok({ sessionId, mode: state.documentMode ?? null, presentationMode: state.presentationMode ?? null, templates: await library.list(),
-          selectedTemplateId: selected?.id ?? null, selectionExpired: !!state.selectedDocumentTemplate && !selected })
+        return ok({ sessionId, mode: state.documentMode ?? null, presentationMode: state.presentationMode ?? null, templates: templates ?? await library.list(),
+          selectedTemplateId: selected?.id ?? null, selectedPptTemplateId: state.selectedTemplateId ?? null, selectionExpired: !!state.selectedDocumentTemplate && !selected })
       } catch (error) {
         return { ok: false, error: { code: 'office-request', message: error instanceof Error ? error.message : 'Office request failed', details: {} } }
       }

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdtemp, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parseMarketRequest } from '../src/main/enterprise/enterprise-market'
 import { etagDigest, releaseWorkbenchArtifact, rememberWorkbenchArtifact, verifyWorkbenchArtifactResponse, sweepWorkbenchVerifyDirectory } from '../src/main/enterprise/workbench-artifact'
@@ -173,11 +173,11 @@ describe('enterprise workbench artifact verification', () => {
     expect(result.ok).toBe(true)
     expect(result.path).toMatch(/\.tgz$/u)
     const ticket = rememberWorkbenchArtifact(result.path ?? '', 'account-a')
-    expect(await readdir(directory)).toEqual([result.path?.split('/').at(-1)])
+    expect(await readdir(directory)).toEqual([basename(result.path!)])
     await sweepWorkbenchVerifyDirectory(directory)
-    expect(await readdir(directory)).toEqual([result.path?.split('/').at(-1)])
+    expect(await readdir(directory)).toEqual([basename(result.path!)])
     await releaseWorkbenchArtifact(ticket, 'account-b')
-    expect(await readdir(directory)).toEqual([result.path?.split('/').at(-1)])
+    expect(await readdir(directory)).toEqual([basename(result.path!)])
     await releaseWorkbenchArtifact(ticket, 'account-a')
     expect(await readdir(directory)).toEqual([])
   })

@@ -27,6 +27,7 @@ export declare class PptService {
     selectTemplate(sessionId: SessionId, templateId: string, actor: PptActor): Promise<OfficeTemplate>;
     selectPresentationMode(sessionId: SessionId, active: boolean, actor: PptActor): Promise<boolean>;
     selectDocumentMode(sessionId: SessionId, mode: 'word' | 'excel' | null, actor: PptActor): Promise<boolean>;
+    selectCaseMode(sessionId: SessionId, mode: 'normal' | 'word' | 'excel' | 'ppt', template: { id: string; mode: 'word' | 'excel'; revision: string } | undefined, keepPresentationTemplate: boolean, actor: PptActor): Promise<boolean>;
     selectDocumentTemplate(sessionId: SessionId, template: { id: string; mode: 'word' | 'excel'; revision: string }, actor: PptActor): Promise<boolean>;
     deselectDocumentTemplate(sessionId: SessionId, actor: PptActor): Promise<boolean>;
     deselectTemplate(sessionId: SessionId, actor: PptActor): Promise<boolean>;

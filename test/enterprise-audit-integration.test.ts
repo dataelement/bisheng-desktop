@@ -224,15 +224,18 @@ describe('audit title through enterprise plugin and HTTP credential broker', () 
     await login(service, origin)
     const session = { header: { id: `e2e-title-${native ? 'responses' : 'chat'}` } }
     let title = { title: 'Private existing title', eventSeq: 10 }
-    let onTitle: ((current: typeof session, event: { type: string, data: { title: string }, seq: number }) => void) | undefined
+    const listeners: Array<(current: typeof session, event: { type: string, data: { title: string }, seq: number }) => void> = []
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const client = await plugin(service, {
       get: (name: string) => name === 'sessions' ? { get: () => session } : name === 'sessionTitle' ? { get: () => title } : undefined,
-      on: (name: string, listener: typeof onTitle, options: { global: boolean }) => {
+      on: (name: string, listener: (typeof listeners)[number], options: { global: boolean }) => {
         expect(name).toBe('session/event')
         expect(options.global).toBe(true)
-        onTitle = listener
-        return () => { onTitle = undefined }
+        listeners.push(listener)
+        return () => {
+          const index = listeners.indexOf(listener)
+          if (index >= 0) listeners.splice(index, 1)
+        }
       }
     })
     const events = await client.call(session.header.id)
@@ -248,11 +251,100 @@ describe('audit title through enterprise plugin and HTTP credential broker', () 
     expect(logs).not.toContain('Private failure body')
     expect(logs).not.toContain(service.snapshot().connectionKey)
     title = { title: 'Private renamed title', eventSeq: 15 }
-    expect(onTitle).toBeTypeOf('function')
-    onTitle?.(session, { type: 'session/title', data: { title: title.title }, seq: title.eventSeq })
+    expect(listeners.length).toBeGreaterThan(0)
+    for (const listener of listeners) listener(session, { type: 'session/title', data: { title: title.title }, seq: title.eventSeq })
     await waitFor(() => uploads.length === 3)
     expect(uploads[2]).toEqual({ conversation_id: session.header.id, title: title.title, title_event_seq: 15 })
     expect(platform.state.chatRequests).toHaveLength(native ? 0 : 1)
     expect(responsesRequests).toBe(native ? 1 : 0)
+  })
+})
+
+describe('audit message feedback through enterprise plugin and HTTP credential broker', () => {
+  it('reports a rating and its retraction after the local session is tracked', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(() => platform.close())
+    const root = await mkdtemp(join(tmpdir(), 'dsh-feedback-integration-'))
+    const uploads: unknown[] = []
+    const fetchImpl = createEnterpriseFetch(async (input, init) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/api/v1/dsh/audit/message-feedback') {
+        uploads.push(JSON.parse(String(init?.body)))
+        return Response.json({ status: 'UPDATED', event_seq: (uploads.at(-1) as { event_seq: number }).event_seq })
+      }
+      const response = await fetch(input, init)
+      if (path === '/api/v1/dsh/config') return Response.json({ ...await response.json(), audit_message_feedback: { version: 1 } })
+      return response
+    })
+    const service = new EnterpriseService({ vault: vaultAt(join(root, ENTERPRISE_VAULT_FILENAME)), fetchImpl, allowInsecureLoopback: true })
+    cleanups.push(() => service.stop())
+    await login(service, origin)
+    const session = { header: { id: 'e2e-feedback-main' } }
+    const listeners: Array<(current: typeof session, event: { type: string, seq: number, data: Record<string, unknown> }) => void> = []
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const client = await plugin(service, {
+      get: (name: string) => name === 'sessions' ? { get: () => session } : undefined,
+      on: (_name: string, listener: (typeof listeners)[number]) => {
+        listeners.push(listener)
+        return () => undefined
+      }
+    })
+    await client.call(session.header.id)
+    const emit = (event: { type: string, seq: number, data: Record<string, unknown> }) => {
+      for (const listener of listeners) listener(session, event)
+    }
+    emit({
+      type: 'feedback/message-put', seq: 12,
+      data: { sessionId: session.header.id, item: { messageId: 'msg-1', rating: 'negative', category: 'other', note: 'Private feedback note' } }
+    })
+    await waitFor(() => uploads.length === 1)
+    expect(uploads[0]).toEqual({
+      conversation_id: session.header.id, message_id: 'msg-1', event_seq: 12, op: 'put',
+      rating: 'negative', category: 'other', note: 'Private feedback note'
+    })
+    expect(JSON.stringify(uploads[0])).not.toContain('synthetic audit hello')
+    emit({ type: 'feedback/message-delete', seq: 13, data: { sessionId: session.header.id, messageId: 'msg-1' } })
+    await waitFor(() => uploads.length === 2)
+    expect(uploads[1]).toEqual({ conversation_id: session.header.id, message_id: 'msg-1', event_seq: 13, op: 'delete' })
+    expect(JSON.stringify(warning.mock.calls)).not.toContain('Private feedback note')
+  })
+
+  it('does not upload a rating when the server has no feedback capability', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(() => platform.close())
+    const root = await mkdtemp(join(tmpdir(), 'dsh-feedback-disabled-'))
+    const uploads: unknown[] = []
+    const fetchImpl = createEnterpriseFetch(async (input, init) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/api/v1/dsh/audit/message-feedback') {
+        uploads.push(JSON.parse(String(init?.body)))
+        return Response.json({ status: 'UPDATED', event_seq: 1 })
+      }
+      return fetch(input, init)
+    })
+    const service = new EnterpriseService({ vault: vaultAt(join(root, ENTERPRISE_VAULT_FILENAME)), fetchImpl, allowInsecureLoopback: true })
+    cleanups.push(() => service.stop())
+    await login(service, origin)
+    const session = { header: { id: 'e2e-feedback-untracked' } }
+    const listeners: Array<(current: typeof session, event: { type: string, seq: number, data: Record<string, unknown> }) => void> = []
+    const client = await plugin(service, {
+      get: (name: string) => name === 'sessions' ? { get: () => session } : undefined,
+      on: (_name: string, listener: (typeof listeners)[number]) => {
+        listeners.push(listener)
+        return () => undefined
+      }
+    })
+    await client.call(session.header.id)
+    for (const listener of listeners) {
+      listener(session, {
+        type: 'feedback/message-put', seq: 4,
+        data: { sessionId: session.header.id, item: { messageId: 'msg-1', rating: 'positive' } }
+      })
+    }
+    await new Promise((resolve) => setTimeout(resolve, 700))
+    expect(uploads).toEqual([])
+    expect(service.snapshot()).not.toHaveProperty('audit_message_feedback')
   })
 })

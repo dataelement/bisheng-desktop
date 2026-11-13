@@ -331,8 +331,8 @@ export function renderDesktopPairingPage(options: {
       ? '扫码即可连接。移动设备与电脑需连接至同一 WiFi，同步实时性高。'
       : 'Scan to connect. Keep the phone and computer on the same WiFi.',
     tunnelHint: zh
-      ? '移动设备通过互联网（如 4G/5G 或其他WiFi网络等）均可远程操控，同步实时性中等'
-      : 'Control remotely over the internet, including 4G/5G or other WiFi networks, with moderate real-time responsiveness.',
+      ? '互联网远程请使用手机 App，并填写与这台电脑相同的毕昇地址。按会话解绑手机暂不可用。'
+      : 'Use the phone app for internet access and enter the same BiSheng address as this computer. Signing out a phone by session is not available yet.',
     tunnelLoading: zh ? '正在创建全球网络链接' : 'Creating a global network link',
     lanLoading: zh ? '正在切换至 WiFi 连接模式' : 'Switching to WiFi connection mode',
     modeLan: zh ? 'WiFi连接模式' : 'WiFi Connection Mode',
@@ -362,9 +362,7 @@ export function renderDesktopPairingPage(options: {
     fallbackLink: zh ? '扫码打不开？换一条线路' : "Can't open? Try another link",
     fallbackLoading: zh ? '正在切换备用线路' : 'Switching to a backup link'
   }
-  const showFallback = Boolean(
-    options.tunnelActive && options.tunnelProvider === 'cloudflare' && !options.connected
-  )
+  const showFallback = false
   const pinHintRemaining =
     !options.pinConsent && options.pinExpiresAt
       ? Math.max(0, Math.ceil((options.pinExpiresAt - Date.now()) / 1000))
