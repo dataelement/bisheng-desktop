@@ -266,6 +266,8 @@ export async function apply(ctx) {
     dshSafePatchPath: patch,
     dshHome: home,
     logPath: join(home, 'harness.log'),
+    // Concurrent subprocess fixtures must not race for the Desktop's stable port.
+    preferredPort: 0,
     startupTimeoutMs: harnessReadyTimeoutMs,
     // Node mode here uses the same real Electron runtime as the packaged CLI.
     launchProcess: (executable, args, options) => spawn(executable, args, { ...options, env: { ...options.env, ELECTRON_RUN_AS_NODE: '1' } }),
@@ -371,6 +373,8 @@ it('reports a missing Office payload during activation and keeps Safe Mode usabl
     dshSafePatchPath: join(root, 'build/dsh-desktop-safe.patch.yml'),
     dshHome: home,
     logPath: join(home, 'harness.log'),
+    // Concurrent subprocess fixtures must not race for the Desktop's stable port.
+    preferredPort: 0,
     startupTimeoutMs: harnessReadyTimeoutMs,
     launchProcess: (executable, args, options) => {
       const child = spawn(executable, args, { ...options, env: { ...options.env, ELECTRON_RUN_AS_NODE: '1' } })

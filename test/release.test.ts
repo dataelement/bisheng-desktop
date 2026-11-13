@@ -620,7 +620,7 @@ describe('GitHub release contract', () => {
     expect(installer).not.toMatch(/Add-MpPreference|HKLM|ExecShell\s+"runas"/)
   })
 
-  it('routes stable downloads through the website and previews through GitHub', async () => {
+  it('routes enterprise downloads through the enterprise website without upstream release links', async () => {
     const readmes = await Promise.all(
       ['README.md', 'README.zh.md', 'README.ja.md', 'README.ru.md', 'README.es.md', 'README.pt.md'].map((file) =>
         readFile(path.join(projectRoot, file), 'utf8')
@@ -628,13 +628,13 @@ describe('GitHub release contract', () => {
     )
 
     for (const readme of readmes) {
-      expect(readme).toMatch(/https:\/\/(?:www\.)?dshdesktop\.com\/(?:#download|zh\/)/)
+      expect(readme).toContain('https://dshdesktop.com/zh/enterprise/')
       expect(readme).not.toContain('| Platform | Package | Download |')
       expect(readme).not.toContain('| 平台 | 安装包 | 下载 |')
       expect(readme).not.toContain('Coming soon')
       expect(readme).not.toContain('即将发布')
-      expect(readme).toContain('https://github.com/dataelement/dsh-desktop/releases')
-      expect(readme).toContain('**Pre-release**')
+      // Enterprise installers are distributed separately from upstream personal builds.
+      expect(readme).not.toContain('https://github.com/dataelement/dsh-desktop/releases')
       for (const asset of releaseAssets) {
         expect(readme).not.toContain(`releases/latest/download/${asset}`)
       }

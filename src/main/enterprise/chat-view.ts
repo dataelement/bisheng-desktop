@@ -151,6 +151,9 @@ export class EnterpriseChatView {
       path: url?.pathname.replace(/^\/workspace/u, ''),
       landing: this.landing,
       epoch: this.generation,
+      // Profile warmup publishes can arrive after the first connected snapshot.
+      // Carry their revision through the existing notification, without resetting the view.
+      accountRevision: account.revision,
       conversationId: url?.pathname.match(/\/workspace\/(?:c|chat|linsight)\/([a-zA-Z0-9_-]+)/u)?.[1],
       connected: account.connected,
       projectScope: account.connected ? account.connectionKey : undefined,

@@ -4,6 +4,7 @@ import { createContentSafetyLocaleScope } from './content-safety-locale.js'
 import { applyEnterpriseSkills } from './work-skills.js'
 import { applyWorkResources } from './work-resources.js'
 import { applyWorkCapabilities } from './work-capabilities.js'
+import { applyEnterpriseSearchPolicy } from './search-policy.js'
 import { requestImageDimensions } from '@deepseek-ai/dsh-attachment'
 import { applyEnterpriseMarket } from './market.js'
 import { applyEnterpriseWorkbenchMarket } from './workbench-market.js'
@@ -26,6 +27,7 @@ export const BISHENG_PROVIDER_ROUTE = 'bisheng-enterprise'
 
 const LOCAL_PATHS = Object.freeze({
   state: '/api/enterprise.state',
+  refreshProfile: '/api/enterprise.profile.refresh',
   inspectBase: '/api/enterprise.base.inspect',
   start: '/api/enterprise.login.start',
   manual: '/api/enterprise.login.manual',
@@ -192,6 +194,7 @@ async function requestBrokerJson(broker, path, body, signal) {
 }
 
 export function apply(ctx) {
+  if (typeof ctx.inject === 'function') ctx.inject(['loader'], applyEnterpriseSearchPolicy)
   const broker = brokerConfig()
   const brokerJson = (path, body, signal) => requestBrokerJson(broker, path, body, signal)
   const connection = Reflect.get(ctx, 'connection')
@@ -248,6 +251,7 @@ export function apply(ctx) {
     request: (body, signal) => brokerJson('/v1/work-resources', body, signal)
   }) })
   if (typeof ctx.inject === 'function') ctx.inject(['skills'], scoped => { workSkills = applyEnterpriseSkills(scoped, {
+    resolveToolName: id => workCapabilities?.resolveToolName(id),
     state: () => account, refreshState: readBrokerState,
     request: async (body, signal) => {
       if (!broker) unavailable()
@@ -373,6 +377,14 @@ export function apply(ctx) {
     })
   }
   registerJsonRoute(connection, LOCAL_PATHS.state, ['GET'], async () => readBrokerState())
+  registerJsonRoute(connection, LOCAL_PATHS.refreshProfile, ['POST'], async request => {
+    const body = await readJson(request)
+    if (!body || !['account', 'foreground', 'image'].includes(body.reason) || Object.keys(body).some(key => key !== 'reason')) {
+      throw Object.assign(new Error('Invalid profile refresh reason.'), { status: 400 })
+    }
+    await brokerJson('/v1/profile/refresh', { reason: body.reason })
+    return readBrokerState()
+  })
   registerJsonRoute(connection, LOCAL_PATHS.inspectBase, ['POST'], async (request) => {
     const body = await readJson(request)
     return inspectedBase(normalizeEnterpriseServerUrl(String(body?.base ?? ''), inspectUrlOptions()))
@@ -488,6 +500,22 @@ function startEnterpriseLlm(ctx, llm, broker) {
   let registration
   let timer
   let stopped = false
+  let stateRead
+  const readEnterpriseState = () => {
+    // One shared read serves every 409. A second failure must not start its own poll loop.
+    if (stateRead) return stateRead
+    stateRead = (async () => {
+      try {
+        if (stopped) return
+        ingest(broker ? await requestBrokerJson(broker, '/v1/state') : disabledState())
+      } catch {
+        // The pending rating keeps its original lifetime until a later snapshot or its deadline.
+      } finally {
+        stateRead = undefined
+      }
+    })()
+    return stateRead
+  }
   const titles = createAuditTitleSync({
     ctx,
     async send(body, signal) {
@@ -520,7 +548,8 @@ function startEnterpriseLlm(ctx, llm, broker) {
       }
       return response.json()
     },
-    note: (reason, details) => console.warn('[enterprise-audit-feedback]', JSON.stringify({ reason, ...details }))
+    note: (reason, details) => console.warn('[enterprise-audit-feedback]', JSON.stringify({ reason, ...details })),
+    reread: () => readEnterpriseState()
   })
   const adapter = new EnterpriseLlmAdapter({
     providerName: () => latest.tenant?.name || latest.user?.display_name || 'BiSheng Enterprise',

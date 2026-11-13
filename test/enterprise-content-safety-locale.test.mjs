@@ -278,8 +278,20 @@ function safeFirstResponse(protocol) {
     JSON.stringify({ ...event, sequence_number }) + '\n\n').join('')
 }
 
-beforeEach(async () => { fixture = await createFixture() })
-afterEach(async () => { try { await fixture?.dispose() } finally { fixture = undefined; vi.unstubAllEnvs() } })
+// Pin the server-side fallback, not the independent renderer locale exercised below.
+// Node's navigator otherwise inherits the machine locale and invalid-cookie tests
+// can accidentally reuse the older Chinese driver locale without detecting it.
+beforeEach(async () => {
+  vi.stubGlobal('navigator', { language: 'en' })
+  fixture = await createFixture()
+})
+afterEach(async () => {
+  try { await fixture?.dispose() } finally {
+    fixture = undefined
+    vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
+  }
+})
 
 function expected(code, language) { return CONTENT_SAFETY_ERROR_COPY[code][language] }
 function encoded(messages, owner = '16e16958-4444-4444-8444-444444444444') { return encodeURIComponent(JSON.stringify({ owner, messages })) }

@@ -120,6 +120,7 @@ describe('BiSheng compatible client API mock', () => {
       '/api/enterprise.workbenches/detail',
       '/api/enterprise.workbenches/verify',
       '/api/enterprise.state',
+      '/api/enterprise.profile.refresh',
       '/api/enterprise.base.inspect',
       '/api/enterprise.login.start',
       '/api/enterprise.login.manual',

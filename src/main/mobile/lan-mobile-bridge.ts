@@ -23,6 +23,21 @@ import {
   renderPairingPinPage
 } from './lan-mobile-pages'
 import type { PairingPinState, PairingPinStore } from './pairing-pin-store'
+import {
+  REMOTE_CHANNEL_HEADER,
+  REMOTE_CHANNEL_TOKEN_HEADER,
+  REMOTE_TENANT_HEADER,
+  REMOTE_USER_HEADER,
+  accountsMatch
+} from './mobile-access-protocol'
+import {
+  isWorkRpcMethod,
+  MobileWorkUploads,
+  parseWorkDispatch,
+  readUploadResult,
+  readWorkEnvelope,
+  readWorkJson
+} from './mobile-work-rpc'
 
 const MAX_BODY_BYTES = 64 * 1024
 const PAIRING_TTL_MS = 5 * 60 * 1000
@@ -108,6 +123,7 @@ export interface LanMobileBridgeOptions {
   onReconnectRequested?: () => void
   onConnectedChange?: (connected: boolean) => void
   pairingPinStore?: PairingPinStore
+  currentAccount?: () => { userId?: string, tenantId?: string }
 }
 
 export interface LanMobileBridgeSnapshot {
@@ -187,6 +203,7 @@ export class LanMobileBridge {
   /** Sessions moved here only by a desktop disconnect. Reconnect will not honor anything else. */
   private readonly resumableSessions = new Map<string, MobileSession>()
   private readonly pendingQuestions = new Map<string, PendingMobileQuestion>()
+  private readonly workUploads = new MobileWorkUploads()
   private ephemeralPin?: string
   private ephemeralPinExpiresAt?: number
   private readonly pinFailuresByIp = new Map<string, number[]>()
@@ -204,7 +221,11 @@ export class LanMobileBridge {
   private muxTask?: Promise<void>
   private readonly sessionStreamAborts = new Set<AbortController>()
   private lastConnected = false
+  /** Keep the workspace follow alive after an app RPC, without marking a browser session connected. */
+  private remoteMuxUntil = 0
+  private remoteMuxTimer?: ReturnType<typeof setTimeout>
   private readonly desktopSessionToken = randomBytes(32).toString('base64url')
+  private readonly accessChannelToken = randomBytes(32).toString('base64url')
   private desktopBootstrapToken?: string
 
   constructor(private readonly options: LanMobileBridgeOptions) {
@@ -267,6 +288,7 @@ export class LanMobileBridge {
     this.suspendedSessions.clear()
     this.resumableSessions.clear()
     this.pendingQuestions.clear()
+    this.workUploads.clear()
     this.ephemeralPin = undefined
     this.ephemeralPinExpiresAt = undefined
     this.clearPinFailures()
@@ -274,6 +296,9 @@ export class LanMobileBridge {
     this.tunnelExpiresAt = undefined
     for (const abort of this.sessionStreamAborts) abort.abort()
     this.sessionStreamAborts.clear()
+    this.remoteMuxUntil = 0
+    if (this.remoteMuxTimer) clearTimeout(this.remoteMuxTimer)
+    this.remoteMuxTimer = undefined
     this.syncConnected()
     this.muxAbort?.abort()
     const muxTask = this.muxTask
@@ -292,6 +317,12 @@ export class LanMobileBridge {
     const targetState = enable !== undefined ? enable : !this.tunnelActive
     if (targetState && this.sessions.size > 0 && !this.tunnelActive) {
       throw new Error('Disconnect the phone before switching connection modes.')
+    }
+    if (targetState) {
+      this.tunnelActive = false
+      this.tunnelLoading = false
+      this.tunnelError = 'Remote access uses the signed-in BiSheng account.'
+      return this.snapshot()
     }
     if (!targetState) {
       // Wait for an in-flight launch, then stop the tunnel it spawned:
@@ -341,31 +372,7 @@ export class LanMobileBridge {
   }
 
   async fallbackToPinggy(): Promise<LanMobileBridgeSnapshot> {
-    if (this.sessions.size > 0) {
-      throw new Error('Disconnect the phone before switching connection modes.')
-    }
-    if (!this.tunnelActive || this.tunnelInstance?.provider !== 'cloudflare') {
-      throw new Error('Fallback is only available for an active Cloudflare tunnel.')
-    }
-    if (this.tunnelLaunch) {
-      throw new Error('A tunnel switch is already in progress.')
-    }
-
-    this.tunnelLoading = true
-    this.tunnelError = undefined
-    const launch = this.swapToPinggy()
-    this.tunnelLaunch = launch
-    try {
-      await launch
-      this.clearTunnelDeathFlags()
-      this.armTunnelProcess(this.tunnelInstance)
-    } catch (error) {
-      this.tunnelError = error instanceof Error ? error.message : String(error)
-    } finally {
-      this.tunnelLoading = false
-      if (this.tunnelLaunch === launch) this.tunnelLaunch = undefined
-    }
-    return this.snapshot()
+    throw new Error('Third-party remote tunnels are disabled.')
   }
 
   private async launchTunnel(): Promise<void> {
@@ -680,6 +687,10 @@ export class LanMobileBridge {
         : transportAddress
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`)
 
+    if (firstHeaderValue(request.headers[REMOTE_CHANNEL_HEADER]) === 'remote') {
+      return this.handleRemoteChannel(request, response, url, transportAddress)
+    }
+
     if (request.method === 'GET' && url.pathname.startsWith('/brand-logo/')) {
       const variant = url.pathname === '/brand-logo/dark' ? 'dark' : 'light'
       const path = this.options.brandLogoPaths?.[variant]
@@ -770,33 +781,7 @@ export class LanMobileBridge {
 
     if (request.method === 'POST' && url.pathname === '/desktop/tunnel/fallback') {
       if (this.rejectUnlessDesktop(request, transportAddress, response)) return
-      this.verifySameOrigin(request)
-      if (this.sessions.size > 0) {
-        return this.json(response, 409, {
-          ok: false,
-          error: 'Disconnect the phone before switching connection modes.'
-        })
-      }
-      if (this.tunnelLoading || this.tunnelLaunch) {
-        return this.json(response, 409, {
-          ok: false,
-          error: 'A tunnel switch is already in progress.'
-        })
-      }
-      if (!this.tunnelActive || this.tunnelInstance?.provider !== 'cloudflare') {
-        return this.json(response, 400, {
-          ok: false,
-          error: 'Fallback is only available for an active Cloudflare tunnel.'
-        })
-      }
-      const snapshot = await this.fallbackToPinggy()
-      const qrSvg = snapshot.pairingUrl
-        ? await QRCode.toString(snapshot.pairingUrl, { type: 'svg', margin: 1, width: 260 })
-        : undefined
-      return this.json(response, 200, {
-        ok: !snapshot.tunnelError,
-        ...this.desktopTunnelPayload(snapshot, qrSvg)
-      })
+      return this.json(response, 410, { ok: false, error: 'Third-party remote tunnels are disabled.' })
     }
 
     if (request.method === 'POST' && url.pathname === '/desktop/pin/consent') {
@@ -1054,12 +1039,75 @@ export class LanMobileBridge {
     if (request.method === 'POST' && url.pathname === '/api/rpc') {
       this.verifySameOrigin(request)
       const input = JSON.parse(await readBody(request)) as { method?: unknown; payload?: unknown }
+      const result = await this.dispatchMobileRpc(input)
+      return this.json(response, result.status, result.body)
+    }
+    this.text(response, 404, 'Not found.')
+  }
+
+  listeningPort(): number | undefined {
+    return this.port
+  }
+
+  remoteChannelToken(): string {
+    return this.accessChannelToken
+  }
+
+  private async handleRemoteChannel(
+    request: IncomingMessage,
+    response: ServerResponse,
+    url: URL,
+    transportAddress: string
+  ): Promise<void> {
+    const token = firstHeaderValue(request.headers[REMOTE_CHANNEL_TOKEN_HEADER]) ?? ''
+    if (!isLoopbackAddress(transportAddress) || !this.pinsEqual(token, this.accessChannelToken)) {
+      return this.json(response, 401, { ok: false, error: 'account_switched' })
+    }
+    const account = this.options.currentAccount?.() ?? {}
+    const presented = {
+      userId: firstHeaderValue(request.headers[REMOTE_USER_HEADER]),
+      tenantId: firstHeaderValue(request.headers[REMOTE_TENANT_HEADER])
+    }
+    if (!accountsMatch(account, presented)) {
+      return this.json(response, 401, { ok: false, error: 'account_switched' })
+    }
+    // The signed-in app is a client too. The follow stream used to start only
+    // for a browser session, so workspace.list from the app answered before
+    // any baseline existed.
+    this.noteRemoteClient()
+    if (request.method === 'GET' && url.pathname === '/api/v1/status') {
+      return this.json(response, 200, { ok: true, accepted: true })
+    }
+    if (request.method === 'POST' && url.pathname === '/api/v1/rpc') {
+      let input: { method?: unknown, payload?: unknown }
+      try {
+        input = JSON.parse(await readBody(request)) as { method?: unknown, payload?: unknown }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (message.includes('too large')) return this.json(response, 413, { ok: false, error: message })
+        return this.json(response, 400, { ok: false, error: 'Invalid JSON.' })
+      }
+      const result = await this.dispatchMobileRpc(input)
+      return this.json(response, result.status, result.body)
+    }
+    if (request.method === 'GET' && url.pathname === '/api/v1/session/stream') {
+      const sessionId = url.searchParams.get('sessionId')
+      if (!sessionId) return this.text(response, 400, 'Session id is required.')
+      return this.streamSession(request, response, sessionId)
+    }
+    return this.json(response, 404, { ok: false, error: 'Not found.' })
+  }
+
+  private async dispatchMobileRpc(input: { method?: unknown, payload?: unknown }): Promise<{
+    status: number
+    body: Record<string, unknown>
+  }> {
       if (input.method === 'interaction.pending') {
         const sessionId = requiredStringField(input.payload, 'sessionId')
         const pending = [...this.pendingQuestions.values()].find(
           (item) => item.sessionId === sessionId
         )
-        return this.json(response, 200, { ok: true, value: pending ?? null })
+        return { status: 200, body: { ok: true, value: pending ?? null } }
       }
       if (input.method === 'interaction.answer') {
         const answer = parseQuestionResponse(input.payload)
@@ -1069,7 +1117,7 @@ export class LanMobileBridge {
           kind: 'result',
           value: { answers: answer.answers }
         })
-        return this.json(response, result.ok ? 200 : 400, result)
+        return { status: result.ok ? 200 : 400, body: result }
       }
       if (input.method === 'interaction.cancel') {
         const rpcId = requiredStringField(input.payload, 'rpcId')
@@ -1083,15 +1131,17 @@ export class LanMobileBridge {
             code: 'cancelled'
           }
         })
-        return this.json(response, result.ok ? 200 : 400, result)
+        return { status: result.ok ? 200 : 400, body: result }
+      }
+      if (typeof input.method === 'string' && isWorkRpcMethod(input.method)) {
+        const result = await this.forwardWork(input.method, input.payload ?? {})
+        return { status: result.ok ? 200 : 400, body: result }
       }
       if (typeof input.method !== 'string' || !RPC_ALLOWLIST.has(input.method)) {
-        return this.json(response, 403, { ok: false, error: 'RPC method is not available on mobile.' })
+        return { status: 403, body: { ok: false, error: 'RPC method is not available on mobile.' } }
       }
       const result = await this.forwardRpc(input.method, input.payload ?? {})
-      return this.json(response, result.ok ? 200 : 400, result)
-    }
-    this.text(response, 404, 'Not found.')
+      return { status: result.ok ? 200 : 400, body: result }
   }
 
   private pageProduct(url: URL): string | undefined {
@@ -1330,7 +1380,15 @@ export class LanMobileBridge {
       // The Host kept no unary workspace read: `workspace/follow` is a stream,
       // and its opening `baseline` frame is exactly the projection this call
       // used to return. The mux consumer keeps that baseline, so the answer is
-      // whatever the carrier last observed.
+      // whatever the carrier last observed. An app request has to wait for
+      // that first frame instead of failing while the socket is still opening.
+      if (this.workspaceSnapshot === undefined) {
+        this.noteRemoteClient()
+        const deadline = this.now() + 5_000
+        while (this.workspaceSnapshot === undefined && this.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
+      }
       const snapshot = this.workspaceSnapshot
       if (snapshot === undefined) return { ok: false, error: 'Harness workspaces are not loaded yet.' }
       return { ok: true, value: snapshot }
@@ -1380,6 +1438,95 @@ export class LanMobileBridge {
     return this.invokeHarness(route.endpoint, route.args(fields))
   }
 
+  /**
+   * Work-tab calls stay on the routes the desktop composer already uses.
+   * Upload chunks are reassembled here because a phone RPC body is capped.
+   */
+  private async forwardWork(
+    method: string,
+    payload: unknown
+  ): Promise<{ ok: boolean; value?: unknown; error?: string }> {
+    const dispatch = parseWorkDispatch(method, payload)
+    if ('error' in dispatch) return { ok: false, error: dispatch.error }
+    if (dispatch.kind === 'upload-start') return this.workUploads.start(payload, this.now())
+    if (dispatch.kind === 'upload-chunk') return this.workUploads.chunk(payload, this.now())
+    if (dispatch.kind === 'upload-finish') {
+      const ready = this.workUploads.finish(payload, this.now())
+      if (!ready.ok) return ready
+      return this.postWorkUpload(ready.value)
+    }
+    const base = this.options.harnessUrl()
+    if (!base) return { ok: false, error: 'Harness is not ready.' }
+    const rpcId = randomUUID()
+    if (dispatch.kind === 'json') {
+      const response = await this.harnessFetch(
+        new URL(dispatch.path, base),
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(dispatch.body),
+          signal: AbortSignal.timeout(30_000)
+        },
+        base
+      )
+      return readWorkJson(response.status, await response.text())
+    }
+    if (dispatch.kind === 'office') {
+      const response = await this.harnessFetch(
+        new URL('/api/office-templates', base),
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            type: 'client-request',
+            rpcId,
+            method: 'office-templates',
+            payload: dispatch.payload
+          }),
+          signal: AbortSignal.timeout(30_000)
+        },
+        base
+      )
+      if (!response.ok) return { ok: false, error: `Harness transport returned HTTP ${response.status}.` }
+      return readWorkEnvelope(await response.text(), rpcId)
+    }
+    const response = await this.harnessFetch(
+      new URL(`/dsh-ppt/${dispatch.endpoint}`, base),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ rpcId, payload: dispatch.payload }),
+        signal: AbortSignal.timeout(30_000)
+      },
+      base
+    )
+    if (!response.ok) return { ok: false, error: `Harness transport returned HTTP ${response.status}.` }
+    return readWorkEnvelope(await response.text(), rpcId)
+  }
+
+  private async postWorkUpload(upload: {
+    sessionId: string
+    name: string
+    body: Buffer
+  }): Promise<{ ok: boolean; value?: unknown; error?: string }> {
+    const base = this.options.harnessUrl()
+    if (!base) return { ok: false, error: 'Harness is not ready.' }
+    const url = new URL('/api/session/uploadFileBinary', base)
+    url.searchParams.set('sessionId', upload.sessionId)
+    url.searchParams.set('name', upload.name)
+    const response = await this.harnessFetch(
+      url,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/octet-stream' },
+        body: new Uint8Array(upload.body),
+        signal: AbortSignal.timeout(60_000)
+      },
+      base
+    )
+    return readUploadResult(response.status, await response.text())
+  }
+
   private async invokeHarness(
     endpoint: string,
     args: Record<string, unknown>
@@ -1412,16 +1559,28 @@ export class LanMobileBridge {
    * running it with no client meant reconnecting twice a second, forever, on
    * every desktop that never used the feature.
    */
+  private noteRemoteClient(): void {
+    const holdMs = 120_000
+    this.remoteMuxUntil = this.now() + holdMs
+    if (this.remoteMuxTimer) clearTimeout(this.remoteMuxTimer)
+    this.remoteMuxTimer = setTimeout(() => {
+      this.remoteMuxTimer = undefined
+      this.syncConnected()
+    }, holdMs)
+    this.remoteMuxTimer.unref?.()
+    this.syncConnected()
+  }
+
   private syncConnected(): void {
-    const connected = this.sessions.size > 0
-    if (connected) this.startMuxMonitor()
+    const browserConnected = this.sessions.size > 0
+    if (browserConnected || this.now() < this.remoteMuxUntil) this.startMuxMonitor()
     else this.muxAbort?.abort()
-    if (connected === this.lastConnected) return
-    this.lastConnected = connected
+    if (browserConnected === this.lastConnected) return
+    this.lastConnected = browserConnected
     // Reconciliation runs off the request path, so a throwing observer must not
     // turn into an unhandled rejection that fails the request behind it.
     try {
-      this.options.onConnectedChange?.(connected)
+      this.options.onConnectedChange?.(browserConnected)
     } catch {
       // A renderer that went away mid-broadcast is not the bridge's problem.
     }

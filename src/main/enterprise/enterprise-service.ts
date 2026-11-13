@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto'
+import { EnterpriseProfileState, type ProfileRefreshReason } from './profile-state'
+import type { MobileAccessAccount } from '../mobile/mobile-access-protocol'
 import { parseWorkSkillRequest, readSkillBytes } from './work-skills'
 import { parseWorkResourceRequest, readResourceJson } from './work-resources'
 import { parseWorkMcpRequest, sendWorkMcp } from './work-mcp'
@@ -58,6 +60,7 @@ export type EnterprisePhase =
   | 'error'
 
 export interface EnterprisePublicIdentity {
+  avatar?: string | null
   id?: string
   username?: string
   display_name?: string
@@ -163,6 +166,8 @@ interface PendingLogin {
 export class EnterpriseService {
   private cloudService: CloudWorkbenchService | undefined
   private mutation: Promise<unknown> = Promise.resolve()
+  private readonly profile = new EnterpriseProfileState()
+  private profileInFlight: Promise<EnterprisePublicState> | undefined
   private refreshInFlight: Promise<EnterprisePublicState> | undefined
   private epoch = 0
   private revision = 0
@@ -188,6 +193,8 @@ export class EnterpriseService {
   private readonly authVersionPrefix = randomUUID()
   private authEpoch = 0
   private authEnabled = false
+  /** Main-process-only credential handoff; never included in public state or IPC. */
+  private readonly mobileAccessListeners = new Set<(account: MobileAccessAccount) => void>()
   private auditFields: AuditContextField[] = []
   private auditRefreshGeneration = 0
   private auditTitleAvailable = false
@@ -199,6 +206,77 @@ export class EnterpriseService {
     this.phase = options.vault.available ? 'idle' : 'disabled'
     if (!options.vault.available) {
       this.error = options.vault.unavailableReason ?? 'Operating-system secure storage is unavailable.'
+    }
+  }
+
+  /** Event-triggered metadata refresh, deliberately independent from state polling. */
+  async refreshProfile(reason: ProfileRefreshReason = 'account'): Promise<EnterprisePublicState> {
+    if (!this.authState().connected) return this.snapshot()
+    if (this.profileInFlight) return this.profileInFlight
+    if (!this.profile.due(reason, this.now())) return this.snapshot()
+    const epoch = this.epoch
+    const sessionVersion = this.authEpoch
+    const base = this.session?.base
+    const userId = this.session?.user?.id
+    const tenantId = this.session?.tenant?.id
+    if (!base || !userId || !tenantId) return this.snapshot()
+    const controller = new AbortController()
+    this.authenticatedControllers.add(controller)
+    this.profile.begin(this.now())
+    const current = () => this.epoch === epoch && this.authEpoch === sessionVersion && !controller.signal.aborted
+    const task = (async () => {
+      try {
+        const accessToken = await this.ensureAccess(epoch)
+        if (!current()) return this.snapshot()
+        const result = await requestEnterpriseJson(this.options.fetchImpl, base, '/api/v1/dsh/profile', {
+          ...this.platformRequestOptions(), accessToken, signal: controller.signal, timeoutMs: 10_000
+        })
+        if (current()) {
+          this.profile.apply(result.body, base, userId, tenantId, this.now())
+          this.publish()
+        }
+      } catch (error) {
+        if (current()) {
+          const status = error instanceof EnterprisePlatformError ? error.status : undefined
+          this.profile.fail(status === 404 || status === 405)
+          // A profile fetch/parse failure does not change account phase or model availability.
+          // ensureAccess still owns the normal expiry/revocation semantics of the credentials.
+          this.note('profile_refresh_failed', { status })
+        }
+      } finally {
+        this.authenticatedControllers.delete(controller)
+      }
+      return this.snapshot()
+    })()
+    this.profileInFlight = task
+    try { return await task } finally { if (this.profileInFlight === task) this.profileInFlight = undefined }
+  }
+
+  subscribeMobileAccessAccount(listener: (account: MobileAccessAccount) => void): () => void {
+    this.mobileAccessListeners.add(listener)
+    this.notifyMobileAccessListener(listener, this.readMobileAccessAccount())
+    return () => { this.mobileAccessListeners.delete(listener) }
+  }
+
+  private notifyMobileAccessListener(listener: (account: MobileAccessAccount) => void, account: MobileAccessAccount): void {
+    try { listener({ ...account }) }
+    catch { this.note('mobile_access_listener_failed') }
+  }
+
+  private publishMobileAccessAccount(): void {
+    const account = this.readMobileAccessAccount()
+    for (const listener of this.mobileAccessListeners) this.notifyMobileAccessListener(listener, account)
+  }
+
+  readMobileAccessAccount(): MobileAccessAccount {
+    // Mobile access must honor local logout immediately, even while remote
+    // revocation is pending, and must not outlive the enterprise session.
+    if (!this.authState().connected) return {}
+    return {
+      ...(this.session?.base ? { base: this.session.base } : {}),
+      ...(this.session?.access_token ? { accessToken: this.session.access_token } : {}),
+      ...(this.session?.user?.id ? { userId: this.session.user.id } : {}),
+      ...(this.session?.tenant?.id ? { tenantId: this.session.tenant.id } : {})
     }
   }
 
@@ -229,7 +307,7 @@ export class EnterpriseService {
       })),
       modelsAvailable: this.modelsAvailable && (this.phase === 'connected' || this.phase === 'refreshing'),
       ...(this.session?.base ? { base: this.session.base } : {}),
-      ...(publicIdentity(this.session?.user) ? { user: publicIdentity(this.session?.user) } : {}),
+      ...(publicIdentity(this.profile.user ?? this.session?.user) ? { user: publicIdentity(this.profile.user ?? this.session?.user) } : {}),
       ...(publicIdentity(this.session?.tenant) ? { tenant: publicIdentity(this.session?.tenant) } : {}),
       ...(this.usage ? { usage: { ...this.usage } } : {}),
       ...(Object.keys(this.modelUsage).length > 0 ? { modelUsage: { ...this.modelUsage } } : {}),
@@ -257,6 +335,7 @@ export class EnterpriseService {
       this.clearError()
       this.publish()
       void this.refreshModels(true)
+      void this.refreshProfile()
     } catch (error) {
       this.session = null
       this.allowPrivateHttpForSession = false
@@ -506,7 +585,7 @@ export class EnterpriseService {
 
   async stop(): Promise<void> {
     this.invalidateAuthSession()
-    this.auditFields = []
+    this.revokeAuditCapability()
     await this.cancelPendingLogin()
     this.epoch += 1
     for (const controller of this.chatControllers) controller.abort(enterpriseSessionChangedAbortReason())
@@ -568,6 +647,7 @@ export class EnterpriseService {
       await this.commitSession(token as EnterpriseCredentialSession, expectedEpoch)
       if (this.authEpoch === pending.authEpoch && this.session?.access_token) this.authEnabled = true
       await this.syncCatalog(expectedEpoch, { includeUsage: true })
+      void this.refreshProfile()
       this.note('login_committed', { originHash: hashEnterpriseOrigin(pending.base) })
       try {
         await this.options.activateDesktop?.()
@@ -650,12 +730,14 @@ export class EnterpriseService {
       if (this.epoch !== expectedEpoch) return
       this.vaultGeneration = stored.generation
       this.session = stored.session
+      // Refresh can be followed by logout before the mobile client's watcher runs.
+      this.publishMobileAccessAccount()
       this.clearError()
       // Leave phase as refreshing; syncCatalog flips to connected after usage.
     } catch {
       this.invalidateAuthSession()
       this.session = null
-      this.auditFields = []
+      this.revokeAuditCapability()
       this.allowPrivateHttpForSession = false
       this.models = []
       this.modelsAvailable = false
@@ -848,9 +930,16 @@ export class EnterpriseService {
   }
 
   private invalidateAuthSession(): void {
+    // Hand off the latest still-authorized cleanup credential before hiding it.
+    // The getter remains authoritative: expired or already-revoked sessions emit {}.
+    this.publishMobileAccessAccount()
     this.authEpoch += 1
+    this.profile.clear()
+    this.profileInFlight = undefined
+    for (const controller of this.authenticatedControllers) controller.abort(enterpriseSessionChangedAbortReason())
     this.authEnabled = false
     this.authTransport.invalidate()
+    this.publishMobileAccessAccount()
   }
 
   async authRequest(plugin: { pluginId: string; instanceId: string }, input: unknown, signal: AbortSignal): Promise<Response> {
@@ -1528,7 +1617,7 @@ export class EnterpriseService {
 
   private async clearLocalSession(phase: EnterprisePhase): Promise<void> {
     this.invalidateAuthSession()
-    this.auditFields = []
+    this.revokeAuditCapability()
     this.epoch += 1
     for (const controller of this.chatControllers) controller.abort(enterpriseSessionChangedAbortReason())
     this.chatControllers.clear()
@@ -1564,9 +1653,22 @@ export class EnterpriseService {
   }
 
   private pauseSessionForRelogin(): void {
-    this.auditFields = []
+    this.revokeAuditCapability()
     this.modelsAvailable = false
     this.publish()
+  }
+
+  /** Drop optional audit authorization. Callers publish when the snapshot must move. */
+  private revokeAuditCapability(): void {
+    this.auditFields = []
+    this.auditTitleAvailable = false
+    this.auditFeedbackAvailable = false
+  }
+
+  private auditRefreshStillCurrent(generation: number, epoch: number, base: string | undefined, connectionKey: string): boolean {
+    if (generation !== this.auditRefreshGeneration || epoch !== this.epoch || base !== this.session?.base) return false
+    const currentKey = this.session?.access_token ? this.connectionKey() : ''
+    return connectionKey === currentKey
   }
 
   private async cancelPendingLogin(): Promise<void> {
@@ -1577,30 +1679,35 @@ export class EnterpriseService {
   }
 
   async refreshAuditCapability(): Promise<void> {
+    // Keep the previous capability until this request settles. Clearing it first makes
+    // in-flight feedback uploads fail with 409 and looks like an account change to the plugin.
     const generation = ++this.auditRefreshGeneration
-    this.auditFields = []
-    this.auditTitleAvailable = false
-    this.auditFeedbackAvailable = false
-    this.publish()
     const epoch = this.epoch
     const base = this.session?.base
-    const connectionKey = this.connectionKey()
-    if (!base || !this.session?.access_token) return
+    const connectionKey = this.session?.access_token ? this.connectionKey() : ''
+    if (!base || !this.session?.access_token) {
+      if (generation === this.auditRefreshGeneration && epoch === this.epoch) {
+        this.revokeAuditCapability()
+        this.publish()
+      }
+      return
+    }
     try {
       const contract = await loadEnterpriseContract()
       const config = contract.parseConfig((await requestEnterpriseJson(
         this.options.fetchImpl, base, contract.API_PATHS.config, this.platformRequestOptions()
       )).body)
-      if (generation !== this.auditRefreshGeneration || epoch !== this.epoch ||
-          base !== this.session?.base || connectionKey !== this.connectionKey()) return
+      if (!this.auditRefreshStillCurrent(generation, epoch, base, connectionKey)) return
       this.auditFields = config.enabled ? config.audit_context?.fields ?? [] : []
       this.auditTitleAvailable = config.enabled && config.audit_conversation_title?.version === 1
       this.auditFeedbackAvailable = config.enabled && config.audit_message_feedback?.version === 1
     } catch {
       // Only optional audit capability is lost; do not replay or reject model calls.
-      if (generation === this.auditRefreshGeneration && epoch === this.epoch) this.note('audit_capability_unavailable')
+      if (!this.auditRefreshStillCurrent(generation, epoch, base, connectionKey)) return
+      this.revokeAuditCapability()
+      this.note('audit_capability_unavailable')
     }
-    if (generation === this.auditRefreshGeneration && epoch === this.epoch) this.publish()
+    if (this.auditRefreshStillCurrent(generation, epoch, base, connectionKey)) this.publish()
   }
 
   private scheduleLoginExpiry(epoch: number): void {
@@ -1641,6 +1748,8 @@ export class EnterpriseService {
   }
 
   private publish(): void {
+    // Credential changes are independent of the token-free public signature.
+    this.publishMobileAccessAccount()
     const snapshot = this.snapshot()
     const signature = publicStateSignature(snapshot)
     if (signature === this.lastPublicSignature) return
@@ -1715,6 +1824,7 @@ async function readMarketErrorCode(response: Response): Promise<string | undefin
 function publicIdentity(value?: EnterprisePublicIdentity): EnterprisePublicIdentity | undefined {
   if (!value) return undefined
   const identity: EnterprisePublicIdentity = {
+    ...(value.avatar === undefined ? {} : { avatar: value.avatar }),
     ...(value.id ? { id: value.id } : {}),
     ...(value.username ? { username: value.username } : {}),
     ...(value.display_name ? { display_name: value.display_name } : {}),

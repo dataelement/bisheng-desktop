@@ -1,8 +1,8 @@
 // Coverage AC: AC-03, AC-30, AC-31, AC-56.
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
@@ -14,12 +14,26 @@ import { EnterpriseService } from '../src/main/enterprise/enterprise-service'
 import { SecureEnterpriseCredentialVault, ENTERPRISE_VAULT_FILENAME } from '../src/main/enterprise/secure-credential-vault'
 
 const cleanups: Array<() => Promise<unknown> | unknown> = []
+beforeEach(async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-audit-home-'))
+  // The enterprise market persists beneath DSH_HOME even though audit fixtures
+  // use their own credential vaults. Never inherit the running Desktop Profile.
+  vi.stubEnv('DSH_HOME', home)
+  for (const key of [
+    'DSH_DESKTOP_ENTERPRISE_BROKER_URL',
+    'DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY',
+    'DSH_DESKTOP_ENTERPRISE_ALLOW_INSECURE_LOOPBACK'
+  ]) vi.stubEnv(key, undefined)
+  // Registered first so plugin and broker disposers run before removing home.
+  cleanups.push(() => rm(home, { recursive: true, force: true }))
+})
 afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()?.()
-  delete process.env.DSH_DESKTOP_ENTERPRISE_BROKER_URL
-  delete process.env.DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY
-  delete process.env.DSH_DESKTOP_ENTERPRISE_ALLOW_INSECURE_LOOPBACK
-  vi.restoreAllMocks()
+  try {
+    while (cleanups.length) await cleanups.pop()?.()
+  } finally {
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  }
 })
 
 async function waitFor(predicate: () => boolean) {
@@ -72,7 +86,8 @@ async function plugin(service: EnterpriseService, services: Record<string, unkno
       // Only global audit-title events are delivered by this fixture; the
       // real locale request/inbox lifecycle is exercised in the locale tests.
       const options = args[1] as { global?: boolean } | undefined
-      if (name !== 'session/event' || options?.global !== true) return () => undefined
+      if (name === 'session/event' && options?.global !== true) return () => undefined
+      if (name !== 'session/event' && name !== 'feedback/committed') return () => undefined
       const subscribe = services.on
       return typeof subscribe === 'function' ? subscribe(name, ...args) : () => undefined
     },
@@ -228,9 +243,10 @@ describe('audit title through enterprise plugin and HTTP credential broker', () 
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const client = await plugin(service, {
       get: (name: string) => name === 'sessions' ? { get: () => session } : name === 'sessionTitle' ? { get: () => title } : undefined,
-      on: (name: string, listener: (typeof listeners)[number], options: { global: boolean }) => {
+      on: (name: string, listener: (typeof listeners)[number], options?: { global: boolean }) => {
+        if (name === 'feedback/committed') return () => undefined
         expect(name).toBe('session/event')
-        expect(options.global).toBe(true)
+        expect(options?.global).toBe(true)
         listeners.push(listener)
         return () => {
           const index = listeners.indexOf(listener)
@@ -285,8 +301,8 @@ describe('audit message feedback through enterprise plugin and HTTP credential b
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const client = await plugin(service, {
       get: (name: string) => name === 'sessions' ? { get: () => session } : undefined,
-      on: (_name: string, listener: (typeof listeners)[number]) => {
-        listeners.push(listener)
+      on: (name: string, listener: (typeof listeners)[number]) => {
+        if (name === 'session/event') listeners.push(listener)
         return () => undefined
       }
     })
@@ -331,8 +347,8 @@ describe('audit message feedback through enterprise plugin and HTTP credential b
     const listeners: Array<(current: typeof session, event: { type: string, seq: number, data: Record<string, unknown> }) => void> = []
     const client = await plugin(service, {
       get: (name: string) => name === 'sessions' ? { get: () => session } : undefined,
-      on: (_name: string, listener: (typeof listeners)[number]) => {
-        listeners.push(listener)
+      on: (name: string, listener: (typeof listeners)[number]) => {
+        if (name === 'session/event') listeners.push(listener)
         return () => undefined
       }
     })
@@ -346,5 +362,105 @@ describe('audit message feedback through enterprise plugin and HTTP credential b
     await new Promise((resolve) => setTimeout(resolve, 700))
     expect(uploads).toEqual([])
     expect(service.snapshot()).not.toHaveProperty('audit_message_feedback')
+  })
+
+  it('uploads a cold committed retraction and ignores it before the session is tracked', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(() => platform.close())
+    const root = await mkdtemp(join(tmpdir(), 'dsh-feedback-cold-'))
+    const uploads: unknown[] = []
+    const fetchImpl = createEnterpriseFetch(async (input, init) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/api/v1/dsh/audit/message-feedback') {
+        uploads.push(JSON.parse(String(init?.body)))
+        return Response.json({ status: 'UPDATED', event_seq: (uploads.at(-1) as { event_seq: number }).event_seq })
+      }
+      const response = await fetch(input, init)
+      if (path === '/api/v1/dsh/config') return Response.json({ ...await response.json(), audit_message_feedback: { version: 1 } })
+      return response
+    })
+    const service = new EnterpriseService({ vault: vaultAt(join(root, ENTERPRISE_VAULT_FILENAME)), fetchImpl, allowInsecureLoopback: true })
+    cleanups.push(() => service.stop())
+    await login(service, origin)
+    const sessionId = 'e2e-feedback-cold'
+    const committed: Array<(inspection: { meta?: { id?: string }, events?: unknown[] }) => void> = []
+    const client = await plugin(service, {
+      get: (name: string) => name === 'sessions' ? { get: () => undefined } : undefined,
+      on: (name: string, listener: (typeof committed)[number]) => {
+        if (name === 'feedback/committed') committed.push(listener)
+        return () => undefined
+      }
+    })
+    const item = { messageId: 'msg-1', rating: 'negative' as const, note: 'cold note' }
+    const inspection = {
+      meta: { id: sessionId },
+      events: [{ type: 'feedback/message-put', seq: 12, data: { sessionId, item } }]
+    }
+    for (const listener of committed) listener(inspection)
+    await new Promise((resolve) => setTimeout(resolve, 700))
+    expect(uploads).toEqual([])
+    await client.call(sessionId)
+    for (const listener of committed) listener(inspection)
+    item.note = 'mutated after the listener returned'
+    await waitFor(() => uploads.length === 1)
+    expect(uploads[0]).toEqual({
+      conversation_id: sessionId, message_id: 'msg-1', event_seq: 12, op: 'put', rating: 'negative', note: 'cold note'
+    })
+  })
+
+  it('still uploads a retraction while a capability refresh is in flight', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(() => platform.close())
+    const root = await mkdtemp(join(tmpdir(), 'dsh-feedback-refresh-'))
+    const uploads: unknown[] = []
+    let hangConfig = false
+    let releaseConfig: (() => void) | undefined
+    const fetchImpl = createEnterpriseFetch(async (input, init) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/api/v1/dsh/audit/message-feedback') {
+        uploads.push(JSON.parse(String(init?.body)))
+        return Response.json({ status: 'UPDATED', event_seq: (uploads.at(-1) as { event_seq: number }).event_seq })
+      }
+      if (hangConfig && path === '/api/v1/dsh/config') {
+        await new Promise<void>((resolve) => { releaseConfig = resolve })
+      }
+      const response = await fetch(input, init)
+      if (path === '/api/v1/dsh/config') return Response.json({ ...await response.json(), audit_message_feedback: { version: 1 } })
+      return response
+    })
+    const service = new EnterpriseService({ vault: vaultAt(join(root, ENTERPRISE_VAULT_FILENAME)), fetchImpl, allowInsecureLoopback: true })
+    cleanups.push(() => service.stop())
+    await login(service, origin)
+    const session = { header: { id: 'e2e-feedback-refresh' } }
+    const listeners: Array<(current: typeof session, event: { type: string, seq: number, data: Record<string, unknown> }) => void> = []
+    const client = await plugin(service, {
+      get: (name: string) => name === 'sessions' ? { get: () => session } : undefined,
+      on: (name: string, listener: (typeof listeners)[number]) => {
+        if (name === 'session/event') listeners.push(listener)
+        return () => undefined
+      }
+    })
+    await client.call(session.header.id)
+    const emit = (event: { type: string, seq: number, data: Record<string, unknown> }) => {
+      for (const listener of listeners) listener(session, event)
+    }
+    emit({
+      type: 'feedback/message-put', seq: 12,
+      data: { sessionId: session.header.id, item: { messageId: 'msg-1', rating: 'negative' } }
+    })
+    await waitFor(() => uploads.length === 1)
+    hangConfig = true
+    const refresh = service.refreshAuditCapability()
+    await waitFor(() => releaseConfig !== undefined)
+    expect(service.snapshot().audit_message_feedback).toEqual({ version: 1 })
+    emit({ type: 'feedback/message-delete', seq: 13, data: { sessionId: session.header.id, messageId: 'msg-1' } })
+    await waitFor(() => uploads.length === 2)
+    expect(uploads[1]).toEqual({ conversation_id: session.header.id, message_id: 'msg-1', event_seq: 13, op: 'delete' })
+    if (!releaseConfig) throw new Error('Capability refresh did not reach the config request.')
+    releaseConfig()
+    await refresh
+    expect(service.snapshot().audit_message_feedback).toEqual({ version: 1 })
   })
 })
