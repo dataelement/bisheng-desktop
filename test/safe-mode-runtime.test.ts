@@ -38,6 +38,8 @@ registerHooks({ resolve(specifier, context, next) {
     dshSafePatchPath,
     dshHome: home,
     logPath: join(home, logName),
+    // Concurrent subprocess fixtures must not race for the Desktop's stable port.
+    preferredPort: 0,
     startupTimeoutMs: 30_000,
     launchProcess: (executable, args, options) => spawn(executable, ['--import', pathToFileURL(hook).href, ...args], options),
     onChanged() {}

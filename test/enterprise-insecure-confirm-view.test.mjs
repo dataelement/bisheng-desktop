@@ -6,6 +6,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { createRoot } from 'react-dom/client'
 import { JSDOM } from 'jsdom'
 import { afterEach, expect, it, vi } from 'vitest'
+import { isInsecurePrivateHttpOrigin, normalizeEnterpriseServerUrl } from '../packages/dsh-desktop-enterprise/deep-link.js'
 
 // Coverage AC: AC-03, AC-30, AC-31, AC-56.
 const source = await readFile(new URL('../packages/dsh-desktop-enterprise/client.js', import.meta.url), 'utf8')
@@ -92,7 +93,9 @@ async function mountEnterprise(initial, hooks = {}) {
       return { ok: true, json: async () => snapshot() }
     }
     if (path === '/api/enterprise.base.inspect' || path === '/api/enterprise.deep-link.inspect') {
-      return { ok: true, json: async () => ({ base: SERVICE, insecurePrivateHttp: true }) }
+      const value = body.base ?? new URL(body.url).searchParams.get('server')
+      const base = normalizeEnterpriseServerUrl(value, { allowInsecurePrivateHttp: true })
+      return { ok: true, json: async () => ({ base, insecurePrivateHttp: isInsecurePrivateHttpOrigin(base) }) }
     }
     return { ok: true, json: async () => snapshot() }
   }
@@ -160,6 +163,24 @@ async function mountEnterprise(initial, hooks = {}) {
   }
   return { text, click, requests, deliverLoginLink, flushTimer, document: dom.window.document }
 }
+
+it.each(['http://203.0.113.10:8080', 'http://bisheng.example.com'])('requires risk confirmation before starting HTTP sign-in: %s', async (base) => {
+  const { text, click, requests } = await mountEnterprise({ ...idleAccount(), base })
+  await click('在浏览器中登录')
+  expect(text()).toContain('登录信息会明文传输')
+  expect(text()).toContain(base)
+  expect(requests.some(item => item.path === '/api/enterprise.login.start')).toBe(false)
+  await click('确认为可信来源')
+  expect(requests.find(item => item.path === '/api/enterprise.login.start').body).toEqual({ base, confirmInsecurePrivateHttp: true })
+})
+
+it('starts loopback HTTP sign-in without a risk prompt', async () => {
+  const base = 'http://127.0.0.1:17860'
+  const { text, click, requests } = await mountEnterprise({ ...idleAccount(), base })
+  await click('在浏览器中登录')
+  expect(text()).not.toContain('登录信息会明文传输')
+  expect(requests.find(item => item.path === '/api/enterprise.login.start').body).toEqual({ base })
+})
 
 it('drops the trusted-source prompt after sign-in and shows it again only on the next browser login', async () => {
   const { text, click, requests, deliverLoginLink } = await mountEnterprise(idleAccount())

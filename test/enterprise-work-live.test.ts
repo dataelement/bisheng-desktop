@@ -42,11 +42,11 @@ it.runIf(Boolean(fixture))('uses real PKCE login, host credential exchange, nati
     ctx.provide('approval', { request: approval } as any)
     let api: any
     const fork = ctx.plugin({ inject: ['tools','skills'], apply(scoped: Context) {
-      api = applyWorkCapabilities({ tools: scoped.tools, skills: scoped.skills,
+      api = applyWorkCapabilities({ connection: { fetch: { register: vi.fn() } }, tools: scoped.tools, skills: scoped.skills,
         sessions: { get: (id: string) => id === session.id ? session : undefined },
         on: scoped.on.bind(scoped), effect: scoped.effect.bind(scoped), logger: scoped.logger
       }, { state: () => service.snapshot(), refreshState: async () => {}, request: (body: any, signal?: AbortSignal) => service.workMcp(body,signal) })
-      applyEnterpriseSkills(scoped, { state: () => service.snapshot(), refreshState: async () => {},
+      applyEnterpriseSkills(scoped, { resolveToolName: (id: number) => api.resolveToolName(id), state: () => service.snapshot(), refreshState: async () => {},
         request: async (body: any, signal?: AbortSignal) => { const result = await service.workSkills(body, signal); return result.binary ? result.bytes : JSON.parse(result.bytes.toString()) } })
       applySkillTool(scoped)
     } }); await fork; forks.push(fork); await api.sync()
@@ -58,8 +58,10 @@ it.runIf(Boolean(fixture))('uses real PKCE login, host credential exchange, nati
     const loaded = await call('skill', { name: skill!.name })
     expect(loaded.isError).toBe(false)
     const content = await ctx.skills.get(skill!.name, { sessionId: session.id })
-    expect(content?.content).toContain(`mcp__bisheng__bisheng_tool_${config.toolId}`)
-    const result = await call(`mcp__bisheng__bisheng_tool_${config.toolId}`, { timezone: 'Asia/Shanghai' })
+    const toolName = await api.resolveToolName(config.toolId)
+    expect(toolName).toBeTruthy()
+    expect(content?.content).toContain(toolName)
+    const result = await call(toolName, { timezone: 'Asia/Shanghai' })
     expect(result.isError).toBe(false)
     expect(approval).toHaveBeenCalledOnce()
     await service.refresh()

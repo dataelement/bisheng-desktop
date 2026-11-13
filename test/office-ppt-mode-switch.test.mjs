@@ -25,12 +25,17 @@ async function fixture(bound = true) {
   const office = [{ id: 'excel-example', title: 'Excel example', mode: 'excel', revision: 'a'.repeat(24), pages: 1, pageAspectRatios: [1.6], thumbnail: 'data:image/png;base64,iVBORw0KGgo=' }]
   const ppt = [{ id: 'ppt-example', name: 'PPT example', category: 'business', palette: { background: 'FFFFFF', surface: 'F4F4F4', text: '242424', muted: '666666', accent: '3888FF', secondary: 'E7E7E9' } }]
   const seats = [], dictionaries = new Map()
-  let documentMode = bound ? 'excel' : null, presentationMode = null, acknowledge, rejectMode
+  let documentMode = bound ? 'excel' : null, presentationMode = null, selectedPptTemplateId = null, acknowledge, rejectMode
   const pending = new Promise((yes, no) => { acknowledge = yes; rejectMode = no })
   const connection = { rpc: { async call(route, endpoint, payload) {
     if (route === '/api') {
       if (payload.endpoint === 'mode') { documentMode = payload.mode; presentationMode = null }
-      return { ok: true, value: { mode: documentMode, presentationMode, selectedTemplateId: null, templates: office } }
+      if (payload.endpoint === 'case-mode') {
+        documentMode = null
+        presentationMode = payload.caseId === 'ppt-case' ? 'ppt' : null
+        selectedPptTemplateId = presentationMode === 'ppt' ? ppt[0].id : null
+      }
+      return { ok: true, value: { mode: documentMode, presentationMode, selectedPptTemplateId, selectedTemplateId: null, templates: office } }
     }
     if (endpoint === 'template/catalog' && ++catalogueRequests > 1) await cataloguePending
     if (endpoint === 'presentation/mode') {
@@ -38,13 +43,13 @@ async function fixture(bound = true) {
       presentationMode = payload.mode; documentMode = null
       await pending
     }
-    return { ok: true, value: { status: 'ok', data: { templates: ppt, presentationMode, documentMode, selectedTemplateId: null } } }
+    return { ok: true, value: { status: 'ok', data: { templates: ppt, presentationMode, documentMode, selectedTemplateId: selectedPptTemplateId } } }
   } } }
   const ctx = {
     get: () => connection,
     effect(run) { disposers.push(run()) }, on() {},
     locale: { register(ns, values) { dictionaries.set(ns, values); return () => {} } },
-    slots: { inject(_seat, run) { run() }, register(meta, component) { seats.push({ meta, component, props: meta.inject(sessionId) }) } }
+    slots: { registerFactory() {}, inject(_seat, run) { run() }, register(meta, component) { seats.push({ meta, component, props: meta.inject(sessionId) }) } }
   }
   for (const source of [officeSource, pptSource]) {
     let plugin
@@ -62,6 +67,7 @@ async function fixture(bound = true) {
   const history = []; disposers.push(officeStore.subscribe(sessionId, () => history.push(officeStore.snapshot(sessionId).mode)))
   return {
     history,
+    async selectCase(caseId) { await act(async () => expect(await officeStore.mutate(sessionId, 'case-mode', { caseId })).toBe(true)) },
     async click(label) { await act(async () => [...container.querySelectorAll('button')].find(b => b.textContent === label).click()) },
     async finish(error) { await act(async () => error ? rejectMode(new Error(error)) : acknowledge()) },
     panels() { return { office: container.querySelector('[data-office-dock]')?.dataset.officeDock ?? null, ppt: !!container.querySelector('[data-office-ppt-template-panel]') } }
@@ -109,6 +115,18 @@ it('keeps the PPT panel when Office reports an empty mode and clears it for Word
   expect(f.panels()).toEqual({ office: null, ppt: true })
   await act(async () => window.dispatchEvent(new CustomEvent('dsh-office-mode-change', { detail: { origin: 'office', mode: 'word', sessionId: 'session-a' } })))
   expect(f.panels()).toEqual({ office: null, ppt: false })
+})
+
+it('syncs confirmed PPT and normal case selections with the native PPT controls', async () => {
+  const f = await fixture()
+  const pressed = () => container.querySelector('button[data-desktop-ppt]').getAttribute('aria-pressed')
+  expect(pressed()).toBe('false')
+  await f.selectCase('ppt-case')
+  expect(pressed()).toBe('true')
+  expect(f.panels()).toEqual({ office: null, ppt: true })
+  await f.selectCase('normal-case')
+  expect(pressed()).toBe('false')
+  expect(f.panels()).toEqual({ office: 'normal', ppt: false })
 })
 
 it('keeps preloaded PPT examples when switching from unbound Excel', async () => {

@@ -1,4 +1,7 @@
+import { confirmCloudEffect, assertCloudRendererRequest } from './enterprise/cloud-confirmation'
 import { EnterpriseChatView } from './enterprise/chat-view'
+import { CloudWorkbenchView } from './enterprise/cloud-workbench-view'
+import type { CloudLaunch } from './enterprise/cloud-workbench'
 import { desktopFileUrl, navigateDesktopWindow } from './desktop-navigation'
 import { recoverStartupConfiguration } from './startup-config-recovery'
 import { initializeDesktopService, desktopDiagnostics } from './desktop-service'
@@ -73,7 +76,10 @@ import {
   type ProfileCompatibilityIssue
 } from './state/profile-compatibility'
 import { ensureStoreDirPinned, inspectStoreConsistency } from './state/profile-store'
+import { hostname } from 'node:os'
 import { cookiePair, LanMobileBridge } from './mobile/lan-mobile-bridge'
+import { startMobileAccessClient, type MobileAccessClient } from './mobile/mobile-access-client'
+import { createFileMobileAccessStore, mobileAccessStorePath } from './mobile/mobile-access-store'
 import { createFilePairingPinStore, pairingPinStorePath } from './mobile/pairing-pin-store'
 import {
   detectPluginRecovery,
@@ -171,6 +177,7 @@ import {
   startUpdateManager,
   stopUpdateManager
 } from './update/update-manager'
+import { attachUpdateCardWindowIfEnabled, enableUpdateCardView } from './update/update-card-view'
 import type { RuntimeSnapshot } from '../shared/contracts'
 import { resolveShellLocale } from './application-locale'
 import { darwinApplicationMenuRoles } from './darwin-application-menu'
@@ -238,6 +245,7 @@ let mainWindow: BrowserWindow | undefined
 let mobileWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let runtime: HarnessRuntime
+const cloudWorkbenchView = new CloudWorkbenchView()
 let enterpriseDesktop: EnterpriseDesktopRuntime | undefined
 let enterpriseChat: EnterpriseChatView | undefined
 let localWorkbenchCapability: string | undefined
@@ -252,6 +260,7 @@ async function liveThirdPartyPluginsAllowed(): Promise<boolean> {
 let desktopStorageManager: DesktopStorageManager | undefined
 let windowStateManager: WindowStateManager | undefined
 let mobileBridge: LanMobileBridge
+let mobileAccess: MobileAccessClient | undefined
 let repairAgentService: RepairAgentService | undefined
 /** A repair prompt from the Recovery page, started by the Safe Mode page load. */
 let pendingRepairPrompt: string | undefined
@@ -1084,12 +1093,14 @@ function createWindow(): BrowserWindow {
   installContextMenu(window, harnessLocale)
   installMainWindowRendererRecovery(window)
   window.on('closed', () => {
+    cloudWorkbenchView.close()
     if (mainWindow === window) mainWindow = undefined
     resolvePluginRecoveryAction('quit')
     resolveWebImportAction('skip')
     resolveSafeModeAction({ type: 'quit' })
   })
   mainWindow = window
+  attachUpdateCardWindowIfEnabled(window)
   return window
 }
 
@@ -1689,6 +1700,36 @@ async function uninstallMarketAndRestart(): Promise<{ ok: boolean }> {
 function registerHarnessHandlers(): void {
   const disposeNotifications = registerDesktopNotificationBridge(() => mainWindow, desktopIconPath, harnessLocale)
   app.once('will-quit', disposeNotifications)
+  for (const channel of ['enterprise-cloud:request', 'enterprise-cloud:open', 'enterprise-cloud:bounds', 'enterprise-cloud:close', 'enterprise-cloud:release']) ipcMain.removeHandler(channel)
+  const checkCloudHost = (event: IpcMainInvokeEvent) => {
+    assertTrustedMainWindowEvent(event)
+    if (!sameHarnessOrigin(event.sender.getURL(), runtime.snapshot().url)) throw new Error('Trusted workbench host required.')
+    if (!enterpriseDesktop) throw new Error('Enterprise connection unavailable.')
+    return enterpriseDesktop
+  }
+  ipcMain.handle('enterprise-cloud:request', async (event, input: unknown) => {
+    const enterprise = checkCloudHost(event)
+    assertCloudRendererRequest(input)
+    return enterprise.cloudRequest(input)
+  })
+  ipcMain.handle('enterprise-cloud:open', async (event, appId: unknown, bounds: unknown, connectionKey: unknown, owner: unknown) => {
+    const enterprise = checkCloudHost(event)
+    if (typeof owner !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(owner) || connectionKey !== enterprise.snapshot().connectionKey) throw new Error('Enterprise account changed.')
+    const launch = await enterprise.cloudRequest({ operation: 'launch', appId }) as CloudLaunch
+    if (launch.connectionKey !== connectionKey) throw new Error('Enterprise account changed.')
+    if (!mainWindow) throw new Error('Workbench window closed.')
+    await cloudWorkbenchView.open(mainWindow, launch, bounds, owner, () => enterpriseDesktop?.snapshot().connected ? enterpriseDesktop.snapshot().connectionKey : undefined,
+      async appId => await enterprise.cloudRequest({ operation: 'launch', appId }) as CloudLaunch)
+    return { appId: launch.appId }
+  })
+  ipcMain.handle('enterprise-cloud:release', async (event, appId: unknown, connectionKey: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    if (!sameHarnessOrigin(event.sender.getURL(), runtime.snapshot().url) || typeof appId !== 'string' || !/^[a-f0-9]{32}$/.test(appId) || typeof connectionKey !== 'string' || !/^[a-f0-9]{16}$/.test(connectionKey)) throw new Error('Invalid cloud application identity.')
+    await cloudWorkbenchView.release(appId, connectionKey)
+  })
+  ipcMain.handle('enterprise-cloud:bounds', (event, bounds: unknown, owner: unknown) => { checkCloudHost(event); cloudWorkbenchView.resizeFor(owner, bounds) })
+  ipcMain.handle('enterprise-cloud:close', (event, owner: unknown) => { assertTrustedMainWindowEvent(event); cloudWorkbenchView.closeFor(owner) })
+
   ipcMain.removeAllListeners('dsh:storage-load-sync')
   ipcMain.on('dsh:storage-load-sync', (event) => {
     event.returnValue = desktopStorageManager?.getAll() ?? {}
@@ -1701,14 +1742,40 @@ function registerHarnessHandlers(): void {
     }
   })
 
-  for (const channel of ['enterprise-chat:present', 'enterprise-chat:state', 'enterprise-chat:retry', 'enterprise-chat:usage', 'enterprise-chat:history', 'enterprise-chat:open', 'enterprise-chat:remove', 'enterprise-chat:open-page', 'enterprise-chat:focus-settings']) ipcMain.removeHandler(channel)
+  for (const channel of ['enterprise-chat:present', 'enterprise-chat:capture', 'enterprise-chat:landing-geometry', 'enterprise-chat:landing-text-motion', 'enterprise-chat:state', 'enterprise-chat:retry', 'enterprise-chat:usage', 'enterprise-chat:history', 'enterprise-chat:open', 'enterprise-chat:remove', 'enterprise-chat:rename', 'enterprise-chat:open-page', 'enterprise-chat:focus-settings', 'enterprise-chat:projects-state', 'enterprise-chat:project-action', 'enterprise-chat:project-conversations']) ipcMain.removeHandler(channel)
+  ipcMain.handle('enterprise-chat:projects-state', (event) => {
+    assertTrustedMainWindowEvent(event)
+    return enterpriseChat?.projectsState()
+  })
+  ipcMain.handle('enterprise-chat:project-action', (event, action: unknown, epoch: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    if (!enterpriseChat) throw new Error('Project sync unavailable.')
+    return enterpriseChat.projectAction(action, epoch)
+  })
+  ipcMain.handle('enterprise-chat:project-conversations', (event, page: unknown, epoch: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    if (!enterpriseChat) throw new Error('Project sync unavailable.')
+    return enterpriseChat.projectConversations(page, epoch)
+  })
+  ipcMain.handle('enterprise-chat:capture', (event) => {
+    assertTrustedMainWindowEvent(event)
+    return enterpriseChat?.capture(mainWindow!)
+  })
+  ipcMain.handle('enterprise-chat:landing-geometry', (event) => {
+    assertTrustedMainWindowEvent(event)
+    return mainWindow && enterpriseChat?.landingGeometry(mainWindow)
+  })
+  ipcMain.handle('enterprise-chat:landing-text-motion', (event, phase: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    return mainWindow && enterpriseChat?.landingTextMotion(mainWindow, phase)
+  })
   ipcMain.handle('enterprise-chat:focus-settings', (event) => {
     assertTrustedMainWindowEvent(event)
     enterpriseChat?.focusSettings()
   })
   ipcMain.handle('enterprise-chat:present', (event, presentation: unknown) => {
     assertTrustedMainWindowEvent(event)
-    return enterpriseChat?.present(mainWindow!, presentation) ?? { phase: 'idle', connected: false }
+    return enterpriseChat?.presentWithLandingHandoff(mainWindow!, presentation) ?? { phase: 'idle', connected: false }
   })
   ipcMain.handle('enterprise-chat:state', (event) => {
     assertTrustedMainWindowEvent(event)
@@ -1731,14 +1798,19 @@ function registerHarnessHandlers(): void {
     assertTrustedMainWindowEvent(event)
     return enterpriseChat?.openPage(id)
   })
-  ipcMain.handle('enterprise-chat:open', (event, id: unknown) => {
+  ipcMain.handle('enterprise-chat:open', (event, id: unknown, projectId: unknown) => {
     assertTrustedMainWindowEvent(event)
-    return enterpriseChat?.open(id)
+    return enterpriseChat?.open(id, projectId)
   })
   ipcMain.handle('enterprise-chat:remove', (event, id: unknown, epoch: unknown) => {
     assertTrustedMainWindowEvent(event)
     if (!enterpriseChat) throw new Error('Enterprise Chat unavailable.')
     return enterpriseChat.remove(id, epoch)
+  })
+  ipcMain.handle('enterprise-chat:rename', (event, id: unknown, name: unknown, epoch: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    if (!enterpriseChat) throw new Error('Enterprise Chat unavailable.')
+    return enterpriseChat.rename(id, name, epoch)
   })
   ipcMain.removeHandler('harness:restart')
   ipcMain.handle('harness:restart', async (event) => {
@@ -1987,6 +2059,7 @@ async function executeDesktopMenuCommand(command: DesktopMenuCommand): Promise<n
       break
   }
 
+  if (isZoomMenuCommand(command)) enterpriseChat?.syncZoom(window)
   return isZoomMenuCommand(command) ? contents.getZoomFactor() : undefined
 }
 
@@ -3316,9 +3389,10 @@ function installMenu(): void {
         { role: 'reload' },
         { role: 'toggleDevTools' },
         { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
+        // Native zoom roles target only one webContents, not embedded native views.
+        { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => void executeDesktopMenuCommand('zoom-reset').catch(showUnexpectedError) },
+        { label: 'Zoom In', accelerator: 'CmdOrCtrl+Plus', click: () => void executeDesktopMenuCommand('zoom-in').catch(showUnexpectedError) },
+        { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => void executeDesktopMenuCommand('zoom-out').catch(showUnexpectedError) },
         { type: 'separator' },
         { role: 'togglefullscreen' }
       ]
@@ -3468,6 +3542,7 @@ async function bootstrap(): Promise<void> {
   })
   try {
     enterpriseDesktop = await startEnterpriseDesktop({
+      confirmCloudEffect: effect => confirmCloudEffect(effect, mainWindow, harnessLocale() === 'zh'),
       desktopVersion: app.getVersion(),
       activateDesktop: async () => {
         const snapshot = runtime.snapshot()
@@ -3497,17 +3572,29 @@ async function bootstrap(): Promise<void> {
       dark: dshBrandLogoPath('dark')
     },
     appIconPath: desktopIconPath(),
-    cloudflaredCacheDir: join(app.getPath('userData'), 'bin'),
-    forceCloudflareFailure: process.env.DSH_TUNNEL_FORCE_PINGGY === '1',
-    tunnelLog: (message) => console.warn(message),
     port: mobileBridgePort(developmentBuild),
     onReconnectRequested: () => {
       void showMobilePairing().catch(showUnexpectedError)
     },
     onConnectedChange: (connected) => broadcastMobileStatus(connected),
-    pairingPinStore: createFilePairingPinStore(pairingPinStorePath(app.getPath('userData')))
+    pairingPinStore: createFilePairingPinStore(pairingPinStorePath(app.getPath('userData'))),
+    currentAccount: () => {
+      const account = enterpriseDesktop?.readMobileAccessAccount()
+      return { userId: account?.userId, tenantId: account?.tenantId }
+    }
   })
   if (!startInSafeMode) void mobileBridge.start().catch(showUnexpectedError)
+  mobileAccess = startMobileAccessClient({
+    account: () => enterpriseDesktop?.readMobileAccessAccount() ?? {},
+    subscribeAccount: listener => enterpriseDesktop?.subscribeMobileAccessAccount(listener) ?? (() => {}),
+    bridge: {
+      port: () => mobileBridge.listeningPort(),
+      channelToken: () => mobileBridge.remoteChannelToken()
+    },
+    store: createFileMobileAccessStore(mobileAccessStorePath(app.getPath('userData'))),
+    displayName: () => hostname(),
+    note: (message) => runtime.note(message)
+  })
   repairAgentService = new RepairAgentService({
     harnessUrl: () => runtime.snapshot().url,
     harnessAuthToken: () => runtime.snapshot().authToken,
@@ -3795,7 +3882,7 @@ async function bootstrap(): Promise<void> {
   if (!developmentBuild) {
     startUpdateManager({
       prepareToInstall: async () => {
-        await Promise.all([runtime.stop(), enterpriseDesktop?.stop()])
+        await Promise.all([runtime.stop(), mobileAccess?.stop(), enterpriseDesktop?.stop()])
         const dshHome = join(app.getPath('userData'), 'harness')
         await quarantineInstalledLaunchAgentsForUpdate(dshHome)
         quitting = true
@@ -3805,6 +3892,7 @@ async function bootstrap(): Promise<void> {
         stopUpdateManager()
       }
     })
+    if (mainWindow && !mainWindow.isDestroyed()) enableUpdateCardView(mainWindow)
   }
 }
 
@@ -3893,7 +3981,7 @@ if (isDaemonLaunch(process.env, process.platform)) {
       tray = undefined
       repairAgentService?.dispose()
       repairAgentService = undefined
-      void Promise.all([runtime.stop(), mobileBridge?.stop(), enterpriseDesktop?.stop()]).finally(() => app.quit())
+      void Promise.all([runtime.stop(), mobileAccess?.stop(), mobileBridge?.stop(), enterpriseDesktop?.stop()]).finally(() => app.quit())
     })
   }
 }

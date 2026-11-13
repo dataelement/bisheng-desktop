@@ -4,12 +4,14 @@ import { createContentSafetyLocaleScope } from './content-safety-locale.js'
 import { applyEnterpriseSkills } from './work-skills.js'
 import { applyWorkResources } from './work-resources.js'
 import { applyWorkCapabilities } from './work-capabilities.js'
+import { applyEnterpriseSearchPolicy } from './search-policy.js'
 import { requestImageDimensions } from '@deepseek-ai/dsh-attachment'
 import { applyEnterpriseMarket } from './market.js'
 import { applyEnterpriseWorkbenchMarket } from './workbench-market.js'
 import { applyEnterpriseAuth, createEnterpriseAuthTransport } from './enterprise-auth.js'
 import { parseThirdPartyPolicy } from './contract.js'
 import { createAuditTitleSync } from './audit-title.js'
+import { createAuditFeedbackSync } from './audit-feedback.js'
 import {
   isInsecurePrivateHttpOrigin,
   normalizeEnterpriseServerUrl,
@@ -25,6 +27,7 @@ export const BISHENG_PROVIDER_ROUTE = 'bisheng-enterprise'
 
 const LOCAL_PATHS = Object.freeze({
   state: '/api/enterprise.state',
+  refreshProfile: '/api/enterprise.profile.refresh',
   inspectBase: '/api/enterprise.base.inspect',
   start: '/api/enterprise.login.start',
   manual: '/api/enterprise.login.manual',
@@ -191,6 +194,7 @@ async function requestBrokerJson(broker, path, body, signal) {
 }
 
 export function apply(ctx) {
+  if (typeof ctx.inject === 'function') ctx.inject(['loader'], applyEnterpriseSearchPolicy)
   const broker = brokerConfig()
   const brokerJson = (path, body, signal) => requestBrokerJson(broker, path, body, signal)
   const connection = Reflect.get(ctx, 'connection')
@@ -219,6 +223,9 @@ export function apply(ctx) {
     }
     if ((!state.connected && account.connected) || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
     account = state
+    // A connected snapshot can arrive before the tool plugin exists. Keep asking
+    // until that plugin is ready; sync itself does nothing once the catalog is warm.
+    if (state.connected) void workCapabilities?.sync?.()?.catch(error => console.warn('[enterprise] tool catalog warmup failed', error))
     if (!state.connected) capabilityPolicy?.reset()
     else void capabilityPolicy?.refresh(state.connectionKey).catch(() => undefined)
     ingestEnterpriseState(state)
@@ -244,6 +251,7 @@ export function apply(ctx) {
     request: (body, signal) => brokerJson('/v1/work-resources', body, signal)
   }) })
   if (typeof ctx.inject === 'function') ctx.inject(['skills'], scoped => { workSkills = applyEnterpriseSkills(scoped, {
+    resolveToolName: id => workCapabilities?.resolveToolName(id),
     state: () => account, refreshState: readBrokerState,
     request: async (body, signal) => {
       if (!broker) unavailable()
@@ -295,6 +303,12 @@ export function apply(ctx) {
       body: JSON.stringify({ connectionKey, ticket })
     }).catch(() => undefined)
   }
+  ctx.provide('desktopCloud', {
+    async request(input) {
+      if (!input || input.operation === 'launch') throw new Error('Use the native cloud workbench view.')
+      return brokerJson('/v1/cloud', input)
+    }
+  })
   applyEnterpriseAuth(ctx)
   const grants = new WeakMap()
   const auth = {
@@ -363,6 +377,14 @@ export function apply(ctx) {
     })
   }
   registerJsonRoute(connection, LOCAL_PATHS.state, ['GET'], async () => readBrokerState())
+  registerJsonRoute(connection, LOCAL_PATHS.refreshProfile, ['POST'], async request => {
+    const body = await readJson(request)
+    if (!body || !['account', 'foreground', 'image'].includes(body.reason) || Object.keys(body).some(key => key !== 'reason')) {
+      throw Object.assign(new Error('Invalid profile refresh reason.'), { status: 400 })
+    }
+    await brokerJson('/v1/profile/refresh', { reason: body.reason })
+    return readBrokerState()
+  })
   registerJsonRoute(connection, LOCAL_PATHS.inspectBase, ['POST'], async (request) => {
     const body = await readJson(request)
     return inspectedBase(normalizeEnterpriseServerUrl(String(body?.base ?? ''), inspectUrlOptions()))
@@ -384,6 +406,7 @@ export function apply(ctx) {
     }
     if ((!state.connected && account.connected) || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
     account = state
+    if (state.connected) void workCapabilities?.sync?.()?.catch(error => console.warn('[enterprise] tool catalog warmup failed', error))
     ingestEnterpriseState(state)
     if (state.connected) await capabilityPolicy?.refresh(state.connectionKey).catch(() => undefined)
     return { ...state, ...thirdPartyFlags() }
@@ -476,6 +499,22 @@ function startEnterpriseLlm(ctx, llm, broker) {
   let registration
   let timer
   let stopped = false
+  let stateRead
+  const readEnterpriseState = () => {
+    // One shared read serves every 409. A second failure must not start its own poll loop.
+    if (stateRead) return stateRead
+    stateRead = (async () => {
+      try {
+        if (stopped) return
+        ingest(broker ? await requestBrokerJson(broker, '/v1/state') : disabledState())
+      } catch {
+        // The pending rating keeps its original lifetime until a later snapshot or its deadline.
+      } finally {
+        stateRead = undefined
+      }
+    })()
+    return stateRead
+  }
   const titles = createAuditTitleSync({
     ctx,
     async send(body, signal) {
@@ -493,12 +532,31 @@ function startEnterpriseLlm(ctx, llm, broker) {
     },
     note: (reason, details) => console.warn('[enterprise-audit-title]', JSON.stringify({ reason, ...details }))
   })
+  const feedback = createAuditFeedbackSync({
+    ctx,
+    async send(body, signal) {
+      if (!broker) throw new Error('Enterprise broker unavailable.')
+      const response = await fetch(new URL('/v1/audit/message-feedback', broker.origin), {
+        method: 'POST', redirect: 'error', signal,
+        headers: { authorization: `Bearer ${broker.capability}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+      if (!response.ok) {
+        await response.body?.cancel()
+        throw Object.assign(new Error('Audit feedback synchronization failed.'), { status: response.status })
+      }
+      return response.json()
+    },
+    note: (reason, details) => console.warn('[enterprise-audit-feedback]', JSON.stringify({ reason, ...details })),
+    reread: () => readEnterpriseState()
+  })
   const adapter = new EnterpriseLlmAdapter({
     providerName: () => latest.tenant?.name || latest.user?.display_name || 'BiSheng Enterprise',
     models: () => modelsAvailable ? models : [],
     auditFields: () => latest.connected ? latest.audit_context?.fields ?? [] : [],
     resolveAuditSession: (id) => {
       titles.track(id)
+      feedback.track(id)
       try {
         const header = ctx.get?.('sessions')?.get(id)?.header
         if (!header || header.id !== id) return undefined
@@ -523,6 +581,7 @@ function startEnterpriseLlm(ctx, llm, broker) {
   const ingest = (state) => {
     latest = state
     titles.ingest(state)
+    feedback.ingest(state)
     if (state.revision === revision) return
     const nextRevision = Number.isSafeInteger(state.revision) ? state.revision : revision
     models = Array.isArray(state.models) ? state.models : []
@@ -567,6 +626,7 @@ function startEnterpriseLlm(ctx, llm, broker) {
       safetyLocaleScope.dispose()
       safetyLocale.disable()
       titles.dispose()
+      feedback.dispose()
       if (timer) clearTimeout(timer)
       registration?.()
     }

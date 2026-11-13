@@ -234,6 +234,8 @@ describe('structured startup failures through the real bundled loader', () => {
       dshSafePatchPath: entry,
       dshHome: home,
       logPath: join(home, 'runtime.log'),
+      // Concurrent subprocess fixtures must not race for the Desktop's stable port.
+      preferredPort: 0,
       startupTimeoutMs: 5_000,
       launchProcess: (executable, args, options) => spawn(executable, args, options),
       onChanged() {}

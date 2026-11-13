@@ -744,22 +744,60 @@ window.__ModuleLoader__.load({
       }
     }
 
+    let accountActionEpoch = 0
+    const actionOwner = {}
+    const observeAction = event => {
+      if (event.detail?.actionStarted && event.detail.source !== actionOwner) accountActionEpoch++
+    }
+    const staleAccountAction = () => Object.assign(new Error('Account action superseded.'), { staleAccountAction: true })
     async function api(path, body, signal) {
-      const response = await fetch(path, {
-        method: body === undefined ? 'GET' : 'POST',
-        credentials: 'same-origin',
-        signal,
-        headers: body === undefined ? {} : { 'content-type': 'application/json' },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) })
-      })
-      const payload = await response.json().catch(() => ({}))
-      if (!response.ok || payload.ok === false) {
-        const failure = new Error(payload.error || `Request failed (${response.status})`)
-        if (typeof payload.errorCode === 'string' && payload.errorCode) failure.errorCode = payload.errorCode
-        throw failure
+      const authorization = path === '/api/enterprise.login.start' || path === '/api/enterprise.deep-link.confirm'
+      const mutation = authorization || ['/api/enterprise.logout', '/api/enterprise.refresh', '/api/enterprise.login.manual'].includes(path)
+      if (mutation) { accountActionEpoch++; window.dispatchEvent(new CustomEvent(ACCOUNT_CHANGED_EVENT, { detail: { actionStarted: true, source: actionOwner } })) }
+      const actionEpoch = accountActionEpoch
+      try {
+        const response = await fetch(path, {
+          method: body === undefined ? 'GET' : 'POST',
+          credentials: 'same-origin',
+          signal,
+          headers: body === undefined ? {} : { 'content-type': 'application/json' },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) })
+        })
+        const payload = await response.json().catch(() => ({}))
+        if (!response.ok || payload.ok === false) {
+          if (mutation && actionEpoch !== accountActionEpoch) throw staleAccountAction()
+          const failure = new Error(payload.error || `Request failed (${response.status})`)
+          if (typeof payload.errorCode === 'string' && payload.errorCode) failure.errorCode = payload.errorCode
+          throw failure
+        }
+        if (mutation) {
+          if (signal?.aborted || actionEpoch !== accountActionEpoch) throw staleAccountAction()
+          // Authorization has its own success contract. Notify readers independently;
+          // a failed display-state read must never discard a usable login URL.
+          if (authorization) {
+            window.dispatchEvent(new CustomEvent(ACCOUNT_CHANGED_EVENT))
+            return payload
+          }
+          let latest
+          try {
+            latest = await api('/api/enterprise.state', undefined, signal)
+          } catch (cause) {
+            if (signal?.aborted || actionEpoch !== accountActionEpoch) throw staleAccountAction()
+            // A confirmed sign-out must clear the identity even if its display read fails.
+            // Connected refresh/manual snapshots are not safe substitutes for a fresh read.
+            if (path !== '/api/enterprise.logout' || payload.connected !== false) throw cause
+            latest = payload
+          }
+          if (signal?.aborted || actionEpoch !== accountActionEpoch) throw staleAccountAction()
+          window.dispatchEvent(new CustomEvent(ACCOUNT_CHANGED_EVENT))
+          // Prefer authoritative current state; only confirmed logout has a safe fallback.
+          if (typeof payload.connected === 'boolean') return latest
+        }
+        return payload
+      } catch (cause) {
+        if (mutation && actionEpoch !== accountActionEpoch) throw staleAccountAction()
+        throw cause
       }
-      if (!path.startsWith('/api/enterprise.market.') && path !== '/api/enterprise.models.refresh') window.dispatchEvent(new CustomEvent(ACCOUNT_CHANGED_EVENT))
-      return payload
     }
 
     function usageText(usage, language, t) {
@@ -941,6 +979,14 @@ window.__ModuleLoader__.load({
             vision) : null))
     }
 
+    function EnterpriseAvatar({ name, src, attempt, onImageError }) {
+      const [failed, setFailed] = useState(null)
+      useEffect(() => setFailed(null), [src, attempt])
+      return h('span', { className: 'dshEnterpriseAvatar', 'aria-hidden': 'true' }, src && failed !== src
+        ? h('img', { key: `${src}:${attempt}`, src, alt: '', referrerPolicy: 'no-referrer', style: { width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }, onError: () => { setFailed(src); onImageError(src) } })
+        : Array.from(String(name)).slice(0, 2).join('').toLocaleUpperCase())
+    }
+
     function EnterpriseSection({ t, renderSlot }) {
       const [state, setState] = useState(null)
       const [base, setBase] = useState(readLastBase)
@@ -951,6 +997,8 @@ window.__ModuleLoader__.load({
       const [errorCode, setErrorCode] = useState('')
       const [confirmation, setConfirmation] = useState(null)
       const stateRef = useRef(null)
+      const lifetime = useRef({ alive: true, revision: 0, failure: null })
+      const [imageAttempt, setImageAttempt] = useState(0)
       const clearFailure = () => {
         setError('')
         setErrorCode('')
@@ -961,20 +1009,59 @@ window.__ModuleLoader__.load({
         setErrorCode(failure.code)
       }
       const applyAccountState = useCallback((next) => {
+        if (!next || (Number.isFinite(next.revision) && Number.isFinite(stateRef.current?.revision) && next.revision < stateRef.current.revision)) return
+        const key = `${next.connectionKey || next.base || ''}:${next.user?.id || ''}:${next.connected}`
+        if (lifetime.current.identity !== key || lifetime.current.avatar !== next.user?.avatar) lifetime.current.failure = null
+        lifetime.current.identity = key
+        lifetime.current.avatar = next.user?.avatar
         stateRef.current = next
         setState(next)
         if (next?.connected === true) setConfirmation(null)
       }, [])
 
-      const refreshState = useCallback(async () => {
-        const next = await api('/api/enterprise.state')
-        applyAccountState(next)
-        if (next.base) {
-          setBase(next.base)
-          rememberBase(next.base)
+      const refreshState = useCallback(async (reason, retryImage = false) => {
+        const current = lifetime.current
+        // Background local reads must not cancel the higher-priority profile operation.
+        if (current.profile) {
+          current.readAfterProfile = true
+          current.retryAfterProfile ||= retryImage || reason === 'account' || reason === 'foreground'
+          return current.profile
         }
-        return next
+        current.request?.abort()
+        const request = new AbortController(), revision = ++current.revision
+        current.request = request
+        const task = (async () => {
+          try {
+            const next = await api(reason ? '/api/enterprise.profile.refresh' : '/api/enterprise.state', reason ? { reason } : undefined, request.signal)
+            if (!current.alive || request.signal.aborted || revision !== current.revision) return
+            applyAccountState(next)
+            const retry = retryImage || current.retryAfterProfile || reason === 'account' || reason === 'foreground'
+            current.retryAfterProfile = false
+            if (retry) { current.failure = null; setImageAttempt(value => value + 1) }
+            if (reason) window.dispatchEvent(new CustomEvent(ACCOUNT_CHANGED_EVENT, { detail: { source: current, retryImage: retry } }))
+            if (next.base) { setBase(next.base); rememberBase(next.base) }
+            return next
+          } catch (cause) {
+            if (!current.alive || request.signal.aborted || revision !== current.revision) return
+            throw cause
+          }
+        })()
+        if (reason) current.profile = task
+        try { return await task } finally {
+          if (current.profile === task) {
+            current.profile = null
+            if (current.readAfterProfile && current.alive) { const retry = current.retryAfterProfile; current.readAfterProfile = false; current.retryAfterProfile = false; void refreshState(undefined, retry).catch(() => {}) }
+          }
+        }
       }, [applyAccountState])
+
+      const imageFailed = src => {
+        const current = lifetime.current
+        if (current.failure?.src === src && Date.now() - current.failure.at < 60_000) return
+        current.failure = { src, at: Date.now() }
+        // Image-triggered success does not reset the failed image: only an explicit retry can remount it.
+        void refreshState('image').catch(() => { /* Keep fallback until the next user/foreground event. */ })
+      }
 
       const inspectDeepLink = useCallback(async (url) => {
         setBusy(true)
@@ -991,24 +1078,42 @@ window.__ModuleLoader__.load({
           ) return
           setConfirmation(inspected)
         } catch (cause) {
-          showFailure(cause)
+          if (lifetime.current.alive && !cause?.staleAccountAction) showFailure(cause)
         } finally {
-          setBusy(false)
+          if (lifetime.current.alive) setBusy(false)
         }
       }, [])
 
       useEffect(() => {
-        refreshState().catch((cause) => {
-          showFailure(cause)
+        const current = lifetime.current
+        current.alive = true
+        window.addEventListener(ACCOUNT_CHANGED_EVENT, observeAction)
+        const changed = event => {
+          if (event.detail?.source === current) return
+          if (event.detail?.actionStarted || event.detail?.identityChanged) {
+            current.request?.abort(); current.revision++; current.profile = null
+            if (event.detail?.actionStarted) return
+          }
+          // Events invalidate; their response snapshots are never authoritative.
+          void refreshState(undefined, event.detail?.retryImage === true).catch(() => {})
+        }
+        window.addEventListener(ACCOUNT_CHANGED_EVENT, changed)
+        refreshState('account').catch(() => {
+          // Profile freshness is best effort; a local read keeps sign-in usable offline.
+          if (current.alive) void refreshState().catch(cause => { if (current.alive) showFailure(cause) })
         })
         const bridge = window.dshDesktopEnterprise
-        if (!bridge?.onLoginLink) return undefined
-        return bridge.onLoginLink((url) => {
+        const unsubscribe = bridge?.onLoginLink?.((url) => {
           openEnterpriseSettingsSection()
           bridge.consumeLoginLink?.()
           void inspectDeepLink(url)
         })
-      }, [inspectDeepLink, refreshState])
+        return () => {
+          current.alive = false; current.revision++; accountActionEpoch++; current.request?.abort()
+          unsubscribe?.(); window.removeEventListener(ACCOUNT_CHANGED_EVENT, changed)
+          window.removeEventListener(ACCOUNT_CHANGED_EVENT, observeAction)
+        }
+      }, [inspectDeepLink, refreshState, applyAccountState])
 
       useEffect(() => {
         setManualFallbackReady(false)
@@ -1037,7 +1142,7 @@ window.__ModuleLoader__.load({
         try {
           await operation()
         } catch (cause) {
-          showFailure(cause)
+          if (!cause?.staleAccountAction) showFailure(cause)
         } finally {
           setBusy(false)
         }
@@ -1063,7 +1168,7 @@ window.__ModuleLoader__.load({
       }, t('logout'))
       const status = connected
         ? h('div', { className: 'dshEnterpriseIdentity' },
-          h('span', { className: 'dshEnterpriseAvatar', 'aria-hidden': 'true' }, String(userLabel).slice(0, 2).toLocaleUpperCase()),
+          h(EnterpriseAvatar, { name: userLabel, src: state?.user?.avatar, attempt: imageAttempt, onImageError: imageFailed }),
           h('div', { className: 'dshEnterpriseAccount' },
             h('strong', null, userLabel),
             h('span', { className: 'dshEnterpriseAccountLabel' }, state?.user?.username || t('accountLabel'))))

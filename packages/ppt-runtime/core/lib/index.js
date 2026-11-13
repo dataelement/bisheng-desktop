@@ -802,6 +802,21 @@ var PptService = class {
                 summary: mode === null ? '已进入普通对话' : `已进入 ${mode} 模式`, facts: { mode } };
         });
     }
+    selectCaseMode(sessionId, mode, template, keepPresentationTemplate, actor) {
+        if (!['normal', 'word', 'excel', 'ppt'].includes(mode) || (template && template.mode !== mode)) {
+            throw new PptError('invalid-request', 'Choose a compatible Work case format');
+        }
+        // One persisted update prevents a format change from leaving a previous
+        // format's template active, even when users immediately switch again.
+        return this.mutate(sessionId, 'select-work-case-mode', actor, state => {
+            const { presentationMode, selectedTemplateId, templateMigration, documentMode, selectedDocumentTemplate, ...rest } = state;
+            const next = mode === 'ppt'
+                ? { ...rest, presentationMode: 'ppt', ...(keepPresentationTemplate && presentationMode === 'ppt' && selectedTemplateId ? { selectedTemplateId } : {}) }
+                : mode === 'normal' ? rest
+                : { ...rest, documentMode: mode, ...(template ? { selectedDocumentTemplate: template } : {}) };
+            return { state: next, value: true, summary: `已选择工作案例输出模式 ${mode}`, facts: { mode, ...(template ? { templateId: template.id } : {}) } };
+        });
+    }
     selectDocumentTemplate(sessionId, template, actor) {
         if (!template || !['word', 'excel'].includes(template.mode) || typeof template.id !== 'string' || !/^[a-z0-9-]{1,96}$/.test(template.id)
             || typeof template.revision !== 'string' || !/^[a-zA-Z0-9.-]{1,96}$/.test(template.revision)) throw new PptError('invalid-request', 'Choose a versioned Office template');
@@ -3224,6 +3239,7 @@ async function apply(ctx, config) {
     ctx.provide('officeModes', {
         state: sessionId => service.state(sessionId),
         select: (sessionId, mode) => service.selectDocumentMode(sessionId, mode, { kind: 'user' }),
+        selectCaseMode: (sessionId, mode, template, keepPresentationTemplate) => service.selectCaseMode(sessionId, mode, template, keepPresentationTemplate, { kind: 'user' }),
         selectTemplate: (sessionId, template) => service.selectDocumentTemplate(sessionId, template, { kind: 'user' }),
         deselectTemplate: sessionId => service.deselectDocumentTemplate(sessionId, { kind: 'user' }),
         record: (sessionId, operation, facts) => service.mutate(sessionId, operation, { kind: 'agent' }, state => ({ state, value: true, summary: operation, facts }))

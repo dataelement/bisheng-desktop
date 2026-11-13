@@ -11,14 +11,20 @@ const readmes = [
   'README.pt.md'
 ]
 
-const manifest = JSON.parse(readFileSync('package.json', 'utf8')) as { dependencies: Record<string, string> }
+// These READMEs introduce the enterprise product; dependency pins and CLI
+// diagnostics belong in development docs, not every translated landing page.
 const requiredFacts = [
-  `@deepseek-ai/dsh@${manifest.dependencies['@deepseek-ai/dsh']}`,
+  'BISHENG',
+  'Chat',
+  'Work',
+  'https://dshdesktop.com/zh/enterprise/',
+  'https://github.com/dataelement/bisheng',
+  'docs/images/bisheng-platform-overview.png',
   'DOCX',
   'PPTX',
   'XLSX',
-  '--safe-mode',
-  'Cloudflare Quick Tunnel',
+  'harness.log',
+  'Profile',
   'NSIS',
   'docs/development.md',
   'docs/architecture.md'

@@ -16,7 +16,7 @@ import { sendWorkMcp } from '../src/main/enterprise/work-mcp'
 const backend = process.env.BISHENG_WORK_BACKEND_ROOT ? path.resolve(process.env.BISHENG_WORK_BACKEND_ROOT) : undefined
 const python = process.env.BISHENG_WORK_PYTHON
 
-it.runIf(Boolean(backend && python))('runs approved enterprise tool against the Python MCP server', async () => {
+it.runIf(Boolean(backend && python))('runs enterprise tools and search through the Python MCP server with shared policy', async () => {
   const child = spawn(python!, [path.resolve('test/fixtures/work-mcp-backend.py')], {
     cwd: backend, env: { ...process.env, PYTHONPATH: backend }, stdio: ['pipe', 'pipe', 'pipe']
   })
@@ -54,7 +54,7 @@ it.runIf(Boolean(backend && python))('runs approved enterprise tool against the 
     const fork = ctx.plugin({
       inject: ['tools', 'skills'],
       apply(scoped: Context) {
-        api = applyWorkCapabilities({
+        api = applyWorkCapabilities({ connection: { fetch: { register: vi.fn() } },
           tools: scoped.tools, skills: scoped.skills, sessions: { get: (id: string) => id === session.id ? session : undefined },
           on: scoped.on.bind(scoped), effect: scoped.effect.bind(scoped), logger: scoped.logger
         }, {
@@ -69,20 +69,26 @@ it.runIf(Boolean(backend && python))('runs approved enterprise tool against the 
     await api.sync()
     const call = (name: string, args: object, caller = agent) => ctx.tools.execute({ name, arguments: args,
       callId: String(++sequence) as any, signal: new AbortController().signal, agent: caller as any })
-    const result = await call('mcp__bisheng__bisheng_tool_7', { query: 'Example' })
+    const result = await call('mcp__bisheng__customer_query', { query: 'Example' })
     expect(result.isError, JSON.stringify(result)).toBe(false)
     expect(JSON.stringify(result)).toContain('Example company')
-    expect(approval).toHaveBeenCalledOnce()
-    const childResult = await call('mcp__bisheng__bisheng_tool_7', { query: 'Example' }, {
+    expect(approval).not.toHaveBeenCalled()
+    const search = await call('mcp__bisheng__web_search', { query: 'search fixture' })
+    expect(search.isError, JSON.stringify(search)).toBe(false)
+    expect(JSON.stringify(search)).toContain('https://example.com/search')
+    expect(ctx.tools.get('web_search')).toBeUndefined()
+    expect(approval).not.toHaveBeenCalled()
+    const childResult = await call('mcp__bisheng__customer_query', { query: 'Example' }, {
       id: 'child', session: { id: 'child', header: { delegationDepth: 1 } }
     } as any)
     expect(childResult.isError).toBe(true)
-    expect(approval).toHaveBeenCalledOnce()
+    expect(approval).not.toHaveBeenCalled()
     const audits = await exchange({ control: 'audit' })
-    expect(audits.filter((row: any) => row.action === 'call').map((row: any) => row.status)).toEqual(['STARTED', 'SUCCEEDED'])
+    expect(audits.filter((row: any) => row.action === 'call').map((row: any) => row.status)).toEqual(['STARTED', 'SUCCEEDED', 'STARTED', 'SUCCEEDED'])
     expect(audits.every((row: any) => row.actor === 42 && row.tenant === 2)).toBe(true)
     await exchange({ control: 'revoke' })
-    expect((await call('mcp__bisheng__bisheng_tool_7', { query: 'Example' })).isError).toBe(true)
+    expect((await call('mcp__bisheng__customer_query', { query: 'Example' })).isError).toBe(true)
+    expect((await call('mcp__bisheng__web_search', { query: 'search fixture' })).isError).toBe(true)
   } finally {
     for (const fork of forks.reverse()) await fork.dispose()
     reader.close(); child.stdin.end(); child.kill()

@@ -13,8 +13,8 @@ import { applyWorkCapabilities } from '../packages/dsh-desktop-enterprise/work-c
 
 const contexts = []
 afterEach(async () => { for (const ctx of contexts.splice(0)) await ctx.fiber.dispose() })
-const name = 'mcp__bisheng__bisheng_tool_38'
-const tool = { name: 'bisheng_tool_38', description: 'Weather fixture', inputSchema: { type: 'object', properties: {} } }
+const name = 'mcp__bisheng__weather_lookup'
+const tool = { name: 'weather_lookup', description: 'Weather fixture', inputSchema: { type: 'object', properties: {} } }
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 async function fixture() {
   const ctx = new Context()
@@ -92,7 +92,8 @@ it('uses the saved availability in the first actual model request of a new sessi
 it('refreshes immediately after save and waits past a pre-save catalog response', async () => {
   const f = await fixture()
   const hold = f.holdNext()
-  const background = f.api.sync()
+  // A ready account skips sync() until an explicit refresh starts another catalog read.
+  const background = f.api.sync({ force: true })
   await hold.started.promise
   f.setEnabled(false)
   const refreshed = f.refresh()
@@ -122,7 +123,7 @@ it('clears stale registrations on catalog failure and retries on the next reques
 it('discards catalog responses after logout or plugin disposal', async () => {
   for (const action of ['logout', 'dispose']) {
     const f = await fixture(), hold = f.holdNext()
-    const pending = f.api.sync()
+    const pending = f.api.sync({ force: true })
     const rejected = expect(pending).rejects.toThrow()
     await hold.started.promise
     if (action === 'logout') f.logout()

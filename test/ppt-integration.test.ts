@@ -180,7 +180,9 @@ describe('DSH PPT built-in plugin', () => {
       }
       const client = entries.get('package/lib/client.js')!.toString()
       expect(client).not.toContain('data:image/jpeg;base64,')
-      expect(Buffer.byteLength(client)).toBeLessThan(120_000)
+      // Keep a bounded text-only bundle: hydration ownership/revision guards add under 1 KB.
+      // The adapter also owns the welcome-page slot and shared template scrolling.
+      expect(Buffer.byteLength(client)).toBeLessThan(name === 'adapter' ? 123_000 : 121_000)
       const urls = [...client.matchAll(/\/dsh-ppt\/previews\/([a-f0-9]{64})\.jpg/gu)]
       expect(urls).toHaveLength(192)
       for (const url of urls) expect(allowed.has(url[1]!)).toBe(true)
@@ -306,13 +308,18 @@ describe('opening PPT template card', () => {
       kindAt: (key: string) => string | undefined,
       pendingInputs: readonly { requestId?: string; placement?: string }[]
     ) => { leadingUserKey: string | null; leadingPendingId: string | null }
-    const kindAt = (key: string) => ({ a: 'context', b: 'user', c: 'user' })[key]
+    const kindAt = (key: string) => ({ a: 'context', b: 'user', c: 'user', d: 'steering' })[key]
 
     expect(openingUserMessageTarget(true, ['b'], kindAt, [])).toEqual({ leadingUserKey: null, leadingPendingId: null })
     expect(openingUserMessageTarget(false, ['a', 'b', 'c'], kindAt, [{ requestId: 'echo', placement: 'transcript' }])).toEqual({
       leadingUserKey: 'b',
       leadingPendingId: null
     })
+    expect(openingUserMessageTarget(false, ['a', 'd', 'b'], kindAt, [])).toEqual({
+      leadingUserKey: 'd',
+      leadingPendingId: null
+    })
+    expect(chat).toContain('kindAt(key) === "user" || kindAt(key) === "steering"')
     expect(openingUserMessageTarget(false, ['a'], kindAt, [
       { id: 'steer' } as { requestId?: string },
       { requestId: 'echo', placement: 'transcript' }
@@ -337,10 +344,11 @@ describe('opening PPT template card', () => {
 
     expect(types).toMatch(/'conversation\.chat\.userMessageFooter': \{\s*kind: 'list';\s*scope: 'session';/)
     expect(adapter).toContain('name: "conversation.chat.userMessageFooter"')
-    expect(card).toContain('loadTemplateState')
-    expect(card).toContain('applyLoadedTemplates')
+    // Footer hydration must join the same store-owned request as the chooser.
+    expect(card).toContain('mode.loadTemplates')
+    expect(card).not.toContain('loadTemplateState')
+    expect(card).not.toContain('applyLoadedTemplates')
     expect(card).toContain('mode.adopt')
-    expect(adapter).toContain("if (detail.mode !== 'word' && detail.mode !== 'excel') return;")
     expect(card).toContain('showModal()')
     expect(card).toContain('data-ppt-opening-template')
     expect(card).toContain('className: "dsh-ppt-opening-title"')
@@ -352,6 +360,8 @@ describe('opening PPT template card', () => {
     expect(card).not.toContain('template/select')
     expect(card).not.toContain('template/deselect')
     expect(card).not.toContain('session.blank')
+    const accessory = sourceSlice(adapter, 'function OfficePptStandardInputAccessory', 'function DesktopPptIcon')
+    expect(accessory).toContain('props.session.blank !== true')
     expect(adapter).toContain('"opening.preview": "预览模板 {name}"')
     expect(adapter).toContain('"opening.preview": "Preview template {name}"')
     expect(adapter).toContain('"opening.close": "关闭预览"')

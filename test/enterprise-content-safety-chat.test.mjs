@@ -1,8 +1,13 @@
 import { spawnSync } from 'node:child_process'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { EnterpriseLlmAdapter } from '../packages/dsh-desktop-enterprise/openai.js'
 import { CONTENT_SAFETY_ERROR_COPY } from '../packages/dsh-desktop-enterprise/error-copy.js'
+
+// Node exposes the host OS locale via navigator; make fallback expectations portable.
+// Explicit per-request locale formatters below must still override this baseline.
+beforeEach(() => { vi.stubGlobal('navigator', { language: 'en' }) })
+afterEach(() => { vi.unstubAllGlobals() })
 
 // Coverage AC: AC-05, AC-24, AC-29, AC-30, AC-31, AC-32, AC-56.
 const model = {

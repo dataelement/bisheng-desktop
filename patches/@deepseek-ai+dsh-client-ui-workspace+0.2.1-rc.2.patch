@@ -1,5 +1,5 @@
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js b/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js
-index 5cca45b..25d4837 100644
+index 5cca45b..42236ea 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js
 @@ -1096,6 +1096,7 @@ window.__ModuleLoader__.load({
@@ -321,24 +321,15 @@ index 5cca45b..25d4837 100644
  								onReveal: node.id === revealSessionId && group.key === revealGroup ? () => {
  									onSessionRevealed(node.id);
  								} : void 0,
-@@ -3328,6 +3476,16 @@ window.__ModuleLoader__.load({
+@@ -3328,6 +3476,7 @@ window.__ModuleLoader__.load({
  				}, group.key);
  			};
  			const groupRows = rootGroups.map((group) => renderGroup(group, 0));
-+			const recentItems = deriveFlat(list, ungroupedSessionIds, rowState, statuses).map((node) => ({
-+				id: node.id, updatedAt: node.updatedAt, pinned: node.pinned, blank: node.blank,
-+				render: (active) => (0, react_jsx_runtime.jsx)(SessionNodeItem, {
-+					node, currentId: active ? current : void 0, now, onOpen: open,
-+					onRenameRequest: onSessionRenameRequest, renderSlot,
-+					unread: unreadSessionIds.includes(node.id), onUnreadChange,
-+					onReveal: node.id === revealSessionId ? () => onSessionRevealed(node.id) : void 0, t
-+				}, node.id)
-+			}));
 +
  			return (0, react_jsx_runtime.jsxs)(_deepseek_ai_dsh_client_ui_primitives.HoverCardGroup, {
  				className: clsx(WorkspaceBrowser_module_css_default.treeBody, WorkspaceBrowser_module_css_default.wide),
  				children: [
-@@ -3341,18 +3499,20 @@ window.__ModuleLoader__.load({
+@@ -3341,18 +3490,20 @@ window.__ModuleLoader__.load({
  						rowKeys,
  						ready: list.phase === "ready" && workspaceReady && !nativeDragActive,
  						resetKey: JSON.stringify([animationResetKey, watermarkMotionKey]),
@@ -349,8 +340,8 @@ index 5cca45b..25d4837 100644
 -						}), groupRows]
 +						children: renderSlot("sidebar.workspaces.collection", {
 +							mode: "projects", query: "", archivedOnly: rowState.archivedFilter === "only",
-+							projects: (active) => rootGroups.filter((group) => group.workspaceId !== void 0).map((group) => renderGroup(group, 0, active)),
-+							items: recentItems
++							projects: (active) => rootGroups.map((group) => renderGroup(group, 0, active)),
++							items: []
 +						}, { fallback: [groups.length === 0 && (0, react_jsx_runtime.jsx)(EmptySessions, {
 +							rowState, onLeaveArchivedOnly, t
 +						}), groupRows] })
@@ -365,7 +356,7 @@ index 5cca45b..25d4837 100644
  			const panelActive = usePanelInfo((info) => info.activePanelId !== null);
  			const statuses = useSessionStatus((s) => s);
  			const rows = (0, react.useMemo)(() => deriveFlat(list, sessionIds, rowState, statuses), [
-@@ -3381,20 +3541,19 @@ window.__ModuleLoader__.load({
+@@ -3381,20 +3532,19 @@ window.__ModuleLoader__.load({
  					rowKeys: rows.length === 0 ? ["empty"] : rows.map((row) => `session:${row.id}`),
  					ready: list.phase === "ready" && workspaceReady && drag === null,
  					resetKey: animationResetKey,
@@ -393,7 +384,7 @@ index 5cca45b..25d4837 100644
  							onReveal: node.id === revealSessionId ? () => {
  								onSessionRevealed(node.id);
  							} : void 0,
-@@ -3433,14 +3592,17 @@ window.__ModuleLoader__.load({
+@@ -3433,14 +3583,17 @@ window.__ModuleLoader__.load({
  							},
  							t
  						}, node.id);
@@ -414,7 +405,7 @@ index 5cca45b..25d4837 100644
  			const statuses = useSessionStatus((s) => s);
  			const currentRemote = remote.query === query ? remote : {
  				query,
-@@ -3469,13 +3631,25 @@ window.__ModuleLoader__.load({
+@@ -3469,13 +3622,25 @@ window.__ModuleLoader__.load({
  							className: WorkspaceBrowser_module_css_default.searchTree,
  							role: "tree",
  							"aria-label": t("search.results.aria"),
@@ -442,7 +433,7 @@ index 5cca45b..25d4837 100644
  						}),
  						pending && (0, react_jsx_runtime.jsx)("div", {
  							role: "status",
-@@ -3489,10 +3663,6 @@ window.__ModuleLoader__.load({
+@@ -3489,10 +3654,6 @@ window.__ModuleLoader__.load({
  								})]
  							}, i))
  						}),
@@ -453,7 +444,7 @@ index 5cca45b..25d4837 100644
  						results.hasMore && (0, react_jsx_runtime.jsx)("div", {
  							className: WorkspaceBrowser_module_css_default.searchStatus,
  							children: t("search.hasMore", { n: resultLimit })
-@@ -3506,19 +3676,27 @@ window.__ModuleLoader__.load({
+@@ -3506,19 +3667,27 @@ window.__ModuleLoader__.load({
  		* @param props - composed slot props (shell owner share + store + injected actions).
  		* @returns the region element tree.
  		*/
@@ -485,7 +476,7 @@ index 5cca45b..25d4837 100644
  			const workspacePhase = useWorkspaces((state) => state.phase);
  			const workspaceStreamState = useWorkspaces((state) => state.state);
  			const archivedSessionIds = useWorkspaces((state) => state.archivedSessionIds);
-@@ -3529,6 +3707,11 @@ window.__ModuleLoader__.load({
+@@ -3529,6 +3698,11 @@ window.__ModuleLoader__.load({
  			const archivedFilter = useStore((s) => s.archivedFilter ?? "default");
  			const groupExpansion = useStore((s) => s.groupExpansion);
  			const sessionOrderByAccount = useStore((s) => s.sessionOrderByAccount);
@@ -497,7 +488,7 @@ index 5cca45b..25d4837 100644
  			const guardedOpen = (sessionId) => {
  				if (archivedSessionIds.includes(sessionId)) {
  					notifyArchivedNotOpenable();
-@@ -3798,6 +3981,11 @@ window.__ModuleLoader__.load({
+@@ -3798,6 +3972,11 @@ window.__ModuleLoader__.load({
  			const [deleting, setDeleting] = (0, react.useState)(false);
  			const [deleteCommittedId, setDeleteCommittedId] = (0, react.useState)(null);
  			const [deleteError, setDeleteError] = (0, react.useState)(null);
@@ -509,7 +500,7 @@ index 5cca45b..25d4837 100644
  			(0, react.useEffect)(() => {
  				if (deleteCommittedId === null || workspaces.some((workspace) => workspace.workspaceId === deleteCommittedId)) return;
  				setDeleting(false);
-@@ -3812,6 +4000,10 @@ window.__ModuleLoader__.load({
+@@ -3812,6 +3991,10 @@ window.__ModuleLoader__.load({
  			const confirmDelete = () => {
  				/* v8 ignore next -- the Modal is absent without a target and its button is disabled while deleting. */
  				if (deleting || deleteTarget === null) return;
@@ -520,7 +511,7 @@ index 5cca45b..25d4837 100644
  				setDeleting(true);
  				setDeleteCommittedId(null);
  				setDeleteError(null);
-@@ -3830,7 +4022,7 @@ window.__ModuleLoader__.load({
+@@ -3830,7 +4013,7 @@ window.__ModuleLoader__.load({
  						children: [
  							wide && (0, react_jsx_runtime.jsx)("span", {
  								className: clsx(WorkspaceBrowser_module_css_default.sectionLabel, WorkspaceBrowser_module_css_default.wide, searchExpanded && WorkspaceBrowser_module_css_default.sectionLabelHidden),
@@ -529,7 +520,7 @@ index 5cca45b..25d4837 100644
  							}),
  							wide && (0, react_jsx_runtime.jsx)("div", {
  								className: clsx(WorkspaceBrowser_module_css_default.searchSlot, searchExpanded && WorkspaceBrowser_module_css_default.searchSlotExpanded),
-@@ -3964,7 +4156,7 @@ window.__ModuleLoader__.load({
+@@ -3964,7 +4147,7 @@ window.__ModuleLoader__.load({
  						className: WorkspaceBrowser_module_css_default.listArea,
  						children: wide && (normalizedQuery !== "" ? (0, react_jsx_runtime.jsx)(SearchResults, {
  							usePanelInfo,
@@ -538,7 +529,7 @@ index 5cca45b..25d4837 100644
  							useSessionStatus,
  							open: openSearchResult,
  							onUnarchive: onSessionUnarchive,
-@@ -3974,12 +4166,15 @@ window.__ModuleLoader__.load({
+@@ -3974,12 +4157,15 @@ window.__ModuleLoader__.load({
  							query: normalizedQuery,
  							remote: remoteSearch,
  							resultLimit: searchResultLimit,
@@ -554,7 +545,7 @@ index 5cca45b..25d4837 100644
  							onLeaveArchivedOnly: leaveArchivedOnly,
  							workspaceReady,
  							animationResetKey: `${groupBy}/${orderBy}/${archivedFilter}`,
-@@ -4007,6 +4202,8 @@ window.__ModuleLoader__.load({
+@@ -4007,6 +4193,8 @@ window.__ModuleLoader__.load({
  							setGroupExpanded: actions.setGroupExpanded,
  							setSessionOrder: saveSessionOrder,
  							rowState,
@@ -563,7 +554,7 @@ index 5cca45b..25d4837 100644
  							onLeaveArchivedOnly: leaveArchivedOnly,
  							startSession,
  							open: guardedOpen,
-@@ -4026,7 +4223,8 @@ window.__ModuleLoader__.load({
+@@ -4026,7 +4214,8 @@ window.__ModuleLoader__.load({
  							onDeleteRequest: (workspaceId, title) => {
  								setDeleteTarget({
  									workspaceId,
@@ -573,7 +564,7 @@ index 5cca45b..25d4837 100644
  								});
  								setDeleteError(null);
  							}
-@@ -4856,6 +5054,7 @@ window.__ModuleLoader__.load({
+@@ -4856,6 +5045,7 @@ window.__ModuleLoader__.load({
  			"status.compact.planReview": "计划待审",
  			"status.compact.answer": "待回答",
  			"status.completed": "已完成",
@@ -581,7 +572,7 @@ index 5cca45b..25d4837 100644
  			"hover.created": "创建于 {time}",
  			"hover.copied": "已复制",
  			"date.ymd": "{y}年{m}月{d}日",
-@@ -4978,6 +5177,7 @@ window.__ModuleLoader__.load({
+@@ -4978,6 +5168,7 @@ window.__ModuleLoader__.load({
  			"status.compact.planReview": "Plan review",
  			"status.compact.answer": "Answer",
  			"status.completed": "Completed",
@@ -589,7 +580,7 @@ index 5cca45b..25d4837 100644
  			"hover.created": "Created {time}",
  			"hover.copied": "Copied",
  			"date.ymd": "{y}-{m}-{d}",
-@@ -5179,6 +5379,8 @@ window.__ModuleLoader__.load({
+@@ -5179,6 +5370,8 @@ window.__ModuleLoader__.load({
  				}
  			});
  			const browserInjected = () => ({
@@ -598,7 +589,7 @@ index 5cca45b..25d4837 100644
  				startSession: (workspaceId, options) => {
  					uiWorkspace.startSession(workspaceId, options);
  				},
-@@ -5193,7 +5395,7 @@ window.__ModuleLoader__.load({
+@@ -5193,7 +5386,7 @@ window.__ModuleLoader__.load({
  					await workspaces.rename(workspaceId, title);
  				},
  				deleteWorkspace: async (workspaceId) => {
@@ -607,7 +598,7 @@ index 5cca45b..25d4837 100644
  				},
  				insertWorkspaceBefore: async (workspaceId, beforeWorkspaceId) => {
  					await workspaces.insertBefore(workspaceId, beforeWorkspaceId);
-@@ -5209,6 +5411,8 @@ window.__ModuleLoader__.load({
+@@ -5209,6 +5402,8 @@ window.__ModuleLoader__.load({
  				hooks: {
  					directoryFlow: browserFlowSource,
  					hostInfo,
@@ -616,7 +607,7 @@ index 5cca45b..25d4837 100644
  					workspaceShortcuts: shortcutControls.state,
  					shortcuts: ctx.shortcuts.catalog
  				}
-@@ -5220,6 +5424,8 @@ window.__ModuleLoader__.load({
+@@ -5220,6 +5415,8 @@ window.__ModuleLoader__.load({
  			ctx.slots.inject("sidebar.workspaces", () => ctx.slots.register({
  				name: "sidebar.workspaces",
  				children: {
@@ -807,7 +798,7 @@ index 18081be..09340ff 100644
      private prepareDraft;
      private draftPreparationFailed;
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/types/client/rows/WorkspaceBrowser.d.ts b/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/types/client/rows/WorkspaceBrowser.d.ts
-index 4532194..8abccfe 100644
+index 4532194..c6fdafa 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/types/client/rows/WorkspaceBrowser.d.ts
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/types/client/rows/WorkspaceBrowser.d.ts
 @@ -4,5 +4,5 @@ import type { WorkspaceBrowserProps } from '../contract/slots.ts';

@@ -28,7 +28,7 @@ export function createSessionSearchFixture(workspaceSource, desktopSource, { gro
     return runtime
   }
   const { WorkspaceBrowser, createWorkspaceShortcutControls, zh, en } = load(workspaceSource, 'exports.WorkspaceBrowser = WorkspaceBrowser; exports.createWorkspaceShortcutControls = createWorkspaceShortcutControls; exports.zh = zh; exports.en = en')
-  const { SharedCollection, MODES_COPY, CLOUD_DELETE_COPY } = load(desktopSource, 'exports.SharedCollection = SharedCollection; exports.MODES_COPY = MODES_COPY; exports.CLOUD_DELETE_COPY = CLOUD_DELETE_COPY')
+  const { SharedCollection, createChatProjects, MODES_COPY, CLOUD_DELETE_COPY, PROJECTS_COPY } = load(desktopSource, 'exports.SharedCollection = SharedCollection; exports.createChatProjects = createChatProjects; exports.MODES_COPY = MODES_COPY; exports.CLOUD_DELETE_COPY = CLOUD_DELETE_COPY; exports.PROJECTS_COPY = PROJECTS_COPY')
   const workspaceCopy = locale === 'zh' ? zh : en
   const t = key => locale ? workspaceCopy[key] || key : key
   const desktopT = key => locale ? MODES_COPY[locale][key] || key : key
@@ -36,10 +36,10 @@ export function createSessionSearchFixture(workspaceSource, desktopSource, { gro
   const catalog = { phase: 'ready', projectionsBySession: {}, ids: ['one', 'two'], byId: Object.fromEntries(['one', 'two'].map(id => [id, { id, title: `会话 ${id}`, updatedAt: 1, blank: false, retainedBy: {} }])) }
   const workspaces = { phase: 'ready', state: 'ready', items: [], archivedSessionIds: [], pinnedSessionIds: [] }
   const view = { groupBy, orderBy: 'updated', archivedFilter: archivedOnly ? 'only' : 'default', groupExpansion: { '': true }, sessionOrderByAccount: {}, unreadSessionIds: [] }
-  let cloud = { mode: 'work', page: 1, historyPhase: 'ready', items: [{ id: 'cloud', title: '云端会话', updatedAt: '2026-01-01T00:00:00Z' }] }
+  let cloud = { mode: 'work', page: 1, historyPhase: 'ready', running: [], items: [{ id: 'cloud', title: '云端会话', updatedAt: '2026-01-01T00:00:00Z' }] }
   const cloudListeners = new Set()
   const opened = []
-  const navigation = { snapshot: () => cloud, subscribe: fn => { cloudListeners.add(fn); return () => cloudListeners.delete(fn) }, open: id => opened.push(`chat:${id}`) }
+  const navigation = { projects: createChatProjects(), snapshot: () => cloud, subscribe: fn => { cloudListeners.add(fn); return () => cloudListeners.delete(fn) }, open: id => opened.push(`chat:${id}`) }
   const actions = Object.fromEntries(['retainAccountKeys', 'syncSessionOrders', 'setGroupExpanded', 'setSessionOrder'].map(name => [name, () => {}]))
   const props = {
     wide: true,
@@ -63,7 +63,7 @@ export function createSessionSearchFixture(workspaceSource, desktopSource, { gro
     open: id => opened.push(`work:${id}`),
     actions,
     renderSlot: (name, props, options) => shared && name === 'sidebar.workspaces.collection'
-      ? React.createElement(SharedCollection, { ...props, navigation, t: desktopT, deleteText: key => CLOUD_DELETE_COPY[locale || 'en'][key] })
+      ? React.createElement(SharedCollection, { ...props, navigation, t: desktopT, projectText: key => PROJECTS_COPY[locale || 'en'][key], deleteText: key => CLOUD_DELETE_COPY[locale || 'en'][key] })
       : options?.fallback,
     t
   }
