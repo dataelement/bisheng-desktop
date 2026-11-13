@@ -499,6 +499,22 @@ function startEnterpriseLlm(ctx, llm, broker) {
   let registration
   let timer
   let stopped = false
+  let stateRead
+  const readEnterpriseState = () => {
+    // One shared read serves every 409. A second failure must not start its own poll loop.
+    if (stateRead) return stateRead
+    stateRead = (async () => {
+      try {
+        if (stopped) return
+        ingest(broker ? await requestBrokerJson(broker, '/v1/state') : disabledState())
+      } catch {
+        // The pending rating keeps its original lifetime until a later snapshot or its deadline.
+      } finally {
+        stateRead = undefined
+      }
+    })()
+    return stateRead
+  }
   const titles = createAuditTitleSync({
     ctx,
     async send(body, signal) {
@@ -531,7 +547,8 @@ function startEnterpriseLlm(ctx, llm, broker) {
       }
       return response.json()
     },
-    note: (reason, details) => console.warn('[enterprise-audit-feedback]', JSON.stringify({ reason, ...details }))
+    note: (reason, details) => console.warn('[enterprise-audit-feedback]', JSON.stringify({ reason, ...details })),
+    reread: () => readEnterpriseState()
   })
   const adapter = new EnterpriseLlmAdapter({
     providerName: () => latest.tenant?.name || latest.user?.display_name || 'BiSheng Enterprise',

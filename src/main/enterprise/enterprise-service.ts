@@ -582,7 +582,7 @@ export class EnterpriseService {
 
   async stop(): Promise<void> {
     this.invalidateAuthSession()
-    this.auditFields = []
+    this.revokeAuditCapability()
     await this.cancelPendingLogin()
     this.epoch += 1
     for (const controller of this.chatControllers) controller.abort(enterpriseSessionChangedAbortReason())
@@ -734,7 +734,7 @@ export class EnterpriseService {
     } catch {
       this.invalidateAuthSession()
       this.session = null
-      this.auditFields = []
+      this.revokeAuditCapability()
       this.allowPrivateHttpForSession = false
       this.models = []
       this.modelsAvailable = false
@@ -1612,7 +1612,7 @@ export class EnterpriseService {
 
   private async clearLocalSession(phase: EnterprisePhase): Promise<void> {
     this.invalidateAuthSession()
-    this.auditFields = []
+    this.revokeAuditCapability()
     this.epoch += 1
     for (const controller of this.chatControllers) controller.abort(enterpriseSessionChangedAbortReason())
     this.chatControllers.clear()
@@ -1648,9 +1648,22 @@ export class EnterpriseService {
   }
 
   private pauseSessionForRelogin(): void {
-    this.auditFields = []
+    this.revokeAuditCapability()
     this.modelsAvailable = false
     this.publish()
+  }
+
+  /** Drop optional audit authorization. Callers publish when the snapshot must move. */
+  private revokeAuditCapability(): void {
+    this.auditFields = []
+    this.auditTitleAvailable = false
+    this.auditFeedbackAvailable = false
+  }
+
+  private auditRefreshStillCurrent(generation: number, epoch: number, base: string | undefined, connectionKey: string): boolean {
+    if (generation !== this.auditRefreshGeneration || epoch !== this.epoch || base !== this.session?.base) return false
+    const currentKey = this.session?.access_token ? this.connectionKey() : ''
+    return connectionKey === currentKey
   }
 
   private async cancelPendingLogin(): Promise<void> {
@@ -1661,30 +1674,35 @@ export class EnterpriseService {
   }
 
   async refreshAuditCapability(): Promise<void> {
+    // Keep the previous capability until this request settles. Clearing it first makes
+    // in-flight feedback uploads fail with 409 and looks like an account change to the plugin.
     const generation = ++this.auditRefreshGeneration
-    this.auditFields = []
-    this.auditTitleAvailable = false
-    this.auditFeedbackAvailable = false
-    this.publish()
     const epoch = this.epoch
     const base = this.session?.base
-    const connectionKey = this.connectionKey()
-    if (!base || !this.session?.access_token) return
+    const connectionKey = this.session?.access_token ? this.connectionKey() : ''
+    if (!base || !this.session?.access_token) {
+      if (generation === this.auditRefreshGeneration && epoch === this.epoch) {
+        this.revokeAuditCapability()
+        this.publish()
+      }
+      return
+    }
     try {
       const contract = await loadEnterpriseContract()
       const config = contract.parseConfig((await requestEnterpriseJson(
         this.options.fetchImpl, base, contract.API_PATHS.config, this.platformRequestOptions()
       )).body)
-      if (generation !== this.auditRefreshGeneration || epoch !== this.epoch ||
-          base !== this.session?.base || connectionKey !== this.connectionKey()) return
+      if (!this.auditRefreshStillCurrent(generation, epoch, base, connectionKey)) return
       this.auditFields = config.enabled ? config.audit_context?.fields ?? [] : []
       this.auditTitleAvailable = config.enabled && config.audit_conversation_title?.version === 1
       this.auditFeedbackAvailable = config.enabled && config.audit_message_feedback?.version === 1
     } catch {
       // Only optional audit capability is lost; do not replay or reject model calls.
-      if (generation === this.auditRefreshGeneration && epoch === this.epoch) this.note('audit_capability_unavailable')
+      if (!this.auditRefreshStillCurrent(generation, epoch, base, connectionKey)) return
+      this.revokeAuditCapability()
+      this.note('audit_capability_unavailable')
     }
-    if (generation === this.auditRefreshGeneration && epoch === this.epoch) this.publish()
+    if (this.auditRefreshStillCurrent(generation, epoch, base, connectionKey)) this.publish()
   }
 
   private scheduleLoginExpiry(epoch: number): void {
