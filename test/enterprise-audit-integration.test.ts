@@ -1,8 +1,8 @@
 // Coverage AC: AC-03, AC-30, AC-31, AC-56.
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
@@ -14,12 +14,26 @@ import { EnterpriseService } from '../src/main/enterprise/enterprise-service'
 import { SecureEnterpriseCredentialVault, ENTERPRISE_VAULT_FILENAME } from '../src/main/enterprise/secure-credential-vault'
 
 const cleanups: Array<() => Promise<unknown> | unknown> = []
+beforeEach(async () => {
+  const home = await mkdtemp(join(tmpdir(), 'dsh-audit-home-'))
+  // The enterprise market persists beneath DSH_HOME even though audit fixtures
+  // use their own credential vaults. Never inherit the running Desktop Profile.
+  vi.stubEnv('DSH_HOME', home)
+  for (const key of [
+    'DSH_DESKTOP_ENTERPRISE_BROKER_URL',
+    'DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY',
+    'DSH_DESKTOP_ENTERPRISE_ALLOW_INSECURE_LOOPBACK'
+  ]) vi.stubEnv(key, undefined)
+  // Registered first so plugin and broker disposers run before removing home.
+  cleanups.push(() => rm(home, { recursive: true, force: true }))
+})
 afterEach(async () => {
-  while (cleanups.length) await cleanups.pop()?.()
-  delete process.env.DSH_DESKTOP_ENTERPRISE_BROKER_URL
-  delete process.env.DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY
-  delete process.env.DSH_DESKTOP_ENTERPRISE_ALLOW_INSECURE_LOOPBACK
-  vi.restoreAllMocks()
+  try {
+    while (cleanups.length) await cleanups.pop()?.()
+  } finally {
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  }
 })
 
 async function waitFor(predicate: () => boolean) {

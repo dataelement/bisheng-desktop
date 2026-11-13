@@ -22,6 +22,8 @@ it('discovers and serves employee Settings through the actual normal-profile Har
     nodeEntryPath: join(root, 'build/harness-node-entry.mjs'),
     nodeExecutablePath: resolveTestNodeExecutable(),
     dshPatchPath: overlay, dshSafePatchPath: join(root, 'build/dsh-desktop-safe.patch.yml'),
+    // Concurrent subprocess fixtures must not race for the Desktop's stable port.
+    preferredPort: 0,
     dshHome: home, logPath: join(home, 'runtime.log'), startupTimeoutMs: 30_000, launchProcess: (executable, args, options) => spawn(executable, args, options), onChanged() {}
   })
   try {
