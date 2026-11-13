@@ -4,6 +4,7 @@ import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createPortal } from 'react-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { fixture, collect } from './helpers/ungrouped-collection.mjs'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 let root, container
@@ -280,7 +281,36 @@ it('creates cloud chats through the shared New Session action and clears the vie
   expect(handled).toBeUndefined()
 })
 
-it('interleaves recent cloud and unassigned local rows while projects appear once', async () => {
+it('renders the native ungrouped projection outside cloud history across mode changes', async () => {
+  const props = fixture()
+  props.workspaces = [] // Deleted project: both surviving sessions belong to Ungrouped.
+  const { collection } = collect(props)
+  // Render only leaf adapters; ownership, filtering and selection come from installed SessionTree.
+  function renderNative(node) {
+    if (Array.isArray(node)) return node.map((child, index) => React.createElement(React.Fragment, { key: index }, renderNative(child)))
+    if (!node || typeof node !== 'object') return node ?? null
+    if (node.type === 'NativeSession') return React.createElement('button', {
+      'data-native-session': node.props.node.id,
+      'aria-current': node.props.currentId === node.props.node.id ? 'page' : undefined
+    }, node.props.node.title)
+    return React.createElement('div', { 'data-native-group': node.type === 'NativeProject' ? 'ungrouped' : undefined }, renderNative(node.props?.children))
+  }
+  const ui = await mount(true, { ...collection, projects: active => renderNative(collection.projects(active)) })
+  const history = container.querySelector('.dshRecentHistory')
+  expect(container.querySelectorAll('[data-native-group=ungrouped]')).toHaveLength(1)
+  expect([...container.querySelectorAll('[data-native-session]')].map(node => node.dataset.nativeSession)).toEqual(['assigned', 'loose'])
+  expect(history.querySelectorAll('[data-history-kind=work]')).toHaveLength(0)
+  expect(history.querySelectorAll('[data-history-kind=chat]')).toHaveLength(1)
+  expect(history.querySelector('[data-native-session]')).toBeNull()
+  await ui.click('work')
+  expect(container.querySelector('[data-native-session=assigned]').getAttribute('aria-current')).toBe('page')
+  await act(async () => history.querySelector('.dshHistoryRow').click())
+  expect(ui.selected()).toBe('chat')
+  expect(container.querySelector('[data-native-session=assigned]').getAttribute('aria-current')).toBeNull()
+  expect(container.querySelectorAll('[data-native-session]')).toHaveLength(2)
+})
+
+it('interleaves local and cloud rows when the collection supplies a flat list', async () => {
   const ui = await mount(true)
   const rows = [...container.querySelectorAll('[data-history-kind]')]
   expect(rows.map(row => row.dataset.historyKind)).toEqual(['work', 'chat'])

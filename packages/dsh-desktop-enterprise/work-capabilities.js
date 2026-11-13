@@ -7,6 +7,7 @@ const PREFIX = 'mcp__bisheng__'
 export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
   let generation = 0, connectionKey, stopped = false, syncing
   let signature = '', disposeTools = [], pickerTools = []
+  const toolNames = new Map()
   let lifetime = new AbortController()
   const assertAccount = key => {
     const account = state()
@@ -22,6 +23,7 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
     lifetime = new AbortController()
     for (const dispose of disposeTools) dispose()
     disposeTools = []; pickerTools = []; signature = ''; connectionKey = undefined
+    toolNames.clear()
   }
   const rpc = async (key, signal, use) => {
     assertAccount(key)
@@ -44,10 +46,10 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
     if (signature === nextSignature) return
     const names = new Set()
     const definitions = catalog.tools.map(tool => {
-      if (!/^bisheng_tool_[1-9][0-9]*$/.test(tool.name) || names.has(tool.name)) throw new Error('Invalid enterprise tool name.')
+      if ((typeof tool.name !== 'string' || tool.name.length > 50 || !/^(?!bisheng_tool_)[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(tool.name)) || names.has(tool.name)) throw new Error('Invalid enterprise tool name.')
       names.add(tool.name)
       return createMcpToolDefinition(ctx, {
-        name: PREFIX + tool.name, rawName: tool.name, description: tool.description || tool.title || tool.name,
+        name: PREFIX + tool.name, rawName: tool.name, description: [tool.title, tool.description].filter(value => typeof value === 'string' && value.trim()).filter((value, index, values) => values.indexOf(value) === index).join(' — ') || tool.name,
         inputSchema: tool.inputSchema,
         call: async (args, exec) => {
           if (!mainSession(exec)) throw new Error('An active main Work task is required.')
@@ -61,6 +63,11 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
     disposeTools = []
     try { for (const definition of definitions) disposeTools.push(ctx.tools.register(definition)) }
     catch (error) { clear(); throw error }
+    toolNames.clear()
+    for (const tool of catalog.tools) {
+      const id = tool._meta?.['bisheng.tool_id']
+      if (Number.isSafeInteger(id) && id > 0) toolNames.set(id, PREFIX + tool.name)
+    }
     pickerTools = catalog.tools.map(tool => ({ name: PREFIX + tool.name, label: tool.title || tool.name, description: tool.description || '' }))
     connectionKey = key; signature = nextSignature
   }
@@ -119,16 +126,11 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
   })
 
   ctx.tools.guard(exec => exec.name.startsWith(PREFIX) && !mainSession(exec) ? 'Enterprise tools require an active main Work task.' : undefined)
-  ctx.on('tools/pre-execute', async (exec, next) => {
-    const decision = await next()
-    if (!exec.name.startsWith(PREFIX) || decision.kind !== 'allow') return decision
-    if (!mainSession(exec)) return { kind: 'deny', reason: 'Enterprise tools require an active main Work task.' }
-    return { kind: 'ask', reason: 'Use the enterprise tool with the displayed arguments.',
-      displayReason: { en: 'Run this enterprise tool with these arguments?', zh: '使用这些参数调用企业工具？' } }
-  })
+  // Approval follows the shared tool policy; do not turn an allowed call into a prompt.
   void sync().catch(error => ctx.logger.warn('Enterprise Work capabilities: %s', error.message))
   ctx.effect(() => async () => {
     stopped = true; clear()
   })
-  return { sync, refresh, clear }
+  // Resolve numeric bundle dependencies against a fresh catalog, never guess an invocation name.
+  return { sync, refresh, clear, resolveToolName: async id => { await sync(); return toolNames.get(id) } }
 }

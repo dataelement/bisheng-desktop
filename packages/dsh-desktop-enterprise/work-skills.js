@@ -18,7 +18,7 @@ export function skillContentHash(files) {
   return digest.digest('hex')
 }
 
-export function createEnterpriseSkills({ state, request, home = process.env.DSH_HOME }) {
+export function createEnterpriseSkills({ state, request, resolveToolName, home = process.env.DSH_HOME }) {
   let revision = 0
   const pending = new Map()
   const catalog = async signal => {
@@ -80,7 +80,8 @@ export function createEnterpriseSkills({ state, request, home = process.env.DSH_
     const toolIds = await request({ operation: 'dependencies', connectionKey: loc.connectionKey, id: loc.id, version: loc.version }, signal)
     assertCurrent()
     if (!Array.isArray(toolIds) || toolIds.some(id => !Number.isSafeInteger(id) || id <= 0)) throw new Error('Invalid enterprise tool dependencies.')
-    const dependencies = toolIds.map(id => `- Tool ${id}: mcp__bisheng__bisheng_tool_${id}`).join('\n')
+    const dependencies = (await Promise.all(toolIds.map(async id => `- Tool ${id}: ${await resolveToolName?.(id) || 'unavailable in the current tool catalog'}`))).join('\n')
+    assertCurrent()
     const skill = files.get('SKILL.md')
     if (!skill) throw new Error('Skill instructions are missing.')
     const directory = join(path, 'files')

@@ -4,6 +4,7 @@ import { createContentSafetyLocaleScope } from './content-safety-locale.js'
 import { applyEnterpriseSkills } from './work-skills.js'
 import { applyWorkResources } from './work-resources.js'
 import { applyWorkCapabilities } from './work-capabilities.js'
+import { applyEnterpriseSearchPolicy } from './search-policy.js'
 import { requestImageDimensions } from '@deepseek-ai/dsh-attachment'
 import { applyEnterpriseMarket } from './market.js'
 import { applyEnterpriseWorkbenchMarket } from './workbench-market.js'
@@ -191,6 +192,7 @@ async function requestBrokerJson(broker, path, body, signal) {
 }
 
 export function apply(ctx) {
+  if (typeof ctx.inject === 'function') ctx.inject(['loader'], applyEnterpriseSearchPolicy)
   const broker = brokerConfig()
   const brokerJson = (path, body, signal) => requestBrokerJson(broker, path, body, signal)
   const connection = Reflect.get(ctx, 'connection')
@@ -244,6 +246,7 @@ export function apply(ctx) {
     request: (body, signal) => brokerJson('/v1/work-resources', body, signal)
   }) })
   if (typeof ctx.inject === 'function') ctx.inject(['skills'], scoped => { workSkills = applyEnterpriseSkills(scoped, {
+    resolveToolName: id => workCapabilities?.resolveToolName(id),
     state: () => account, refreshState: readBrokerState,
     request: async (body, signal) => {
       if (!broker) unavailable()

@@ -18,7 +18,7 @@ function bundle() {
 }
 
 function fixture() {
-  const skill = bundle(), messages = [], catalog = { tools: [{ name: 'bisheng_tool_7', description: 'Search customers',
+  const skill = bundle(), messages = [], catalog = { tools: [{ name: 'customer_query', title: 'Customer lookup', _meta: { 'bisheng.tool_id': 7 }, description: 'Search customers',
     inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } }] }
   let failure = false
   const request = vi.fn(async ({ message, connectionKey }) => {
@@ -65,7 +65,7 @@ it('keeps conversation preparation available on catalog failure but rejects stal
   const api = applyWorkCapabilities(ctx, { request: (...args) => failing ? Promise.reject(new Error('network unavailable')) : f.request(...args),
     state: () => ({ connected: true, connectionKey: 'account-a' }), refreshState: async () => {} })
   await api.sync()
-  const tool = registered.get('mcp__bisheng__bisheng_tool_7')
+  const tool = registered.get('mcp__bisheng__customer_query')
   failing = true
   await expect(events.get('system-prompt/prepare')({ agent: { session } })).resolves.toBeUndefined()
   expect(registered.size).toBe(0)
@@ -92,17 +92,28 @@ it('does not clear a newer generation when an old refresh fails', async () => {
   await expect(api.sync()).resolves.toBeUndefined()
 })
 
+it.each(['bisheng_tool_7', 'Customer Query', 'a'.repeat(51), 'duplicate'])('rejects invalid or duplicate catalog names: %s', async name => {
+  const f = fixture(), register = vi.fn(() => () => {})
+  f.catalog.tools[0].name = name
+  if (name === 'duplicate') f.catalog.tools.push({ ...f.catalog.tools[0] })
+  const ctx = { connection: { fetch: { register: vi.fn() } }, logger: { warn: vi.fn() }, sessions: { get: () => undefined },
+    tools: { register, guard: vi.fn() }, on: vi.fn(), effect: fn => cleanups.push(fn()) }
+  const api = applyWorkCapabilities(ctx, { request: f.request, state: () => ({ connected: true, connectionKey: 'account-a' }), refreshState: async () => {} })
+  await expect(api.sync()).rejects.toThrow('Invalid enterprise tool name')
+  expect(register).not.toHaveBeenCalled()
+})
+
 it('negotiates the real SDK protocol and follows all catalog pages', async () => {
   const f = fixture()
   const result = await withWorkMcp(f.request, 'account-a', undefined, client => client.listTools())
-  expect(result.tools[0].name).toBe('bisheng_tool_7')
+  expect(result.tools[0].name).toBe('customer_query')
   expect(f.messages.map(row => row.method)).toEqual(['initialize', 'notifications/initialized', 'tools/list'])
   const fetchPage = vi.fn(async params => params?.cursor ? { tools: [2] } : { tools: [1], nextCursor: 'next' })
   expect(await readMcpPages(fetchPage, 'tools')).toEqual([1, 2])
   await expect(readMcpPages(async () => ({ tools: [], nextCursor: 'same' }), 'tools')).rejects.toThrow('cursor')
 })
 
-it('registers native tools, enforces approval, isolates children and clears identity', async () => {
+it('registers native tools without overriding approval policy, isolates children and clears identity', async () => {
   const f = fixture(), tools = new Map(), events = new Map()
   const session = { id: 'main', header: { delegationDepth: 0 } }
   let account = { connected: true, connectionKey: 'account-a' }, provider, guard
@@ -115,13 +126,17 @@ it('registers native tools, enforces approval, isolates children and clears iden
   }
   const api = applyWorkCapabilities(ctx, { request: f.request, state: () => account, refreshState: async () => {} })
   await api.sync()
-  const tool = tools.get('mcp__bisheng__bisheng_tool_7')
+  const tool = tools.get('mcp__bisheng__customer_query')
+  expect(await api.resolveToolName(7)).toBe('mcp__bisheng__customer_query')
+  expect(await api.resolveToolName(8)).toBeUndefined()
+  expect(tool.description).toContain('Customer lookup')
   const exec = { name: tool.name, agent: { session }, signal: new AbortController().signal }
   expect(guard(exec)).toBeUndefined()
   expect(guard({ ...exec, agent: { session: { id: 'child', header: { delegationDepth: 1 } } } })).toContain('main')
-  expect(await events.get('tools/pre-execute')(exec, async () => ({ kind: 'allow' }))).toMatchObject({ kind: 'ask' })
-  expect(await events.get('tools/pre-execute')(exec, async () => ({ kind: 'deny' }))).toEqual({ kind: 'deny' })
+  // No enterprise-specific hook may override the shared policy (including full-access allow).
+  expect(events.has('tools/pre-execute')).toBe(false)
   expect((await tool.execute({ query: 'customer' }, exec)).content[0].text).toBe('customer result')
+  expect(f.messages.find(row => row.method === 'tools/call').params.name).toBe('customer_query')
   f.fail()
   await expect(tool.execute({ query: 'customer' }, exec)).rejects.toThrow('denied')
   account = { connected: true, connectionKey: 'account-b' }
@@ -144,7 +159,7 @@ it('serves fresh picker entries and rejects disabled tools and old-account draft
   const send = body => route.fetch(new Request('http://localhost/api/enterprise.work-tools', { method: 'POST', body: JSON.stringify(body) }))
   const catalog = await (await send({ operation: 'catalog' })).json()
   expect(catalog.connectionKey).toBe('account-a')
-  expect(catalog.tools).toEqual([{ name: 'mcp__bisheng__bisheng_tool_7', label: 'bisheng_tool_7', description: 'Search customers' }])
+  expect(catalog.tools).toEqual([{ name: 'mcp__bisheng__customer_query', label: 'Customer lookup', description: 'Search customers' }])
   const selection = { operation: 'validate', connectionKey: 'account-a', names: [catalog.tools[0].name] }
   expect((await send(selection)).status).toBe(200)
   expect((await send({ ...selection, connectionKey: 'old-account' })).status).toBe(400)
