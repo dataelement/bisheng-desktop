@@ -6,17 +6,24 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createEnterpriseSkills, enterpriseSkillName, skillContentHash } from '../packages/dsh-desktop-enterprise/work-skills.js'
 const homes = []
 afterEach(async () => { for (const home of homes.splice(0)) await rm(home, { recursive: true, force: true }) })
-async function setup() {
+async function setup(resolveToolName = async () => 'mcp__bisheng__customer_query') {
   const home = await mkdtemp(join(tmpdir(), 'work-skills-')); homes.push(home)
   let state = { connected: true, connectionKey: 'key-a', base: 'https://a.example', tenant: { id: 2 }, user: { id: 3 } }
   let files = { 'SKILL.md': Buffer.from('---\nname: office\ndescription: office\n---\nEnterprise instructions'), 'scripts/run.py': Buffer.from('print(42)'), 'templates/file.bin': Buffer.from([0, 255, 42]) }
   const version = () => skillContentHash(new Map(Object.entries(files).map(([key, data]) => [key, { data }])))
   let enabled = true
   const request = vi.fn(async body => body.operation === 'dependencies' ? [7] : body.operation === 'list' ? (enabled ? [{ id: 7, name: 'office', display_name: 'Office', description: 'Create documents', content_hash: version() }] : []) : Buffer.from(zipSync(files)))
-  const skills = createEnterpriseSkills({ state: () => state, request, home })
+  const skills = createEnterpriseSkills({ state: () => state, request, resolveToolName, home })
   return { skills, request, setState: value => { state = value }, state, disable: () => { enabled = false }, update: () => { files = { ...files, 'SKILL.md': Buffer.from('Updated instructions') } } }
 }
 describe('enterprise Work skill provider', () => {
+  it('does not invent invocation names for unavailable tool dependencies', async () => {
+    const { skills } = await setup(async () => undefined)
+    const [row] = await skills.catalog()
+    const loaded = await skills.load(row.name)
+    expect(loaded.content).toContain('unavailable in the current tool catalog')
+    expect(loaded.content).not.toContain('bisheng_tool_7')
+  })
   it('uses the enterprise display label for discovery while keeping isolated invocation keys', async () => {
     const { skills, request } = await setup()
     request.mockResolvedValue([
@@ -42,7 +49,7 @@ describe('enterprise Work skill provider', () => {
     expect(row.locator.displayName).toBe('Office')
     const loaded = await skills.load(row.name)
     expect(loaded.content).toContain('Enterprise instructions')
-    expect(loaded.content).toContain('mcp__bisheng__bisheng_tool_7')
+    expect(loaded.content).toContain('mcp__bisheng__customer_query')
     expect(await readFile(join(loaded.resourceBase.path, 'templates/file.bin'))).toEqual(Buffer.from([0, 255, 42]))
     expect(await readFile(join(loaded.resourceBase.path, 'scripts/run.py'), 'utf8')).toBe('print(42)')
   })

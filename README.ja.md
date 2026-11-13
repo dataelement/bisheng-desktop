@@ -3,8 +3,9 @@
 </h1>
 
 <p align="center">
-  <strong>DSH Desktop by Dataelem</strong> は、Dataelem チームが DeepSeek Harness フレームワークを基盤に開発したデスクトップ Agent アプリケーションです。オープンソース版とエンタープライズ版を提供しています。<br />
-  公式サイト：<a href="https://www.dshdesktop.com/">www.dshdesktop.com</a> · オープンソースリポジトリ：<a href="https://github.com/dataelement/dsh-desktop">dataelement/dsh-desktop</a>
+  <strong>BISHENG クライアントは、ローカル業務と企業 AI をつなぐデスクトップ Agent です。</strong><br />
+  従業員は企業アカウントで許可されたモデル、ナレッジベース、ツール、スキルを利用し、Chat でクラウド上の Q&A や複数ステップのタスクを実行し、Work で許可されたディレクトリ内の資料を処理できます。企業はリソース、権限、クレジット、利用量を一元管理します。<br />
+  <a href="https://dshdesktop.com/zh/enterprise/">BISHENG クライアントをダウンロード</a> · <a href="https://github.com/dataelement/bisheng">BISHENG サーバーのリポジトリ</a>
 </p>
 
 <p align="center">
@@ -12,88 +13,49 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="ライセンス: MIT" src="https://img.shields.io/badge/License-MIT-171513.svg" /></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-171513.svg" /></a>
   <img alt="macOS" src="https://img.shields.io/badge/macOS-Apple%20Silicon%20%7C%20Intel-171513.svg" />
   <img alt="Windows" src="https://img.shields.io/badge/Windows-x64-171513.svg" />
 </p>
 
-![ポータブル Preset、モデルプロバイダー、スマートフォン連携、編集可能な PPTX 生成を備えた DSH Desktop](docs/images/dsh-desktop-hero-v021.png)
+## BISHENG クライアントでできること
 
-<p align="center"><strong>DeepSeek 公式モデルや主要なサードパーティーモデルを利用し、ポータブルな Agent Preset を管理し、スマートフォンから Harness セッションを続け、資料から編集可能な PPTX を生成できます。</strong></p>
+- **Chat：企業のクラウドにタスクを任せる。** 資料について質問したり、タスクモードで複数ステップの処理、スキルの呼び出し、ファイルの作成を行い、進捗と結果を確認できます。
+- **Work：ローカル資料を使って作業を続ける。** 許可したディレクトリを選び、資料整理、データ分析、編集可能な Word・Excel・PPT の作成を行い、フィードバックに応じて修正し、許可された場所に保存できます。
+- **権限に従って企業リソースを利用。** 企業アカウントで許可されたモデル、ナレッジスペース、API/MCP ツール、スキルを使い、アプリセンターから公開済みのアプリ、アシスタント、ワークフローを開けます。
+- **企業による一元管理。** 管理者がリソースと権限を設定し、プラグインとワークベンチを配布して、月間クレジットと呼び出し利用量を管理します。Chat と Work の企業モデル呼び出しは、現在のユーザーの同じクレジット台帳を使用します。
+- **Web とデスクトップの連携。** 同じ企業アカウントで Web とデスクトップの Chat から同じサーバー側タスクを開くと、タスクイベントと完了状態を同期して確認できます。ローカル Work のタスクと成果物は独立した記録として管理します。
 
-DSH Desktop は、ローカルの DeepSeek Harness をインストール可能なデスクトップアプリとして提供します。Harness を自動起動し、Profile、プラグイン、ワークスペース、モデル設定、セッションをアプリ本体とは別の場所に保存し、ローカル Runtime の準備が整うと完全な Harness 画面を開きます。
+![BISHENG の Web・デスクトップ・モバイル画面](docs/images/bisheng-platform-overview.png)
 
-> [!IMPORTANT]
-> DSH Desktop は、急速に進化している `@deepseek-ai/dsh@0.2.1-rc.2` を基盤とする早期プレビューです。macOS 版はコード署名と Apple 公証済みです。Windows x64 インストーラーもコード署名済みですが、発行元のダウンロード・インストール実績が蓄積されるまでは Windows のセキュリティ警告が表示される場合があります。
+> モバイルアプリは近日公開予定です。機能と公開予定、企業連携機能、デプロイ要件、オープンソース版・企業版の提供範囲は、各バージョンの説明をご確認ください。
 
-## ダウンロード
+## BISHENG プラットフォームと関連プロジェクト
 
-安定版とプレビュー版を提供しています。日常利用におすすめの**安定版**は[公式サイト](https://www.dshdesktop.com/#download)からダウンロードできます。**プレビュー版**を試す場合は、[GitHub Releases](https://github.com/dataelement/dsh-desktop/releases) で **Pre-release** と表示されたバージョンを選んでください。
+**BISHENG はオープンソースの企業向けオールインワン Agent プラットフォーム**です。オフィス業務の効率化と企業での AI 活用に注力し、モデル、ナレッジ、ツール、スキル、アプリ、一元管理機能をクライアントに提供します。
 
-プレビュー版には新機能に加え、DeepSeek Harness 公式の最新バージョンを積極的に取り込みます。コミュニティのプラグインと互換性がない場合があるため、**一般ユーザーにはおすすめしません**。いち早く試したい方は、ぜひコミュニティにフィードバックをお寄せください。先行ユーザーによる検証を経てから、コミュニティ全体に更新を配信します。
+- [BISHENG 企業プラットフォーム](https://github.com/dataelement/bisheng)：企業 AI サービスをデプロイし、組織のリソース、権限、利用量を一元管理します。
+- [DSH Desktop](https://github.com/dataelement/dsh-desktop)：DeepSeek Harness を基盤とするオープンソースのデスクトップ Agent 基盤です。BISHENG クライアントはこの基盤に企業 AI サービスを接続します。
 
-インストール版は起動直後と 6 時間ごとに更新を確認します。新しいバージョンが見つかっても、同意するまでダウンロードは始まりません。ダウンロード後に **Restart and install** を選ぶとインストールします。アプリケーションメニューから手動確認したり、今のバージョンだけをスキップしたりすることもできます。
+## ダウンロードとインストール
 
-## コミュニティ
+[BISHENG クライアント公式サイト](https://dshdesktop.com/zh/enterprise/)からインストーラーを取得し、企業でデプロイした BISHENG プラットフォームと組み合わせて利用します。企業アカウントでログインし、管理者が設定・許可したリソースを使用してください。
 
-<p align="center">
-  下の QR コードを WeChat で読み取り、DSH Desktop コミュニティグループに参加してください。<br />
-  <img src="docs/images/wechat-group-20260815.png" width="220" alt="DSH Desktop WeChat グループの QR コード" /><br />
-  Discord を利用する場合は、<a href="https://discord.gg/7Xgf3qe3Qp">DSH Desktop Discord コミュニティ</a>にも参加できます。
-</p>
+個人版を単独で利用する場合は、[DSH Desktop 公式サイト](https://dshdesktop.com/zh/)をご覧ください。
 
-## DSH Desktop が追加する機能
+## オフィス文書とデスクトップ機能
 
-DeepSeek Harness は Agent Runtime と Web UI を提供します。DSH Desktop は、その上にデスクトップ製品として必要なホスト機能を追加します。
+- **オフィス文書の作成**：内蔵の PPT モードでテンプレートを選び、内容を説明して、編集可能な PPTX を作成します。デスクトップ実行環境には Python と Office ライブラリが含まれ、DOCX・PPTX・XLSX の作成と検査に対応します。テンプレートと検査方法は [PPT ガイド](packages/ppt-runtime/README.md)をご覧ください。
+- **ローカルワークスペースと設定**：OS 標準のディレクトリ選択画面からワークスペースを管理します。Profile、プラグイン、セッション、モデル設定はインストール先とは別に保存され、更新時も保持されます。カスタム設定の入出力は [Preset パッケージ形式](docs/preset-packages.md)をご覧ください。
+- **更新と復旧**：現在のインストール版ではオンライン更新はまだ有効になっていません。[公式サイト](https://dshdesktop.com/zh/enterprise/)から新しいインストーラーを取得できます。オンライン更新の提供開始は各バージョンの説明に従います。プラグインに問題がある場合、`Harness` メニューの「セーフモードで再起動…」からサードパーティ製プラグインを一時的に無効化し、通常の Profile のデータを保持できます。診断は `harness.log` に記録されます。[プラグインの復旧](docs/architecture.md#profiles-and-plugin-recovery)と[更新の仕組み](docs/architecture.md#updates)をご覧ください。
 
-- 別の CLI やブラウザータブを必要とせず Harness を起動・終了
-- OS 標準のディレクトリ選択画面でプロジェクトワークスペースを追加・管理
-- DeepSeek 公式モデルと主要なサードパーティーモデルプロバイダーに対応
-- カスタム Agent Preset 一式をポータブルな [`.dshpreset` パッケージ](docs/preset-packages.md)としてインポート・エクスポート
-- 内蔵の PPT モードで資料から編集可能な PPTX を生成・出力
-- macOS と Windows に Python と Office ライブラリを同梱し、DOCX・PPTX・XLSX のオフライン作成と検証に対応
-- アプリ更新後も Profile、プラグイン、ワークスペース、セッション、モデル設定を保持
-- Harness 起動時やフロントエンドのプラグイン障害を検出し、診断ログとガイド付き復旧を提供
-- サードパーティープラグインだけを一時停止する非破壊的なセーフモード
-- ペアリングしたスマートフォンから LAN または任意の一時公開トンネル経由でセッションを継続
-- デスクトップ更新の確認、ダウンロード、インストールをユーザーが管理
-- macOS と Windows 向けのメニュー、タイトルバー、フォーカス、テーマ、ブランド表示
+## スマートフォン接続とデータの境界
 
-## PPT 作成
+デスクトップ実行環境では QR コードによるスマートフォン接続を利用できます。`Harness` メニューの「スマートフォンを接続…」を選び、WiFi でスキャンしてペアリングします。インターネットトンネルでは、パソコンに表示される接続パスワードも必要です。既定の有効期限は 5 分間で、明示的に同意した場合のみ長期パスワードを作成します。デスクトップ側で切断すると、スマートフォンのセッションも無効になります。接続できない場合は「QR リンクを開けませんか？ 別の経路を試す」から切り替えられます。
 
-**PPT** ボタンを有効にし、テンプレートを選んで作成したい内容を入力します。**16 種類のテンプレート、192 種類のレイアウト**から、編集可能な PPTX を生成できます。プレビューは英語ですが、出力は英語・中国語に対応し、それぞれのフォント設定を備えています。プレビューの言語が出力言語を決めることはありません。
+このブラウザでのペアリング機能は、近日公開予定のモバイルアプリとは別です。Harness はローカルのランダムなループバックポートで動作し、スマートフォンからは独立したペアリング Bridge を経由してアクセスします。ローカル Work と企業クラウドのタスクが自動同期されるわけではありません。[モバイルアクセスの境界](docs/architecture.md#mobile-access-boundary)をご覧ください。
 
-PPT はプリインストールされており、自動指示は PPT ボタンを有効にしたセッションだけに適用されます。詳細と出典は [PPT ガイド](packages/ppt-runtime/README.md)を参照してください。
-
-## スマートフォン接続
-
-`Harness` メニューから **Connect Phone…** を選び、ペアリングコードを読み取ります。スマートフォンがセッションへアクセスする前に、デスクトップ側の明示的な承認が必要です。
-
-Harness 自体はランダムな `127.0.0.1` ポートだけで動作します。スマートフォン接続には別のペアリング Bridge を使い、LAN 内に限定するか、遠隔利用時だけ一時的な Cloudflare Quick Tunnel を有効にできます。
-
-Cloudflare の起動に失敗すると Pinggy を試します。Cloudflare のペアリングリンクが表示されてもスマートフォンで開けない場合は、**Can’t open? Try another link** を選んで Pinggy に切り替えられます。
-
-## セーフモードと復旧
-
-サードパーティープラグインが起動や画面表示を妨げた場合、DSH Desktop は Runtime とフロントエンドの証拠から関連プラグインを特定し、ガイド付き復旧画面を開きます。
-
-`Harness` メニューの **Restart as Safe Mode…** を選ぶと、公式コア Bundle だけを含む隔離 Profile で起動します。通常 Profile のサードパーティープラグインは停止しますが、Agent、セッション、モデル設定、ワークスペースは引き続き利用できます。
-
-復旧画面では互換性のあるプラグイン更新を確認し、利用可能な場合は個別に更新できます。セーフモードでは一括更新も可能です。相談したい場合は **WeChat group** にマウスを合わせて QR コードを表示するか、**Discord** をクリックしてコミュニティを開いてください。
-
-通常画面を開けない場合は `--safe-mode` を指定できます。macOS の例：
-
-```sh
-open -a "DSH Desktop" --args --safe-mode
-```
-
-## ローカルデータとセキュリティ
-
-- Harness Web UI はランダムな loopback ポートだけで提供されます。
-- Renderer には Node.js 権限がなく、Context Isolation と sandbox を使用します。
-- WebView、信頼されていないアプリ内ナビゲーション、予期しない権限要求をブロックします。
-- Profile とセッションはインストール先ではなく、ユーザー別のアプリデータに保存されます。
-- スマートフォン接続には短時間だけ有効な Token とデスクトップ側の承認が必要です。
+Renderer に Node.js の権限はなく、Context Isolation と Sandbox が有効です。外部ページはシステムブラウザで開きます。Profile とセッションはユーザー単位のアプリデータディレクトリに保存されます。[ウィンドウと IPC のセキュリティ](docs/architecture.md#window-and-ipc-security)をご覧ください。
 
 ## 対応プラットフォーム
 
@@ -102,26 +64,48 @@ open -a "DSH Desktop" --args --safe-mode
 | macOS Apple Silicon | 署名・公証済み DMG/ZIP | 対応 |
 | macOS Intel | 署名・公証済み DMG/ZIP | 対応 |
 | Windows x64 | コード署名済み NSIS インストーラー | 対応 |
-| Windows ARM64 | — | 未対応 |
-| Linux | — | 未対応 |
+| Windows ARM64 | — | 現在未対応 |
+| Linux | — | 現在未対応 |
 
-Harness にはターゲット固有のネイティブ依存関係が含まれるため、各リリースは対応する OS とアーキテクチャ上でビルドされます。
+Harness は各プラットフォームのネイティブ依存を含むため、正式インストーラーは対応する OS とアーキテクチャ上でビルドします。
 
 ## 開発とアーキテクチャ
 
-- [開発ガイド](docs/development.md) — セットアップ、検証、パッチ保守、ネイティブパッケージング
-- [アーキテクチャ](docs/architecture.md) — Runtime、データ、セキュリティ、復旧、スマートフォン接続、更新
-- [リリース手順](docs/release-runbook.md) — 署名と公開の管理
-- [Preset パッケージ形式](docs/preset-packages.md) — ポータブル Agent Preset の仕様
+貢献を歓迎します。技術文書は次のように分かれています。
 
-変更を提出する前に `npm test`、`npm run typecheck`、`npm run build` を実行し、影響する実際のアプリ操作も確認してください。Issue、ログ、スクリーンショット、テストデータに本物の API キーを含めないでください。
+- [開発ガイド](docs/development.md) — ローカル環境、検証、パッチ保守、ネイティブビルド
+- [実行アーキテクチャ](docs/architecture.md) — 起動、永続化、セキュリティ、復旧、スマートフォン接続、更新
+- [リリース手順](docs/release-runbook.md) — 署名と正式リリースの管理
+- [Preset パッケージ形式](docs/preset-packages.md) — 移植可能な Agent Preset の契約
 
-## 関連プロジェクト
+変更提出前に `npm test`、`npm run typecheck`、`npm run build` を実行し、影響する操作を実際に確認してください。Issue、ログ、スクリーンショット、テストデータに本物の API キーを含めないでください。
 
-[dsh-market](https://github.com/dsh-market/dsh-market) は DeepSeek Harness のコミュニティプラグインマーケットです。Harness 画面からプラグインの検索、プレビュー、インストール、更新、有効化・無効化、テーマ変更を行えます。
+## コミュニティ
+
+共通のデスクトップ基盤については [DSH Desktop Discord コミュニティ](https://discord.gg/7Xgf3qe3Qp)に参加するか、以下の WeChat グループの QR コードをスキャンしてください。
+
+<img src="docs/images/wechat-group-20260815.png" width="220" alt="DSH Desktop コミュニティの WeChat グループ QR コード" />
 
 ## ライセンス
 
-DSH Desktop は [MIT License](LICENSE) のもとで公開されています。
+DSH Desktop は [MIT License](LICENSE) で公開されています。
 
-DeepSeek Harness とその依存関係には、それぞれの上流ライセンスと商標ポリシーが適用されます。DSH Desktop は独立したコミュニティデスクトップアプリです。
+DeepSeek Harness とその依存には、それぞれの上流ライセンスと商標規則が適用されます。DSH Desktop は独立したコミュニティ製デスクトップアプリです。
+
+## 導入実績
+
+BISHENG はさまざまな業界の大手企業に導入されています。以下は導入先の一部です。
+
+![中国気象局、HSBC、ボッシュ、ワトソンズ、中国移動、中糧集団](docs/images/bisheng-customer-logos-row-1.png)
+
+![首鋼集団、中国宝武、中金公司、中国輸出信用保険公司、中国石油、中国工商銀行](docs/images/bisheng-customer-logos-row-2.png)
+
+![重慶銀行、中国電建、華泰証券、華夏銀行、遼寧金控、中国民生銀行](docs/images/bisheng-customer-logos-row-3.png)
+
+![龍華資本、蘇交科、中信銀行、中英人寿、北汽集団、中債資信](docs/images/bisheng-customer-logos-row-4.png)
+
+## 企業向けお問い合わせ
+
+BISHENG の企業向けデプロイ、クライアント連携、製品デモ、ビジネス連携について、お気軽にお問い合わせください。
+
+[飛書（Feishu）フォームから BISHENG チームに問い合わせる](https://dataelem.feishu.cn/share/base/form/shrcnVow7GQwwKYEBCD41Bu5qoh)

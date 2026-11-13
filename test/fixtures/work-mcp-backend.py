@@ -18,7 +18,8 @@ import bisheng.dsh.work_mcp as runtime
 
 
 async def main():
-    tools = {7: SimpleNamespace(id=7, name="Customer query", desc="Read customer totals")}
+    tools = {7: SimpleNamespace(id=7, name="Customer query", desc="Read customer totals", tool_key="customer_query", is_preset=1)}
+    tools[8] = SimpleNamespace(id=8, name="Web search", desc="Search webpages and cite URLs", tool_key="web_search", is_preset=1)
     files = {"SKILL.md": b"---\nname: report\ndescription: Create a report\n---\nUse tool 7 and templates/report.csv.\n",
              "templates/report.csv": b"customer,total\n"}
     digest = hashlib.sha256()
@@ -42,6 +43,16 @@ async def main():
     service._executor = AsyncMock(return_value=SimpleNamespace(args_schema={"type": "object", "required": ["query"],
         "properties": {"query": {"type": "string"}}, "additionalProperties": False},
         ainvoke=AsyncMock(return_value={"customer": "Example company", "total": 120})))
+    default_executor = service._executor.return_value
+
+    async def executor(tool_id):
+        if tool_id != 8:
+            return default_executor
+        return SimpleNamespace(args_schema=default_executor.args_schema, ainvoke=AsyncMock(return_value=json.dumps([
+            {"title": "Search fixture", "url": "https://example.com/search", "snippet": "Search result"}
+        ])))
+
+    service._executor.side_effect = executor
     service._read_bundle = lambda skill: {"content": "Use tool 7 and templates/report.csv.", "tool_ids": [7],
         "files": [{"path": path, "data": base64.b64encode(data).decode(),
                    "sha256": hashlib.sha256(data).hexdigest()} for path, data in sorted(files.items())]}

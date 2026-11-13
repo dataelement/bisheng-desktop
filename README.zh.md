@@ -3,8 +3,9 @@
 </h1>
 
 <p align="center">
-  <strong>DSH Desktop by Dataelem</strong>（DSH 客户端）是 Dataelem 团队基于 DeepSeek Harness 框架打造的桌面 Agent 应用，提供开源版与企业版。<br />
-  官方网站：<a href="https://www.dshdesktop.com/">www.dshdesktop.com</a> · 开源仓库：<a href="https://github.com/dataelement/dsh-desktop">dataelement/dsh-desktop</a>
+  <strong>BISHENG 客户端是连接本地办公与企业 AI 的桌面 Agent。</strong><br />
+  员工使用企业账号调用获准的模型、知识库、工具和技能，在 Chat 中进行云端问答与多步任务，在 Work 中处理授权目录里的本地材料；企业统一管理资源、权限、积分与用量。<br />
+  <a href="https://dshdesktop.com/zh/enterprise/">下载 BISHENG 客户端</a> · <a href="https://github.com/dataelement/bisheng">BISHENG 服务端仓库</a>
 </p>
 
 <p align="center">
@@ -17,87 +18,44 @@
   <img alt="Windows" src="https://img.shields.io/badge/Windows-x64-171513.svg" />
 </p>
 
-![DSH Desktop 的 Preset、模型提供方、手机控制与可编辑 PPT 生成功能](docs/images/dsh-desktop-hero-v021.png)
+## BISHENG 客户端能做什么
 
-<p align="center"><strong>使用 DeepSeek 官方模型或主流第三方模型，管理可移植的 Agent Preset，在手机上继续 Harness 会话，并将材料生成可继续编辑的 PPTX。</strong></p>
+- **Chat：把任务交给企业云端**。进行资料问答，或进入任务模式完成多步处理、调用技能、生成文件，查看任务进度与结果。
+- **Work：围绕本地材料持续工作**。选择授权目录，整理材料、分析数据，生成可编辑的 Word、Excel 和 PPT，并根据反馈继续修改、保存到获准目录。
+- **按权限使用企业资源**。使用企业账号调用获准的模型、知识空间、API/MCP 工具和技能，也可从应用中心打开企业已发布的应用、助手和工作流。
+- **企业统一管理**。管理员集中配置资源与权限，分发插件和工作台，管理月度积分和调用用量；Chat 与 Work 的企业模型调用共用当前用户的积分账本。
+- **网页与桌面协作**。同一企业账号在网页与桌面 Chat 中打开同一个服务端任务时，可同步查看任务事件与完成状态。本地 Work 的任务与产物按独立记录管理。
 
-DSH Desktop 把本地 DeepSeek Harness 封装为可安装的桌面应用。它会自动启动 Harness，把 Profile、插件、工作区、模型配置和会话保存在应用安装目录之外，并在本地 Runtime 就绪后直接进入完整 Harness 界面。
+![BISHENG 网页端、桌面端与手机端展示](docs/images/bisheng-platform-overview.png)
 
-> [!IMPORTANT]
-> DSH Desktop 当前处于早期预览阶段，基于仍在快速迭代的 `@deepseek-ai/dsh@0.2.1-rc.2`。macOS 正式包已完成代码签名并通过 Apple 公证；Windows x64 安装包也已完成代码签名。随着下载量、安装量和发行者信誉逐步积累，Windows 安全提示会逐渐减少，但不会立即消失。
+> 手机 App 即将推出，具体功能与上线安排以版本说明为准。企业接入能力、部署要求及开源与企业版范围，以对应版本说明为准。
+
+## BISHENG 平台与关联项目
+
+**BISHENG 是开源的企业级一站式 Agent 平台**，专注办公效率与企业 AI 应用落地，为客户端提供模型、知识、工具、技能、应用及统一管理能力。
+
+- [BISHENG 企业平台](https://github.com/dataelement/bisheng)：部署企业 AI 服务，集中管理组织的资源、权限与用量。
+- [DSH Desktop](https://github.com/dataelement/dsh-desktop)：基于 DeepSeek Harness 的开源桌面 Agent 基础，BISHENG 客户端在此之上连接企业 AI 服务。
 
 ## 下载安装
 
-我们提供稳定版和预览版：**稳定版**可在[官网](https://dshdesktop.com/zh/)下载，推荐日常使用；**预览版**可在 [GitHub Releases](https://github.com/dataelement/dsh-desktop/releases) 中选择标记为 **Pre-release** 的版本。
+从[BISHENG 客户端官网](https://dshdesktop.com/zh/enterprise/)获取安装包，配合企业部署的 BISHENG 平台使用。登录企业账号后，使用管理员已配置并授权的资源。
 
-预览版除了包含我们的新增功能，还会积极跟进 DeepSeek Harness 官方最新版本，可能与社区插件不兼容，**不建议普通用户使用**。欢迎愿意尝鲜的用户体验并在社区反馈；经尝鲜用户验证后，我们才会向全体社区用户推送。
+如需独立使用个人版，可访问 [DSH Desktop 官网](https://dshdesktop.com/zh/)。
 
-安装版会在启动后及每六小时检查更新。发现新版本时，DSH Desktop 会先询问用户；同意后才开始下载，只有选择“重新启动并安装”后才会进入安装。你也可以从应用菜单手动检查，或跳过当前版本而不影响后续版本提示。
+## 办公文件与桌面能力
 
-## 加入社区
+- **办公文件交付**：通过内置 PPT 模式选择模板、描述内容，生成可继续编辑的 PPTX；桌面运行环境携带 Python 与 Office 库，支持 DOCX、PPTX、XLSX 的生成和检查。模板与校验方式见 [PPT 说明](packages/ppt-runtime/README.md)。
+- **本地工作区与配置**：通过系统目录选择器管理工作区；Profile、插件、会话和模型配置保存在安装目录之外，升级时保留。自定义配置的导入与导出见 [Preset 包格式](docs/preset-packages.md)。
+- **更新与恢复**：当前安装版在线更新尚未启用，可从[官网](https://dshdesktop.com/zh/enterprise/)获取新版安装包；在线更新的开放以对应版本说明为准。插件异常时可通过 `Harness` 菜单的“以安全模式重启…”暂时屏蔽第三方插件，保留正常 Profile 的数据；诊断信息写入 `harness.log`。详细流程见[运行架构：插件恢复](docs/architecture.md#profiles-and-plugin-recovery)与[更新机制](docs/architecture.md#updates)。
 
-<p align="center">
-  使用微信扫描下方二维码，加入 DSH Desktop 微信交流群。<br />
-  <img src="docs/images/wechat-group-20260815.png" width="220" alt="DSH Desktop 微信群二维码" /><br />
-  也可以加入 <a href="https://discord.gg/7Xgf3qe3Qp">DSH Desktop Discord 社区</a>。
-</p>
+## 手机连接与数据边界
 
-## DSH Desktop 带来了什么
+桌面运行时保留扫码连接手机的方式：从 `Harness` 菜单选择“连接手机…”，WiFi 下扫码配对；使用互联网隧道时，还需输入电脑显示的连接密码。默认密码 5 分钟有效；只有明确勾选同意后才生成长效密码。桌面端断开连接后，手机会话随即失效。连接异常时可用“扫码打不开？换一条线路”切换线路。
 
-DeepSeek Harness 已经提供 Agent Runtime 与 Web UI。DSH Desktop 在此基础上补齐真正的桌面宿主能力：
+这项浏览器配对能力与即将推出的手机 App 分开。Harness 运行在本机随机回环端口，手机访问通过独立的配对 Bridge；它不代表本地 Work 与企业云端任务自动同步。详见[运行架构：移动访问边界](docs/architecture.md#mobile-access-boundary)。
 
-- 自动启动和停止 Harness，不需要另开 CLI 或浏览器标签页
-- 通过系统原生目录选择器添加和管理项目工作区
-- 支持 DeepSeek 官方模型与主流第三方模型提供方
-- 将完整的自定义 Agent Preset 导入或导出为便携的 [`.dshpreset` 压缩包](docs/preset-packages.md)，安装前检查命名冲突并提示信任风险
-- 通过内置 PPT 模式将材料生成并交付为可继续编辑的 PPTX
-- 在 macOS 和 Windows 自带 Python 及 Office 库，支持离线生成和检查 DOCX、PPTX、XLSX
-- 应用升级时保留 Profile、插件、工作区、会话和模型配置
-- 识别 Harness 启动或前端插件故障，把诊断写入 `harness.log` 并提供引导恢复入口
-- 提供不破坏用户数据的安全模式，临时屏蔽第三方插件
-- 让已配对的手机通过局域网或可选的临时公网隧道继续会话
-- 在应用内检查桌面更新，并由用户决定是否下载和安装
-- 针对 macOS 和 Windows 优化原生菜单、标题栏、窗口焦点、主题和品牌体验
-
-## PPT 生成
-
-点击 **PPT** 按钮，选择模板，再描述你想制作的内容。内置 **16 套模板、192 种版式**，可输出可继续编辑的 PPTX。模板预览统一使用英文，生成内容支持中文和英文，并配有对应字体设置；预览语言不决定输出语言。
-
-PPT 功能保持预装，相关自动提示词仅在选中 PPT 按钮的会话中生效。模板、校验和参考来源详见 [PPT 说明](packages/ppt-runtime/README.md)。
-
-## 手机连接
-
-从 `Harness` 菜单选择“连接手机…”，再扫描配对二维码。
-
-- WiFi 下扫码即可连接。
-- 互联网隧道需要再输入电脑上显示的 6 位连接密码。默认是 5 分钟、只存在内存里的临时密码；只有在「连接手机」窗口勾选同意后，才会在本机生成长效密码。
-
-Harness 本身始终运行在随机的 `127.0.0.1` 端口。手机访问由独立的配对 Bridge 提供。Cloudflare Quick Tunnel 是常态长连接路径；免费 Pinggy 是 Cloudflare 不可用时（如中国大陆）的备用通道，大约 60 分钟后失效。桌面端断开连接后，手机会话随即失效。
-
-Cloudflare 启动失败时会尝试 Pinggy。若已显示 Cloudflare 配对链接，但手机无法打开，可点击“**扫码打不开？换一条线路**”切换到 Pinggy。
-
-## 安全模式与故障恢复
-
-如果第三方插件导致启动或页面渲染异常，DSH Desktop 会结合 Runtime 与前端证据定位相关插件，并打开引导式恢复界面。
-
-从 `Harness` 菜单选择“以安全模式重启…”，应用会使用只包含官方核心 Bundle 的隔离 Profile 启动。正常 Profile 中的第三方插件会被屏蔽，但 Agent、会话、模型配置和工作区仍然可用。你可以从页面顶部的安全模式提示卸载选中的问题插件，或恢复正常启动。
-
-恢复页面会检查插件是否有兼容更新；有可用版本时，可升级对应插件，安全模式还支持批量升级。需要帮助时，鼠标悬停“**微信群**”即可显示二维码，点击 **Discord** 则会打开社区链接。
-
-当正常界面无法进入时，也可以通过 `--safe-mode` 启动。例如 macOS：
-
-```sh
-open -a "DSH Desktop" --args --safe-mode
-```
-
-## 本地数据与安全边界
-
-- Harness Web UI 只运行在随机回环端口。
-- Renderer 不具备 Node.js 权限，并启用 Context Isolation 与 Sandbox。
-- WebView、不可信站内跳转和非预期权限请求会被阻止。
-- 外部网页链接交给系统浏览器打开。
-- Profile 与会话保存在 Electron 的用户级应用数据目录，不在安装目录内。
-- 手机访问需要短时配对 Token。WiFi 扫码即连；互联网隧道还需要电脑上显示的连接密码。
+Renderer 不具备 Node.js 权限，并启用 Context Isolation 与 Sandbox；外部网页在系统浏览器中打开。Profile 与会话保存在用户级应用数据目录。详见[运行架构：窗口与 IPC 安全](docs/architecture.md#window-and-ipc-security)。
 
 ## 平台支持
 
@@ -122,12 +80,32 @@ Harness 包含目标平台原生依赖，因此每一种正式安装包都在对
 
 提交修改前请运行 `npm test`、`npm run typecheck` 和 `npm run build`，并实际操作受影响的应用流程。请勿在 Issue、日志、截图或测试数据中提交真实 API Key。
 
-## 友情链接
+## 社区
 
-[dsh-market](https://github.com/dsh-market/dsh-market) 是 DeepSeek Harness 社区插件市场，可在 Harness 界面中浏览和搜索插件、查看截图、安装或更新包、启停插件以及切换主题。
+共享桌面基础能力的使用交流，可加入 [DSH Desktop Discord 社区](https://discord.gg/7Xgf3qe3Qp)，或扫描下方微信群二维码。
+
+<img src="docs/images/wechat-group-20260815.png" width="220" alt="DSH Desktop 社区微信群二维码" />
 
 ## 许可证
 
 DSH Desktop 采用 [MIT License](LICENSE) 开源。
 
 DeepSeek Harness 及其依赖仍遵循各自的上游许可证与商标规则。DSH Desktop 是独立的社区桌面应用。
+
+## 服务企业
+
+BISHENG 已服务众多行业头部企业，以下为部分客户。
+
+![中国气象局、汇丰银行、博世、屈臣氏、中国移动、中粮集团](docs/images/bisheng-customer-logos-row-1.png)
+
+![首钢集团、中国宝武、中金公司、中国出口信用保险公司、中国石油、中国工商银行](docs/images/bisheng-customer-logos-row-2.png)
+
+![重庆银行、中国电建、华泰证券、华夏银行、辽宁金控、中国民生银行](docs/images/bisheng-customer-logos-row-3.png)
+
+![龙华资本、苏交科、中信银行、中英人寿、北汽集团、中债资信](docs/images/bisheng-customer-logos-row-4.png)
+
+## 企业咨询
+
+如需了解 BISHENG 企业部署、桌面客户端接入、产品演示或商务合作，欢迎联系我们。
+
+[填写飞书表单，联系 BISHENG 团队](https://dataelem.feishu.cn/share/base/form/shrcnVow7GQwwKYEBCD41Bu5qoh)

@@ -13,8 +13,8 @@ import { applyWorkCapabilities } from '../packages/dsh-desktop-enterprise/work-c
 
 const contexts = []
 afterEach(async () => { for (const ctx of contexts.splice(0)) await ctx.fiber.dispose() })
-const name = 'mcp__bisheng__bisheng_tool_38'
-const tool = { name: 'bisheng_tool_38', description: 'Weather fixture', inputSchema: { type: 'object', properties: {} } }
+const name = 'mcp__bisheng__weather_lookup'
+const tool = { name: 'weather_lookup', description: 'Weather fixture', inputSchema: { type: 'object', properties: {} } }
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 async function fixture() {
   const ctx = new Context()
