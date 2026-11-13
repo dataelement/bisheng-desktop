@@ -220,6 +220,14 @@ describe('restricted enterprise credential broker', () => {
     expect(response.status).toBe(200)
     assertPublicBrokerPayload(await response.json())
     expect(refresh).toHaveBeenCalledTimes(1)
+    expect(refresh).toHaveBeenLastCalledWith(false)
+    // F016: the account entry may ask for the credit balance too, and nothing else.
+    expect((await brokerFetch(broker, path, { method: 'POST', body: JSON.stringify({ includeUsage: true }) })).status).toBe(200)
+    expect(refresh).toHaveBeenLastCalledWith(true)
+    expect((await brokerFetch(broker, path, { method: 'POST', body: JSON.stringify({ includeUsage: 'yes' }) })).status).toBe(400)
+    expect((await brokerFetch(broker, path, { method: 'POST', body: JSON.stringify({ includeUsage: true, base: 'x' }) })).status).toBe(400)
+    expect((await brokerFetch(broker, '/v1/refresh', { method: 'POST', body: JSON.stringify({ includeUsage: true }) })).status).toBe(400)
+    expect(refresh).toHaveBeenCalledTimes(2)
   })
 
   it('logs in through the fixed routes without exporting credentials', async () => {

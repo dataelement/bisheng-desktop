@@ -351,17 +351,23 @@ it('uses DSH plugin tabs for inventory and enterprise contributions without an A
 const click = async node => { expect(node).not.toBeNull(); await act(async () => node.click()) }
 const menuItem = label => [...document.querySelectorAll('[role=menuitem]')].find(node => node.textContent === label)
 
-it.each(['zh', 'en'])('shows remaining enterprise credits in the account menu and refreshes on open (%s)', async language => {
+it.each(['zh', 'en'])('shows remaining enterprise credits on the account entry and in its menu, refreshing on open (%s)', async language => {
   const f = await fixture(language)
   f.setAccount({ connected: true, user: { username: 'admin' }, usage: { used: 100_000_000, limit: 12_000_000_000, quota_state: 'available' } })
   await f.render('settings.launcher', { wide: true })
+  // F016: the balance is on the account entry itself, with up to two decimals.
+  expect(document.querySelector('[data-dsh-account-credits]').textContent).toBe(language === 'zh' ? '剩余 11,900 积分' : '11,900 credits left')
+  expect(document.querySelector('.dshAccountTrigger').getAttribute('aria-label')).toContain(language === 'zh' ? '剩余 11,900 积分' : '11,900 credits left')
   await click(document.querySelector('.dshAccountTrigger'))
-  expect(document.querySelector('.dshAccountMenuCredits strong').textContent).toBe('11,900.0')
+  // Opening the menu rereads the live balance, not the host's cached state.
+  expect(f.request.mock.calls.at(-1)[0]).toBe('/api/enterprise.models.refresh')
+  expect(document.querySelector('.dshAccountMenuCredits strong').textContent).toBe('11,900')
   expect(document.querySelector('.dshAccountMenuCredits small').textContent).toBe(language === 'zh' ? '剩余积分' : 'Credits remaining')
   await click(document.querySelector('.dshAccountTrigger'))
   f.setAccount({ connected: true, user: { username: 'admin' }, usage: { source: 'unavailable' } })
   await click(document.querySelector('.dshAccountTrigger'))
   expect(document.querySelector('.dshAccountMenuCredits strong').textContent).toBe('—')
+  expect(document.querySelector('[data-dsh-account-credits]')).toBeNull()
   expect(document.querySelector('.dshAccountMenuCredits small').textContent).toBe(language === 'zh' ? '积分暂不可用' : 'Credits unavailable')
 })
 
@@ -689,4 +695,75 @@ it('keeps a session failure bounded while the host publishes a new error epoch',
   await f.mount(entry.Component, entry.options.inject())
   expect(usage).toHaveBeenCalledTimes(1)
   expect(document.querySelector('[role=alert]')).not.toBeNull()
+})
+
+it('F016: shows fractional credits on the account entry with two decimals', async () => {
+  const f = await fixture('zh')
+  f.setAccount({ connected: true, user: { username: 'f015user' }, usage: { used: 100_512_720, limit: 1_000_000_000, quota_state: 'available' } })
+  await f.render('settings.launcher', { wide: true })
+  expect(document.querySelector('[data-dsh-account-credits]').textContent).toBe('剩余 899.49 积分')
+})
+
+it('F016: keeps the collapsed rail to the avatar while the label still carries the balance', async () => {
+  const f = await fixture('en')
+  f.setAccount({ connected: true, user: { username: 'admin' }, usage: { used: 0, limit: 5_000_000, quota_state: 'available' } })
+  await f.render('settings.launcher', { wide: false })
+  expect(document.querySelector('[data-dsh-account-credits]')).toBeNull()
+  expect(document.querySelector('.dshAccountTrigger').getAttribute('aria-label')).toContain('5 credits left')
+})
+
+it('F016: rereads the balance on the account entry shortly after a Chat turn finishes', async () => {
+  const f = await fixture('zh')
+  f.setAccount({ connected: true, user: { username: 'f015user' }, usage: { used: 100_000_000, limit: 1_000_000_000, quota_state: 'available' } })
+  await f.render('settings.launcher', { wide: true })
+  expect(document.querySelector('[data-dsh-account-credits]').textContent).toBe('剩余 900 积分')
+  const base = { connected: true, phase: 'ready', settingsProtocolVersion: 1, navigation: { settings: { aiAccess: false } } }
+  await act(async () => f.update(base))
+  await act(async () => f.update({ ...base, running: ['c1'] }))
+  const reads = f.request.mock.calls.length
+  f.setAccount({ connected: true, user: { username: 'f015user' }, usage: { used: 104_766_400, limit: 1_000_000_000, quota_state: 'available' } })
+  await act(async () => f.update({ ...base, running: [] }))
+  expect(f.request.mock.calls.length).toBe(reads)
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 1700)) })
+  // One local read of the cached state for the host notification, then the live balance.
+  expect(f.request.mock.calls.slice(reads).map(([path]) => path)).toEqual(['/api/enterprise.state', '/api/enterprise.models.refresh'])
+  // The plain state is the host's cache; the balance is reread with the catalog.
+  const [path, init] = f.request.mock.calls.at(-1)
+  expect(path).toBe('/api/enterprise.models.refresh')
+  expect(init).toMatchObject({ method: 'POST', body: '{"includeUsage":true}' })
+  expect(document.querySelector('[data-dsh-account-credits]').textContent).toBe('剩余 895.23 积分')
+})
+
+it('F016: falls back to the cached account state when the balance refresh is refused', async () => {
+  const f = await fixture('zh')
+  f.setAccount({ connected: true, user: { username: 'f015user' }, usage: { used: 100_000_000, limit: 1_000_000_000, quota_state: 'available' } })
+  await f.render('settings.launcher', { wide: true })
+  const base = { connected: true, phase: 'ready', settingsProtocolVersion: 1, navigation: { settings: { aiAccess: false } } }
+  await act(async () => f.update(base))
+  await act(async () => f.update({ ...base, running: ['c1'] }))
+  const original = f.request.getMockImplementation()
+  f.request.mockImplementation(async (path, init) => path === '/api/enterprise.models.refresh'
+    ? { ok: false, status: 429, json: async () => ({ error: 'Too many refresh attempts.' }) }
+    : original(path, init))
+  await act(async () => f.update({ ...base, running: [] }))
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 1700)) })
+  expect(f.request.mock.calls.slice(-2).map(([path]) => path)).toEqual(['/api/enterprise.models.refresh', '/api/enterprise.state'])
+  expect(document.querySelector('[data-dsh-account-credits]').textContent).toBe('剩余 900 积分')
+  await click(document.querySelector('.dshAccountTrigger'))
+  expect(document.querySelector('.dshAccountMenuError')).toBeNull()
+})
+
+it('F016: shows a balance the host reread after a Work turn without any Chat activity', async () => {
+  const f = await fixture('zh')
+  f.setAccount({ connected: true, user: { username: 'f015user' }, usage: { used: 100_000_000, limit: 1_000_000_000, quota_state: 'available' } })
+  await f.render('settings.launcher', { wide: true })
+  const base = { connected: true, phase: 'ready', settingsProtocolVersion: 1, navigation: { settings: { aiAccess: false } } }
+  await act(async () => f.update(base))
+  const reads = f.request.mock.calls.length
+  f.setAccount({ connected: true, user: { username: 'f015user' }, usage: { used: 102_000_000, limit: 1_000_000_000, quota_state: 'available' } })
+  // A burst of host notifications costs one local read of the cached state.
+  await act(async () => { f.update(base); f.update(base); f.update(base) })
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 400)) })
+  expect(f.request.mock.calls.slice(reads).map(([path]) => path)).toEqual(['/api/enterprise.state'])
+  expect(document.querySelector('[data-dsh-account-credits]').textContent).toBe('剩余 898 积分')
 })

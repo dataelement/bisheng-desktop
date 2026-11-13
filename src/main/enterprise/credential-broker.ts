@@ -239,11 +239,14 @@ export async function startEnterpriseCredentialBroker(
           sendJson(response, 429, { error: 'Too many refresh attempts.' })
           return
         }
-        if (!isExactObject(body, [])) {
+        // F016: a catalog refresh may also reread the credit balance, e.g. right after a Chat turn.
+        const includeUsage = path === '/v1/models/refresh'
+          && isExactObject(body, ['includeUsage']) && body.includeUsage === true
+        if (!includeUsage && !isExactObject(body, [])) {
           sendJson(response, 400, { error: 'Refresh does not accept a body.' })
           return
         }
-        sendJson(response, 200, path === '/v1/models/refresh' ? await service.refreshModels() : await service.refresh())
+        sendJson(response, 200, path === '/v1/models/refresh' ? await service.refreshModels(includeUsage) : await service.refresh())
         return
       }
       if (path === '/v1/logout') {

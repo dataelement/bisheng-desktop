@@ -860,7 +860,7 @@ window.__ModuleLoader__.load({
       if (!usage || usage.source === 'unavailable' || usage.quota_state === 'unavailable') {
         return t('usageUnavailable')
       }
-      const formatter = new Intl.NumberFormat(language || 'en', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+      const formatter = new Intl.NumberFormat(language || 'en', { maximumFractionDigits: 2 })
       if (usage.limit === 0) return formatter.format(0)
       if (usage.used === null || usage.limit === null) return t('usageUnavailable')
       return formatter.format(Math.max(0, usage.limit - usage.used) / 1_000_000)
