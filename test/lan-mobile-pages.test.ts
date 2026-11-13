@@ -361,6 +361,9 @@ describe('LAN mobile page', () => {
     expect(desktop).toContain('--bg:#141416')
     expect(desktop).toContain('.qr{display:inline-flex;background:#fff')
     expect(desktop).toContain('Creating a global network link')
+    expect(desktop).toContain(
+      'Control remotely over the internet, including 4G/5G or other WiFi networks, with moderate real-time responsiveness.'
+    )
     expect(desktop).toContain('Copied')
     expect(desktop).not.toContain('Link copied')
     expect(desktop).not.toContain('id="copyToast"')
@@ -580,7 +583,7 @@ describe('LAN mobile page', () => {
     expect(desktop).toContain('id="pinActions" class="pin-actions" hidden')
     expect(desktop).toContain('.pin-actions[hidden]{display:none}')
     expect(desktop).toContain(
-      '互联网远程请使用手机 App，并填写与这台电脑相同的毕昇地址。按会话解绑手机暂不可用。'
+      '移动设备通过互联网（如 4G/5G 或其他WiFi网络等）均可远程操控，同步实时性中等'
     )
     expect(desktop).toContain('断开连接')
     expect(desktop).toContain('现在可以关闭此窗口。')
@@ -854,7 +857,9 @@ describe('LAN mobile page', () => {
     expect(elements.tunnelError?.classList.contains('show')).toBe(true)
     expect(elements.tunnelError?.textContent).toContain('隧道建立失败：')
     expect(elements.tunnelError?.textContent).toContain('Unable to create an internet tunnel')
-    expect(elements.modeHint?.textContent).toContain('毕昇地址')
+    expect(elements.modeHint?.textContent).toBe(
+      '移动设备通过互联网（如 4G/5G 或其他WiFi网络等）均可远程操控，同步实时性中等'
+    )
 
     await api.switchMode(false)
     expect(api.selectedTunnelTab()).toBe(false)
@@ -882,7 +887,8 @@ describe('LAN mobile page', () => {
       tunnelActive: true,
       tunnelProvider: 'pinggy'
     })
-    expect(cloudflare).toContain('id="fallbackLink" class="fallback-link hide"')
+    expect(cloudflare).toContain('id="fallbackLink" class="fallback-link"')
+    expect(cloudflare).not.toContain('id="fallbackLink" class="fallback-link hide"')
     expect(pinggy).toContain('id="fallbackLink" class="fallback-link hide"')
   })
 })
