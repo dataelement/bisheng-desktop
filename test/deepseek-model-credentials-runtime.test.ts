@@ -21,6 +21,8 @@ it('updates the authenticated model catalog when the official key is stored and 
     dshSafePatchPath: join(root, 'build/dsh-desktop-safe.patch.yml'),
     dshHome: home,
     logPath: join(home, 'runtime.log'),
+    // Concurrent subprocess fixtures must not race for the Desktop's stable port.
+    preferredPort: 0,
     startupTimeoutMs: 30_000,
     launchProcess: (executable, args, options) => spawn(executable, args, options),
     onChanged() {}
