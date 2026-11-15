@@ -170,7 +170,7 @@ describe('enterprise service login loop', () => {
     expect(service.snapshot()).toMatchObject({ connected: false, modelsAvailable: false, models: [] })
   })
 
-  it('retains reasoning metadata through login, refresh and detached public snapshots', async () => {
+  it('retains model metadata through login, refresh, catalog polling and detached public snapshots', async () => {
     const platform = createMockEnterpriseServer({ port: 0 })
     const origin = await platform.listen()
     cleanups.push(async () => platform.close())
@@ -179,7 +179,12 @@ describe('enterprise service login loop', () => {
       const response = await globalThis.fetch(input, init)
       if (!String(input).endsWith('/api/v1/dsh/models')) return response
       const body = await response.json()
-      body.data = body.data.map((model: Record<string, unknown>) => ({ ...model, reasoning }))
+      body.data = body.data.map((model: Record<string, unknown>) => ({
+        ...model, reasoning, slug: 'org/model-v1', context_window: 500000,
+        input_modalities: ['text', 'image'],
+        capabilities: { ...(model.capabilities as Record<string, boolean>), vision: true },
+        supported_reasoning_levels: [{ effort: 'high', description: 'High' }], default_reasoning_level: 'high'
+      }))
       return Response.json(body)
     }
     const { service } = await createService(createEnterpriseFetch(fetchImpl))
@@ -187,11 +192,19 @@ describe('enterprise service login loop', () => {
     await completeBrowserLogin(origin, started.authorizationUrl)
     await waitFor(() => service.snapshot().modelsAvailable)
     const snapshot = service.snapshot()
-    expect(snapshot.models[0]?.reasoning).toEqual(reasoning)
+    const metadata = {
+      slug: 'org/model-v1', context_window: 500000, input_modalities: ['text', 'image'],
+      supported_reasoning_levels: [{ effort: 'high', description: 'High' }], default_reasoning_level: 'high', reasoning
+    }
+    expect(snapshot.models[0]).toMatchObject(metadata)
+    snapshot.models[0]?.input_modalities?.splice(0)
+    snapshot.models[0]?.supported_reasoning_levels?.splice(0)
     snapshot.models[0]?.reasoning?.efforts.splice(0)
-    expect(service.snapshot().models[0]?.reasoning).toEqual(reasoning)
+    expect(service.snapshot().models[0]).toMatchObject(metadata)
     await service.refresh()
-    expect(service.snapshot().models[0]?.reasoning).toEqual(reasoning)
+    expect(service.snapshot().models[0]).toMatchObject(metadata)
+    await service.refreshModels()
+    expect(service.snapshot().models[0]).toMatchObject(metadata)
   })
 
   it('AC-T05/AC-T07: title broker binds the current epoch, refreshes once, and never sends broker identity fields', async () => {
