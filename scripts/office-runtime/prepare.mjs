@@ -32,26 +32,35 @@ function canRetryDownload(error) {
   return RETRYABLE_NETWORK_CODES.has(code)
 }
 
+function downloadFailureReason(error) {
+  const code = error?.cause?.code || error?.code
+  // TimeoutError's numeric DOM code is 23. Log the name so a retry is not mistaken for HTTP 23.
+  if (typeof code === 'string' && code.length > 0) return code
+  return error?.name || 'failed'
+}
+
+function timeoutError(url, cause) {
+  const wrapped = new Error(`Office runtime download timed out after ${DOWNLOAD_TIMEOUT_MS}ms: ${url}`)
+  wrapped.name = 'TimeoutError'
+  wrapped.cause = cause
+  wrapped.retryable = true
+  return wrapped
+}
+
 async function fetchAsset(url) {
-  let response
   try {
-    response = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) })
-  } catch (error) {
-    if (error?.name === 'TimeoutError' || error?.name === 'AbortError') {
-      const wrapped = new Error(`Office runtime download timed out after ${DOWNLOAD_TIMEOUT_MS}ms: ${url}`)
-      wrapped.name = 'TimeoutError'
-      wrapped.cause = error
-      wrapped.retryable = true
-      throw wrapped
+    const response = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) })
+    if (!response.ok) {
+      const error = new Error(`Office runtime download: HTTP ${response.status} ${url}`)
+      error.retryable = response.status === 408 || response.status === 429 || response.status >= 500
+      throw error
     }
+    // The same signal aborts the body after headers arrive. That rejection is a raw TimeoutError.
+    return Buffer.from(await response.arrayBuffer())
+  } catch (error) {
+    if (error?.name === 'TimeoutError' || error?.name === 'AbortError') throw timeoutError(url, error)
     throw error
   }
-  if (!response.ok) {
-    const error = new Error(`Office runtime download: HTTP ${response.status} ${url}`)
-    error.retryable = response.status === 408 || response.status === 429 || response.status >= 500
-    throw error
-  }
-  return Buffer.from(await response.arrayBuffer())
 }
 
 function pythonArchive(artifact) {
@@ -89,7 +98,7 @@ export async function downloadAsset(url, sha256, cache) {
       } catch (downloadError) {
         lastError = downloadError
         if (!canRetryDownload(downloadError) || attempt === DOWNLOAD_ATTEMPTS) break
-        const reason = downloadError?.cause?.code || downloadError?.code || downloadError?.name || 'failed'
+        const reason = downloadFailureReason(downloadError)
         console.warn(`Office runtime download retry ${attempt}/${DOWNLOAD_ATTEMPTS - 1}: ${url} (${reason})`)
         await new Promise(resolve => setTimeout(resolve, attempt * 2_000))
       }

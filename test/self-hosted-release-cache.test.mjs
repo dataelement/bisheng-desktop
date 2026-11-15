@@ -42,6 +42,20 @@ it('keeps portable preparation on Linux and macOS work on self-hosted runners', 
   }
 })
 
+it('prefetches the Intel Office Python archive into the cache Intel restores', async () => {
+  const source = await readFile(path.resolve(import.meta.dirname, '../.github/workflows/release.yml'), 'utf8')
+  const { jobs } = YAML.parse(source)
+  const prepare = jobs['prepare-shared-runtime-assets']
+  const prepareCache = prepare.steps.find(step => step.name === 'Cache shared runtime assets')
+  const download = prepare.steps.find(step => step.name === 'Download Intel Office runtime inputs')
+  const restore = jobs.macos.steps.find(step => step.name === 'Restore shared runtime assets')
+  expect(download.run).toBe('node scripts/office-runtime/prepare.mjs --download-only mac-x64')
+  expect(prepare.steps.indexOf(download)).toBeGreaterThan(prepare.steps.indexOf(prepareCache))
+  expect(prepareCache.with.key).toBe(restore.with.key)
+  expect(prepareCache.with.key).toContain('shared-runtime-assets-v3-')
+  expect(restore.with['restore-keys']).toBeUndefined()
+})
+
 it('restores Windows download caches before installing dependencies', async () => {
   const source = await readFile(path.resolve(import.meta.dirname, '../.github/workflows/release.yml'), 'utf8')
   const job = YAML.parse(source).jobs['windows-x64']
