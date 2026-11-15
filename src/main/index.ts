@@ -3572,6 +3572,9 @@ async function bootstrap(): Promise<void> {
       dark: dshBrandLogoPath('dark')
     },
     appIconPath: desktopIconPath(),
+    cloudflaredCacheDir: join(app.getPath('userData'), 'bin'),
+    forceCloudflareFailure: process.env.DSH_TUNNEL_FORCE_PINGGY === '1',
+    tunnelLog: (message) => console.warn(message),
     port: mobileBridgePort(developmentBuild),
     onReconnectRequested: () => {
       void showMobilePairing().catch(showUnexpectedError)
