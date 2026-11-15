@@ -205,14 +205,19 @@ jobs:
         run: npm run office:prepare
       - name: Download Intel Office runtime inputs
         run: node scripts/office-runtime/prepare.mjs --download-only mac-x64
-      - name: Upload Office runtime downloads
-        uses: actions/upload-artifact@v4
+      # A run-scoped key is immutable, so a repeated attempt restores the archives already stored for this run.
+      - name: Check this run's Office download cache
+        id: office-run-cache
+        uses: actions/cache/restore@v4
         with:
-          name: office-runtime-downloads
+          path: ${{ runner.temp }}/office-runtime-downloads-probe
+          key: office-runtime-downloads-${{ github.run_id }}
+      - name: Save this run's Office downloads
+        if: steps.office-run-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
           path: .build/office-downloads
-          if-no-files-found: error
-          retention-days: 1
-          compression-level: 1
+          key: office-runtime-downloads-${{ github.run_id }}
   macos:
     name: macOS ${{ matrix.label }}
     needs: [validate-dispatch, prepare-shared-runtime-assets]
@@ -280,24 +285,12 @@ jobs:
             .build/office-template-cache
             .build/ppt-runtime
           key: shared-runtime-assets-v3-${{ hashFiles('scripts/office-runtime/**', 'packages/dsh-desktop-office/**', 'packages/ppt-runtime/**', 'scripts/ppt/**', 'package-lock.json') }}
-      # Cache saves are not guaranteed, and a miss makes this runner download GitHub release
-      # assets it cannot reach. The artifact is this run's complete office download set.
-      - name: Download Office runtime downloads
-        uses: actions/download-artifact@v4
+      # A miss leaves office:prepare to download on this packaging machine.
+      - name: Restore this run's Office downloads
+        uses: actions/cache/restore@v4
         with:
-          name: office-runtime-downloads
           path: .build/office-downloads
-      - name: Require Intel Office Python archive
-        if: matrix.arch == 'x64'
-        run: |
-          node --input-type=module <<'EOF'
-          import { access } from 'node:fs/promises'
-          import { readFile } from 'node:fs/promises'
-          const lock = JSON.parse(await readFile('scripts/office-runtime/lock.json', 'utf8'))
-          const archive = `.build/office-downloads/${lock.targets['mac-x64'].pythonSha256}`
-          await access(archive)
-          console.log(`Intel Office Python archive is present: ${archive}`)
-          EOF
+          key: office-runtime-downloads-${{ github.run_id }}
       - run: npm run typecheck
       - run: npm run build
       - name: Run complete macOS test suite on prepared inputs

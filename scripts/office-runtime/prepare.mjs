@@ -20,7 +20,8 @@ export function officeTarget(platform = process.platform, arch = process.arch) {
 }
 
 const DOWNLOAD_ATTEMPTS = 3
-const DOWNLOAD_TIMEOUT_MS = 180_000
+// Self-hosted Intel runners often need several minutes to finish a GitHub release download.
+const DOWNLOAD_TIMEOUT_MS = 600_000
 const RETRYABLE_NETWORK_CODES = new Set([
   'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'EPIPE',
   'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT'
