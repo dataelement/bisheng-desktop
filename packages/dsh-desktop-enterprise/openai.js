@@ -578,7 +578,7 @@ export class EnterpriseLlmAdapter extends LlmAdapter {
       id: model.id,
       name: model.display_name,
       ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
-      inputModalities: model.capabilities.vision ? ['text', 'image'] : ['text']
+      inputModalities: model.input_modalities ?? (model.capabilities.vision ? ['text', 'image'] : ['text'])
     })))
   }
 
@@ -589,8 +589,9 @@ export class EnterpriseLlmAdapter extends LlmAdapter {
       provider,
       id,
       name: model.display_name,
+      ...(model.context_window === undefined ? {} : { context: { contextWindow: model.context_window } }),
       ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
-      inputModalities: model.capabilities.vision ? ['text', 'image'] : ['text']
+      inputModalities: model.input_modalities ?? (model.capabilities.vision ? ['text', 'image'] : ['text'])
     })
   }
 

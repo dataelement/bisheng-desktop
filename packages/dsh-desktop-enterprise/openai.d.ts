@@ -2,7 +2,12 @@ import { LlmAdapter, type GenerateOptions, type LlmModelInfo, type LlmProviderIn
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { EnterpriseModel } from './contract.js'
 
-export type EnterpriseAdapterModel = Pick<EnterpriseModel, 'id' | 'display_name' | 'reasoning' | 'capabilities'>
+/**
+ * The enterprise catalog keeps BiSheng's wire names, while the adapter maps
+ * them to the DSH model protocol at its boundary. `slug` remains catalog
+ * metadata and is deliberately not used as the routable model id.
+ */
+export type EnterpriseAdapterModel = Pick<EnterpriseModel, 'id' | 'display_name' | 'reasoning' | 'context_window' | 'input_modalities' | 'capabilities'>
 export interface EnterpriseAdapterOptions {
   models(): readonly EnterpriseAdapterModel[]
   providerName?(): string

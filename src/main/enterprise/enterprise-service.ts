@@ -83,6 +83,11 @@ export interface EnterprisePublicUsage {
 export interface EnterprisePublicModel {
   id: string
   display_name: string
+  slug?: string
+  context_window?: number
+  input_modalities?: Array<'text' | 'image'>
+  supported_reasoning_levels?: Array<{ effort: string; description: string }>
+  default_reasoning_level?: string
   reasoning?: { efforts: Array<{ id: string; name: string }>; defaultEffort?: string }
   capabilities: {
     streaming: boolean
@@ -299,6 +304,11 @@ export class EnterpriseService {
       models: this.models.map((model) => ({
         id: model.id,
         display_name: model.display_name,
+        ...(model.slug === undefined ? {} : { slug: model.slug }),
+        ...(model.context_window === undefined ? {} : { context_window: model.context_window }),
+        ...(model.input_modalities === undefined ? {} : { input_modalities: [...model.input_modalities] }),
+        ...(model.supported_reasoning_levels === undefined ? {} : { supported_reasoning_levels: structuredClone(model.supported_reasoning_levels) }),
+        ...(model.default_reasoning_level === undefined ? {} : { default_reasoning_level: model.default_reasoning_level }),
         ...(model.reasoning === undefined ? {} : { reasoning: structuredClone(model.reasoning) }),
         capabilities: { ...model.capabilities }
       })),
@@ -773,6 +783,11 @@ export class EnterpriseService {
       this.models = parsedModels.map((model) => ({
         id: model.id,
         display_name: model.display_name,
+        ...(model.slug === undefined ? {} : { slug: model.slug }),
+        ...(model.context_window === undefined ? {} : { context_window: model.context_window }),
+        ...(model.input_modalities === undefined ? {} : { input_modalities: [...model.input_modalities] }),
+        ...(model.supported_reasoning_levels === undefined ? {} : { supported_reasoning_levels: structuredClone(model.supported_reasoning_levels) }),
+        ...(model.default_reasoning_level === undefined ? {} : { default_reasoning_level: model.default_reasoning_level }),
         ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
         capabilities: model.capabilities
       }))
@@ -823,6 +838,11 @@ export class EnterpriseService {
       this.models = parsedModels.map((model) => ({
         id: model.id,
         display_name: model.display_name,
+        ...(model.slug === undefined ? {} : { slug: model.slug }),
+        ...(model.context_window === undefined ? {} : { context_window: model.context_window }),
+        ...(model.input_modalities === undefined ? {} : { input_modalities: [...model.input_modalities] }),
+        ...(model.supported_reasoning_levels === undefined ? {} : { supported_reasoning_levels: structuredClone(model.supported_reasoning_levels) }),
+        ...(model.default_reasoning_level === undefined ? {} : { default_reasoning_level: model.default_reasoning_level }),
         ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
         capabilities: model.capabilities
       }))
