@@ -42,18 +42,37 @@ it('keeps portable preparation on Linux and macOS work on self-hosted runners', 
   }
 })
 
-it('prefetches the Intel Office Python archive into the cache Intel restores', async () => {
+it('passes this run\'s Office downloads to macOS instead of fetching them on Intel', async () => {
   const source = await readFile(path.resolve(import.meta.dirname, '../.github/workflows/release.yml'), 'utf8')
   const { jobs } = YAML.parse(source)
   const prepare = jobs['prepare-shared-runtime-assets']
   const prepareCache = prepare.steps.find(step => step.name === 'Cache shared runtime assets')
-  const download = prepare.steps.find(step => step.name === 'Download Intel Office runtime inputs')
+  const prefetch = prepare.steps.find(step => step.name === 'Download Intel Office runtime inputs')
+  const upload = prepare.steps.find(step => step.name === 'Upload Office runtime downloads')
   const restore = jobs.macos.steps.find(step => step.name === 'Restore shared runtime assets')
-  expect(download.run).toBe('node scripts/office-runtime/prepare.mjs --download-only mac-x64')
-  expect(prepare.steps.indexOf(download)).toBeGreaterThan(prepare.steps.indexOf(prepareCache))
+  const download = jobs.macos.steps.find(step => step.name === 'Download Office runtime downloads')
+  const requireArchive = jobs.macos.steps.find(step => step.name === 'Require Intel Office Python archive')
+  const build = jobs.macos.steps.find(step => step.run === 'npm run build')
+  expect(prefetch.run).toBe('node scripts/office-runtime/prepare.mjs --download-only mac-x64')
+  expect(prepare.steps.indexOf(prefetch)).toBeGreaterThan(prepare.steps.indexOf(prepareCache))
+  expect(prepare.steps.indexOf(upload)).toBeGreaterThan(prepare.steps.indexOf(prefetch))
+  expect(upload.uses).toBe('actions/upload-artifact@v4')
+  expect(upload.with).toMatchObject({
+    name: 'office-runtime-downloads',
+    path: '.build/office-downloads',
+    'if-no-files-found': 'error',
+    'retention-days': 1
+  })
   expect(prepareCache.with.key).toBe(restore.with.key)
   expect(prepareCache.with.key).toContain('shared-runtime-assets-v3-')
   expect(restore.with['restore-keys']).toBeUndefined()
+  expect(download.uses).toBe('actions/download-artifact@v4')
+  expect(download.with).toMatchObject({ name: 'office-runtime-downloads', path: '.build/office-downloads' })
+  expect(jobs.macos.steps.indexOf(download)).toBeGreaterThan(jobs.macos.steps.indexOf(restore))
+  expect(jobs.macos.steps.indexOf(requireArchive)).toBeGreaterThan(jobs.macos.steps.indexOf(download))
+  expect(jobs.macos.steps.indexOf(requireArchive)).toBeLessThan(jobs.macos.steps.indexOf(build))
+  expect(requireArchive.if).toBe("matrix.arch == 'x64'")
+  expect(requireArchive.run).toContain("lock.targets['mac-x64'].pythonSha256")
 })
 
 it('restores Windows download caches before installing dependencies', async () => {
