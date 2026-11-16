@@ -1,4 +1,4 @@
-import { Agent, request as httpRequest } from 'node:http'
+import { request as httpRequest } from 'node:http'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   ENTERPRISE_CALLBACK_PATH,
@@ -86,42 +86,6 @@ describe('enterprise login callback server', () => {
     )
     expect(matched.status).toBe(200)
     expect(accepted).toBe(1)
-  })
-
-  it('closes a one-shot callback even when the browser requests keep-alive', async () => {
-    const agent = new Agent({ keepAlive: true })
-    let accepted = 0
-    const server = await startLoginCallbackServer({
-      expectedState: 'state-good',
-      expectedAuthId: () => 'auth-good',
-      onAccepted: () => { accepted += 1 }
-    })
-    servers.push(server)
-    try {
-      const result = await new Promise<{ status: number, connection?: string, body: string }>((resolve, reject) => {
-        const request = httpRequest(`${server.redirectUri}?auth_id=auth-good&state=state-good&identity_ticket=ticket_ok`, {
-          agent,
-          headers: { connection: 'keep-alive' }
-        }, (response) => {
-          const chunks: Buffer[] = []
-          response.on('data', chunk => chunks.push(Buffer.from(chunk)))
-          response.on('end', () => resolve({
-            status: response.statusCode ?? 0,
-            connection: response.headers.connection,
-            body: Buffer.concat(chunks).toString('utf8')
-          }))
-        })
-        request.on('error', reject)
-        request.end()
-      })
-      expect(result.status).toBe(200)
-      expect(result.body).toContain('return to BISHENG')
-      expect(result.connection).toBe('close')
-      expect(accepted).toBe(1)
-      await server.close()
-    } finally {
-      agent.destroy()
-    }
   })
 
   it('reports authorization expiry once when the callback flow times out', async () => {

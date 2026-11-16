@@ -60,8 +60,6 @@ function sendHtml(response: ServerResponse, status: number, title: string, messa
   const html = callbackPage(title, message)
   response.writeHead(status, {
     ...CALLBACK_SECURITY_HEADERS,
-    // This listener is single-use; do not delay token exchange behind an idle socket.
-    connection: 'close',
     'content-length': Buffer.byteLength(html)
   })
   response.end(html)
