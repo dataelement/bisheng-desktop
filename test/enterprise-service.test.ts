@@ -39,6 +39,7 @@ async function createService(
     ...options,
     vault,
     fetchImpl,
+    cloudRoot: join(directory, 'cloud-projects'),
     allowInsecureLoopback: true,
     note: (entry) => { notes.push(entry.event); entries.push(entry) }
   })
@@ -66,6 +67,58 @@ async function completeBrowserLogin(origin: string, authorizationUrl: string) {
   expect(callback.searchParams.get('identity_ticket')).toMatch(/^ticket_/u)
   expect(await fetch(callback).then((response) => response.status)).toBe(200)
 }
+
+it('reads the cloud protocol from the currently signed-in enterprise and stops after logout', async () => {
+  const first = createMockEnterpriseServer({ port: 0 })
+  const second = createMockEnterpriseServer({ port: 0 })
+  const firstOrigin = await first.listen()
+  const secondOrigin = await second.listen()
+  cleanups.push(() => first.close(), () => second.close())
+  const guideRequests: string[] = []
+  const { service } = await createService(createEnterpriseFetch(async (input, init) => {
+    if (new URL(input).pathname === '/api/v1/dev-toolkit/workbench-guide.md') {
+      expect(new Headers(init?.headers).get('authorization')).toMatch(/^Bearer .+/u)
+      guideRequests.push(input)
+      return new Response('# Enterprise protocol\n', { headers: { 'content-type': 'text/markdown' } })
+    }
+    return fetch(input, init)
+  }))
+  for (const origin of [firstOrigin, secondOrigin]) {
+    await completeBrowserLogin(origin, (await service.startLogin(origin)).authorizationUrl)
+    await waitFor(() => service.snapshot().connected)
+    const result = await service.cloudRequest({ operation: 'guide' })
+    expect(result).toMatchObject({ guideUrl: `${origin}/api/v1/dev-toolkit/workbench-guide.md` })
+  }
+  expect(guideRequests).toEqual([
+    `${firstOrigin}/api/v1/dev-toolkit/workbench-guide.md`,
+    `${secondOrigin}/api/v1/dev-toolkit/workbench-guide.md`
+  ])
+  await service.logout()
+  await expect(service.cloudRequest({ operation: 'guide' })).rejects.toThrow()
+  expect(guideRequests).toHaveLength(2)
+})
+
+it('discards an old enterprise protocol response when the account changes during the request', async () => {
+  const first = createMockEnterpriseServer({ port: 0 })
+  const second = createMockEnterpriseServer({ port: 0 })
+  const firstOrigin = await first.listen()
+  const secondOrigin = await second.listen()
+  cleanups.push(() => first.close(), () => second.close())
+  let finishGuide: ((response: Response) => void) | undefined
+  const { service } = await createService(createEnterpriseFetch(async (input, init) => {
+    if (input === `${firstOrigin}/api/v1/dev-toolkit/workbench-guide.md`) {
+      return new Promise<Response>(resolve => { finishGuide = resolve })
+    }
+    return fetch(input, init)
+  }))
+  await completeBrowserLogin(firstOrigin, (await service.startLogin(firstOrigin)).authorizationUrl)
+  await waitFor(() => service.snapshot().connected)
+  const pending = expect(service.cloudRequest({ operation: 'guide' })).rejects.toThrow('Enterprise account changed.')
+  await waitFor(() => finishGuide !== undefined)
+  await service.startLogin(secondOrigin)
+  finishGuide?.(new Response('# Old enterprise protocol', { headers: { 'content-type': 'text/markdown' } }))
+  await pending
+})
 
 async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
   const started = Date.now()

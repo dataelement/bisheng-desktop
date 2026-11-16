@@ -129,7 +129,11 @@ export function apply(ctx, config) {
     scoped.connection.fetch.register({
       path: '/api/desktop-workbenches/cloud', methods: ['POST'], requestBody: 'buffered',
       async fetch(request) {
-        try { return Response.json(await scoped.desktopCloud.request(await readPayload(request))) }
+        try {
+          const input = await readPayload(request)
+          if (!['guide', 'list', 'limits', 'progress'].includes(input.operation)) throw new Error('Use the development tool for cloud source and publishing operations.')
+          return Response.json(await scoped.desktopCloud.request(input))
+        }
         catch (error) { return Response.json({ error: error.message }, { status: 400 }) }
       }
     })
