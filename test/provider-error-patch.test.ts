@@ -71,6 +71,10 @@ describe('provider error classification patches', () => {
     expect(patch).toContain('case "upstream_error": return "message.failure.upstreamError";')
     expect(patch).toContain('case "monthly_token_limit_exceeded": return "message.failure.monthlyTokenLimit";')
     expect(patch).toContain('case "quota_unavailable": return "message.failure.quotaUnavailable";')
+    // F016 (BiSheng 26176): a model without a price is refused until the administrator fixes it.
+    expect(patch).toContain('case "model_pricing_missing": return "message.failure.modelPricingMissing";')
+    expect(patch).toContain('"message.failure.modelPricingMissing": "该模型尚未配置价格，暂时无法使用，请联系管理员。"')
+    expect(patch).toContain('"message.failure.modelPricingMissing": "This model has no price configured yet, so it can\'t be used. Contact your administrator."')
     expect(patch).toContain('case "NO_ADAPTER": return "message.failure.noAdapter";')
     expect(patch).toContain('if (platformKey) return t(platformKey);')
     expect(patch).toContain('code === "CONTEXT_WINDOW_EXCEEDED" && message === "Model context length exceeded"')
@@ -109,6 +113,8 @@ describe('provider error classification patches', () => {
     expect(patch).toContain('function trajectoryFailureKey(message, code)')
     expect(patch).toContain('case "user_disabled": return "details.failure.userDisabled";')
     expect(patch).toContain('case "UNKNOWN_MODEL": return "details.failure.unknownModel";')
+    expect(patch).toContain('case "model_pricing_missing": return "details.failure.modelPricingMissing";')
+    expect(patch).toContain('"details.failure.modelPricingMissing": "该模型尚未配置价格，暂时无法使用，请联系管理员。"')
     expect(patch).toContain('const platformKey = trajectoryFailureKey(request.error, request.errorCode);')
   })
 

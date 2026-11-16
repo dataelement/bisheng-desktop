@@ -424,9 +424,10 @@ export function apply(ctx) {
     })
   })
   registerJsonRoute(connection, LOCAL_PATHS.refreshModels, ['POST'], async (request) => {
-    await readJson(request)
+    const body = await readJson(request)
     if (!broker) return disabledState()
-    const state = await brokerJson('/v1/models/refresh', {})
+    // F016: `includeUsage` also rereads the credit balance; nothing else from the body is forwarded.
+    const state = await brokerJson('/v1/models/refresh', body?.includeUsage === true ? { includeUsage: true } : {})
     ingestEnterpriseState(state)
     return state
   })

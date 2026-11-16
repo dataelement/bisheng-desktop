@@ -207,6 +207,36 @@ describe('enterprise service login loop', () => {
     expect(service.snapshot().models[0]).toMatchObject(metadata)
   })
 
+  it('F016: carries credit ratio hints through login, catalog refresh and detached public snapshots', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    let ratio = '3.00'
+    const fetchImpl: EnterpriseFetch = async (input, init) => {
+      const response = await globalThis.fetch(input, init)
+      if (!String(input).endsWith('/api/v1/dsh/models')) return response
+      const body = await response.json()
+      body.data = body.data.map((model: Record<string, unknown>, index: number) => index === 0
+        ? { ...model, pricing_hint: { ratio, base: false, free: false } }
+        : model)
+      return Response.json(body)
+    }
+    const { service } = await createService(createEnterpriseFetch(fetchImpl))
+    const started = await service.startLogin(origin)
+    await completeBrowserLogin(origin, started.authorizationUrl)
+    await waitFor(() => service.snapshot().modelsAvailable)
+    const snapshot = service.snapshot()
+    expect(snapshot.models[0]?.pricing_hint).toEqual({ ratio: '3.00', base: false, free: false })
+    expect(snapshot.models.slice(1).every(model => model.pricing_hint === undefined)).toBe(true)
+    snapshot.models[0]!.pricing_hint!.ratio = 'tampered'
+    expect(service.snapshot().models[0]?.pricing_hint?.ratio).toBe('3.00')
+    const before = service.snapshot().revision
+    ratio = '1.50'
+    await service.refreshModels()
+    expect(service.snapshot().models[0]?.pricing_hint?.ratio).toBe('1.50')
+    expect(service.snapshot().revision).toBeGreaterThan(before)
+  })
+
   it('AC-T05/AC-T07: title broker binds the current epoch, refreshes once, and never sends broker identity fields', async () => {
     const platform = createMockEnterpriseServer({ port: 0 })
     const origin = await platform.listen()
