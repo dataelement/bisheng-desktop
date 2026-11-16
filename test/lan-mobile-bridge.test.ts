@@ -2043,6 +2043,29 @@ describe('work tab mobile rpc', () => {
     })
     expect(JSON.parse(seen.find((item) => item.url === '/api/office-templates')!.body.toString('utf8')).payload.args).toBeUndefined()
 
+    const welcomeCases = await mobileRpc(port, cookie, 'office.call', {
+      endpoint: 'welcome-cases'
+    })
+    expect(welcomeCases.status).toBe(200)
+    expect(
+      JSON.parse(
+        seen.filter((item) => item.url === '/api/office-templates').at(-1)!.body.toString('utf8')
+      )
+    ).toMatchObject({
+      type: 'client-request',
+      method: 'office-templates',
+      payload: { endpoint: 'welcome-cases' }
+    })
+
+    const unknownOffice = await mobileRpc(port, cookie, 'office.call', {
+      endpoint: 'nonexistent'
+    })
+    expect(unknownOffice.status).toBe(400)
+    expect(await unknownOffice.json()).toEqual({
+      ok: false,
+      error: 'Unknown Office operation.'
+    })
+
     const ppt = await mobileRpc(port, cookie, 'ppt.call', {
       endpoint: 'presentation/mode',
       sessionId: 'session-1',
