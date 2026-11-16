@@ -35,6 +35,7 @@ afterEach(async () => {
   disposers.splice(0).reverse().forEach(dispose => dispose())
   delete window.dshEnterpriseChat
   delete window.__ModuleLoader__
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 async function mount(connected = false, collection = {}, inert = false, workbench, prepare, work = React.createElement('textarea', { 'aria-label': 'work draft', defaultValue: 'retained draft' })) {
@@ -689,6 +690,8 @@ async function mountLandingMorph({ footer = false, textMotion = false } = {}) {
 
 it('keeps the hidden Work landing laid out and paints frame zero before hiding Chat', async () => {
   const { ui, bridge, workPanel, chatPanel, motions } = await mountLandingMorph({ footer: true })
+  // Drive the paint frames explicitly without the 120 ms fallback racing act().
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
   const draft = ui.draft()
   expect(workPanel.parentElement).toBe(chatPanel.parentElement)
   expect(workPanel.hidden).toBe(true)
@@ -719,6 +722,7 @@ it('keeps the hidden Work landing laid out and paints frame zero before hiding C
 
 it('paints the Work landing before hiding Chat even when the composer cannot morph', async () => {
   const { ui, bridge, elements, workPanel, motions } = await mountLandingMorph()
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
   elements.card.getBoundingClientRect = () => new DOMRect(340, 0, 600, 172)
   const frames = []
   vi.stubGlobal('requestAnimationFrame', callback => frames.push(callback))
