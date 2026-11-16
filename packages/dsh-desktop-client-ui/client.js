@@ -2126,6 +2126,11 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
       if (!response.ok) throw new Error(result.error || `Knowledge request failed (${response.status})`)
       return result
     }
+    // Skill picker groups in display order: the user's own BISHENG uploads; skills the
+    // organization publishes or the client bundles; skills installed on this computer.
+    const SKILL_GROUPS = [['uploaded', 'skillGroupUploaded'], ['provided', 'skillGroupProvided'], ['local', 'skillGroupLocal']]
+    Object.assign(RESOURCE_COPY.zh, { skillGroupUploaded: '我上传的 ({count})', skillGroupProvided: '企业提供 ({count})', skillGroupLocal: '本地安装 ({count})' })
+    Object.assign(RESOURCE_COPY.en, { skillGroupUploaded: 'Uploaded by you ({count})', skillGroupProvided: 'Provided by your organization ({count})', skillGroupLocal: 'Installed locally ({count})' })
     async function workSkillRequest(body, signal) {
       const response = await fetch('/api/enterprise.work-skills', {
         method: 'POST', headers: { 'content-type': 'application/json' }, signal, body: JSON.stringify(body)
@@ -2431,14 +2436,26 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           options: ({ sessionId }, signal) => ctx.sessions.using(sessionId, { source: 'workSkillPicker', signal }, async () => {
             const catalog = await workSkillRequest({ operation: 'catalog' }, signal)
             const labels = new Map(catalog.skills.map(skill => [skill.name, skill.displayName]))
+            const uploaded = new Set(catalog.skills.filter(skill => skill.uploaded === true).map(skill => skill.name))
             const result = await ctx.remote.skills.list({ sessionId }, signal)
             if (!result.ok) throw new Error(result.error.message)
-            return result.value.skills.map(skill => ({
+            // Within "provided", published skills come before the client's bundled ones;
+            // each keeps the registry's order.
+            const options = result.value.skills.map(skill => ({
+              rank: uploaded.has(skill.name) ? 0 : labels.has(skill.name) ? 1 : skill.source === 'bundled' ? 2 : 3,
               id: JSON.stringify({ name: skill.name, label: labels.get(skill.name) || skill.name, enterprise: labels.has(skill.name) }),
               label: labels.get(skill.name) || skill.name,
               badgeIcon: labels.has(skill.name) ? props => React.createElement(ResourceIcon, { ...props, id: 'skills', size: 12 }) : undefined,
               detail: skill.description
             }))
+            const groupOf = rank => SKILL_GROUPS[[0, 1, 1, 2][rank]]
+            const counts = new Map()
+            for (const { rank } of options) counts.set(groupOf(rank), (counts.get(groupOf(rank)) || 0) + 1)
+            // The popup keeps groups in first-occurrence order, so emit them in display order.
+            return options.sort((a, b) => a.rank - b.rank).map(({ rank, ...option }) => {
+              const [name, key] = groupOf(rank)
+              return { ...option, group: { name, label: t(key, { count: counts.get(groupOf(rank)) }) } }
+            })
           }),
           onSelect: (option, { sessionId }) => {
             const scope = ctx.sessions.scope(sessionId)
@@ -2506,6 +2523,12 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           .dshWorkKnowledgeConfirm:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 88%,var(--dsw-alias-label-primary))}
           .dshWorkKnowledgeConfirm:disabled{opacity:.5}
           .dshWorkResourceError{padding:8px 12px;color:var(--dsw-alias-state-error-primary);font-size:12px}
+          /* /skills group headings read as section titles, in the skill reference blue so they stand
+             apart from skill names, and scroll with their rows. The upstream sticky heading stays
+             transparent until an async observer marks it stuck, so rows showed through it
+             mid-scroll. Only this picker is grouped. */
+          [role=listbox][aria-label^="/skills "]>[data-menu-group]+[data-menu-group]{margin-top:4px}
+          [role=listbox][aria-label^="/skills "]>[data-menu-group]>[data-menu-group-heading]{position:static;background:transparent;padding:10px 7px 4px;color:var(--dsw-alias-link);font-size:12px;font-weight:500}
           @media(max-width:1023px){.dshWorkKnowledgeDialog{width:min(400px,100%)}}
           @media(max-width:575px){.dshWorkKnowledgeModified{max-width:80px}.dshWorkKnowledgeFooter{flex-wrap:wrap}.dshWorkSelectionCount{flex:1 0 100%}}
         `
