@@ -15,9 +15,13 @@ async function store() {
   roots.push(root)
   return { root, installs: createEnterpriseInstallStore(root) }
 }
-// The host-side Plugin Manager service answers ChangeResult values directly.
-function manager() {
-  return { setBundleEnabled: vi.fn(async () => ({ application: 'applied' })) }
+// The host-side Plugin Manager service answers plain values; by default every
+// recorded package is still installed.
+function manager(installed = ['kept', 'revoked']) {
+  return {
+    listBundles: vi.fn(async () => installed.map(name => ({ name, installed: true }))),
+    setBundleEnabled: vi.fn(async () => ({ application: 'applied' }))
+  }
 }
 
 describe('installed workbench access request', () => {
@@ -54,6 +58,13 @@ describe('enterprise install records', () => {
     await installs.record({ id: A, pluginName: 'mind-workbench', version: '1.0.0' })
     expect(await installs.read()).toMatchObject({ [A]: { id: A, pluginName: 'mind-workbench', version: '1.0.0' } })
     expect(JSON.parse(await readFile(join(root, 'enterprise-installs.json'), 'utf8'))[A].pluginName).toBe('mind-workbench')
+  })
+
+  it('creates the workbench data directory on a fresh profile', async () => {
+    const { root } = await store()
+    const fresh = createEnterpriseInstallStore(join(root, 'not-created-yet', 'desktop-workbenches'))
+    await fresh.record({ id: A, pluginName: 'mind-workbench', version: '1.0.0' })
+    expect(Object.keys(await fresh.read())).toEqual([A])
   })
 
   it('ignores a damaged record file instead of failing the workbench page', async () => {
@@ -101,6 +112,18 @@ describe('installed workbench access check', () => {
     expect((await installs.read())[A]).not.toHaveProperty('revoked')
   })
 
+  it('forgets workbenches uninstalled elsewhere instead of failing every check', async () => {
+    const { installs } = await store()
+    await installs.record({ id: A, pluginName: 'kept', version: '1.0.0' })
+    await installs.record({ id: B, pluginName: 'gone', version: '1.0.0' })
+    const plugins = manager(['kept'])
+    const access = vi.fn(async () => ({ [A]: false }))
+    expect(await checkEnterpriseWorkbenchAccess({ installs, access, manager: plugins })).toEqual({ status: 'checked', revoked: ['kept'] })
+    expect(access).toHaveBeenCalledWith([A])
+    expect(plugins.setBundleEnabled).toHaveBeenCalledExactlyOnceWith('kept', false)
+    expect(Object.keys(await installs.read())).toEqual([A])
+  })
+
   it('does not ask the server when nothing came from the enterprise', async () => {
     const { installs } = await store()
     const access = vi.fn()
@@ -111,7 +134,7 @@ describe('installed workbench access check', () => {
   it('reports a failed disable instead of marking the workbench revoked', async () => {
     const { installs } = await store()
     await installs.record({ id: B, pluginName: 'revoked', version: '1.0.0' })
-    const plugins = { setBundleEnabled: vi.fn(async () => ({ application: 'failed', error: { diagnostic: 'busy' } })) }
+    const plugins = { ...manager(), setBundleEnabled: vi.fn(async () => ({ application: 'failed', error: { diagnostic: 'busy' } })) }
     await expect(checkEnterpriseWorkbenchAccess({ installs, access: async () => ({ [B]: false }), manager: plugins })).rejects.toThrow(/busy/)
     expect((await installs.read())[B]).not.toHaveProperty('revoked')
   })

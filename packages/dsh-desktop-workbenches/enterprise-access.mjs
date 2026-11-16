@@ -1,4 +1,4 @@
-import { readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 const HEX_ID = /^[a-f0-9]{32}$/u
@@ -29,6 +29,8 @@ export function createEnterpriseInstallStore(root) {
     return Object.fromEntries(Object.entries(parsed).filter(([id, record]) => validRecord(id, record)))
   }
   const write = async (next) => {
+    // A fresh profile has no workbench data directory until something is stored.
+    await mkdir(root, { recursive: true })
     const temporary = `${path}.${process.pid}.tmp`
     await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
     await rename(temporary, path)
@@ -45,6 +47,7 @@ export function createEnterpriseInstallStore(root) {
       ...current,
       [install.id]: { id: install.id, pluginName: install.pluginName, version: install.version, installedAt: new Date().toISOString() }
     })),
+    forget: (ids) => update(current => Object.fromEntries(Object.entries(current).filter(([id]) => !ids.includes(id)))),
     setRevoked: (id, revoked) => update(current => {
       if (!current[id]) return current
       const { revoked: _previous, ...rest } = current[id]
@@ -58,11 +61,23 @@ export function createEnterpriseInstallStore(root) {
  * Installation and user data stay; a returned grant clears the reason but the
  * employee turns the workbench back on. When access cannot be confirmed
  * nothing changes (F022 AC-12, AC-13, AC-14).
- * @param {{ installs: ReturnType<typeof createEnterpriseInstallStore>, access: (ids: string[]) => Promise<Record<string, boolean>>, manager: { setBundleEnabled(name: string, enabled: boolean): Promise<{ application?: string, error?: { diagnostic?: string, message?: string } }> } }} options
+ * @param {{ installs: ReturnType<typeof createEnterpriseInstallStore>, access: (ids: string[]) => Promise<Record<string, boolean>>, manager: { listBundles(): Promise<Array<{ name?: string, installed?: boolean }>>, setBundleEnabled(name: string, enabled: boolean): Promise<{ application?: string, error?: { diagnostic?: string, message?: string } }> } }} options
  * @returns {Promise<{ status: 'checked' | 'unknown', revoked: string[] }>}
  */
 export async function checkEnterpriseWorkbenchAccess({ installs, access, manager }) {
-  const records = await installs.read()
+  let records = await installs.read()
+  if (Object.keys(records).length) {
+    // A workbench removed from the Plugins page or the startup recovery page
+    // leaves its record behind; drop it rather than fail every later check.
+    const bundles = await manager.listBundles()
+    const installed = new Set((Array.isArray(bundles) ? bundles : [])
+      .filter(bundle => typeof bundle?.name === 'string' && bundle.installed !== false).map(bundle => bundle.name))
+    const gone = Object.keys(records).filter(id => !installed.has(records[id].pluginName))
+    if (gone.length) {
+      await installs.forget(gone)
+      records = await installs.read()
+    }
+  }
   const ids = Object.keys(records)
   const revokedNames = (current) => Object.values(current).filter(record => record.revoked).map(record => record.pluginName)
   if (!ids.length) return { status: 'checked', revoked: [] }
