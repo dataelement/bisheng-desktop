@@ -4446,6 +4446,17 @@ describe('revoked enterprise workbenches (F022)', () => {
     expect(service.activationFor(service.catalog.get('writer'))).toBe('on')
   })
 
+  it('asks the host to record catalog-listed enterprise workbenches installed earlier', async () => {
+    const { service, request } = await revokedFixture()
+    service.enterpriseCatalog = [
+      { id: 'a'.repeat(32), packageName: 'mind-workbench', currentVersion: { id: 'v'.repeat(32), version: '1.2.0' } },
+      { id: 'malformed' }
+    ]
+    await service.adoptEnterpriseInstalls()
+    const call = request.mock.calls.find(([url]) => url === '/api/desktop-workbenches/enterprise-installs/adopt')
+    expect(JSON.parse(call[1].body)).toEqual({ items: [{ id: 'a'.repeat(32), pluginName: 'mind-workbench', version: '1.2.0' }] })
+  })
+
   it('keeps the last confirmed revocation when the access check fails', async () => {
     const { service, host } = await revokedFixture()
     await service.checkEnterpriseAccess()

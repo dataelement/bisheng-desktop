@@ -118,6 +118,7 @@ window.__ModuleLoader__.load({
     const CATALOG_API = '/api/desktop-workbenches/catalog'
     const MARKET_INSTALLS_API = '/api/desktop-workbenches/market-installs'
     const ENTERPRISE_ACCESS_API = '/api/desktop-workbenches/enterprise-access-check'
+    const ENTERPRISE_ADOPT_API = '/api/desktop-workbenches/enterprise-installs/adopt'
     const NATIVE_STATUS = { idle: 'idle', ready: 'ready', unavailable: 'unavailable' }
     const parseVersion = (value) => {
       if (typeof value !== 'string') return null
@@ -433,6 +434,25 @@ window.__ModuleLoader__.load({
         this.publish()
         const active = this.state.active && (this.catalog.get(this.state.active) || { id: this.state.active })
         if (this.ready && active && this.activationFor(active) === 'off') this.run(this.leave())
+      }
+      // Workbenches installed before the host kept enterprise records are bound to
+      // their catalog id while the catalog still lists them (F022).
+      async adoptEnterpriseInstalls() {
+        const items = this.enterpriseCatalog
+          .filter(item => typeof item?.id === 'string' && typeof item.packageName === 'string')
+          .slice(0, 500)
+          .map(item => ({ id: item.id, pluginName: item.packageName, version: item.currentVersion?.version || '' }))
+        if (!items.length) return
+        try {
+          const response = await this.request(ENTERPRISE_ADOPT_API, {
+            method: 'POST', credentials: 'same-origin', cache: 'no-store',
+            headers: { 'content-type': 'application/json' }, body: JSON.stringify({ items })
+          })
+          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        } catch (error) {
+          // Best effort: the next catalog refresh retries; installs made by this version are recorded anyway.
+          console.warn('[workbenches] Enterprise install records could not be updated', error)
+        }
       }
       // Disable installed enterprise workbenches whose grant was revoked. The host
       // keeps every workbench as it was when access cannot be confirmed (F022).
@@ -1260,6 +1280,7 @@ window.__ModuleLoader__.load({
             this.enterpriseCatalog = Array.isArray(data.data) ? data.data : []
             this.enterpriseCatalogStatus = this.enterpriseCatalog.length ? 'ready' : 'empty'
             this.enterpriseCatalogError = ''
+            this.run(this.adoptEnterpriseInstalls())
           }
         } catch (error) {
           if (!this.disposed) {

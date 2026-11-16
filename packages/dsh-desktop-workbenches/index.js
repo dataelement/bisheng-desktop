@@ -1,4 +1,4 @@
-import { checkEnterpriseWorkbenchAccess, createEnterpriseInstallStore } from './enterprise-access.mjs'
+import { adoptEnterpriseInstalls, checkEnterpriseWorkbenchAccess, createEnterpriseInstallStore } from './enterprise-access.mjs'
 import { installEnterpriseWorkbench } from './enterprise-install.mjs'
 import { registerCloudTools } from './cloud-tools.mjs'
 import { readInstallEvidence } from './install-evidence.mjs'
@@ -77,6 +77,16 @@ async function recordLocalInstall(root, install) {
   const temporary = `${path}.${process.pid}.tmp`
   await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
   await rename(temporary, path)
+}
+
+async function readLocalInstalls(root) {
+  try {
+    const value = JSON.parse(await readFile(join(root, 'local-installs.json'), 'utf8'))
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  } catch (error) {
+    if (error?.code === 'ENOENT' || error instanceof SyntaxError) return {}
+    throw error
+  }
 }
 
 export function apply(ctx, config) {
@@ -381,6 +391,27 @@ export function apply(ctx, config) {
           return Response.json(result.body, { status: result.status, headers: { 'cache-control': 'no-store' } })
         } catch (error) {
           return installFailure(error, 'Could not install the enterprise workbench.')
+        }
+      }
+    })
+    // Bind workbenches installed before these records existed while the enterprise
+    // catalog still lists them; market and local installs are never adopted (F022).
+    scoped.connection.fetch.register({
+      path: '/api/desktop-workbenches/enterprise-installs/adopt',
+      methods: ['POST'],
+      requestBody: 'buffered',
+      async fetch(request) {
+        try {
+          const payload = await readPayload(request, 256 * 1024, 'Request is too large.')
+          const items = Array.isArray(payload?.items) ? payload.items.slice(0, 500) : []
+          const excluded = new Set([
+            ...Object.values(await marketInstalls.read()).map(install => install?.pluginName),
+            ...Object.values(await readLocalInstalls(config.root)).map(install => install?.pluginName)
+          ].filter(name => typeof name === 'string'))
+          const result = await adoptEnterpriseInstalls({ installs: enterpriseInstalls, manager: scoped.pluginManager, items, excluded })
+          return Response.json(result, { headers: { 'cache-control': 'no-store' } })
+        } catch (error) {
+          return installFailure(error, 'Could not record enterprise workbench installs.')
         }
       }
     })

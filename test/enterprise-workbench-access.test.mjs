@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createWorkbenchMarketController } from '../packages/dsh-desktop-enterprise/workbench-market.js'
-import { checkEnterpriseWorkbenchAccess, createEnterpriseInstallStore } from '../packages/dsh-desktop-workbenches/enterprise-access.mjs'
+import { adoptEnterpriseInstalls, checkEnterpriseWorkbenchAccess, createEnterpriseInstallStore } from '../packages/dsh-desktop-workbenches/enterprise-access.mjs'
 
 const A = 'a'.repeat(32)
 const B = 'b'.repeat(32)
@@ -114,5 +114,42 @@ describe('installed workbench access check', () => {
     const plugins = { setBundleEnabled: vi.fn(async () => ({ application: 'failed', error: { diagnostic: 'busy' } })) }
     await expect(checkEnterpriseWorkbenchAccess({ installs, access: async () => ({ [B]: false }), manager: plugins })).rejects.toThrow(/busy/)
     expect((await installs.read())[B]).not.toHaveProperty('revoked')
+  })
+})
+
+describe('adopting workbenches installed before the access records existed', () => {
+  const installed = (...names) => ({ listBundles: vi.fn(async () => names.map(name => ({ name, installed: true }))) })
+
+  it('records listed enterprise workbenches that are installed but unknown', async () => {
+    const { installs } = await store()
+    const result = await adoptEnterpriseInstalls({
+      installs,
+      manager: installed('mind-workbench'),
+      items: [{ id: A, pluginName: 'mind-workbench', version: '1.0.0' }, { id: B, pluginName: 'not-installed', version: '1.0.0' }]
+    })
+    expect(result).toEqual({ adopted: ['mind-workbench'] })
+    expect(Object.keys(await installs.read())).toEqual([A])
+  })
+
+  it('never rebinds a known install or a package that came from somewhere else', async () => {
+    const { installs } = await store()
+    await installs.record({ id: A, pluginName: 'mind-workbench', version: '1.0.0' })
+    const manager = installed('mind-workbench', 'market-copy')
+    const result = await adoptEnterpriseInstalls({
+      installs,
+      manager,
+      items: [{ id: A, pluginName: 'mind-workbench', version: '2.0.0' }, { id: B, pluginName: 'market-copy', version: '1.0.0' }],
+      excluded: new Set(['market-copy'])
+    })
+    expect(result).toEqual({ adopted: [] })
+    expect((await installs.read())[A].version).toBe('1.0.0')
+    expect(await installs.read()).not.toHaveProperty(B)
+  })
+
+  it('ignores malformed items without asking the Plugin Manager', async () => {
+    const { installs } = await store()
+    const manager = installed('x')
+    expect(await adoptEnterpriseInstalls({ installs, manager, items: [{ id: 'bad', pluginName: 'x', version: '1' }, null] })).toEqual({ adopted: [] })
+    expect(manager.listBundles).not.toHaveBeenCalled()
   })
 })

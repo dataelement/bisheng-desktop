@@ -85,3 +85,26 @@ export async function checkEnterpriseWorkbenchAccess({ installs, access, manager
   }
   return { status: 'checked', revoked: revokedNames(await installs.read()) }
 }
+
+/**
+ * Record enterprise workbenches installed before this record existed. Only
+ * catalog-listed (still visible) items whose package is installed and did not
+ * come from the workbench market or a local directory are adopted; a known id
+ * keeps its original record.
+ * @param {{ installs: ReturnType<typeof createEnterpriseInstallStore>, manager: { listBundles(): Promise<Array<{ name?: string, installed?: boolean }>> }, items: unknown[], excluded?: Set<string> }} options
+ * @returns {Promise<{ adopted: string[] }>}
+ */
+export async function adoptEnterpriseInstalls({ installs, manager, items, excluded = new Set() }) {
+  const valid = (Array.isArray(items) ? items : []).filter(item => item && typeof item === 'object' && HEX_ID.test(item.id ?? '') &&
+    typeof item.pluginName === 'string' && item.pluginName.length > 0 && typeof item.version === 'string' && !excluded.has(item.pluginName))
+  if (!valid.length) return { adopted: [] }
+  const current = await installs.read()
+  const missing = valid.filter(item => !current[item.id])
+  if (!missing.length) return { adopted: [] }
+  const bundles = await manager.listBundles()
+  const installedNames = new Set((Array.isArray(bundles) ? bundles : [])
+    .filter(bundle => typeof bundle?.name === 'string' && bundle.installed !== false).map(bundle => bundle.name))
+  const adopted = missing.filter(item => installedNames.has(item.pluginName))
+  for (const item of adopted) await installs.record(item)
+  return { adopted: adopted.map(item => item.pluginName) }
+}
