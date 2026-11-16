@@ -278,6 +278,53 @@ const boundState = () => ({ ...emptyState(), added: ['writer', 'research'],
   recentSessions: { writer: 'writer-1', research: 'research-1' }, notes: { writer: 'Retained business draft' } })
 
 describe('desktop workbench client navigation', () => {
+  it.each([
+    { language: 'zh', connected: false, policy: false, copy: 'open' },
+    { language: 'zh', connected: true, policy: true, copy: 'open' },
+    { language: 'zh', connected: true, policy: false, copy: 'closed' },
+    { language: 'en', connected: false, policy: false, copy: 'open' },
+    { language: 'en', connected: true, policy: true, copy: 'open' },
+    { language: 'en', connected: true, policy: false, copy: 'closed' }
+  ])('uses the existing settings copy for $language connected=$connected policy=$policy', async ({ language, connected, policy, copy }) => {
+    const expected = {
+      zh: {
+        open: '列表来自网络工作台市场，也可以安装本机开发的工作台。企业上传的工作台在「来自企业」中安装。',
+        closed: '当前企业未开放网络工作台市场。工作台市场展示本企业上传的工作台，可以直接安装；已安装里保留本机已安装和本地开发的工作台。'
+      },
+      en: {
+        open: 'The list comes from the network workbench market. Locally developed workbenches can also be installed. Enterprise uploads can be installed from From enterprise.',
+        closed: 'This enterprise has not opened the network workbench market. The workbench market shows workbenches uploaded by your enterprise, and they can be installed directly. Installed keeps local and previously installed workbenches.'
+      }
+    }
+    let client
+    const testReact = {
+      ...React,
+      useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot()
+    }
+    const testWindow = {
+      sessionStorage, localStorage: enabledStorage,
+      __dshEnterpriseWorkbenchSnapshot: { known: true, connected, allowThirdPartyWorkbenches: policy },
+      __ModuleLoader__: { load({ factory }) {
+        client = factory(name => name === 'react' ? testReact : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null })
+      } }
+    }
+    // Expose the private settings component only inside this test's module VM.
+    vm.runInNewContext(code.replace('return { apply, inject:', 'return { WorkbenchSettingsTab, apply, inject:'), {
+      window: testWindow, document, setTimeout, clearTimeout, AbortController
+    })
+    const { ctx, service } = await fixture()
+    ctx.locale = { bind: () => key => key, getSnapshot: () => ({ active: language }) }
+    ctx.effect = () => {}
+    ctx.slots = { inject() {} }
+    try {
+      client.apply(ctx)
+      const markup = renderToStaticMarkup(React.createElement(client.WorkbenchSettingsTab))
+      expect(markup).toContain(`<p class="dshWbMuted">${expected[language][copy]}</p>`)
+    } finally {
+      service.dispose()
+    }
+  })
+
   it('waits for tenant policy before public reads and applies close, reopen, and logout transitions', async () => {
     const original = await fixture()
     original.service.dispose()

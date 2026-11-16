@@ -2915,7 +2915,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           })),
         h('p', { className: 'dshWbMuted' }, !enabled
           ? t('enableHint')
-          : enterprise.allowThirdPartyWorkbenches
+          : !enterprise.connected || enterprise.allowThirdPartyWorkbenches === true
             ? enterpriseText(undefined, 'settingsOpen')
             : enterpriseText(undefined, 'settingsClosed')))
     }
