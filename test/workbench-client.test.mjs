@@ -694,7 +694,7 @@ describe('desktop workbench client navigation', () => {
     expect(expiryCallback).toBeTypeOf('function')
     signedIn = false
     expiryCallback()
-    await vi.waitFor(() => expect(service.networkMarketAllowed).toBe(false))
+    expect(service.networkMarketAllowed).toBe(true)
     for (const cleanup of cleanups) cleanup()
     expect(nativeUnsubscribe).toHaveBeenCalledOnce()
     expect(listeners.get('focus')).toHaveLength(0)
@@ -4157,7 +4157,7 @@ describe('sidebar central panel selection', () => {
     service.publish()
     const ui = interactiveMarket(service, 'enterprise', undefined, { known: true, connected: true, connectionKey, allowThirdPartyWorkbenches: false })
     let tree = ui.render()
-    expect(ui.find(tree, node => node.props?.role === 'tab')).toHaveLength(3)
+    expect(ui.find(tree, node => node.props?.role === 'tab')).toHaveLength(5)
     expect(ui.find(tree, node => node.type?.name === 'CloudInstalledCard')).toHaveLength(0)
     ui.find(tree, node => node.props?.id === 'dsh-workbench-cloud-tab')[0].props.onClick()
     tree = ui.render()
@@ -4214,31 +4214,45 @@ describe('sidebar central panel selection', () => {
     expect(ui.find(tree, node => node.props?.className === 'dshWbBrowseTools')).toHaveLength(0)
     expect(ui.find(tree, node => node.props?.className === 'dshWbSearch')).toHaveLength(0)
   })
-  it('keeps cloud sign-in available while closed-policy public collections remain hidden', async () => {
+  it.each([false, true])('keeps original market cards and favorites alongside the cloud tab (connected=%s)', async connected => {
     const { service } = await fixture()
-    const ui = interactiveMarket(service, 'market', undefined, { known: true, connected: false, allowThirdPartyWorkbenches: false })
-    const tree = ui.render()
-    for (const tab of ['market', 'favorites', 'enterprise']) {
-      expect(ui.find(tree, node => node.props?.id === `dsh-workbench-${tab}-tab`)).toHaveLength(0)
-    }
-    expect(ui.find(tree, node => node.props?.id === 'dsh-workbench-cloud-tab')).toHaveLength(1)
-    expect(ui.find(tree, node => node.props?.id === 'dsh-workbench-mine-tab')).toHaveLength(1)
-    expect(ui.button(tree, '登录毕昇账号')).toBeDefined()
-    expect(ui.button(tree, '安装本地工作台')).toBeUndefined()
-  })
-
-  it('uses enterprise distribution as the market when public installation is blocked', async () => {
-    const { service } = await fixture()
-    service.remoteCatalog = [{ id: 'o/a', owner: 'o', name: 'Cached public workbench', description: { zh: '缓存目录', en: 'Cached catalog' }, screenshots: [], url: 'https://github.com/o/a' }]
+    service.remoteCatalog = [{
+      id: 'o/a', owner: 'o', name: 'Public workbench', version: '1.2.3',
+      description: { zh: '完整市场介绍', en: 'Market description' },
+      screenshots: [{ url: 'https://example.test/workbench.png' }], url: 'https://github.com/o/a',
+      metrics: { githubStars: { value: 17 }, npmDownloads30d: { value: 120 } }
+    }]
     service.enterpriseCatalog = [{ id: 'enterprise-board', displayName: 'Enterprise board' }]
     service.publish()
-    const ui = interactiveMarket(service, 'market', undefined, { known: true, connected: true, allowThirdPartyWorkbenches: false })
-    const tree = ui.render()
-    expect(ui.find(tree, node => node.type === 'article')).toHaveLength(1)
-    expect(ui.find(tree, node => node.type === 'article' && node.props.key === 'enterprise-board')).toHaveLength(1)
-    for (const tab of ['favorites', 'enterprise']) expect(ui.find(tree, node => node.props?.id === `dsh-workbench-${tab}-tab`)).toHaveLength(0)
-    expect(ui.button(tree, '安装本地工作台')).toBeUndefined()
-    expect(ui.button(tree, '登录毕昇账号')).toBeUndefined()
+    const ui = interactiveMarket(service, 'market', undefined, {
+      known: true, connected, allowThirdPartyWorkbenches: false
+    })
+    let tree = ui.render()
+    expect(ui.find(tree, node => node.props?.role === 'tab').map(node => node.props.id)).toEqual([
+      'dsh-workbench-market-tab', 'dsh-workbench-favorites-tab',
+      ...(connected ? ['dsh-workbench-enterprise-tab'] : []),
+      'dsh-workbench-mine-tab', 'dsh-workbench-cloud-tab'
+    ])
+    expect(ui.find(tree, node => node.type === 'article').map(node => node.props.key)).toEqual(['o/a'])
+    const preview = ui.find(tree, node => node.type?.name === 'Preview')[0]
+    expect(preview.props.entry.screenshots).toEqual(['https://example.test/workbench.png'])
+    expect(ui.find(tree, node => node.props?.className === 'dshWbRoundButton')[0].props.href).toBe('https://github.com/o/a')
+    expect(ui.find(tree, node => node.type?.name === 'EntryMetrics')[0].props.entry.metrics).toMatchObject({
+      githubStars: { value: 17 }, npmDownloads30d: { value: 120 }
+    })
+    expect(ui.find(tree, node => node.props?.className === 'dshWbCardVersion')).toHaveLength(1)
+    const favorite = () => ui.find(tree, node => node.props?.className === 'dshWbFavorite')[0]
+    favorite().props.onClick()
+    await vi.waitFor(() => expect(service.state.favorites).toEqual(['o/a']))
+    tree = ui.render()
+    ui.find(tree, node => node.props?.id === 'dsh-workbench-favorites-tab')[0].props.onClick()
+    tree = ui.render()
+    expect(ui.find(tree, node => node.type === 'article').map(node => node.props.key)).toEqual(['o/a'])
+    expect(favorite().props['aria-pressed']).toBe(true)
+    favorite().props.onClick()
+    await vi.waitFor(() => expect(service.state.favorites).toEqual([]))
+    expect(ui.find(ui.render(), node => node.type === 'article')).toHaveLength(0)
+    service.dispose()
   })
 
   it('keeps the Workbench entrance visible before enterprise login', () => {
