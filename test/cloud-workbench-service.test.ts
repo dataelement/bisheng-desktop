@@ -188,10 +188,13 @@ it('restores the complete current enterprise toolkit in a new conversation witho
   const calls: string[] = []
   const service = approvedService(async path => {
     calls.push(path)
-    return { base: 'https://enterprise.test/bisheng/', connectionKey: key, response: envelope({}) }
+    return { base: 'https://enterprise.test/bisheng/', connectionKey: key,
+      response: new Response('# Enterprise workbench protocol\n', { headers: { 'content-type': 'text/markdown; charset=utf-8' } }) }
   }, root)
   expect(await service.request({ operation: 'guide' })).toEqual({
     guideUrl: 'https://enterprise.test/bisheng/api/v1/dev-toolkit/workbench-guide.md',
+    guideMarkdown: '# Enterprise workbench protocol\n',
+    guideSha256: createHash('sha256').update('# Enterprise workbench protocol\n').digest('hex'),
     toolkit: {
       workbenchGuideUrl: 'https://enterprise.test/bisheng/api/v1/dev-toolkit/workbench-guide.md',
       versionsUrl: 'https://enterprise.test/bisheng/api/v1/dev-toolkit/versions',
@@ -200,8 +203,34 @@ it('restores the complete current enterprise toolkit in a new conversation witho
       platformWiringUrl: 'https://enterprise.test/bisheng/api/v1/dev-toolkit/skills/platform-wiring'
     }
   })
-  expect(calls).toEqual(['/api/v1/dev-toolkit/versions'])
+  expect(calls).toEqual(['/api/v1/dev-toolkit/workbench-guide.md'])
   expect(await readdir(root)).toEqual([])
+})
+
+it.each([404, 401, 403, 503])('reports the enterprise guide URL and actual HTTP failure (%s)', async status => {
+  const root = await fixture()
+  const response = Response.json({ detail: 'Request failed' }, { status })
+  const service = approvedService(async () => ({
+    base: 'https://enterprise.test/bisheng/', connectionKey: key,
+    response
+  }), root)
+  await expect(service.request({ operation: 'guide' })).rejects.toThrow(
+    `HTTP ${status} at https://enterprise.test/bisheng/api/v1/dev-toolkit/workbench-guide.md`)
+  expect(response.bodyUsed).toBe(true)
+  expect(await readdir(root)).toEqual([])
+})
+
+it.each([
+  { content: '<html>Sign in</html>', type: 'text/html' },
+  { content: '{"detail":"Not Found"}', type: 'application/json' },
+  { content: '', type: 'text/markdown' }
+])('rejects a successful HTTP response without a real guide ($type)', async ({ content, type }) => {
+  const root = await fixture()
+  const service = approvedService(async () => ({
+    base: 'https://enterprise.test', connectionKey: key,
+    response: new Response(content, { headers: { 'content-type': type } })
+  }), root)
+  await expect(service.request({ operation: 'guide' })).rejects.toThrow('Enterprise workbench guide is not a Markdown document')
 })
 
 
@@ -272,4 +301,142 @@ it('confirms an immutable snapshot and does not infer schema consent from later 
   const blob = upload?.get('package')
   if (!(blob instanceof Blob)) throw new Error('Missing upload')
   expect(createHash('sha256').update(Buffer.from(await blob.arrayBuffer())).digest('hex')).toBe(digest)
+})
+
+it('creates source in the current workspace and restores its publish identity after restarts', async () => {
+  const root = await fixture()
+  const workspace = join(root, 'workspace')
+  const registry = join(root, 'registry')
+  await mkdir(workspace)
+  await writeFile(join(workspace, 'existing.txt'), 'preserve existing work')
+  const uploads: FormData[] = []
+  const fetch: CloudFetch = async (path, init) => {
+    if (path.endsWith('/deploy')) uploads.push(init?.body as FormData)
+    return { base: 'https://enterprise.test', connectionKey: key,
+      response: envelope({ app_id: appId, deployment_id: 'd'.repeat(32), version_id: versionId }) }
+  }
+  const service = approvedService(fetch, registry)
+  const project = await service.request({ operation: 'create', workspaceRoot: workspace }) as { projectId: string; path: string }
+  const { realpath } = await import('node:fs/promises')
+  expect(project.path).toBe(join(await realpath(workspace), `cloud-workbench-${project.projectId}`, 'project'))
+  await writeFile(join(project.path, 'main.py'), 'print("workspace source")')
+  expect(await readdir(join(registry, project.projectId))).toEqual(['origin.json'])
+  const restored = approvedService(fetch, registry)
+  expect(await restored.request({ operation: 'project', projectId: project.projectId })).toMatchObject({ path: project.path })
+  await restored.request({ operation: 'publish', projectId: project.projectId })
+  await approvedService(fetch, registry).request({ operation: 'publish', projectId: project.projectId })
+  expect(uploads).toHaveLength(2)
+  expect(uploads[1]?.get('app_id')).toBe(appId)
+  expect(await readFile(join(workspace, 'existing.txt'), 'utf8')).toBe('preserve existing work')
+})
+
+it('checks out into the current workspace and retains the source version on publish after restart', async () => {
+  const root = await fixture()
+  const workspace = join(root, 'workspace')
+  await mkdir(workspace)
+  await writeFile(join(root, 'main.py'), 'print("downloaded source")')
+  const archive = join(root, 'source.tar.gz')
+  await pack({ file: archive, cwd: root, gzip: true }, ['main.py'])
+  const bytes = await readFile(archive)
+  let uploaded: FormData | undefined
+  const fetch: CloudFetch = async (path, init) => {
+    if (path.endsWith('/deploy')) uploaded = init?.body as FormData
+    return { base: 'https://enterprise.test', connectionKey: key, response: path.endsWith('/source')
+      ? new Response(bytes, { headers: { 'content-type': 'application/gzip', 'x-source-sha256': createHash('sha256').update(bytes).digest('hex'), 'x-app-id': appId, 'x-base-version-id': versionId } })
+      : envelope({ app_id: appId, deployment_id: 'd'.repeat(32) }) }
+  }
+  const registry = join(root, 'registry')
+  const project = await approvedService(fetch, registry).request({ operation: 'checkout', appId, versionId, workspaceRoot: workspace }) as { projectId: string; path: string }
+  const { realpath } = await import('node:fs/promises')
+  expect(project.path.startsWith(await realpath(workspace))).toBe(true)
+  expect(await readFile(join(project.path, 'main.py'), 'utf8')).toBe('print("downloaded source")')
+  await approvedService(fetch, registry).request({ operation: 'publish', projectId: project.projectId })
+  expect(uploaded?.get('app_id')).toBe(appId)
+  expect(uploaded?.get('base_version_id')).toBe(versionId)
+})
+
+it('rejects invalid workspace destinations before creating project directories', async () => {
+  const root = await fixture()
+  const file = join(root, 'a-file')
+  await writeFile(file, 'existing contents')
+  const service = approvedService(async () => ({ base: 'https://enterprise.test', connectionKey: key, response: envelope({}) }), join(root, 'registry'))
+  for (const workspaceRoot of ['relative', null, file, join(root, 'missing')]) {
+    await expect(service.request({ operation: 'create', workspaceRoot })).rejects.toThrow()
+  }
+  expect(await readdir(root)).toEqual(['a-file'])
+})
+
+it('does not follow a workspace project directory replaced with a symlink', async () => {
+  const root = await fixture()
+  const workspace = join(root, 'workspace')
+  const outside = join(root, 'outside')
+  await mkdir(workspace)
+  await mkdir(outside)
+  await writeFile(join(outside, 'main.py'), 'outside source')
+  let uploads = 0
+  const service = approvedService(async path => {
+    if (path.endsWith('/deploy')) uploads++
+    return { base: 'https://enterprise.test', connectionKey: key, response: envelope({}) }
+  }, join(root, 'registry'))
+  const project = await service.request({ operation: 'create', workspaceRoot: workspace }) as { projectId: string; path: string }
+  const { symlink } = await import('node:fs/promises')
+  await rm(project.path, { recursive: true })
+  await symlink(outside, project.path, process.platform === 'win32' ? 'junction' : 'dir')
+  await expect(service.request({ operation: 'publish', projectId: project.projectId })).rejects.toThrow('Invalid development project directory')
+  expect(uploads).toBe(0)
+})
+
+it('cleans a rejected checkout from both the workspace and project registry', async () => {
+  const root = await fixture()
+  const workspace = join(root, 'workspace')
+  const registry = join(root, 'registry')
+  await mkdir(workspace)
+  const bytes = gzipSync(Buffer.from('invalid tar content'))
+  const service = approvedService(async path => ({ base: 'https://enterprise.test', connectionKey: key,
+    response: path.endsWith('/source') ? new Response(bytes, { headers: { 'content-type': 'application/gzip',
+      'x-source-sha256': createHash('sha256').update(bytes).digest('hex'), 'x-app-id': appId, 'x-base-version-id': versionId } }) : envelope({}) }), registry)
+  await expect(service.request({ operation: 'checkout', appId, versionId, workspaceRoot: workspace })).rejects.toThrow()
+  expect(await readdir(workspace)).toEqual([])
+  expect(await readdir(registry)).toEqual([])
+})
+
+it('creates independent projects concurrently in the same workspace', async () => {
+  const root = await fixture()
+  const workspace = join(root, 'workspace')
+  await mkdir(workspace)
+  const service = approvedService(async () => ({ base: 'https://enterprise.test', connectionKey: key, response: envelope({}) }), join(root, 'registry'))
+  const projects = await Promise.all([service.request({ operation: 'create', workspaceRoot: workspace }), service.request({ operation: 'create', workspaceRoot: workspace })]) as Array<{ projectId: string; path: string }>
+  expect(new Set(projects.map(project => project.projectId)).size).toBe(2)
+  expect(new Set(projects.map(project => project.path)).size).toBe(2)
+  expect(await readdir(workspace)).toHaveLength(2)
+})
+
+it('resumes an older managed project in the current workspace and keeps its app/version identity', async () => {
+  const root = await fixture()
+  const workspace = join(root, 'workspace')
+  await mkdir(workspace)
+  const source = join(root, 'main.py')
+  await writeFile(source, 'print("existing unpublished edits")')
+  const archive = join(root, 'source.tar.gz')
+  await pack({ file: archive, cwd: root, gzip: true }, ['main.py'])
+  const bytes = await readFile(archive)
+  let uploaded: FormData | undefined
+  const fetch: CloudFetch = async (path, init) => {
+    if (path.endsWith('/deploy')) uploaded = init?.body as FormData
+    return { base: 'https://enterprise.test', connectionKey: key, response: path.endsWith('/source')
+      ? new Response(bytes, { headers: { 'content-type': 'application/gzip', 'x-source-sha256': createHash('sha256').update(bytes).digest('hex'), 'x-app-id': appId, 'x-base-version-id': versionId } })
+      : envelope({ app_id: appId, deployment_id: 'd'.repeat(32) }) }
+  }
+  const registry = join(root, 'registry')
+  const old = await approvedService(fetch, registry).request({ operation: 'checkout', appId, versionId }) as { projectId: string; path: string }
+  const service = approvedService(fetch, registry)
+  const resumed = await service.request({ operation: 'resume', projectId: old.projectId, workspaceRoot: workspace }) as { projectId: string; path: string }
+  expect(resumed.projectId).not.toBe(old.projectId)
+  expect(await readFile(join(resumed.path, 'main.py'), 'utf8')).toContain('existing unpublished edits')
+  expect(await readFile(join(old.path, 'main.py'), 'utf8')).toContain('existing unpublished edits')
+  const again = await service.request({ operation: 'resume', projectId: resumed.projectId, workspaceRoot: workspace }) as { projectId: string; path: string }
+  expect(again.projectId).toBe(resumed.projectId)
+  await approvedService(fetch, registry).request({ operation: 'publish', projectId: resumed.projectId })
+  expect(uploaded?.get('app_id')).toBe(appId)
+  expect(uploaded?.get('base_version_id')).toBe(versionId)
 })
