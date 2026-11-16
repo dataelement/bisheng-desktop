@@ -205,7 +205,7 @@ index c246e9d5..3c768645 100644
  		exports.SESSION_SEARCH_SNIPPET_MAX_CODE_POINTS = SESSION_SEARCH_SNIPPET_MAX_CODE_POINTS;
  		exports.SessionCreateError = SessionCreateError;
 diff --git a/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js b/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js
-index 730b8a41..f3075b61 100644
+index 730b8a41..aaacd178 100644
 --- a/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js
 +++ b/node_modules/@deepseek-ai/dsh-api-session-controller/lib/index.js
 @@ -8,7 +8,7 @@ import { Remote, RemoteError, TypertRemoteService, principalOf, remoteErrorOf }
@@ -513,7 +513,7 @@ index 730b8a41..f3075b61 100644
  //#endregion
  //#region lib/types/control.js
  /** Live Session projection state with reconnect baselines. */
-@@ -2382,10 +2572,12 @@ let SessionSkillCatalog = (() => {
+@@ -2382,10 +2572,13 @@ let SessionSkillCatalog = (() => {
  				const scope = live ?? lease?.key;
  				try {
  					return { skills: (await skillRegistry.list({
@@ -523,10 +523,11 @@ index 730b8a41..f3075b61 100644
  					})).filter(isUserInvocable).map((skill) => ({
  						name: skill.name,
 +						...skill.displayName === void 0 ? {} : { displayName: skill.displayName },
++						...skill.source === void 0 ? {} : { source: skill.source },
  						...skill.path === void 0 ? {} : { path: skill.path },
  						description: skill.description,
  						...skill.whenToUse === void 0 ? {} : { whenToUse: skill.whenToUse },
-@@ -2487,6 +2679,171 @@ const SessionMediaReferences = {
+@@ -2487,6 +2680,171 @@ const SessionMediaReferences = {
  		}), "session-controller: /api/file");
  	}
  };
@@ -698,7 +699,7 @@ index 730b8a41..f3075b61 100644
  //#endregion
  //#region lib/types/archived-session-gate.js
  /**
-@@ -2647,6 +3004,17 @@ var __disposeResources = (function(SuppressedError) {
+@@ -2647,6 +3005,17 @@ var __disposeResources = (function(SuppressedError) {
  function addressedSession(request) {
  	return request.address.kind === "session" ? request.address.sessionId : request.address.childSessionId;
  }
@@ -716,7 +717,7 @@ index 730b8a41..f3075b61 100644
  /** Host service backing the generated `ctx.remote.session` namespace. */
  let SessionController = (() => {
  	let _classSuper = TypertRemoteService;
-@@ -2661,6 +3029,7 @@ let SessionController = (() => {
+@@ -2661,6 +3030,7 @@ let SessionController = (() => {
  	let _openWorkspacePath_decorators;
  	let _workspacePathApplications_decorators;
  	let _rename_decorators;
@@ -724,7 +725,7 @@ index 730b8a41..f3075b61 100644
  	let _fork_decorators;
  	let _prompt_decorators;
  	let _attachment_decorators;
-@@ -2683,6 +3052,7 @@ let SessionController = (() => {
+@@ -2683,6 +3053,7 @@ let SessionController = (() => {
  			_openWorkspacePath_decorators = [Remote("openWorkspacePath")];
  			_workspacePathApplications_decorators = [Remote("workspacePathApplications")];
  			_rename_decorators = [Remote("rename")];
@@ -732,7 +733,7 @@ index 730b8a41..f3075b61 100644
  			_fork_decorators = [Remote("fork")];
  			_prompt_decorators = [Remote("prompt")];
  			_attachment_decorators = [Remote("attachment")];
-@@ -2808,6 +3178,17 @@ let SessionController = (() => {
+@@ -2808,6 +3179,17 @@ let SessionController = (() => {
  				},
  				metadata: _metadata
  			}, null, _instanceExtraInitializers);
@@ -750,7 +751,7 @@ index 730b8a41..f3075b61 100644
  			__esDecorate(this, null, _fork_decorators, {
  				kind: "method",
  				name: "fork",
-@@ -2975,10 +3356,12 @@ let SessionController = (() => {
+@@ -2975,10 +3357,12 @@ let SessionController = (() => {
  			this.canOpenPath = internals.canOpenPath ?? (() => config.nativeOpen ?? (internals.openPath !== void 0 || canOpenNativePath()));
  			ctx.plugin(SessionFileReferences);
  			ctx.plugin(SessionMediaReferences);
@@ -764,7 +765,7 @@ index 730b8a41..f3075b61 100644
  			});
  			ctx.on("session/disposed", (session) => {
  				ctx.emit("api-session/removed", session.id);
-@@ -3157,7 +3540,7 @@ let SessionController = (() => {
+@@ -3157,7 +3541,7 @@ let SessionController = (() => {
  			} catch (error) {
  				if (signal.aborted) throw new RemoteError("gateway/cancelled", "path open was aborted", {});
  				if (error instanceof RemoteError) throw error;
@@ -773,7 +774,7 @@ index 730b8a41..f3075b61 100644
  			}
  		}
  		/**
-@@ -3184,8 +3567,17 @@ let SessionController = (() => {
+@@ -3184,8 +3568,17 @@ let SessionController = (() => {
  			const hostPath = resolve(path);
  			const { fs } = this.ctx;
  			const mapped = fs.processPathFromHostPath(hostPath);
@@ -792,7 +793,7 @@ index 730b8a41..f3075b61 100644
  			return hostPath;
  		}
  		/**
-@@ -3196,6 +3588,10 @@ let SessionController = (() => {
+@@ -3196,6 +3589,10 @@ let SessionController = (() => {
  		rename(request) {
  			return this.commands.rename(request);
  		}
@@ -804,7 +805,7 @@ index 730b8a41..f3075b61 100644
  		* Fork one cold-readable exact event prefix into a new Session. An omitted
  		* boundary selects the latest completed-turn prefix; an open cut receives
 diff --git a/node_modules/@deepseek-ai/dsh-api-session-controller/lib/typert.host.js b/node_modules/@deepseek-ai/dsh-api-session-controller/lib/typert.host.js
-index 417bc0ee..b7f4ba47 100644
+index 417bc0ee..24b38365 100644
 --- a/node_modules/@deepseek-ai/dsh-api-session-controller/lib/typert.host.js
 +++ b/node_modules/@deepseek-ai/dsh-api-session-controller/lib/typert.host.js
 @@ -236,6 +236,14 @@ const _deepseek_ai_dsh_api_session_controller_session_create_result$schema = ()
@@ -822,15 +823,16 @@ index 417bc0ee..b7f4ba47 100644
  let _deepseek_ai_dsh_api_session_controller_session_follow_parameter_0$schema$value
  const _deepseek_ai_dsh_api_session_controller_session_follow_parameter_0$schema = () => (_deepseek_ai_dsh_api_session_controller_session_follow_parameter_0$schema$value ??= z.object({
    'address': z.union([z.object({
-@@ -1222,6 +1230,7 @@ const _deepseek_ai_dsh_api_session_controller_skills_list_result$schema = () =>
+@@ -1222,6 +1230,8 @@ const _deepseek_ai_dsh_api_session_controller_skills_list_result$schema = () =>
    'skills': z.array(z.object({
    'path': z.string().readonly().optional().describe('Absolute SKILL.md path when supplied by a filesystem provider.'),
    'name': z.string().readonly().describe('Kebab-case identifier referenced as `/name`.'),
 +  'displayName': z.string().readonly().optional().describe('Optional UI title; name remains the invocation key.'),
++  'source': z.string().readonly().optional().describe('Discovery source of the winning skill, for grouping in UI only.'),
    'description': z.string().readonly().describe('Short routing description.'),
    'whenToUse': z.string().readonly().optional().describe('Optional extra routing guidance.'),
    'modelInvocable': z.boolean().readonly().describe('Whether the same skill is also advertised to the model.'),
-@@ -1519,6 +1528,31 @@ const $remote = createTypertRemoteInfo({
+@@ -1519,6 +1529,31 @@ const $remote = createTypertRemoteInfo({
        },
        sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":599,"column":10},
      },
@@ -862,7 +864,7 @@ index 417bc0ee..b7f4ba47 100644
      'session/create': {
        service: 'sessionController',
        description: 'Create one ordinary Session for a new conversation, reusing the named blank Session while it is reusable.',
-@@ -2117,6 +2151,13 @@ export const TYPERT = {
+@@ -2117,6 +2152,13 @@ export const TYPERT = {
              "summary": "Rename one Session after explicitly resuming it.",
              "jsDoc": "/**\n * Rename one Session after explicitly resuming it.\n * @param request - Session identity and proposed title.\n * @returns the accepted title and durable event sequence.\n */"
            },
@@ -876,7 +878,7 @@ index 417bc0ee..b7f4ba47 100644
            {
              "kind": "method",
              "name": "fork",
-@@ -2794,6 +2835,14 @@ export const TYPERT = {
+@@ -2794,6 +2836,14 @@ export const TYPERT = {
              "name": "SessionCreateValue",
              "declaration": "export interface SessionCreateValue {\n    readonly sessionId: SessionId;\n    readonly agentPreset?: string;\n}"
            },
@@ -921,7 +923,7 @@ index 19758684..9c78cd97 100644
      'session/fork': (request: SessionForkRequest) => Promise<RemoteResult<SessionForkValue>>
      'session/initializeDefaultModel': () => Promise<RemoteResult<void>>
 diff --git a/node_modules/@deepseek-ai/dsh-api-session-controller/lib/typert.remote-client.js b/node_modules/@deepseek-ai/dsh-api-session-controller/lib/typert.remote-client.js
-index 912fb550..185d78ed 100644
+index 912fb550..2b16481d 100644
 --- a/node_modules/@deepseek-ai/dsh-api-session-controller/lib/typert.remote-client.js
 +++ b/node_modules/@deepseek-ai/dsh-api-session-controller/lib/typert.remote-client.js
 @@ -236,6 +236,14 @@ const _deepseek_ai_dsh_api_session_controller_session_create_result$schema = ()
@@ -939,15 +941,16 @@ index 912fb550..185d78ed 100644
  let _deepseek_ai_dsh_api_session_controller_session_follow_parameter_0$schema$value
  const _deepseek_ai_dsh_api_session_controller_session_follow_parameter_0$schema = () => (_deepseek_ai_dsh_api_session_controller_session_follow_parameter_0$schema$value ??= z.object({
    'address': z.union([z.object({
-@@ -1222,6 +1230,7 @@ const _deepseek_ai_dsh_api_session_controller_skills_list_result$schema = () =>
+@@ -1222,6 +1230,8 @@ const _deepseek_ai_dsh_api_session_controller_skills_list_result$schema = () =>
    'skills': z.array(z.object({
    'path': z.string().readonly().optional().describe('Absolute SKILL.md path when supplied by a filesystem provider.'),
    'name': z.string().readonly().describe('Kebab-case identifier referenced as `/name`.'),
 +  'displayName': z.string().readonly().optional().describe('Optional UI title; name remains the invocation key.'),
++  'source': z.string().readonly().optional().describe('Discovery source of the winning skill, for grouping in UI only.'),
    'description': z.string().readonly().describe('Short routing description.'),
    'whenToUse': z.string().readonly().optional().describe('Optional extra routing guidance.'),
    'modelInvocable': z.boolean().readonly().describe('Whether the same skill is also advertised to the model.'),
-@@ -1519,6 +1528,31 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
+@@ -1519,6 +1529,31 @@ export const TYPERT_REMOTE = createTypertRemoteInfo({
        },
        sourceLocation: {"file":"packages/api/session-controller/src/index.ts","line":599,"column":10},
      },
@@ -1373,31 +1376,34 @@ index 3001f900..999a127d 100644
           * Fork one cold-readable exact event prefix into a new Session. An omitted
           * boundary selects the latest completed-turn prefix; an open cut receives
 diff --git a/node_modules/@deepseek-ai/dsh-api-session-controller/lib/types/skill-catalog.js b/node_modules/@deepseek-ai/dsh-api-session-controller/lib/types/skill-catalog.js
-index df09478a..f5bbc312 100644
+index df09478a..b04d7b6e 100644
 --- a/node_modules/@deepseek-ai/dsh-api-session-controller/lib/types/skill-catalog.js
 +++ b/node_modules/@deepseek-ai/dsh-api-session-controller/lib/types/skill-catalog.js
-@@ -163,6 +163,7 @@ let SessionSkillCatalog = (() => {
+@@ -163,6 +163,8 @@ let SessionSkillCatalog = (() => {
                      return {
                          skills: skills.map(skill => ({
                              name: skill.name,
 +                            ...skill.displayName === undefined ? {} : { displayName: skill.displayName },
++                            ...skill.source === undefined ? {} : { source: skill.source },
                              ...skill.path === undefined ? {} : { path: skill.path },
                              description: skill.description,
                              ...skill.whenToUse === undefined ? {} : { whenToUse: skill.whenToUse },
 diff --git a/node_modules/@deepseek-ai/dsh-api-session-controller/lib/types/types.d.ts b/node_modules/@deepseek-ai/dsh-api-session-controller/lib/types/types.d.ts
-index 0b3ebd31..fed3fb19 100644
+index 0b3ebd31..474b4a62 100644
 --- a/node_modules/@deepseek-ai/dsh-api-session-controller/lib/types/types.d.ts
 +++ b/node_modules/@deepseek-ai/dsh-api-session-controller/lib/types/types.d.ts
-@@ -248,6 +248,8 @@ export interface SkillListRequest {
+@@ -248,6 +248,10 @@ export interface SkillListRequest {
  }
  /** One skill available to the Session's human-facing composer. */
  export interface SkillEntry {
 +    /** Optional UI title; name remains the invocation key. */
 +    readonly displayName?: string;
++    /** Discovery source of the winning skill, for grouping in UI only. */
++    readonly source?: string;
      /** Absolute SKILL.md path when supplied by a filesystem provider. */
      readonly path?: string;
      /** Kebab-case identifier referenced as `/name`. */
-@@ -316,6 +318,14 @@ export interface SessionRenameValue {
+@@ -316,6 +320,14 @@ export interface SessionRenameValue {
      readonly title: string;
      readonly seq: number;
  }

@@ -84,3 +84,50 @@ it('marks enterprise skill options with the existing skill icon while preserving
   expect(options[1].badgeIcon).toBeUndefined()
   expect(JSON.parse(options[1].id).enterprise).toBe(false)
 })
+
+// Group order is own uploads, then organization and client-bundled skills, then this computer.
+it.each([
+  ['zh', ['我上传的 (1)', '企业提供 (3)', '本地安装 (3)']],
+  ['en', ['Uploaded by you (1)', 'Provided by your organization (3)', 'Installed locally (3)']]
+])('groups skill options by where they come from in %s', async (language, headings) => {
+  const { plugin, fetch } = setup()
+  fetch.mockResolvedValueOnce(Response.json({ skills: [
+    { name: 'bisheng-ab12-7', displayName: 'Word 文档处理', uploaded: false },
+    { name: 'bisheng-ab12-8', displayName: '我的周报', uploaded: true },
+    { name: 'bisheng-ab12-9', displayName: '旧平台技能' }
+  ] }))
+  const skills = [
+    { name: 'lark-doc', description: 'Installed in ~/.agents/skills.', source: 'user-agents' },
+    { name: 'bisheng-ab12-7', description: 'Published by the organization.', source: 'bisheng' },
+    { name: 'office-docx', description: 'Bundled with the client.', source: 'bundled' },
+    { name: 'repo-helper', description: 'Inside the workspace.', source: 'project-agents' },
+    { name: 'bisheng-ab12-8', description: 'Uploaded by this user.', source: 'bisheng' },
+    { name: 'legacy-local', description: 'Listed without a source.' },
+    { name: 'bisheng-ab12-9', description: 'From a platform without upload markers.', source: 'bisheng' }
+  ]
+  const commands = new Map(), dictionaries = new Map()
+  const ctx = {
+    effect(run, label) { if (label === 'desktop Work resources locale') run() }, on() {},
+    slots: { inject() {} },
+    locale: {
+      register: (ns, dictionary) => { dictionaries.set(ns, dictionary) },
+      bind: ns => (key, args = {}) => dictionaries.get(ns)[language][key].replace(/\{(\w+)\}/g, (_, name) => String(args[name]))
+    },
+    remote: { skills: { list: async () => ({ ok: true, value: { skills } }) } },
+    sessions: { using: async (_id, _options, run) => run() },
+    commandUi: { register: command => commands.set(command.name, command) },
+    inject: (_dependencies, install) => install(ctx)
+  }
+  plugin.apply(ctx)
+  const options = await commands.get('skills').ui.options({ sessionId: 'task' }, new AbortController().signal)
+  expect(options.map(option => [option.group.name, option.label])).toEqual([
+    ['uploaded', '我的周报'],
+    // Published skills first, then the client's bundled ones, each in registry order.
+    ['provided', 'Word 文档处理'], ['provided', '旧平台技能'], ['provided', 'office-docx'],
+    ['local', 'lark-doc'], ['local', 'repo-helper'], ['local', 'legacy-local']
+  ])
+  expect([...new Map(options.map(option => [option.group.name, option.group.label])).values()]).toEqual(headings)
+  // Grouping does not change what a selection inserts.
+  expect(JSON.parse(options[0].id)).toEqual({ name: 'bisheng-ab12-8', label: '我的周报', enterprise: true })
+  expect(JSON.parse(options[3].id)).toEqual({ name: 'office-docx', label: 'office-docx', enterprise: false })
+})

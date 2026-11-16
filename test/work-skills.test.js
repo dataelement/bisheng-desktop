@@ -145,3 +145,20 @@ it('coexists with a same-named local skill in the actual Harness registry', asyn
     expect(await ctx.skills.get(enterprise.name)).toBeUndefined()
   } finally { disposeProvider(); await fork.dispose() }
 })
+
+it('tells the picker which enterprise skills the user uploaded', async () => {
+  const fixture = await setup()
+  fixture.request.mockResolvedValue([
+    { id: 7, name: 'office', display_name: 'Office', description: 'Create documents', content_hash: 'a'.repeat(64), source: 'platform' },
+    { id: 8, name: 'weekly-report', display_name: '我的周报', description: 'Weekly report', content_hash: 'b'.repeat(64), source: 'personal' },
+    // Platforms before the runtime catalog carried `source`.
+    { id: 9, name: 'legacy', display_name: '旧平台技能', description: '', content_hash: 'c'.repeat(64) }
+  ])
+  let route
+  const { applyEnterpriseSkills } = await import('../packages/dsh-desktop-enterprise/work-skills.js')
+  applyEnterpriseSkills({ skills: { registerProvider: factory => { factory({ invalidate: () => {}, signal: new AbortController().signal }) } },
+    connection: { fetch: { register: value => { route = value } } } },
+  { state: () => fixture.state, request: fixture.request, refreshState: async () => {}, home: homes.at(-1) })
+  const response = await route.fetch(new Request('http://localhost/api/enterprise.work-skills', { method: 'POST', body: JSON.stringify({ operation: 'catalog' }) }))
+  expect((await response.json()).skills.map(skill => [skill.displayName, skill.uploaded])).toEqual([['Office', false], ['我的周报', true], ['旧平台技能', false]])
+})
