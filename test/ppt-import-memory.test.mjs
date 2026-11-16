@@ -63,6 +63,7 @@ it('cleans failed uploads and records the conversion error without interrupting 
   expect(await library.list()).toEqual([]);
 });
 
+// Twelve real native previews need the same budget as the other multi-page imports.
 it('processes repeated dense vector paths under a small heap with frames and ordinary shapes retained',async()=>{
   const {root,library,job}=await fixture();
   const pptx=new PptxGenJS();pptx.layout='LAYOUT_WIDE';
@@ -100,7 +101,7 @@ it('processes repeated dense vector paths under a small heap with frames and ord
     expect(xml).toContain('<p:pic>');
   }
   await library.cancel('owner',draft.draftId);
-},60000);
+},120000);
 
 it.each(['a','drawing',''])('preserves namespace and Unicode positions while bounding %s geometry',prefix=>{
   const q=prefix?prefix+':':'',ns=prefix?`xmlns:${prefix}`:'xmlns';

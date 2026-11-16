@@ -78,10 +78,14 @@ class TestChangeSummary(unittest.TestCase):
             run.assert_not_called()
 
     def test_real_git_range_and_code_evidence(self):
-        with tempfile.TemporaryDirectory() as work, contextlib.chdir(work), patch.dict(os.environ, {
+        with tempfile.TemporaryDirectory() as work, contextlib.ExitStack() as cleanup, patch.dict(os.environ, {
             "GIT_AUTHOR_NAME": "Test", "GIT_COMMITTER_NAME": "Test",
             "GIT_AUTHOR_EMAIL": "test@example.com", "GIT_COMMITTER_EMAIL": "test@example.com",
         }), patch.object(build, "summarize_changes", return_value="中文总结") as summarize:
+            # Restore cwd on failure, including on macOS's Python 3.9.
+            cleanup.callback(os.chdir, os.getcwd())
+            os.chdir(work)
+
             def git(*args):
                 return subprocess.check_output(["git", *args], text=True).strip()
 

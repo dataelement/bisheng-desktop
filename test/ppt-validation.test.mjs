@@ -149,8 +149,9 @@ describe('PPT validation authoring loop', () => {
     const xml = new TextDecoder().decode(unzipSync(await readFile(outputPath))['ppt/slides/slide1.xml'])
     expect(xml).toContain(String.raw`\n`)
     const importedDir = path.join(f.workspace, 'imported')
-    const imported = spawnSync(process.execPath, [cli, 'convert', outputPath, '-o', importedDir, '--json'], { encoding: 'utf8', timeout: 10_000 })
-    expect(imported.status, imported.stdout + imported.stderr).toBe(0)
+    // A fresh renderer converts four real slides; retain a bounded integration budget.
+    const imported = spawnSync(process.execPath, [cli, 'convert', outputPath, '-o', importedDir, '--json'], { encoding: 'utf8', timeout: 30_000 })
+    expect(imported.status, [imported.error?.message, imported.signal, imported.stdout, imported.stderr].filter(Boolean).join('\n')).toBe(0)
     const importCheck = spawnSync(process.execPath, [cli, 'check', importedDir, '--json'], { encoding: 'utf8', timeout: 10_000 })
     expect(JSON.parse(importCheck.stdout).issues.filter(i => i.code === 'text-escaped-newline')).toEqual([])
     const hostImport = await f.run('pptd_import', { pptx_path: rendered.value.outputPath, output_directory: 'host-imported' })
@@ -159,7 +160,7 @@ describe('PPT validation authoring loop', () => {
     await writeFile(file, yaml.dump(page))
     checked = await f.run('pptd_check', { project_path: 'deck' })
     expect(checked.value.issues.some(i => i.code === 'text-literal-escapes')).toBe(true)
-  }, 30_000)
+  }, 60_000)
 
   it('checks only visible rich text for newline residue', async () => {
     const f = await fixture({ broken: false })

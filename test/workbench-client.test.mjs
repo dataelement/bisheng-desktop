@@ -278,6 +278,161 @@ const boundState = () => ({ ...emptyState(), added: ['writer', 'research'],
   recentSessions: { writer: 'writer-1', research: 'research-1' }, notes: { writer: 'Retained business draft' } })
 
 describe('desktop workbench client navigation', () => {
+  it.each([
+    { language: 'zh', connected: false, policy: false, copy: 'open' },
+    { language: 'zh', connected: true, policy: true, copy: 'open' },
+    { language: 'zh', connected: true, policy: false, copy: 'closed' },
+    { language: 'en', connected: false, policy: false, copy: 'open' },
+    { language: 'en', connected: true, policy: true, copy: 'open' },
+    { language: 'en', connected: true, policy: false, copy: 'closed' }
+  ])('uses the existing settings copy for $language connected=$connected policy=$policy', async ({ language, connected, policy, copy }) => {
+    const expected = {
+      zh: {
+        open: '列表来自网络工作台市场，也可以安装本机开发的工作台。企业上传的工作台在「来自企业」中安装。',
+        closed: '当前企业未开放网络工作台市场。工作台市场展示本企业上传的工作台，可以直接安装；已安装里保留本机已安装和本地开发的工作台。'
+      },
+      en: {
+        open: 'The list comes from the network workbench market. Locally developed workbenches can also be installed. Enterprise uploads can be installed from From enterprise.',
+        closed: 'This enterprise has not opened the network workbench market. The workbench market shows workbenches uploaded by your enterprise, and they can be installed directly. Installed keeps local and previously installed workbenches.'
+      }
+    }
+    let client
+    const testReact = {
+      ...React,
+      useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot()
+    }
+    const testWindow = {
+      sessionStorage, localStorage: enabledStorage,
+      __dshEnterpriseWorkbenchSnapshot: { known: true, connected, allowThirdPartyWorkbenches: policy },
+      __ModuleLoader__: { load({ factory }) {
+        client = factory(name => name === 'react' ? testReact : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null })
+      } }
+    }
+    // Expose the private settings component only inside this test's module VM.
+    vm.runInNewContext(code.replace('return { apply, inject:', 'return { WorkbenchSettingsTab, apply, inject:'), {
+      window: testWindow, document, setTimeout, clearTimeout, AbortController
+    })
+    const { ctx, service } = await fixture()
+    ctx.locale = { bind: () => key => key, getSnapshot: () => ({ active: language }) }
+    ctx.effect = () => {}
+    ctx.slots = { inject() {} }
+    try {
+      client.apply(ctx)
+      const markup = renderToStaticMarkup(React.createElement(client.WorkbenchSettingsTab))
+      expect(markup).toContain(`<p class="dshWbMuted">${expected[language][copy]}</p>`)
+    } finally {
+      service.dispose()
+    }
+  })
+
+  it('waits for tenant policy before public reads and applies close, reopen, and logout transitions', async () => {
+    const original = await fixture()
+    original.service.dispose()
+    const { ctx } = original
+    let service, applyLocal
+    let account = {
+      connected: true, connectionKey: 'a'.repeat(16), allowThirdPartyWorkbenches: false,
+      sessionExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString()
+    }
+    const initialAccount = deferred()
+    const fetchImpl = vi.fn(async (url, options) => {
+      if (url === '/api/enterprise.state') {
+        await initialAccount.promise
+        return Response.json(account)
+      }
+      if (String(url).startsWith('/api/enterprise.workbenches/catalog')) return Response.json({ status: 'empty', data: [] })
+      return original.request(url, options)
+    })
+    const listeners = new Map()
+    const testWindow = {
+      localStorage: enabledStorage, sessionStorage,
+      addEventListener(type, listener) {
+        if (!listeners.has(type)) listeners.set(type, new Set())
+        listeners.get(type).add(listener)
+      },
+      removeEventListener(type, listener) { listeners.get(type)?.delete(listener) },
+      __ModuleLoader__: { load({ factory }) {
+        applyLocal = factory(name => name === 'react' ? { createElement() {}, Component: class {} } : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null }).apply
+      } }
+    }
+    vm.runInNewContext(code, { window: testWindow, document, fetch: fetchImpl, setTimeout, clearTimeout, AbortController })
+    const cleanups = []
+    ctx.reflect = { provide: (_name, value) => { service = value } }
+    ctx.slots = { inject() {}, register() {} }
+    ctx.effect = (callback, label) => {
+      if (!['workbenches: service', 'workbenches: enterprise capability', 'workbenches: lifecycle'].includes(label)) return
+      const cleanup = callback()
+      if (typeof cleanup === 'function') cleanups.push(cleanup)
+    }
+    const syncAccount = () => { for (const listener of listeners.get('focus') || []) listener() }
+    const publicReads = () => fetchImpl.mock.calls.filter(([url]) => String(url).startsWith('/api/desktop-workbenches/catalog'))
+    try {
+      applyLocal(ctx)
+      await vi.waitFor(() => expect(service.ready).toBe(true))
+      expect(publicReads()).toHaveLength(0)
+      initialAccount.resolve()
+      await vi.waitFor(() => expect(service.enterpriseCatalogStatus).toBe('empty'))
+      expect(service.networkMarketAllowed).toBe(false)
+      await service.load()
+      await service.refreshCatalog()
+      expect(publicReads()).toHaveLength(0)
+
+      account = { ...account, allowThirdPartyWorkbenches: true }
+      syncAccount()
+      await vi.waitFor(() => expect(service.remoteCatalog).toHaveLength(2))
+      expect(service.networkMarketAllowed).toBe(true)
+      expect(publicReads().length).toBeGreaterThan(0)
+      service.state.favorites = ['writer']
+      const catalog = service.remoteCatalog
+      const readsBeforeLogout = publicReads().length
+      account = { connected: false }
+      syncAccount()
+      await vi.waitFor(() => expect(service.enterpriseAccountKey).toBe(''))
+      expect(service.networkMarketAllowed).toBe(true)
+      expect(service.remoteCatalog).toBe(catalog)
+      expect(service.state.favorites).toEqual(['writer'])
+      expect(publicReads()).toHaveLength(readsBeforeLogout)
+
+      account = {
+        connected: true, connectionKey: 'a'.repeat(16), allowThirdPartyWorkbenches: false,
+        sessionExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString()
+      }
+      syncAccount()
+      await vi.waitFor(() => expect(service.networkMarketAllowed).toBe(false))
+      expect(service.remoteCatalog).toEqual([])
+      expect(service.state.favorites).toEqual(['writer'])
+      await service.refreshCatalog()
+      expect(publicReads()).toHaveLength(readsBeforeLogout)
+    } finally {
+      initialAccount.resolve()
+      for (const cleanup of cleanups.reverse()) cleanup()
+    }
+  })
+
+  it.each([false, true])('discards stale public refresh outcomes after policy closes and reopens (fails=%s)', async fails => {
+    const { service } = await fixture()
+    const stale = deferred()
+    const fresh = deferred()
+    service.readCatalog = vi.fn().mockReturnValueOnce(stale.promise).mockReturnValueOnce(fresh.promise)
+    const oldRefresh = service.refreshCatalog()
+    service.closePublicMarket()
+    expect(service.remoteCatalog).toEqual([])
+    service.networkMarketAllowed = true
+    const newRefresh = service.refreshCatalog()
+    if (fails) stale.resolve(Promise.reject(new Error('Old catalog failed')))
+    else stale.resolve({ entries: [{ id: 'old/public' }], categories: [], stale: false })
+    await oldRefresh
+    expect(service.remoteCatalog).toEqual([])
+    expect(service.catalogError).toBe('')
+    expect(service.catalogRefresh).toBe(newRefresh)
+    expect(service.catalogRefreshing).toBe(true)
+    fresh.resolve({ entries: [], categories: [], stale: false })
+    await newRefresh
+    expect(service.readCatalog).toHaveBeenCalledTimes(2)
+    expect(service.catalogRefreshing).toBe(false)
+    service.dispose()
+  })
+
   it('renders an installed cloud shortcut with the shared card layout and shortcut-only actions', async () => {
     const { service } = await fixture()
     const item = { id: 'b'.repeat(32), name: 'Team board', description: 'Shared enterprise records', version_id: 'c'.repeat(32) }
@@ -574,7 +729,7 @@ describe('desktop workbench client navigation', () => {
           { id: 'writer', owner: 'test', repository: 'writer', url: 'https://github.com/test/writer', name: 'Writer', category: 'other', description: { zh: 'Writer' }, screenshots: [], version: '1.0.0', distribution: { name: 'writer' } }
         ] }
       })
-      if (path.startsWith('/api/desktop-workbenches/market-installs')) return Response.json({ installs: {} })
+      if (path.startsWith('/api/desktop-workbenches/market-installs')) return Response.json({ installs: { writer: { pluginName: 'writer', version: '1.0.0' } } })
       if (path === '/api/desktop-workbenches/state' && options.method !== 'POST') return Response.json(stored)
       if (options.method === 'POST') {
         const payload = JSON.parse(options.body)
@@ -669,6 +824,9 @@ describe('desktop workbench client navigation', () => {
     service.register({ title: 'Writer' }, () => null)
     await service.load()
     await vi.waitFor(() => expect(service.getSnapshot().enterpriseCatalogStatus).toBe('empty'))
+    await service.catalogRefresh
+    expect(service.remoteCatalog.map(entry => entry.id)).toContain('writer')
+    expect(service.getSnapshot().catalog.map(entry => entry.id)).toContain('writer')
     expect(testWindow.setInterval).not.toHaveBeenCalled()
     projects.push({ workspaceId: 'project-2', title: 'Other project', sessionIds: ['native-2'] })
     list.ids.push('native-2')
@@ -694,7 +852,7 @@ describe('desktop workbench client navigation', () => {
     expect(expiryCallback).toBeTypeOf('function')
     signedIn = false
     expiryCallback()
-    await vi.waitFor(() => expect(service.networkMarketAllowed).toBe(false))
+    await vi.waitFor(() => expect(service.networkMarketAllowed).toBe(true))
     for (const cleanup of cleanups) cleanup()
     expect(nativeUnsubscribe).toHaveBeenCalledOnce()
     expect(listeners.get('focus')).toHaveLength(0)
@@ -4214,31 +4372,72 @@ describe('sidebar central panel selection', () => {
     expect(ui.find(tree, node => node.props?.className === 'dshWbBrowseTools')).toHaveLength(0)
     expect(ui.find(tree, node => node.props?.className === 'dshWbSearch')).toHaveLength(0)
   })
-  it('keeps cloud sign-in available while closed-policy public collections remain hidden', async () => {
+  it.each([false, true])('keeps public cards and favorites when permitted or signed out (connected=%s)', async connected => {
     const { service } = await fixture()
-    const ui = interactiveMarket(service, 'market', undefined, { known: true, connected: false, allowThirdPartyWorkbenches: false })
-    const tree = ui.render()
-    for (const tab of ['market', 'favorites', 'enterprise']) {
-      expect(ui.find(tree, node => node.props?.id === `dsh-workbench-${tab}-tab`)).toHaveLength(0)
-    }
-    expect(ui.find(tree, node => node.props?.id === 'dsh-workbench-cloud-tab')).toHaveLength(1)
-    expect(ui.find(tree, node => node.props?.id === 'dsh-workbench-mine-tab')).toHaveLength(1)
-    expect(ui.button(tree, '登录毕昇账号')).toBeDefined()
-    expect(ui.button(tree, '安装本地工作台')).toBeUndefined()
+    service.remoteCatalog = [{
+      id: 'o/a', owner: 'o', name: 'Public workbench', version: '1.2.3',
+      description: { zh: '完整市场介绍', en: 'Market description' },
+      screenshots: [{ url: 'https://example.test/workbench.png' }], url: 'https://github.com/o/a',
+      metrics: { githubStars: { value: 17 }, npmDownloads30d: { value: 120 } }
+    }]
+    service.enterpriseCatalog = [{ id: 'enterprise-board', displayName: 'Enterprise board' }]
+    service.publish()
+    const ui = interactiveMarket(service, 'market', undefined, {
+      known: true, connected, allowThirdPartyWorkbenches: connected
+    })
+    let tree = ui.render()
+    expect(ui.find(tree, node => node.props?.role === 'tab').map(node => node.props.id)).toEqual([
+      'dsh-workbench-market-tab', 'dsh-workbench-favorites-tab',
+      ...(connected ? ['dsh-workbench-enterprise-tab'] : []),
+      'dsh-workbench-mine-tab', 'dsh-workbench-cloud-tab'
+    ])
+    expect(ui.find(tree, node => node.type === 'article').map(node => node.props.key)).toEqual(['o/a'])
+    const preview = ui.find(tree, node => node.type?.name === 'Preview')[0]
+    expect(preview.props.entry.screenshots).toEqual(['https://example.test/workbench.png'])
+    expect(ui.find(tree, node => node.props?.className === 'dshWbRoundButton')[0].props.href).toBe('https://github.com/o/a')
+    expect(ui.find(tree, node => node.type?.name === 'EntryMetrics')[0].props.entry.metrics).toMatchObject({
+      githubStars: { value: 17 }, npmDownloads30d: { value: 120 }
+    })
+    expect(ui.find(tree, node => node.props?.className === 'dshWbCardVersion')).toHaveLength(1)
+    const favorite = () => ui.find(tree, node => node.props?.className === 'dshWbFavorite')[0]
+    favorite().props.onClick()
+    await vi.waitFor(() => expect(service.state.favorites).toEqual(['o/a']))
+    tree = ui.render()
+    ui.find(tree, node => node.props?.id === 'dsh-workbench-favorites-tab')[0].props.onClick()
+    tree = ui.render()
+    expect(ui.find(tree, node => node.type === 'article').map(node => node.props.key)).toEqual(['o/a'])
+    expect(favorite().props['aria-pressed']).toBe(true)
+    favorite().props.onClick()
+    await vi.waitFor(() => expect(service.state.favorites).toEqual([]))
+    expect(ui.find(ui.render(), node => node.type === 'article')).toHaveLength(0)
+    service.dispose()
   })
 
-  it('uses enterprise distribution as the market when public installation is blocked', async () => {
+
+  it.each([false, undefined])('uses only enterprise distribution when public policy is %s', async policy => {
     const { service } = await fixture()
     service.remoteCatalog = [{ id: 'o/a', owner: 'o', name: 'Cached public workbench', description: { zh: '缓存目录', en: 'Cached catalog' }, screenshots: [], url: 'https://github.com/o/a' }]
     service.enterpriseCatalog = [{ id: 'enterprise-board', displayName: 'Enterprise board' }]
     service.publish()
-    const ui = interactiveMarket(service, 'market', undefined, { known: true, connected: true, allowThirdPartyWorkbenches: false })
-    const tree = ui.render()
+    const ui = interactiveMarket(service, 'market', undefined, { known: true, connected: true, allowThirdPartyWorkbenches: policy })
+    let tree = ui.render()
     expect(ui.find(tree, node => node.type === 'article')).toHaveLength(1)
     expect(ui.find(tree, node => node.type === 'article' && node.props.key === 'enterprise-board')).toHaveLength(1)
     for (const tab of ['favorites', 'enterprise']) expect(ui.find(tree, node => node.props?.id === `dsh-workbench-${tab}-tab`)).toHaveLength(0)
+    expect(ui.find(tree, node => node.props?.role === 'tab').map(node => node.props.id)).toEqual([
+      'dsh-workbench-market-tab', 'dsh-workbench-mine-tab', 'dsh-workbench-cloud-tab'
+    ])
+    expect(ui.button(tree, '工作台市场')).toBeDefined()
+    expect(ui.find(tree, node => node.props?.className === 'dshWbFavorite')).toHaveLength(0)
     expect(ui.button(tree, '安装本地工作台')).toBeUndefined()
     expect(ui.button(tree, '登录毕昇账号')).toBeUndefined()
+    ui.button(tree, '制作我的工作台').props.onClick()
+    tree = ui.render()
+    expect(ui.find(tree, node => node.props?.className?.includes('dshWbStartCreate'))).toHaveLength(1)
+    expect(ui.button(tree, '复制投稿指令')).toBeUndefined()
+    expect(ui.find(tree, node => node.type?.name === 'SubmissionStatus')).toHaveLength(0)
+    expect(ui.find(tree, node => node.props?.className === 'dshWbMuted dshWbSubmitOutcome')).toHaveLength(0)
+    service.dispose()
   })
 
   it('keeps the Workbench entrance visible before enterprise login', () => {
