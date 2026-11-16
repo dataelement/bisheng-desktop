@@ -356,10 +356,10 @@ it.each(['zh', 'en'])('shows remaining enterprise credits on the account entry a
   f.setAccount({ connected: true, user: { username: 'admin' }, usage: { used: 100_000_000, limit: 12_000_000_000, quota_state: 'available' } })
   await f.render('settings.launcher', { wide: true })
   // F016: the balance is on the account entry itself, with up to two decimals.
-  expect(document.querySelector('[data-dsh-account-credits]').textContent).toBe(language === 'zh' ? '剩余 11,900 积分' : '11,900 credits left')
-  expect(document.querySelector('.dshAccountTrigger').getAttribute('aria-label')).toContain(language === 'zh' ? '剩余 11,900 积分' : '11,900 credits left')
+  expect(document.querySelector('[data-dsh-account-credits]').textContent).toBe(language === 'zh' ? '剩余 11,900 / 12,000 积分' : '11,900 / 12,000 credits left')
+  expect(document.querySelector('.dshAccountTrigger').getAttribute('aria-label')).toContain(language === 'zh' ? '剩余 11,900 / 12,000 积分' : '11,900 / 12,000 credits left')
   await click(document.querySelector('.dshAccountTrigger'))
-  expect(document.querySelector('.dshAccountMenuCredits strong').textContent).toBe('11,900')
+  expect(document.querySelector('.dshAccountMenuCredits strong').textContent).toBe('11,900 / 12,000')
   expect(document.querySelector('.dshAccountMenuCredits small').textContent).toBe(language === 'zh' ? '剩余积分' : 'Credits remaining')
   await click(document.querySelector('.dshAccountTrigger'))
   f.setAccount({ connected: true, user: { username: 'admin' }, usage: { source: 'unavailable' } })
@@ -367,6 +367,17 @@ it.each(['zh', 'en'])('shows remaining enterprise credits on the account entry a
   expect(document.querySelector('.dshAccountMenuCredits strong').textContent).toBe('—')
   expect(document.querySelector('[data-dsh-account-credits]')).toBeNull()
   expect(document.querySelector('.dshAccountMenuCredits small').textContent).toBe(language === 'zh' ? '积分暂不可用' : 'Credits unavailable')
+})
+
+it.each(['zh', 'en'])('F016: shows an uncapped member as unlimited instead of the int64 ceiling (%s)', async language => {
+  const f = await fixture(language)
+  // JSON.parse turns the server's 9223372036854775807 "no cap" into 2 ** 63.
+  f.setAccount({ connected: true, user: { username: 'admin' }, usage: { used: 100_000_000, limit: 2 ** 63, quota_state: 'available' } })
+  await f.render('settings.launcher', { wide: true })
+  expect(document.querySelector('[data-dsh-account-credits]').textContent).toBe(language === 'zh' ? '积分不限' : 'Unlimited credits')
+  await click(document.querySelector('.dshAccountTrigger'))
+  expect(document.querySelector('.dshAccountMenuCredits strong').textContent).toBe(language === 'zh' ? '不限' : 'Unlimited')
+  expect(document.querySelector('.dshAccountMenuCredits small').textContent).toBe(language === 'zh' ? '剩余积分' : 'Credits remaining')
 })
 
 it.each([true, false])('keeps Chat visible while the sidebar account menu opens and closes (wide=%s)', async wide => {
@@ -1179,7 +1190,7 @@ it('F016: shows fractional credits on the account entry with two decimals', asyn
   const f = await fixture('zh')
   f.setAccount({ connected: true, user: { username: 'f015user' }, usage: { used: 100_512_720, limit: 1_000_000_000, quota_state: 'available' } })
   await f.render('settings.launcher', { wide: true })
-  expect(document.querySelector('[data-dsh-account-credits]').textContent).toBe('剩余 899.49 积分')
+  expect(document.querySelector('[data-dsh-account-credits]').textContent).toBe('剩余 899.49 / 1,000 积分')
 })
 
 it('F016: keeps the collapsed rail to the avatar while the label still carries the balance', async () => {
@@ -1187,14 +1198,14 @@ it('F016: keeps the collapsed rail to the avatar while the label still carries t
   f.setAccount({ connected: true, user: { username: 'admin' }, usage: { used: 0, limit: 5_000_000, quota_state: 'available' } })
   await f.render('settings.launcher', { wide: false })
   expect(document.querySelector('[data-dsh-account-credits]')).toBeNull()
-  expect(document.querySelector('.dshAccountTrigger').getAttribute('aria-label')).toContain('5 credits left')
+  expect(document.querySelector('.dshAccountTrigger').getAttribute('aria-label')).toContain('5 / 5 credits left')
 })
 
 it('F016: rereads the balance on the account entry shortly after a Chat turn finishes', async () => {
   const f = await fixture('zh')
   f.setAccount({ connected: true, user: { username: 'f015user' }, usage: { used: 100_000_000, limit: 1_000_000_000, quota_state: 'available' } })
   await f.render('settings.launcher', { wide: true })
-  expect(document.querySelector('[data-dsh-account-credits]').textContent).toBe('剩余 900 积分')
+  expect(document.querySelector('[data-dsh-account-credits]').textContent).toBe('剩余 900 / 1,000 积分')
   const base = { connected: true, phase: 'ready', settingsProtocolVersion: 1, navigation: { settings: { aiAccess: false } } }
   await act(async () => f.update(base))
   await act(async () => f.update({ ...base, running: ['c1'] }))
@@ -1208,7 +1219,7 @@ it('F016: rereads the balance on the account entry shortly after a Chat turn fin
   const [path, init] = f.request.mock.calls.at(-1)
   expect(path).toBe('/api/enterprise.models.refresh')
   expect(init).toMatchObject({ method: 'POST', body: '{"includeUsage":true}' })
-  expect(document.querySelector('[data-dsh-account-credits]').textContent).toBe('剩余 895.23 积分')
+  expect(document.querySelector('[data-dsh-account-credits]').textContent).toBe('剩余 895.23 / 1,000 积分')
 })
 
 it('F016: keeps the last balance without an error when the balance refresh is refused', async () => {
@@ -1226,7 +1237,7 @@ it('F016: keeps the last balance without an error when the balance refresh is re
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 1700)) })
   expect(f.request.mock.calls.at(-1)[0]).toBe('/api/enterprise.models.refresh')
   // A freshness read that fails (e.g. rate limited) keeps the identity and the last known balance.
-  expect(document.querySelector('[data-dsh-account-credits]').textContent).toBe('剩余 900 积分')
+  expect(document.querySelector('[data-dsh-account-credits]').textContent).toBe('剩余 900 / 1,000 积分')
   await click(document.querySelector('.dshAccountTrigger'))
   expect(document.querySelector('.dshAccountMenuError')).toBeNull()
 })
@@ -1242,5 +1253,5 @@ it('F016: shows a balance the host reread after a Work turn without any Chat act
   // The host rereads usage after a Work turn and publishes a new account revision; repeats are ignored.
   await act(async () => { f.update({ ...base, accountRevision: 7 }); f.update({ ...base, accountRevision: 7 }) })
   expect(f.request.mock.calls.slice(reads).map(([path]) => path)).toEqual(['/api/enterprise.state'])
-  expect(document.querySelector('[data-dsh-account-credits]').textContent).toBe('剩余 898 积分')
+  expect(document.querySelector('[data-dsh-account-credits]').textContent).toBe('剩余 898 / 1,000 积分')
 })

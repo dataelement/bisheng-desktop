@@ -8,14 +8,14 @@ window.__ModuleLoader__.load({
     const COPY = {
       zh: {
         accountMenu: '账号菜单', enterpriseAccount: '企业账号', signedOut: '未登录', deviceOnly: '本机模式', signInHint: '登录后可使用企业功能', identityLoading: '正在读取账号…', identityError: '暂时无法读取账号', settings: '设置', accountSettings: '账号设置', approvals: '消息', approvalsPending: '待处理审批', phone: '连接手机', login: '登录企业账号', logout: '退出登录', logoutBody: '退出后需要重新登录企业账号。本机设置、已安装插件和本地数据保留。', logoutFailed: '退出登录未完成，请重试。', cancel: '取消', again: '重试', close: '关闭', loggingOut: '正在退出登录…',
-        creditsRemaining: '剩余积分', creditsUnavailable: '积分暂不可用', creditsLine: '剩余 {value} 积分',
+        creditsRemaining: '剩余积分', creditsUnavailable: '积分暂不可用', creditsLine: '剩余 {value} / {limit} 积分', creditsUnlimited: '积分不限',
         activity: '用量活动', period: '统计范围：{start} — {end}', less: '少', more: '多', totalTokens: '累计 Token', totalMessages: '累计消息',
         tokenWan: '{value}万', tokenYi: '{value}亿', numberLocale: 'zh-CN', modelUsage: '模型用量', tokens: 'Token 用量', messages: '消息数', storage: '个人存储空间', unlimited: '不限', storageValue: '已使用 {used} / {limit}', breakdown: '输入 {input} Token · 输出 {output} Token', missingUsage: '{count} 条记录缺少 Token 用量', usageError: '用量统计加载失败，请重试。', storageError: '存储空间加载失败，请重试。', noUsage: '暂无用量记录', unavailable: '—',
         openContent: '进入设置内容', usage: '用量与存储', about: '关于与帮助', tasks: '我的审批', requests: '我的申请', notifications: '通知', ai: 'AI 助手接入', loading: '正在加载企业设置…', error: '暂时无法加载企业设置，请检查连接后重试。', restart: '请完全退出并重新启动客户端，以启用统一设置。', unsupported: '平台暂不支持统一设置，请联系管理员更新平台。', retry: '重新连接', signIn: '登录企业账号后可查看', openAccount: '前往账号设置', desktopVersion: 'BISHENG 版本', harnessVersion: 'Harness 版本', infoError: '无法读取版本信息', update: '检查更新', logs: '查看日志', recovery: '安全模式与插件恢复', localHint: '本机设置仍可正常使用。', actionError: '操作未完成，请重试。',
       },
       en: {
         accountMenu: 'Account menu', enterpriseAccount: 'Enterprise account', signedOut: 'Not signed in', deviceOnly: 'Device only', signInHint: 'Sign in to use enterprise features', identityLoading: 'Loading account…', identityError: 'Account unavailable', settings: 'Settings', accountSettings: 'Account settings', approvals: 'Messages', approvalsPending: 'Pending approvals', phone: 'Connect phone', login: 'Sign in', logout: 'Log out', logoutBody: 'You will need to sign in again. Device settings, installed plugins and local data are kept.', logoutFailed: 'Logout did not complete. Try again.', cancel: 'Cancel', again: 'Retry', close: 'Close', loggingOut: 'Logging out…',
-        creditsRemaining: 'Credits remaining', creditsUnavailable: 'Credits unavailable', creditsLine: '{value} credits left',
+        creditsRemaining: 'Credits remaining', creditsUnavailable: 'Credits unavailable', creditsLine: '{value} / {limit} credits left', creditsUnlimited: 'Unlimited credits',
         activity: 'Usage activity', period: 'Reporting period: {start} — {end}', less: 'Less', more: 'More', totalTokens: 'Total tokens', totalMessages: 'Total messages',
         tokenWan: '{value} ten thousand', tokenYi: '{value} hundred million', numberLocale: 'en-US', modelUsage: 'Model usage', tokens: 'Token usage', messages: 'Messages', storage: 'Personal storage', unlimited: 'Unlimited', storageValue: 'Used {used} / {limit}', breakdown: 'Input {input} tokens · Output {output} tokens', missingUsage: '{count} records are missing token usage', usageError: 'Usage statistics failed to load. Please retry.', storageError: 'Storage failed to load. Please retry.', noUsage: 'No usage recorded', unavailable: '—',
         openContent: 'Enter settings content', usage: 'Usage and storage', about: 'About and help', tasks: 'My approvals', requests: 'My requests', notifications: 'Notifications', ai: 'AI assistant access', loading: 'Loading enterprise settings…', error: 'Enterprise settings could not load. Check the connection and try again.', restart: 'Quit and restart the desktop app to enable unified settings.', unsupported: 'This platform does not support unified settings yet. Ask your administrator to update it.', retry: 'Reconnect', signIn: 'Sign in to view enterprise settings', openAccount: 'Open account settings', desktopVersion: 'BISHENG version', harnessVersion: 'Harness version', infoError: 'Could not read version information', update: 'Check for updates', logs: 'Show logs', recovery: 'Safe Mode and plugin recovery', localHint: 'Device settings remain available.', actionError: 'The action did not complete. Try again.',
@@ -500,10 +500,14 @@ window.__ModuleLoader__.load({
       const label = name || t(identity.account ? 'signedOut' : identity.error ? 'identityError' : 'identityLoading')
       const connected = identity.account?.connected === true
       const quota = identity.account?.usage
-      const credits = !identity.error && quota && quota.source !== 'unavailable' && quota.quota_state !== 'unavailable'
-        && Number.isFinite(quota.limit) && Number.isFinite(quota.used)
-        ? new Intl.NumberFormat(t('numberLocale'), { maximumFractionDigits: 2 }).format(Math.max(0, quota.limit - quota.used) / 1_000_000)
-        : null
+      const balance = !identity.error && quota && quota.source !== 'unavailable' && quota.quota_state !== 'unavailable'
+        && Number.isFinite(quota.limit) && Number.isFinite(quota.used) ? quota : null
+      // The server's int64 "no cap" arrives as 2 ** 63 once parsed; it is not a number to show.
+      const unlimitedCredits = balance !== null && balance.limit >= 2 ** 63
+      const creditNumber = new Intl.NumberFormat(t('numberLocale'), { maximumFractionDigits: 2 })
+      // F016: "remaining / allowance", so raising an exhausted member's allowance visibly changes.
+      const credits = balance && !unlimitedCredits ? creditNumber.format(Math.max(0, balance.limit - balance.used) / 1_000_000) : null
+      const creditLimit = balance && !unlimitedCredits ? creditNumber.format(balance.limit / 1_000_000) : null
       const busy = actionBusy || identity.busy
       useEffect(() => {
         if (!menuOpen || busy) return undefined
@@ -535,7 +539,7 @@ window.__ModuleLoader__.load({
       }
       const badge = pending > 0 ? h(AccountBadge, { count: pending }) : null
       // F016: the balance sits under the name, so it is visible without opening the menu.
-      const creditsLine = connected && credits !== null ? t('creditsLine', { value: credits }) : null
+      const creditsLine = !connected ? null : unlimitedCredits ? t('creditsUnlimited') : credits !== null ? t('creditsLine', { value: credits, limit: creditLimit }) : null
       const triggerLabel = `${t('accountMenu')}: ${label}${creditsLine ? ` · ${creditsLine}` : ''}${pending > 0 ? ` · ${t('approvalsPending')} ${pending}` : ''}`
       // The shared native-surface coordinator handles any overlap with embedded content.
       return h('div', { className: 'dshAccountLauncher', 'data-dsh-account-launcher': '' },
@@ -544,7 +548,7 @@ window.__ModuleLoader__.load({
             h('span', { className: 'dshAccountAvatarWrap' }, h(AccountAvatar, { name, src: connected ? identity.account?.user?.avatar : null, attempt: identity.imageAttempt, onImageError: identity.imageFailed }), badge),
             wide && h('span', { className: 'dshAccountTriggerCopy' }, h('span', null, label), creditsLine && h('small', { 'data-dsh-account-credits': '' }, creditsLine)), wide && h(IconChevronDownOutlineRegular)) },
           h('div', { className: 'dshAccountMenuIdentity' }, h(AccountAvatar, { name, src: connected ? identity.account?.user?.avatar : null, attempt: identity.imageAttempt, onImageError: identity.imageFailed }), h('div', null, h('strong', null, label), h('small', null, t(connected ? 'enterpriseAccount' : 'signInHint'))),
-            connected && h('div', { className: 'dshAccountMenuCredits', role: 'status' }, h('strong', null, credits ?? '—'), h('small', null, t(credits === null ? 'creditsUnavailable' : 'creditsRemaining')))),
+            connected && h('div', { className: 'dshAccountMenuCredits', role: 'status' }, h('strong', null, unlimitedCredits ? t('unlimited') : credits !== null ? `${credits} / ${creditLimit}` : '—'), h('small', null, t(credits === null && !unlimitedCredits ? 'creditsUnavailable' : 'creditsRemaining')))),
           h(MenuItemButton, { icon: h(IconSettingsOutlineRegular), shortcut: settingsShortcut, disabled: busy, onSelect: () => { setMenuOpen(false); openSettings() } }, t('settings')),
           connected && h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'account' }), disabled: busy, onSelect: openAccountSettings }, t('accountSettings')),
           h(MenuItemButton, { icon: h(IconChecklistOutlineRegular), disabled: busy || !connected, onSelect: () => { setMenuOpen(false); setApprovalsOpen(true) } },
