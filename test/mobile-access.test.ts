@@ -153,26 +153,28 @@ describe('remote channel', () => {
     await new Promise<void>((resolve) => harness.close(() => resolve()))
   })
 
-  it('does not start a third-party tunnel when remote mode is requested', async () => {
-    let started = false
+  it('reports URL tunnel failures instead of requiring the signed-in app', async () => {
+    const started: string[] = []
     const bridge = new LanMobileBridge({
       harnessUrl: () => undefined,
       port: 0,
       createCloudflareTunnel: async () => {
-        started = true
-        throw new Error('cloudflared should not start')
+        started.push('cloudflare')
+        throw new Error('cloudflared unavailable')
       },
       createPinggyTunnel: async () => {
-        started = true
-        throw new Error('pinggy should not start')
+        started.push('pinggy')
+        throw new Error('pinggy unavailable')
       }
     })
     bridges.push(bridge)
     await bridge.start()
     const snapshot = await bridge.toggleTunnel(true)
-    expect(started).toBe(false)
+    expect(started).toEqual(['cloudflare', 'pinggy'])
     expect(snapshot.tunnelActive).toBe(false)
     expect(snapshot.tunnelProvider).toBeUndefined()
+    expect(snapshot.tunnelError).toContain('cloudflared unavailable')
+    expect(snapshot.tunnelError).toContain('pinggy unavailable')
   })
 })
 

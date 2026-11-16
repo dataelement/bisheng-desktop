@@ -1257,9 +1257,9 @@ describe('snapshot keeps tunnel state after the pairing token is consumed', () =
     })
     expect(toggle.status).toBe(200)
     const toggleJson = await toggle.json()
-    expect(toggleJson.ok).toBe(false)
-    expect(toggleJson.active).toBe(false)
-    expect(toggleJson.error).toContain('signed-in BiSheng')
+    expect(toggleJson.ok).toBe(true)
+    expect(toggleJson.active).toBe(true)
+    expect(toggleJson.url).toBe('https://post-pair.trycloudflare.com')
   })
 
   it('serves the desktop page with a fresh pairing token after approval or expiry', async () => {
@@ -1696,7 +1696,11 @@ describe('LAN vs tunnel pairing authorization', () => {
       body: JSON.stringify({ enable: true })
     })
     expect(toggled.status).toBe(200)
-    expect(await toggled.json()).toMatchObject({ active: false, unexpectedlyClosed: true })
+    expect(await toggled.json()).toMatchObject({
+      active: true,
+      unexpectedlyClosed: false,
+      url: 'https://second.trycloudflare.com'
+    })
     expect(events.at(-1)).toBe(false)
   })
 

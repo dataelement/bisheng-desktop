@@ -174,7 +174,7 @@ function parseModelReasoning(value) {
       throw new Error('BiSheng model reasoning effort is invalid.')
     }
     ids.add(effort.id)
-    return { id: effort.id, name: effort.name }
+    return { id: effort.id, name: effort.name, ...(typeof effort.description === 'string' ? { description: effort.description } : {}) }
   })
   if (value.defaultEffort !== undefined && !ids.has(value.defaultEffort)) {
     throw new Error('BiSheng model default reasoning effort is invalid.')
@@ -206,13 +206,41 @@ function parseModelEntry(entry, seen) {
     return undefined
   }
   let reasoning
-  if (entry.reasoning !== undefined) {
-    try {
-      reasoning = parseModelReasoning(entry.reasoning)
-    } catch {
-      // Invalid capability metadata makes only this model unavailable.
-      return undefined
+  let inputModalities
+  try {
+    if (entry.reasoning !== undefined) reasoning = parseModelReasoning(entry.reasoning)
+    if (entry.supported_reasoning_levels !== undefined || entry.default_reasoning_level !== undefined) {
+      if (!Array.isArray(entry.supported_reasoning_levels)) return undefined
+      const declared = parseModelReasoning({
+        efforts: entry.supported_reasoning_levels.map((level) => isObject(level)
+          ? { id: level.effort, name: level.description, description: level.description }
+          : level),
+        ...(entry.default_reasoning_level === undefined ? {} : { defaultEffort: entry.default_reasoning_level })
+      })
+      // Two authoritative declarations must agree; never silently select one.
+      if (reasoning && (reasoning.defaultEffort !== declared.defaultEffort ||
+          reasoning.efforts.length !== declared.efforts.length ||
+          reasoning.efforts.some((effort) => !declared.efforts.some((item) => item.id === effort.id && item.name === effort.name &&
+            (effort.description === undefined || item.description === undefined || item.description === effort.description))))) return undefined
+      reasoning = reasoning
+        ? { ...declared, efforts: declared.efforts.map((effort) => ({
+          ...effort,
+          ...(reasoning.efforts.find((item) => item.id === effort.id)?.description === undefined
+            ? {}
+            : { description: reasoning.efforts.find((item) => item.id === effort.id)?.description })
+        })) }
+        : declared
     }
+    if (entry.input_modalities !== undefined) {
+      if (!Array.isArray(entry.input_modalities) || entry.input_modalities.length === 0 ||
+          entry.input_modalities.some((item) => item !== 'text' && item !== 'image') ||
+          new Set(entry.input_modalities).size !== entry.input_modalities.length) return undefined
+      inputModalities = [...entry.input_modalities]
+      if (entry.capabilities.vision !== undefined && entry.capabilities.vision !== inputModalities.includes('image')) return undefined
+    }
+  } catch {
+    // Reject invalid capability declarations; parseModels reports the invalid catalog.
+    return undefined
   }
   seen.add(entry.id)
   const usage = isObject(entry.usage) ? parseUsageLenient(entry.usage) : undefined
@@ -224,10 +252,17 @@ function parseModelEntry(entry, seen) {
     owned_by: typeof entry.owned_by === 'string' && entry.owned_by.length > 0 ? entry.owned_by : 'bisheng',
     display_name: typeof entry.display_name === 'string' && entry.display_name.length > 0 ? entry.display_name : entry.id,
     ...(reasoning === undefined ? {} : { reasoning }),
+    ...(typeof entry.slug === 'string' && entry.slug.trim() ? { slug: entry.slug.trim() } : {}),
+    ...(Number.isSafeInteger(entry.context_window) && entry.context_window > 0 ? { context_window: entry.context_window } : {}),
+    ...(inputModalities === undefined ? {} : { input_modalities: inputModalities }),
+    ...(entry.supported_reasoning_levels === undefined ? {} : {
+      supported_reasoning_levels: reasoning.efforts.map((effort) => ({ effort: effort.id, description: effort.name }))
+    }),
+    ...(entry.default_reasoning_level === undefined ? {} : { default_reasoning_level: reasoning.defaultEffort }),
     capabilities: {
       streaming: entry.capabilities.streaming,
       tools: entry.capabilities.tools,
-      vision: entry.capabilities.vision ?? false,
+      vision: inputModalities === undefined ? (entry.capabilities.vision ?? false) : inputModalities.includes('image'),
       reasoning_content: entry.capabilities.reasoning_content,
       ...(entry.capabilities.responses === undefined ? {} : { responses: entry.capabilities.responses })
     },

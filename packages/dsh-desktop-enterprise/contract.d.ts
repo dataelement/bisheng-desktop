@@ -19,7 +19,7 @@ export declare const COMPATIBLE_CONTRACT_VERSIONS: readonly ['0.4.0', '0.5.0']
 export declare const API_PATHS: Readonly<Record<'config' | 'authorizations' | 'token' | 'logout' | 'models' | 'chat' | 'responses' | 'usage' | 'auditTitle' | 'auditFeedback', string>>
 
 export interface EnterpriseModelReasoning {
-  efforts: Array<{ id: string; name: string }>
+  efforts: Array<{ id: string; name: string; description?: string }>
   defaultEffort?: string
 }
 
@@ -38,6 +38,11 @@ export interface EnterpriseModel {
   owned_by: string
   display_name: string
   reasoning?: EnterpriseModelReasoning
+  slug?: string
+  context_window?: number
+  input_modalities?: Array<'text' | 'image'>
+  supported_reasoning_levels?: Array<{ effort: string; description: string }>
+  default_reasoning_level?: string
   capabilities: { streaming: boolean; tools: boolean; reasoning_content: boolean; vision?: boolean; responses?: boolean }
   pricing_hint?: EnterprisePricingHint
   usage?: {

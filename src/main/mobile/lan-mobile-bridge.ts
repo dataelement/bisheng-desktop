@@ -318,12 +318,8 @@ export class LanMobileBridge {
     if (targetState && this.sessions.size > 0 && !this.tunnelActive) {
       throw new Error('Disconnect the phone before switching connection modes.')
     }
-    if (targetState) {
-      this.tunnelActive = false
-      this.tunnelLoading = false
-      this.tunnelError = 'Remote access uses the signed-in BiSheng account.'
-      return this.snapshot()
-    }
+    // Browser URL pairing remains available independently of the mobile app
+    // and its signed-in account channel.
     if (!targetState) {
       // Wait for an in-flight launch, then stop the tunnel it spawned:
       // otherwise the just-launched process is orphaned (or silently revives
@@ -372,7 +368,31 @@ export class LanMobileBridge {
   }
 
   async fallbackToPinggy(): Promise<LanMobileBridgeSnapshot> {
-    throw new Error('Third-party remote tunnels are disabled.')
+    if (this.sessions.size > 0) {
+      throw new Error('Disconnect the phone before switching connection modes.')
+    }
+    if (!this.tunnelActive || this.tunnelInstance?.provider !== 'cloudflare') {
+      throw new Error('Fallback is only available for an active Cloudflare tunnel.')
+    }
+    if (this.tunnelLaunch) {
+      throw new Error('A tunnel switch is already in progress.')
+    }
+
+    this.tunnelLoading = true
+    this.tunnelError = undefined
+    const launch = this.swapToPinggy()
+    this.tunnelLaunch = launch
+    try {
+      await launch
+      this.clearTunnelDeathFlags()
+      this.armTunnelProcess(this.tunnelInstance)
+    } catch (error) {
+      this.tunnelError = error instanceof Error ? error.message : String(error)
+    } finally {
+      this.tunnelLoading = false
+      if (this.tunnelLaunch === launch) this.tunnelLaunch = undefined
+    }
+    return this.snapshot()
   }
 
   private async launchTunnel(): Promise<void> {
@@ -781,7 +801,33 @@ export class LanMobileBridge {
 
     if (request.method === 'POST' && url.pathname === '/desktop/tunnel/fallback') {
       if (this.rejectUnlessDesktop(request, transportAddress, response)) return
-      return this.json(response, 410, { ok: false, error: 'Third-party remote tunnels are disabled.' })
+      this.verifySameOrigin(request)
+      if (this.sessions.size > 0) {
+        return this.json(response, 409, {
+          ok: false,
+          error: 'Disconnect the phone before switching connection modes.'
+        })
+      }
+      if (this.tunnelLoading || this.tunnelLaunch) {
+        return this.json(response, 409, {
+          ok: false,
+          error: 'A tunnel switch is already in progress.'
+        })
+      }
+      if (!this.tunnelActive || this.tunnelInstance?.provider !== 'cloudflare') {
+        return this.json(response, 400, {
+          ok: false,
+          error: 'Fallback is only available for an active Cloudflare tunnel.'
+        })
+      }
+      const snapshot = await this.fallbackToPinggy()
+      const qrSvg = snapshot.pairingUrl
+        ? await QRCode.toString(snapshot.pairingUrl, { type: 'svg', margin: 1, width: 260 })
+        : undefined
+      return this.json(response, 200, {
+        ok: !snapshot.tunnelError,
+        ...this.desktopTunnelPayload(snapshot, qrSvg)
+      })
     }
 
     if (request.method === 'POST' && url.pathname === '/desktop/pin/consent') {
