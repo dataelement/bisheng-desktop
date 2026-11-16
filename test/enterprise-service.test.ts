@@ -69,11 +69,11 @@ async function completeBrowserLogin(origin: string, authorizationUrl: string) {
 
 async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
   const started = Date.now()
-  while (Date.now() - started < timeoutMs) {
-    if (predicate()) return
+  // Check readiness before the deadline so a delayed timer cannot discard it.
+  while (!predicate()) {
+    if (Date.now() - started >= timeoutMs) throw new Error('Timed out waiting for enterprise service.')
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
-  throw new Error('Timed out waiting for enterprise service.')
 }
 
 describe('enterprise service login loop', () => {
