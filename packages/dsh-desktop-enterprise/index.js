@@ -348,6 +348,10 @@ export function apply(ctx) {
           version: opened.version,
           release: () => releaseWorkbenchArtifact(opened.ticket, opened.connectionKey)
         }
+      },
+      // F022: whether installed enterprise workbenches are still visible to this account.
+      access(ids) {
+        return workbenches.checkAccess(ids)
       }
     })
   }

@@ -39,6 +39,25 @@ describe('enterprise workbench market request', () => {
       path: `/api/v1/dsh/market/workbenches/${ID}/versions/${VERSION}/artifact`, connectionKey: 'tenant', body: {}
     })).toThrow('Unsupported enterprise market request.')
   })
+
+  it('forwards only a bounded list of workbench ids to the access check (F022)', () => {
+    const path = '/api/v1/dsh/market/workbenches/access'
+    expect(parseMarketRequest({ path, connectionKey: 'tenant', body: { workbench_ids: [ID, LEGACY] } }))
+      .toEqual({ path, connectionKey: 'tenant', body: { workbench_ids: [ID, LEGACY] }, binary: false })
+    for (const body of [
+      undefined,
+      {},
+      { workbench_ids: [] },
+      { workbench_ids: ['not-an-id'] },
+      { workbench_ids: [ID], tenant_id: 2 },
+      { workbench_ids: Array.from({ length: 501 }, (_, index) => index.toString(16).padStart(32, '0')) }
+    ]) {
+      expect(() => parseMarketRequest({ path, connectionKey: 'tenant', ...(body === undefined ? {} : { body }) }))
+        .toThrow('Unsupported enterprise market request.')
+    }
+    expect(() => parseMarketRequest({ path: `${path}?page=1`, connectionKey: 'tenant', body: { workbench_ids: [ID] } }))
+      .toThrow('Unsupported enterprise market request.')
+  })
 })
 
 describe('enterprise workbench catalog parsing', () => {
