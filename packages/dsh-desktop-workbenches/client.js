@@ -117,6 +117,7 @@ window.__ModuleLoader__.load({
     const MIGRATE_API = '/api/desktop-workbenches/state/migrate'
     const CATALOG_API = '/api/desktop-workbenches/catalog'
     const MARKET_INSTALLS_API = '/api/desktop-workbenches/market-installs'
+    const ENTERPRISE_ACCESS_API = '/api/desktop-workbenches/enterprise-access-check'
     const NATIVE_STATUS = { idle: 'idle', ready: 'ready', unavailable: 'unavailable' }
     const parseVersion = (value) => {
       if (typeof value !== 'string') return null
@@ -208,6 +209,7 @@ window.__ModuleLoader__.load({
         emptyHint: '请联系管理员上传。', detail: '查看详情', detailLoading: '正在读取企业工作台详情…',
         verify: '核对原包', verifying: '正在核对…', verified: '原包完整性核对通过。',
         install: '安装', installing: '正在安装…', installed: '已安装', restart: '重启后生效',
+        revoked: '管理员已收回使用权限',
         scope: '企业上传的工作台可以安装到本机。安装完成后需要重启才能使用。',
         settingsOpen: '列表来自网络工作台市场，也可以安装本机开发的工作台。企业上传的工作台在「来自企业」中安装。',
         settingsClosed: '当前企业未开放网络工作台市场。工作台市场展示本企业上传的工作台，可以直接安装；已安装里保留本机已安装和本地开发的工作台。'
@@ -218,6 +220,7 @@ window.__ModuleLoader__.load({
         emptyHint: 'Ask your administrator to upload one.', detail: 'View details', detailLoading: 'Loading enterprise workbench details…',
         verify: 'Verify package', verifying: 'Verifying…', verified: 'The package integrity check passed.',
         install: 'Install', installing: 'Installing…', installed: 'Installed', restart: 'Restart to use',
+        revoked: 'Your administrator revoked access',
         scope: 'Enterprise workbenches can be installed on this computer. Restart after installation to use them.',
         settingsOpen: 'The list comes from the network workbench market. Locally developed workbenches can also be installed. Enterprise uploads can be installed from From enterprise.',
         settingsClosed: 'This enterprise has not opened the network workbench market. The workbench market shows workbenches uploaded by your enterprise, and they can be installed directly. Installed keeps local and previously installed workbenches.'
@@ -307,6 +310,8 @@ window.__ModuleLoader__.load({
         this.native = { status: NATIVE_STATUS.idle, bundles: {} }
         this.nativeTicket = 0
         this.togglingPlugin = null
+        // Enterprise workbench packages whose grant was revoked (F022).
+        this.revokedPlugins = new Set()
         this.removingPlugin = null
         this.removedWorkbenchIds = new Set()
         this.installing = null
@@ -429,8 +434,33 @@ window.__ModuleLoader__.load({
         const active = this.state.active && (this.catalog.get(this.state.active) || { id: this.state.active })
         if (this.ready && active && this.activationFor(active) === 'off') this.run(this.leave())
       }
+      // Disable installed enterprise workbenches whose grant was revoked. The host
+      // keeps every workbench as it was when access cannot be confirmed (F022).
+      async checkEnterpriseAccess() {
+        let data
+        try {
+          const response = await this.request(ENTERPRISE_ACCESS_API, { method: 'POST', credentials: 'same-origin', cache: 'no-store' })
+          data = await response.json()
+          if (!response.ok) throw new Error(data?.error || `HTTP ${response.status}`)
+        } catch (error) {
+          // A background check must not interrupt the workbench page; the next sync retries.
+          console.warn('[workbenches] Enterprise access check failed', error)
+          return
+        }
+        if (this.disposed || !Array.isArray(data?.revoked)) return
+        const revoked = new Set(data.revoked.filter(name => typeof name === 'string'))
+        const changed = revoked.size !== this.revokedPlugins.size || [...revoked].some(name => !this.revokedPlugins.has(name))
+        this.revokedPlugins = revoked
+        if (changed) await this.refreshNative()
+        this.publish()
+      }
       async setPluginEnabled(name, enabled) {
         if (!name || this.native.status !== NATIVE_STATUS.ready || this.togglingPlugin) throw new Error('无法确定此工作台的原生插件状态。')
+        if (enabled && this.revokedPlugins.has(name)) {
+          // Ask again: the administrator may have restored access since the last sync.
+          await this.checkEnterpriseAccess()
+          if (this.revokedPlugins.has(name)) throw new Error(enterpriseText(this.ctx, 'revoked'))
+        }
         this.togglingPlugin = name
         this.publish()
         try {
@@ -2640,6 +2670,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
               h('div', { className: 'dshWbCardBody' },
                 h('div', { className: 'dshWbCardTitle' }, h('h2', null, h(EntryTitle, { entry })), tab === 'mine' && service.isLocalEntry(entry) && h('span', { className: 'dshWbCategory' }, tr('本地')), tab === 'mine' && h('span', { className: 'dshWbControlHint dshWbSwitchHint' }, h('button', { type: 'button', className: 'dshWbRunSwitch', role: 'switch', 'aria-checked': activation === 'on', 'aria-label': both(`${entry.title}运行状态`, `${entry.title} running state`), 'aria-describedby': `dsh-wb-switch-tooltip-${catalogId}`, disabled: disabled || !!togglingPlugin || !hasNativeControl || activation === 'unknown', onClick: () => service.run(service.setPluginEnabled(pluginName, activation !== 'on')) }), h('span', { id: `dsh-wb-switch-tooltip-${catalogId}`, className: 'dshWbControlTooltip', role: 'tooltip' }, activation === 'unknown' ? tr('原生插件状态暂不可用') : activation === 'on' ? tr('停用') : tr('启用')))),
                 h('div', { className: 'dshWbAuthorRow' }, h(AuthorItem, { entry, showVersion: false }), versionText && h('span', { className: 'dshWbCardVersion' }, versionText)),
+                tab === 'mine' && pluginName && service.revokedPlugins.has(pluginName) && h('p', { className: 'dshWbMuted', role: 'status' }, enterpriseText(service.ctx, 'revoked')),
                 h('div', { className: 'dshWbDescriptionHint' }, h('p', { className: 'dshWbMuted dshWbCardDescription' }, entry.description || tr('这个工作台暂时还没有填写介绍。'))),
                 h('div', { className: 'dshWbActions' },
                   h('div', { className: 'dshWbCardVersionActions' },
@@ -2994,6 +3025,8 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           // Account polling must not refetch the full marketplace during an
           // Agent conversation. Explicit open/refresh still reads fresh data.
           if (connected && (previousKey !== account.connectionKey || service.enterpriseCatalogStatus === 'idle')) service.run(service.refreshEnterpriseWorkbenches())
+          // Each sync (sign-in, account change, window focus) re-checks installed enterprise workbenches.
+          if (connected) service.run(service.checkEnterpriseAccess())
         }
         const syncTab = () => {
           disposeTab?.()

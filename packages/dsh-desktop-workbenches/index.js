@@ -1,3 +1,4 @@
+import { checkEnterpriseWorkbenchAccess, createEnterpriseInstallStore } from './enterprise-access.mjs'
 import { installEnterpriseWorkbench } from './enterprise-install.mjs'
 import { registerCloudTools } from './cloud-tools.mjs'
 import { readInstallEvidence } from './install-evidence.mjs'
@@ -366,6 +367,7 @@ export function apply(ctx, config) {
     })
   })
   ctx.inject(['pluginManager', 'enterpriseWorkbenchPackages'], (scoped) => {
+    const enterpriseInstalls = createEnterpriseInstallStore(config.root)
     scoped.connection.fetch.register({
       path: '/api/desktop-workbenches/enterprise-install',
       methods: ['POST'],
@@ -374,9 +376,30 @@ export function apply(ctx, config) {
         try {
           const payload = await readPayload(request, 4096, 'Request is too large.')
           const result = await installEnterpriseWorkbench(scoped.pluginManager, scoped.enterpriseWorkbenchPackages, payload?.id)
+          // Remember the catalog id: a revoked workbench disappears from the catalog (F022).
+          if (result.body.install) await enterpriseInstalls.record(result.body.install)
           return Response.json(result.body, { status: result.status, headers: { 'cache-control': 'no-store' } })
         } catch (error) {
           return installFailure(error, 'Could not install the enterprise workbench.')
+        }
+      }
+    })
+    // Disable installed enterprise workbenches whose grant was revoked (F022).
+    // Network and server failures keep every workbench as it was.
+    scoped.connection.fetch.register({
+      path: '/api/desktop-workbenches/enterprise-access-check',
+      methods: ['POST'],
+      requestBody: 'buffered',
+      async fetch() {
+        try {
+          const result = await checkEnterpriseWorkbenchAccess({
+            installs: enterpriseInstalls,
+            access: ids => scoped.enterpriseWorkbenchPackages.access(ids),
+            manager: scoped.pluginManager
+          })
+          return Response.json(result, { headers: { 'cache-control': 'no-store' } })
+        } catch (error) {
+          return installFailure(error, 'Could not check enterprise workbench access.')
         }
       }
     })

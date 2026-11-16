@@ -4413,3 +4413,45 @@ it('uninstalls an old-account shortcut after identity switching without dropping
     expect(service.state.added).toContain(`cloud:${newKey}:${appId}`)
   } finally { delete clientWindow.dshDesktopEnterprise }
 })
+
+describe('revoked enterprise workbenches (F022)', () => {
+  async function revokedFixture() {
+    const base = await fixture({ ...boundState(), pinned: ['writer'], active: null })
+    const host = { enabled: false, revoked: ['writer'], status: 200 }
+    base.ctx.remote = { pluginManager: {
+      listBundles: vi.fn(async () => ({ ok: true, value: [{ name: 'writer', enabled: host.enabled, installed: true, rows: [] }] })),
+      setBundleEnabled: vi.fn(async (_name, next) => { host.enabled = next; return { ok: true, value: { changed: true, application: 'applied' } } })
+    } }
+    base.service.installs = { writer: { pluginName: 'writer' } }
+    const original = base.request.getMockImplementation()
+    base.request.mockImplementation(async (url, options = {}) => url === '/api/desktop-workbenches/enterprise-access-check'
+      ? Response.json(host.status === 200 ? { status: 'checked', revoked: host.revoked } : { error: 'unavailable' }, { status: host.status })
+      : original(url, options))
+    await base.service.refreshNative()
+    return { ...base, host }
+  }
+
+  it('refuses to turn a revoked workbench back on until access returns', async () => {
+    const { service, ctx, host } = await revokedFixture()
+    await service.checkEnterpriseAccess()
+    expect(service.revokedPlugins.has('writer')).toBe(true)
+    expect(service.activationFor(service.catalog.get('writer'))).toBe('off')
+    await expect(service.setPluginEnabled('writer', true)).rejects.toThrow('管理员已收回使用权限')
+    expect(ctx.remote.pluginManager.setBundleEnabled).not.toHaveBeenCalled()
+
+    host.revoked = []
+    await service.setPluginEnabled('writer', true)
+    expect(ctx.remote.pluginManager.setBundleEnabled).toHaveBeenCalledWith('writer', true)
+    expect(service.revokedPlugins.size).toBe(0)
+    expect(service.activationFor(service.catalog.get('writer'))).toBe('on')
+  })
+
+  it('keeps the last confirmed revocation when the access check fails', async () => {
+    const { service, host } = await revokedFixture()
+    await service.checkEnterpriseAccess()
+    host.status = 503
+    // The client logs and keeps its state; the check itself never rejects.
+    await expect(service.checkEnterpriseAccess()).resolves.toBeUndefined()
+    expect(service.revokedPlugins.has('writer')).toBe(true)
+  })
+})
