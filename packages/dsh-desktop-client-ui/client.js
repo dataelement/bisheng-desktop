@@ -2523,6 +2523,12 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           .dshWorkKnowledgeConfirm:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 88%,var(--dsw-alias-label-primary))}
           .dshWorkKnowledgeConfirm:disabled{opacity:.5}
           .dshWorkResourceError{padding:8px 12px;color:var(--dsw-alias-state-error-primary);font-size:12px}
+          /* /skills group headings read as section titles, in the skill reference blue so they stand
+             apart from skill names, and scroll with their rows. The upstream sticky heading stays
+             transparent until an async observer marks it stuck, so rows showed through it
+             mid-scroll. Only this picker is grouped. */
+          [role=listbox][aria-label^="/skills "]>[data-menu-group]+[data-menu-group]{margin-top:4px}
+          [role=listbox][aria-label^="/skills "]>[data-menu-group]>[data-menu-group-heading]{position:static;background:transparent;padding:10px 7px 4px;color:var(--dsw-alias-link);font-size:12px;font-weight:500}
           @media(max-width:1023px){.dshWorkKnowledgeDialog{width:min(400px,100%)}}
           @media(max-width:575px){.dshWorkKnowledgeModified{max-width:80px}.dshWorkKnowledgeFooter{flex-wrap:wrap}.dshWorkSelectionCount{flex:1 0 100%}}
         `
