@@ -3,7 +3,7 @@ import type { MarketRuntimeFiber } from './market-runtime.js'
 import type { EnterpriseAuthHost } from './enterprise-auth.js'
 export interface InstalledMarketPlugin {
   name: string; version: string; digest: string; directory: string; generation_id: string; plugin_id: string;
-  version_id: string; revision: number; enabled: boolean; status: string; display_name: string; error?: string; config?: Record<string, unknown>; description?: string; integrity?: string
+  version_id: string; revision: number; enabled: boolean; status: string; display_name: string; error?: string; reason?: 'revoked' | 'disabled' | 'version'; config?: Record<string, unknown>; description?: string; integrity?: string
 }
 export interface MarketAccount {
   connected: boolean; desktopVersion?: string; base?: string; user?: { id: string }; tenant?: { id: string; name?: string }; sessionExpiresAt?: string

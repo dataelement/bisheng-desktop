@@ -121,6 +121,14 @@ export function createMarketController(ctx, accountController, options = {}) {
     const rule = policy?.policies.find(p => p.plugin_id === record.plugin_id && p.name === record.name)
     return rule && !rule.disabled && rule.versions.some(v => v.id === record.version_id && v.digest === record.digest)
   }
+  // Why a confirmed policy stopped this installation. The server leaves out
+  // plugins the employee may no longer see, so a missing policy is a revoked
+  // grant (F022); deleted plugins stay in the policies and keep running.
+  const stopReason = record => {
+    const rule = policy?.policies.find(p => p.plugin_id === record.plugin_id)
+    if (!rule) return 'revoked'
+    return rule.disabled ? 'disabled' : 'version'
+  }
   const sessionOpen = () => !(account?.sessionExpiresAt && Date.parse(account.sessionExpiresAt) <= Date.now())
   const requireOnline = () => {
     if (!sessionOpen()) throw marketFailure('Enterprise session expired.', 'session_expired')
@@ -144,14 +152,19 @@ export function createMarketController(ctx, accountController, options = {}) {
     running.set(record.plugin_id, fiber)
     record.status = 'enabled'
     delete record.error
+    delete record.reason
   }
   const enforce = async () => {
     const valid = Boolean(account && online && policy && sessionOpen())
     for (const record of document.installed) {
       if (!valid || !authorized(record)) {
         await stopRecord(record)
-        if (valid) record.enabled = false
+        // Only a confirmed policy explains a stop; an outage keeps the last reason.
+        if (valid) { record.enabled = false; record.reason = stopReason(record) }
         record.revision = policy?.policies.find(p => p.plugin_id === record.plugin_id)?.revision ?? record.revision
+      } else if (record.reason) {
+        // The cause is gone; the switch stays off until the employee turns it on.
+        delete record.reason
       }
     }
     await save()

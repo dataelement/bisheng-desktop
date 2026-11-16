@@ -518,7 +518,7 @@ window.__ModuleLoader__.load({
       failed: '暂时无法读取企业插件，请重试或联系管理员。',
       protocolMismatch: '当前客户端需要更新后的企业市场，请联系管理员升级服务端。',
       install: '安装', update: '更新',
-      installed: '已安装', uninstall: '卸载', enable: '启用', disable: '停用', disabled: '已停用',
+      installed: '已安装', uninstall: '卸载', enable: '启用', disable: '停用', disabled: '已停用', revoked: '管理员已收回使用权限',
       version: '版本', incompatible: '当前系统或版本暂不支持',
       installing: '安装中…', updating: '更新中…', enabling: '启用中…', disabling: '停用中…', uninstalling: '卸载中…', unsupported: '暂不支持', setup: '企业市场暂未就绪，可联系管理员完成配置。'
     }
@@ -528,7 +528,7 @@ window.__ModuleLoader__.load({
       failed: 'Enterprise plugins are unavailable. Try again or contact your administrator.',
       protocolMismatch: 'This Desktop requires a newer enterprise market. Ask an administrator to upgrade the server.',
       install: 'Install', update: 'Update',
-      installed: 'Installed', uninstall: 'Uninstall', enable: 'Enable', disable: 'Disable', disabled: 'Disabled',
+      installed: 'Installed', uninstall: 'Uninstall', enable: 'Enable', disable: 'Disable', disabled: 'Disabled', revoked: 'Your administrator revoked access',
       version: 'Version', incompatible: 'Unsupported system or Desktop version',
       installing: 'Installing…', updating: 'Updating…', enabling: 'Enabling…', disabling: 'Disabling…', uninstalling: 'Uninstalling…', unsupported: 'Unavailable', setup: 'The enterprise market is not ready. Contact your administrator.'
     }
@@ -670,7 +670,10 @@ window.__ModuleLoader__.load({
                   h('button', { type: 'button', disabled: busy || (!local.enabled && !catalog.installReady), 'aria-busy': activeAction === 'enable' || activeAction === 'disable', onClick: () => operate(local.enabled ? 'disable' : 'enable', plugin) }, activeAction === 'enable' ? marketCopy.enabling : activeAction === 'disable' ? marketCopy.disabling : local.enabled ? marketCopy.disable : marketCopy.enable),
                   h('button', { type: 'button', disabled: busy, 'aria-busy': activeAction === 'uninstall', onClick: () => operate('uninstall', plugin) }, activeAction === 'uninstall' ? marketCopy.uninstalling : marketCopy.uninstall)) : null)),
             h('p', { className: 'dshEnterpriseMarketDescription', title: plugin.description }, plugin.description),
-            (operation?.error || local?.error) ? h('p', { role: 'alert', className: 'dshEnterpriseMarketError' }, operation?.error || local.error) : null,
+            // A revoked grant is not the user's own "Disabled" switch: say who turned it
+            // off, also in place of the generic error a retried "Enable" then reports.
+            (local?.reason === 'revoked' || operation?.error || local?.error) ? h('p', { role: 'alert', className: 'dshEnterpriseMarketError' },
+              local?.reason === 'revoked' ? marketCopy.revoked : operation?.error || local.error) : null,
             h('div', { className: 'dshEnterpriseMarketCardFooter' },
               h('span', { className: 'dshEnterpriseMarketVersion' }, `${marketCopy.version} ${current?.version || local?.version || '—'}`),
               local ? h('span', { className: 'dshEnterpriseMarketInstalled' }, local.enabled ? marketCopy.installed : marketCopy.disabled) : null))
