@@ -272,7 +272,8 @@ it('routes bounded, versioned choices through the authenticated Connection owner
 
   const catalogue = await rpc('welcome-cases', {}, signal)
   expect(catalogue.value.cases.find(item => item.id === 'event-minutes')).toMatchObject({ officeMode: 'word', template: '会议纪要 · 发布会筹备' })
-  expect(catalogue.value).not.toHaveProperty('chat')
+  expect(catalogue.value.chat.find(item => item.id === 'confirm-event').title.zh).toBe('写一封方案确认邮件')
+  expect(catalogue.value.chatBatches[0]).toContain('confirm-event')
   expect((await rpc('case-mode', { sessionId: payload.sessionId, caseId: 'unknown' }, signal)).ok).toBe(false)
   const selection = await rpc('case-mode', { sessionId: payload.sessionId, caseId: 'event-minutes', mode: 'ppt', templateId: 'coffee-market' }, signal)
   expect(selection.value).toMatchObject({ mode: 'word', presentationMode: null, selectedTemplateId: 'meeting-minutes' })
