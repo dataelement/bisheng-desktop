@@ -407,3 +407,11 @@ Work 模型下拉框的模型名由 `dsh-client-ui-model-selection` 渲染，外
 服务端对没有价格记录的模型返回 HTTP 503、`code: model_pricing_missing`（毕昇错误码 26176）。`openai.js` 将其列为平台错误码；`dsh-client-ui-chat` 与 `dsh-client-ui-trajectory` 的现有平台错误本地化补丁各增加一条对应的中英文提示。没有新增补丁文件。随上游提供平台错误码本地化接缝时一并移除。
 
 回归：`test/enterprise-contract.test.ts`、`test/enterprise-service.test.ts`、`test/enterprise-package.test.ts`、`test/enterprise-model-sync.test.mjs`、`test/enterprise-model-label.test.mjs`、`test/enterprise-openai-adapter.test.mjs`、`test/provider-error-patch.test.ts`。补丁由干净的原始包重新生成，`patch-package` 可完整撤销并重新应用。实际 Work 下拉框与账号页显示需连接已升级的毕昇服务端验收。
+
+### ASAR 路径的 stat 权限位（Harness 0.2.1-rc.2，Electron 43）
+
+`@deepseek-ai/dsh-fs-local@0.2.1-rc.2` 的 `probe()` 与 `probeNoFollow()` 在 `stat` / `lstat(..., { bigint: true })` 之后执行 `Number(info.mode & 511n)`。Electron 43 的 ASAR 视图对 `.asar` 路径忽略 `bigint`，返回普通 `Stats`，`mode` 仍是 Number，于是抛出 `Cannot mix BigInt and other types`。`read`、`lstat` 和目录列举都会先走到这两处。普通磁盘文件返回 `BigIntStats`，不受影响。已发布的 `0.2.2-rc.3` 仍是同一表达式，升级依赖不能消除。
+
+补丁只把两处改成 `Number(info.mode) & 0o777`，不改 `Stats` 对象本身。`Stats.prototype.isFile()` 仍用 Number 做位运算，把 `mode` 改成 BigInt 会在类型判断处抛同样的错。上游删除 `info.mode & 511n` 后移除 `patches/@deepseek-ai+dsh-fs-local+0.2.1-rc.2.patch`，并保留 `test/fs-local-asar-stat.test.ts`。
+
+这个补丁不改变 Electron 把 `app.asar` 本体显示成目录的行为。修复后读取归档文件本身会得到 `FS_NOT_REGULAR_FILE`，读取归档内文件可以继续。ASAR 路径的 `mtimeNs` / `ctimeNs` 仍可能缺失，版本令牌不能用于新鲜度判断。
