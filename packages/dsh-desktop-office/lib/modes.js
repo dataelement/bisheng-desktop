@@ -7,8 +7,16 @@ const PLUGIN = 'dsh-desktop-office-composer'
 let casesPromise
 const workCases = () => casesPromise ??= readFile(new URL('../welcome-cases.json', import.meta.url), 'utf8')
   .then(raw => {
-    const { work, batches } = JSON.parse(raw)
-    return { cases: work, batches: batches.work }
+    const parsed = JSON.parse(raw)
+    const { work, batches } = parsed
+    // Chat batches stay beside the work catalogue. The work page only reads
+    // cases and batches, and the phone reads the chat fields for its landing.
+    return {
+      cases: work,
+      batches: batches.work,
+      chat: Array.isArray(parsed.chat) ? parsed.chat : [],
+      chatBatches: Array.isArray(batches.chat) ? batches.chat : [],
+    }
   })
   .catch(error => { casesPromise = undefined; throw error })
 
