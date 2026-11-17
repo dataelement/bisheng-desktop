@@ -573,6 +573,28 @@ describe('mobile access forwarding over real WebSockets', () => {
     expect(paths.every(path => [MOBILE_BIND_PATH, MOBILE_UNBIND_PATH, '/api/v1/status'].includes(path))).toBe(true)
   })
 
+  it('cancels one forward and leaves the other request and the socket open', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    const server = await accessServer()
+    const signals: AbortSignal[] = []
+    setup(async (input, init) => {
+      const path = new URL(String(input)).pathname
+      if (path === MOBILE_BIND_PATH || path === MOBILE_UNBIND_PATH) return new Response()
+      if (init?.signal) signals.push(init.signal)
+      return new Promise<Response>(() => undefined)
+    }, undefined, server.base)
+    const socket = await server.next()
+    socket.send(JSON.stringify({ type: 'request', id: 'keep', path: '/api/v1/status', headers: {} }))
+    socket.send(JSON.stringify({ type: 'request', id: 'drop', path: '/api/v1/status', headers: {} }))
+    for (let attempt = 0; attempt < 20 && signals.length < 2; attempt += 1) await turn()
+    expect(signals).toHaveLength(2)
+    socket.send(JSON.stringify({ type: 'cancel', id: 'drop' }))
+    await turn()
+    expect(signals[0]?.aborted).toBe(false)
+    expect(signals[1]?.aborted).toBe(true)
+    expect(socket.readyState).toBe(WebSocket.OPEN)
+  })
+
   it('cancels a pending SSE reader and never sends chunks or end to the new account', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
     const server = await accessServer()

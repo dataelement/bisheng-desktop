@@ -38,6 +38,7 @@ import {
   readWorkEnvelope,
   readWorkJson
 } from './mobile-work-rpc'
+import { projectMobilePpt, projectTranscriptFrame, projectTranscriptHistory } from './mobile-phone-view'
 
 const MAX_BODY_BYTES = 64 * 1024
 const PAIRING_TTL_MS = 5 * 60 * 1000
@@ -220,6 +221,7 @@ export class LanMobileBridge {
   private muxAbort?: AbortController
   private muxTask?: Promise<void>
   private readonly sessionStreamAborts = new Set<AbortController>()
+  private readonly sessionStreamWriters = new Map<string, Set<ServerResponse>>()
   private lastConnected = false
   /** Keep the workspace follow alive after an app RPC, without marking a browser session connected. */
   private remoteMuxUntil = 0
@@ -1080,7 +1082,7 @@ export class LanMobileBridge {
       this.verifyTrustedOrigin(request)
       const sessionId = url.searchParams.get('sessionId')
       if (!sessionId) return this.text(response, 400, 'Session id is required.')
-      return this.streamSession(request, response, sessionId)
+      return this.streamSession(request, response, sessionId, url.searchParams.get('view') === 'transcript')
     }
     if (request.method === 'POST' && url.pathname === '/api/rpc') {
       this.verifySameOrigin(request)
@@ -1139,7 +1141,7 @@ export class LanMobileBridge {
     if (request.method === 'GET' && url.pathname === '/api/v1/session/stream') {
       const sessionId = url.searchParams.get('sessionId')
       if (!sessionId) return this.text(response, 400, 'Session id is required.')
-      return this.streamSession(request, response, sessionId)
+      return this.streamSession(request, response, sessionId, url.searchParams.get('view') === 'transcript')
     }
     return this.json(response, 404, { ok: false, error: 'Not found.' })
   }
@@ -1469,13 +1471,14 @@ export class LanMobileBridge {
       // Harness 0.1.2 calls the durable entries `records` and serves
       // projections on the list row. Keep the stable mobile-page contract so
       // cached pages can still render messages, running state, and todos.
+      const history = {
+        events: value.records,
+        projections,
+        hasMore: value.hasMore === true
+      }
       return {
         ok: true,
-        value: {
-          events: value.records,
-          projections,
-          hasMore: value.hasMore === true
-        }
+        value: fields.view === 'transcript' ? projectTranscriptHistory(history) : history
       }
     }
 
@@ -1547,7 +1550,9 @@ export class LanMobileBridge {
       base
     )
     if (!response.ok) return { ok: false, error: `Harness transport returned HTTP ${response.status}.` }
-    return readWorkEnvelope(await response.text(), rpcId)
+    const envelope = readWorkEnvelope(await response.text(), rpcId)
+    if (!envelope.ok || dispatch.kind !== 'ppt') return envelope
+    return { ok: true, value: projectMobilePpt(dispatch.endpoint, envelope.value) }
   }
 
   private async postWorkUpload(upload: {
@@ -1770,7 +1775,8 @@ export class LanMobileBridge {
   private async streamSession(
     request: IncomingMessage,
     response: ServerResponse,
-    sessionId: string
+    sessionId: string,
+    transcript = false
   ): Promise<void> {
     const base = this.options.harnessUrl()
     if (!base) return this.text(response, 503, 'Harness is not ready.')
@@ -1780,6 +1786,9 @@ export class LanMobileBridge {
     const streamId = `mobile-session-${randomUUID()}`
     const abort = new AbortController()
     this.sessionStreamAborts.add(abort)
+    const writers = this.sessionStreamWriters.get(sessionId) ?? new Set<ServerResponse>()
+    writers.add(response)
+    this.sessionStreamWriters.set(sessionId, writers)
 
     response.statusCode = 200
     response.setHeader('content-type', 'text/event-stream; charset=utf-8')
@@ -1807,6 +1816,9 @@ export class LanMobileBridge {
         socket.removeEventListener('close', handleClose)
         socket.removeEventListener('error', handleError)
         this.sessionStreamAborts.delete(abort)
+        const openWriters = this.sessionStreamWriters.get(sessionId)
+        openWriters?.delete(response)
+        if (openWriters?.size === 0) this.sessionStreamWriters.delete(sessionId)
       }
       const finish = (): void => {
         if (settled) return
@@ -1837,7 +1849,8 @@ export class LanMobileBridge {
         try { frame = JSON.parse(text) } catch { return }
         if (!isRecord(frame) || frame.streamId !== streamId) return
         if (frame.type === 'item') {
-          const value = frame.value
+          const value = transcript ? projectTranscriptFrame(frame.value) : frame.value
+          if (value === undefined) return
           const eventName = isRecord(value) && value.type === 'snapshot' ? 'snapshot' : 'event'
           response.write(`event: ${eventName}\ndata: ${JSON.stringify(value)}\n\n`)
         } else if (frame.type === 'error' || frame.type === 'end') {
@@ -1896,11 +1909,25 @@ export class LanMobileBridge {
       const agentId = typeof value.agentId === 'string' ? value.agentId : undefined
       if (!eventId || !request || !agentId) return
       const pending = parsePendingQuestion(eventId, { ...request, sessionId: agentId })
-      if (pending) this.pendingQuestions.set(eventId, pending)
+      if (pending) {
+        this.pendingQuestions.set(eventId, pending)
+        this.pushQuestionSignal(agentId)
+      }
       return
     }
     if (value.type === 'cancel' && typeof value.eventId === 'string') {
+      const pending = this.pendingQuestions.get(value.eventId)
       this.pendingQuestions.delete(value.eventId)
+      if (pending) this.pushQuestionSignal(pending.sessionId)
+    }
+  }
+
+  /** Empty signal. The phone reads interaction.pending for the actual question. */
+  private pushQuestionSignal(sessionId: string): void {
+    const writers = this.sessionStreamWriters.get(sessionId)
+    if (writers === undefined) return
+    for (const response of writers) {
+      if (!response.writableEnded) response.write('event: question\ndata: {}\n\n')
     }
   }
 

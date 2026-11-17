@@ -739,6 +739,67 @@ describe('LAN mobile bridge pairing surface', () => {
     })
   })
 
+  it('projects a transcript view down to the events the phone renders', async () => {
+    const harness = createServer(async (request, response) => {
+      if (request.method !== 'POST') {
+        response.statusCode = 404
+        response.end()
+        return
+      }
+      const chunks: Buffer[] = []
+      for await (const chunk of request) chunks.push(Buffer.from(chunk))
+      const envelope = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { rpcId: string; method: string }
+      const value = envelope.method === 'session/list'
+        ? { items: [{ sessionId: 'session-1', projections: { asOfSeq: 4, values: { turnOutline: 'secret' } } }] }
+        : {
+            records: [
+              {
+                type: 'user/message',
+                time: 1,
+                data: {
+                  source: { kind: 'user' },
+                  content: [{ type: 'text', text: '你好' }, { type: 'image', url: 'data:image/png;base64,AAAA' }]
+                }
+              },
+              {
+                type: 'tool/result',
+                data: { output: 'x'.repeat(200_000) }
+              }
+            ],
+            hasMore: true
+          }
+      response.setHeader('content-type', 'application/json')
+      response.end(JSON.stringify({ type: 'server-response', rpcId: envelope.rpcId, result: { ok: true, value } }))
+    })
+    servers.push(harness)
+    await new Promise<void>((resolve) => harness.listen(0, '127.0.0.1', resolve))
+    const harnessPort = (harness.address() as AddressInfo).port
+    const bridge = new LanMobileBridge({ harnessUrl: () => `http://127.0.0.1:${harnessPort}` })
+    bridges.push(bridge)
+    const { port, cookie } = await pairBridge(bridge)
+    const history = await mobileRpc(port, cookie, 'session.history', {
+      sessionId: 'session-1',
+      maxMessages: 100,
+      view: 'transcript'
+    })
+    expect(history.status).toBe(200)
+    const body = await history.json() as { value: { events: unknown[]; hasMore: boolean; projections?: unknown } }
+    expect(body.value.projections).toBeUndefined()
+    expect(body.value.hasMore).toBe(true)
+    expect(JSON.stringify(body.value)).not.toContain('tool/result')
+    expect(JSON.stringify(body.value)).not.toContain('image')
+    expect(body.value.events).toEqual([
+      {
+        type: 'user/message',
+        time: 1,
+        data: {
+          source: { kind: 'user' },
+          content: [{ type: 'text', text: '你好' }]
+        }
+      }
+    ])
+  })
+
   it('streams native session follow snapshots and events to an authorized phone', async () => {
     let sessionOpen: unknown
     const harness = createServer((_request, response) => {
@@ -858,6 +919,71 @@ describe('LAN mobile bridge pairing surface', () => {
 })
 
 describe('LAN mobile bridge user questions', () => {
+  it('pushes a question signal only to streams of that session', async () => {
+    const muxClients: TestWebSocket[] = []
+    const harness = createServer((_request, response) => {
+      response.statusCode = 404
+      response.end()
+    })
+    const muxServer = new WebSocketServer({ noServer: true })
+    webSocketServers.push(muxServer)
+    harness.on('upgrade', (request, socket, head) => {
+      if (request.url !== '/api/remote.mux') return socket.destroy()
+      muxServer.handleUpgrade(request, socket, head, (client) => {
+        muxClients.push(client)
+      })
+    })
+    servers.push(harness)
+    await new Promise<void>((resolve) => harness.listen(0, '127.0.0.1', resolve))
+    const harnessPort = (harness.address() as AddressInfo).port
+    const bridge = new LanMobileBridge({ harnessUrl: () => `http://127.0.0.1:${harnessPort}` })
+    bridges.push(bridge)
+    const { port, cookie } = await pairBridge(bridge)
+    const sessionOne = await fetch(`http://127.0.0.1:${port}/api/session/stream?sessionId=session-1`, {
+      headers: { cookie }
+    })
+    const sessionTwo = await fetch(`http://127.0.0.1:${port}/api/session/stream?sessionId=session-2`, {
+      headers: { cookie }
+    })
+    expect(sessionOne.status).toBe(200)
+    expect(sessionTwo.status).toBe(200)
+    const readOne = sessionOne.body!.getReader()
+    const readTwo = sessionTwo.body!.getReader()
+    const decoder = new TextDecoder()
+    let one = ''
+    let two = ''
+    const first = await readOne.read()
+    one += decoder.decode(first.value, { stream: true })
+    const second = await Promise.race([
+      readTwo.read().then((chunk) => decoder.decode(chunk.value, { stream: true })),
+      new Promise<string>((resolve) => setTimeout(() => resolve(''), 200))
+    ])
+    two += second
+    for (const client of muxClients) {
+      client.send(JSON.stringify({
+        type: 'item',
+        streamId: 'mobile-events',
+        value: {
+          type: 'waterfall',
+          event: 'user-questions/request',
+          eventId: 'question-rpc-1',
+          agentId: 'session-1',
+          request: { questions: [{ id: 'q', question: '继续吗', options: [{ label: '继续' }] }] }
+        }
+      }))
+    }
+    const started = Date.now()
+    while (!one.includes('event: question') && Date.now() - started < 2000) {
+      const chunk = await readOne.read()
+      one += decoder.decode(chunk.value, { stream: true })
+    }
+    expect(one).toContain('event: question')
+    expect(one).toContain('data: {}')
+    expect(two).not.toContain('event: question')
+    await readOne.cancel()
+    await readTwo.cancel()
+  })
+
   it('replays pending questions and forwards the desktop answer protocol', async () => {
     const responses: unknown[] = []
     const muxClients: TestWebSocket[] = []
@@ -1988,6 +2114,33 @@ describe('work tab mobile rpc', () => {
         }))
         return
       }
+      if (request.url === '/dsh-ppt/state' || request.url === '/dsh-ppt/template/catalog') {
+        const envelope = JSON.parse(body.toString('utf8')) as { rpcId: string }
+        response.end(JSON.stringify({
+          type: 'server-response',
+          rpcId: envelope.rpcId,
+          result: {
+            ok: true,
+            value: {
+              status: 'ok',
+              data: {
+                selectedTemplateId: 'blue',
+                presentationMode: 'ppt',
+                templates: [{
+                  id: 'blue',
+                  name: '蓝色商务',
+                  revision: '3',
+                  mode: 'ppt',
+                  previewImages: ['data:image/png;base64,' + 'A'.repeat(8_000)]
+                }],
+                decks: [{ id: 'deck-1' }],
+                activities: [{ id: 'activity-1' }]
+              }
+            }
+          }
+        }))
+        return
+      }
       response.statusCode = 404
       response.end(JSON.stringify({ error: 'missing' }))
     })
@@ -2071,11 +2224,23 @@ describe('work tab mobile rpc', () => {
       sessionId: 'session-1',
       mode: 'ppt'
     })
+    const pptState = await mobileRpc(port, cookie, 'ppt.call', {
+      endpoint: 'state',
+      sessionId: 'session-1'
+    })
     expect(ppt.status).toBe(200)
     expect(await ppt.json()).toEqual({ ok: true, value: { presentationMode: 'ppt' } })
     expect(JSON.parse(seen.find((item) => item.url === '/dsh-ppt/presentation/mode')!.body.toString('utf8'))).toMatchObject({
       payload: { sessionId: 'session-1', mode: 'ppt' }
     })
+    expect(pptState.status).toBe(200)
+    const projected = await pptState.json() as { value: Record<string, unknown> }
+    expect(projected.value).toEqual({
+      selectedTemplateId: 'blue',
+      presentationMode: 'ppt',
+      templates: [{ id: 'blue', name: '蓝色商务', revision: '3', mode: 'ppt' }]
+    })
+    expect(JSON.stringify(projected.value).length).toBeLessThan(768 * 1024)
 
     const file = Buffer.from('hello')
     const started = await mobileRpc(port, cookie, 'session.uploadStart', {
