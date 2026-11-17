@@ -41,6 +41,7 @@ export default defineConfig({
       'test/shell-environment-encoding.test.ts',
       'test/directory-picker.test.ts',
       'test/file-preview.test.ts',
+      'test/fs-local-asar-stat.test.ts',
       'test/desktop-service.test.ts',
       'test/desktop-storage.test.ts',
       'test/enterprise-vault.test.ts',
