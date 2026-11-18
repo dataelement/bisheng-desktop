@@ -187,3 +187,40 @@ it('serves fresh picker entries and rejects disabled tools and old-account draft
   account = { connected: false }
   expect((await send({ operation: 'catalog' })).status).toBe(400)
 })
+
+it('bounds failed background catalog attempts while allowing explicit refresh and account reset', async () => {
+  vi.useFakeTimers()
+  try {
+    const f = fixture()
+    let failing = true
+    const failure = Object.assign(new Error('Missing endpoint'), { status: 404 })
+    const routes = [], events = new Map()
+    const session = { id: 'main', header: { delegationDepth: 0 } }
+    const request = vi.fn((...args) => failing ? Promise.reject(failure) : f.request(...args))
+    const ctx = { connection: { fetch: { register: route => routes.push(route) } }, logger: { warn: vi.fn() },
+      sessions: { get: () => session }, tools: { register: () => () => {}, guard: vi.fn() },
+      on: (name, fn) => events.set(name, fn), effect: fn => cleanups.push(fn()) }
+    const api = applyWorkCapabilities(ctx, { request, state: () => ({ connected: true, connectionKey: 'account-a' }), refreshState: async () => {} })
+    await expect(api.sync()).rejects.toThrow('Missing endpoint')
+    const count = request.mock.calls.length
+    const outcomes = await Promise.allSettled(Array.from({ length: 20 }, () => api.sync()))
+    expect(outcomes.every(result => result.status === 'rejected' && result.reason === failure)).toBe(true)
+    const response = await routes[0].fetch(new Request('http://localhost/api/enterprise.work-tools', { method: 'POST', body: JSON.stringify({ operation: 'catalog' }) }))
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: 'Missing endpoint' })
+    expect(request).toHaveBeenCalledTimes(count)
+    await events.get('system-prompt/prepare')({ agent: { session } })
+    expect(request.mock.calls.length).toBeGreaterThan(count)
+    expect(ctx.logger.warn).toHaveBeenCalledWith('Enterprise Work capabilities: %s', 'Missing endpoint')
+    await vi.advanceTimersByTimeAsync(30_001)
+    await expect(api.sync()).rejects.toThrow('Missing endpoint')
+    expect(request.mock.calls.length).toBeGreaterThan(count)
+    failing = false
+    await api.refresh()
+    expect(f.messages.some(message => message.method === 'tools/list')).toBe(true)
+    api.clear()
+    const before = f.messages.length
+    await api.sync()
+    expect(f.messages.length).toBeGreaterThan(before)
+  } finally { vi.useRealTimers() }
+})
