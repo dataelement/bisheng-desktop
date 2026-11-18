@@ -41,9 +41,12 @@ export async function createTemplateLibrary(root) {
   }
   return {
     entry, asset,
-    async list() {
-      return Promise.all(catalog.map(async ({ files, sampleFile, ...item }) => ({ ...item,
-        thumbnail: `data:image/webp;base64,${(await asset(item.id, 'thumbnail.webp')).toString('base64')}` })))
+    // Phone sheets only render names. Desktop cards still request the images.
+    async list({ thumbnails = true } = {}) {
+      return Promise.all(catalog.map(async ({ files, sampleFile, ...item }) => {
+        if (!thumbnails) return item
+        return { ...item, thumbnail: `data:image/webp;base64,${(await asset(item.id, 'thumbnail.webp')).toString('base64')}` }
+      }))
     },
     async preview(id, page) {
       const item = entry(id)
