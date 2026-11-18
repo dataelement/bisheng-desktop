@@ -971,6 +971,10 @@ window.__ModuleLoader__.load({
       async removeWorkbench(id) {
         // Market installs use their recorded package identity. Other workbenches
         // must resolve to a removable native bundle before their record is cleared.
+        // The plugin manager cannot remove a bundle while its workbench is the
+        // active panel. Leave it first so the manager can complete its stop and
+        // reload transaction instead of keeping the confirmation modal busy.
+        if (this.state.active === id) await this.leave()
         const catalogId = this.marketInstallFor(id)
         if (catalogId) {
           await this.uninstallFromMarket(catalogId)

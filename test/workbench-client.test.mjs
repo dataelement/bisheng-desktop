@@ -4121,6 +4121,21 @@ describe('workbench market screenshot and metadata display', () => {
     expect(ui.find(ui.render(), node => node.type === 'article' && node.props.key === 'owner/local')).toHaveLength(0)
   })
 
+  it('leaves an active workbench before uninstalling its native bundle', async () => {
+    const { service, ctx, saved } = await fixture({ ...emptyState(), added: ['owner/local'], pinned: ['owner/local'], active: 'owner/local' })
+    setFiberPackage(ctx, 'local-package')
+    service.register({ title: 'Local', repository: 'https://github.com/owner/local' }, () => null)
+    let installed = true
+    ctx.remote = { pluginManager: {
+      listBundles: vi.fn(async () => ({ ok: true, value: installed ? [{ name: 'local-package', installed: true, enabled: true, removable: true }] : [] })),
+      removeBundle: vi.fn(async () => { installed = false; return { ok: true, value: { changed: true, application: 'restart-required' } } })
+    } }
+    await service.refreshNative()
+    await service.removeWorkbench('owner/local')
+    expect(saved().state.active).toBe(null)
+    expect(ctx.remote.pluginManager.removeBundle).toHaveBeenCalledWith('local-package')
+  })
+
   it('keeps a local workbench when native removal fails or is not applied', async () => {
     const { service, ctx, saved } = await fixture({ ...emptyState(), added: ['owner/local'], pinned: ['owner/local'] })
     setFiberPackage(ctx, 'local-package')
