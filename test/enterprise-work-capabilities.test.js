@@ -97,7 +97,7 @@ it('does not clear a newer generation when an old refresh fails', async () => {
   await expect(api.sync()).resolves.toBeUndefined()
 })
 
-it.each(['bisheng_tool_7', 'Customer Query', 'a'.repeat(51), 'duplicate'])('rejects invalid or duplicate catalog names: %s', async name => {
+it.each(['', '   ', 'a'.repeat(129), 'duplicate'])('rejects invalid or duplicate catalog names: %s', async name => {
   const f = fixture(), register = vi.fn(() => () => {})
   f.catalog.tools[0].name = name
   if (name === 'duplicate') f.catalog.tools.push({ ...f.catalog.tools[0] })
@@ -106,6 +106,17 @@ it.each(['bisheng_tool_7', 'Customer Query', 'a'.repeat(51), 'duplicate'])('reje
   const api = applyWorkCapabilities(ctx, { request: f.request, state: () => ({ connected: true, connectionKey: 'account-a' }), refreshState: async () => {} })
   await expect(api.sync()).rejects.toThrow('Invalid enterprise tool name')
   expect(register).not.toHaveBeenCalled()
+})
+
+it('accepts provider-defined MCP names using the MCP naming charset', async () => {
+  const f = fixture(), tools = new Map()
+  f.catalog.tools[0].name = 'weather.lookup-v2'
+  const ctx = { connection: { fetch: { register: vi.fn() } }, logger: { warn: vi.fn() }, sessions: { get: () => undefined },
+    tools: { register: tool => { tools.set(tool.name, tool); return () => tools.delete(tool.name) }, guard: vi.fn() },
+    on: vi.fn(), effect: fn => cleanups.push(fn()) }
+  const api = applyWorkCapabilities(ctx, { request: f.request, state: () => ({ connected: true, connectionKey: 'account-a' }), refreshState: async () => {} })
+  await api.sync()
+  expect(tools.has('mcp__bisheng__weather.lookup-v2')).toBe(true)
 })
 
 it('negotiates the real SDK protocol and follows all catalog pages', async () => {

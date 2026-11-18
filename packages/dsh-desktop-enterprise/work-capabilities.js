@@ -46,7 +46,7 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
     if (signature === nextSignature) { ready = true; return }
     const names = new Set()
     const definitions = catalog.tools.map(tool => {
-      if ((typeof tool.name !== 'string' || tool.name.length > 50 || !/^(?!bisheng_tool_)[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(tool.name)) || names.has(tool.name)) throw new Error('Invalid enterprise tool name.')
+      if (typeof tool.name !== 'string' || !tool.name.trim() || tool.name.length > 128 || names.has(tool.name)) throw new Error('Invalid enterprise tool name.')
       names.add(tool.name)
       return createMcpToolDefinition(ctx, {
         name: PREFIX + tool.name, rawName: tool.name, description: [tool.title, tool.description].filter(value => typeof value === 'string' && value.trim()).filter((value, index, values) => values.indexOf(value) === index).join(' — ') || tool.name,
