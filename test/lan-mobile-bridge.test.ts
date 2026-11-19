@@ -3,12 +3,21 @@ import { createServer, request as httpRequest, type IncomingMessage } from 'node
 import { createRequire } from 'node:module'
 import type { AddressInfo } from 'node:net'
 import type { Duplex } from 'node:stream'
+import { boundedMobileResponse, MAX_MOBILE_FRAME_BYTES } from '../src/main/mobile/mobile-access-client'
+import {
+  REMOTE_CHANNEL_HEADER,
+  REMOTE_CHANNEL_TOKEN_HEADER,
+  REMOTE_TENANT_HEADER,
+  REMOTE_USER_HEADER
+} from '../src/main/mobile/mobile-access-protocol'
 import {
   applyWorkspaceFollowFrame,
   isInternetTunnelHost,
   isPrivateAddress,
   LanMobileBridge,
-  normalizeRemoteAddress
+  normalizeRemoteAddress,
+  pageMobileSessions,
+  SESSION_PAGE_LIMIT
 } from '../src/main/mobile/lan-mobile-bridge'
 
 const bridges: LanMobileBridge[] = []
@@ -871,7 +880,8 @@ describe('LAN mobile bridge pairing surface', () => {
       args: {
         request: {
           address: { kind: 'session', sessionId: 'session-1' },
-          maxMessages: 100
+          maxMessages: 100,
+          assistantStream: true
         }
       }
     })
@@ -2097,7 +2107,31 @@ describe('work tab mobile rpc', () => {
         return
       }
       if (request.url === '/api/office-templates') {
-        const envelope = JSON.parse(body.toString('utf8')) as { rpcId: string }
+        const envelope = JSON.parse(body.toString('utf8')) as {
+          rpcId: string
+          payload?: { endpoint?: string }
+        }
+        if (envelope.payload?.endpoint === 'catalog') {
+          response.end(JSON.stringify({
+            type: 'server-response',
+            rpcId: envelope.rpcId,
+            result: {
+              ok: true,
+              value: {
+                templates: [{
+                  id: 'minutes',
+                  title: '会议纪要',
+                  revision: '9',
+                  mode: 'word',
+                  description: '不应下发',
+                  thumbnail: 'data:image/webp;base64,' + 'A'.repeat(8_000),
+                  pageAspectRatios: [1.4]
+                }]
+              }
+            }
+          }))
+          return
+        }
         response.end(JSON.stringify({
           type: 'server-response',
           rpcId: envelope.rpcId,
@@ -2210,6 +2244,20 @@ describe('work tab mobile rpc', () => {
       payload: { endpoint: 'welcome-cases' }
     })
 
+    const officeCatalog = await mobileRpc(port, cookie, 'office.call', { endpoint: 'catalog' })
+    expect(officeCatalog.status).toBe(200)
+    expect(await officeCatalog.json()).toEqual({
+      ok: true,
+      value: { templates: [{ id: 'minutes', title: '会议纪要', revision: '9', mode: 'word' }] }
+    })
+    expect(
+      JSON.parse(
+        seen.filter((item) => item.url === '/api/office-templates').at(-1)!.body.toString('utf8')
+      )
+    ).toMatchObject({
+      payload: { endpoint: 'catalog', summary: true }
+    })
+
     const unknownOffice = await mobileRpc(port, cookie, 'office.call', {
       endpoint: 'nonexistent'
     })
@@ -2278,3 +2326,374 @@ describe('work tab mobile rpc', () => {
     expect(closed.status).toBe(403)
   })
 })
+
+describe('mobile permission presets', () => {
+  it('reads the catalog and current projection, and rejects a raw command line', async () => {
+    const calls: { method?: string; args?: unknown }[] = []
+    const harness = createServer(async (request, response) => {
+      const chunks: Buffer[] = []
+      for await (const chunk of request) chunks.push(Buffer.from(chunk))
+      const body = Buffer.concat(chunks)
+      // Pairing probes the harness before the first RPC. Those requests
+      // have no client envelope and are not part of the permission contract.
+      if (!body.length) {
+        response.statusCode = 404
+        response.end()
+        return
+      }
+      const envelope = JSON.parse(body.toString('utf8')) as {
+        rpcId: string
+        method: string
+        payload: { args?: unknown }
+      }
+      calls.push({ method: envelope.method, args: envelope.payload?.args })
+      const value = envelope.method === 'session/list'
+        ? {
+            items: [
+              {
+                sessionId: 'session-1',
+                projections: {
+                  values: { permissions: { currentValue: 'workspace-write' } }
+                }
+              },
+              {
+                sessionId: 'session-2',
+                projections: { values: { title: 'No permission control' } }
+              }
+            ]
+          }
+        : envelope.method === 'permissionPresets/catalog'
+          ? {
+              options: [
+                { value: 'read-only', name: 'read-only' },
+                { value: 'workspace-write', name: 'workspace-write' },
+                { value: 'danger-full-access', name: 'danger-full-access' }
+              ],
+              defaultPreset: 'workspace-write'
+            }
+          : {
+              commandId: 'cmd-1',
+              result: { kind: 'success', text: 'preset workspace-write' }
+            }
+      response.setHeader('content-type', 'application/json')
+      response.end(JSON.stringify({
+        type: 'server-response',
+        rpcId: envelope.rpcId,
+        result: { ok: true, value }
+      }))
+    })
+    servers.push(harness)
+    await new Promise<void>((resolve) => harness.listen(0, '127.0.0.1', resolve))
+    const harnessPort = (harness.address() as AddressInfo).port
+    const bridge = new LanMobileBridge({
+      harnessUrl: () => `http://127.0.0.1:${harnessPort}`
+    })
+    bridges.push(bridge)
+    const { port, cookie } = await pairBridge(bridge)
+
+    const catalog = await mobileRpc(port, cookie, 'permission.catalog', {})
+    expect(catalog.status).toBe(200)
+    expect(await catalog.json()).toMatchObject({
+      ok: true,
+      value: { defaultPreset: 'workspace-write' }
+    })
+    expect(calls.at(-1)).toMatchObject({
+      method: 'permissionPresets/catalog',
+      args: {}
+    })
+
+    const current = await mobileRpc(port, cookie, 'permission.current', {
+      sessionId: 'session-1'
+    })
+    expect(await current.json()).toEqual({
+      ok: true,
+      value: { currentValue: 'workspace-write' }
+    })
+    expect(calls.at(-1)?.method).toBe('session/list')
+
+    const missing = await mobileRpc(port, cookie, 'permission.current', {
+      sessionId: 'session-2'
+    })
+    expect(await missing.json()).toEqual({ ok: true, value: {} })
+
+    const selected = await mobileRpc(port, cookie, 'permission.select', {
+      sessionId: 'session-1',
+      preset: 'workspace-write'
+    })
+    expect(selected.status).toBe(200)
+    expect(await selected.json()).toEqual({
+      ok: true,
+      value: { preset: 'workspace-write' }
+    })
+    expect(calls.at(-1)).toEqual({
+      method: 'commands/execute',
+      args: {
+        agentId: 'session-1',
+        line: '/permission workspace-write',
+        submittedAttachments: []
+      }
+    })
+
+    const before = calls.length
+    for (const payload of [
+      { sessionId: 'session-1', line: '/permission danger-full-access' },
+      { sessionId: 'session-1', preset: 'workspace-write', command: '/permission read-only' },
+      { sessionId: 'session-1', preset: 'custom' },
+      { sessionId: 'session-1', preset: '/permission workspace-write' },
+      { sessionId: 'session-1', preset: 'workspace write' }
+    ]) {
+      const rejected = await mobileRpc(port, cookie, 'permission.select', payload)
+      expect(rejected.status).toBe(400)
+      expect(await rejected.json()).toMatchObject({ ok: false })
+    }
+    expect(calls).toHaveLength(before)
+  })
+})
+
+describe('session list pages', () => {
+  const rows = [
+    { sessionId: 'b', updatedAt: 2, projections: { values: { title: 'B', todos: 'secret', agentPreset: 'standard' } } },
+    { sessionId: 'a', updatedAt: 2, projections: { values: { title: 'A', todos: 'secret' } } },
+    { sessionId: 'c', updatedAt: 1, projections: { values: { title: 'C', todos: 'secret' } } },
+    { sessionId: 'other', updatedAt: 9, projections: { values: { title: 'Other', todos: 'secret' } } }
+  ]
+
+  it('orders ties by session id and continues strictly after the cursor', () => {
+    const first = pageMobileSessions({
+      items: rows,
+      sessionIds: new Set(['a', 'b', 'c']),
+      archivedSessionIds: new Set(['c']),
+      limit: 1
+    })
+    expect(first.items.map((item) => item.sessionId)).toEqual(['a'])
+    expect(first.items[0]?.projections).toEqual({ values: { title: 'A' } })
+    expect(first.hasMore).toBe(true)
+    expect(first.nextCursor).toBe('2:a')
+
+    const second = pageMobileSessions({
+      items: rows,
+      sessionIds: new Set(['a', 'b', 'c']),
+      archivedSessionIds: new Set(['c']),
+      cursor: first.nextCursor,
+      limit: 10
+    })
+    expect(second.items.map((item) => item.sessionId)).toEqual(['b'])
+    expect(second.items[0]?.projections).toEqual({
+      values: { title: 'B', agentPreset: 'standard' }
+    })
+    expect(second.hasMore).toBe(false)
+    expect(second.nextCursor).toBeUndefined()
+
+    const ignored = pageMobileSessions({ items: rows, cursor: 'not-a-cursor', limit: 1 })
+    expect(ignored.items[0]?.sessionId).toBe('other')
+    expect(pageMobileSessions({ items: rows }).items).toHaveLength(SESSION_PAGE_LIMIT > rows.length ? rows.length : SESSION_PAGE_LIMIT)
+  })
+})
+
+describe('remote session list', () => {
+  it('trims the platform channel and leaves the lan page unchanged', async () => {
+    const harness = createServer(async (request, response) => {
+      if (request.method !== 'POST') {
+        response.statusCode = 404
+        response.end()
+        return
+      }
+      response.setHeader('content-type', 'application/json')
+      response.end(JSON.stringify({
+        type: 'server-response',
+        rpcId: JSON.parse(await readJson(request)).rpcId,
+        result: {
+          ok: true,
+          value: {
+            items: [{
+              sessionId: 's1',
+              updatedAt: 1,
+              projections: { asOfSeq: 4, values: { title: '标题', todos: 'secret', agentPreset: 'standard' } }
+            }]
+          }
+        }
+      }))
+    })
+    servers.push(harness)
+    await new Promise<void>((resolve) => harness.listen(0, '127.0.0.1', resolve))
+    const port = (harness.address() as AddressInfo).port
+    const bridge = new LanMobileBridge({
+      harnessUrl: () => `http://127.0.0.1:${port}`,
+      currentAccount: () => ({ userId: 'user-1', tenantId: 'tenant-1' })
+    })
+    bridges.push(bridge)
+    const { port: bridgePort, cookie } = await pairBridge(bridge)
+
+    const remote = await fetch(`http://127.0.0.1:${bridgePort}/api/v1/rpc`, {
+      method: 'POST',
+      headers: remoteHeaders(bridge),
+      body: JSON.stringify({ method: 'session.list', payload: {} })
+    })
+    expect(remote.status).toBe(200)
+    expect(await remote.json()).toEqual({
+      ok: true,
+      value: {
+        items: [{
+          sessionId: 's1',
+          updatedAt: 1,
+          projections: { values: { title: '标题', agentPreset: 'standard' } }
+        }]
+      }
+    })
+
+    const page = await mobileRpc(bridgePort, cookie, 'session.list', {})
+    const lan = await page.json() as { value?: { items?: Array<{ projections?: { values?: { todos?: string } } }> } }
+    expect(lan.value?.items?.[0]?.projections?.values?.todos).toBe('secret')
+  })
+
+  it('pages one workspace and reports a missing baseline', async () => {
+    let tick = 0
+    const harness = createServer((request, response) => {
+      response.statusCode = 404
+      response.end()
+    })
+    servers.push(harness)
+    await new Promise<void>((resolve) => harness.listen(0, '127.0.0.1', resolve))
+    const port = (harness.address() as AddressInfo).port
+    const bridge = new LanMobileBridge({
+      harnessUrl: () => `http://127.0.0.1:${port}`,
+      currentAccount: () => ({ userId: 'user-1', tenantId: 'tenant-1' }),
+      // Each read jumps past the five-second baseline wait, including reads
+      // bridge.start already made.
+      now: () => {
+        tick += 1
+        return tick * 6_000
+      }
+    })
+    bridges.push(bridge)
+    const snapshot = await bridge.start()
+    const missing = await fetch(`http://127.0.0.1:${snapshot.port}/api/v1/rpc`, {
+      method: 'POST',
+      headers: remoteHeaders(bridge),
+      body: JSON.stringify({ method: 'session.listPage', payload: { workspaceId: 'w1' } })
+    })
+    expect(missing.status).toBe(400)
+    expect(await missing.json()).toMatchObject({
+      ok: false,
+      error: 'Harness workspaces are not loaded yet.'
+    })
+  })
+
+  it('keeps a huge session list under the gateway frame', async () => {
+    const items = Array.from({ length: 2_000 }, (_, index) => ({
+      sessionId: `s${String(index).padStart(4, '0')}`,
+      updatedAt: 2_000 - index,
+      running: false,
+      blank: false,
+      projections: {
+        values: {
+          title: 't',
+          agentPreset: 'standard',
+          modelSelection: { next: { provider: 'p', model: 'm' } },
+          todos: 'x'.repeat(400)
+        }
+      }
+    }))
+    const harness = createServer(async (request, response) => {
+      const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+      if (request.method === 'POST' && url.pathname === '/api/session/list') {
+        const envelope = JSON.parse(await readJson(request)) as { rpcId?: string }
+        response.setHeader('content-type', 'application/json')
+        response.end(JSON.stringify({
+          type: 'server-response',
+          rpcId: envelope.rpcId,
+          result: { ok: true, value: { items } }
+        }))
+        return
+      }
+      response.statusCode = 404
+      response.end()
+    })
+    const mux = new WebSocketServer({ noServer: true })
+    webSocketServers.push(mux)
+    harness.on('upgrade', (request, socket, head) => {
+      if (request.url?.split('?', 1)[0] !== '/api/remote.mux') {
+        socket.destroy()
+        return
+      }
+      mux.handleUpgrade(request, socket, head, (client) => {
+        client.send(JSON.stringify({
+          type: 'item',
+          streamId: 'mobile-workspaces',
+          value: {
+            type: 'baseline',
+            value: {
+              items: [{ workspaceId: 'w1', sessionIds: items.map((item) => item.sessionId) }],
+              archivedSessionIds: []
+            }
+          }
+        }))
+      })
+    })
+    servers.push(harness)
+    await new Promise<void>((resolve) => harness.listen(0, '127.0.0.1', resolve))
+    const port = (harness.address() as AddressInfo).port
+    const bridge = new LanMobileBridge({
+      harnessUrl: () => `http://127.0.0.1:${port}`,
+      currentAccount: () => ({ userId: 'user-1', tenantId: 'tenant-1' })
+    })
+    bridges.push(bridge)
+    const snapshot = await bridge.start()
+    const headers = remoteHeaders(bridge)
+    const listed = await fetch(`http://127.0.0.1:${snapshot.port}/api/v1/rpc`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ method: 'session.list', payload: {} })
+    })
+    const listedText = await listed.text()
+    expect(boundedMobileResponse({
+      type: 'response',
+      id: 'list',
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: listedText
+    }).tooLarge).toBe(false)
+    expect(listedText).not.toContain('todos')
+
+    const paged = await fetch(`http://127.0.0.1:${snapshot.port}/api/v1/rpc`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ method: 'session.listPage', payload: { workspaceId: 'missing' } })
+    })
+    expect(await paged.json()).toMatchObject({ ok: true, value: { items: [], hasMore: false } })
+
+    const page = await fetch(`http://127.0.0.1:${snapshot.port}/api/v1/rpc`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ method: 'session.listPage', payload: { workspaceId: 'w1' } })
+    })
+    const pageText = await page.text()
+    const pageBody = JSON.parse(pageText) as { value?: { items?: unknown[]; hasMore?: boolean } }
+    expect(pageBody.value?.items).toHaveLength(SESSION_PAGE_LIMIT)
+    expect(pageBody.value?.hasMore).toBe(true)
+    expect(boundedMobileResponse({
+      type: 'response',
+      id: 'page',
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: pageText
+    }).tooLarge).toBe(false)
+    expect(pageText.length).toBeLessThan(MAX_MOBILE_FRAME_BYTES)
+  })
+})
+
+function remoteHeaders(bridge: LanMobileBridge): Record<string, string> {
+  return {
+    [REMOTE_CHANNEL_HEADER]: 'remote',
+    [REMOTE_CHANNEL_TOKEN_HEADER]: bridge.remoteChannelToken(),
+    [REMOTE_USER_HEADER]: 'user-1',
+    [REMOTE_TENANT_HEADER]: 'tenant-1',
+    'content-type': 'application/json'
+  }
+}
+
+async function readJson(request: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = []
+  for await (const chunk of request) chunks.push(Buffer.from(chunk))
+  return Buffer.concat(chunks).toString('utf8')
+}

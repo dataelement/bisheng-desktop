@@ -1,8 +1,13 @@
 /**
  * Fields the phone actually renders. The full PPT state and session page carry
- * preview images, tool results, and reasoning that a single gateway frame cannot
- * hold and that the phone parser ignores.
+ * preview images and tool results that a single gateway frame cannot hold.
+ * Reasoning stays, but a history page keeps it only for the latest turns so
+ * the unary RPC still fits the gateway frame. Live follow frames are chunked
+ * and keep every reasoning delta.
  */
+
+/** History turns whose reasoning text is copied through. Older turns keep the answer only. */
+const RECENT_REASONING_TURNS = 3
 
 const PPT_STATE_FIELDS = [
   'selectedTemplateId',
@@ -22,6 +27,61 @@ const USAGE_FIELDS = [
   'cacheWriteTokens',
   'reasoningTokens'
 ] as const
+
+const SESSION_ROW_FIELDS = ['updatedAt', 'running', 'blank'] as const
+
+// Harness 0.2.1 keeps the preset inside the projection, not on the row.
+const SESSION_VALUE_FIELDS = [
+  'title',
+  'sessionTitle',
+  'session.title',
+  'modelSelection',
+  'agentPreset'
+] as const
+
+/**
+ * One session-list row the phone menu can render. The rest of the projection
+ * (todos, goals, questions) is what pushes a full list past the gateway frame.
+ * A row without a session id is skipped so one bad item does not drop the page.
+ */
+export function projectSessionRow(value: unknown): Record<string, unknown> | undefined {
+  const row = record(value)
+  if (row === undefined) return undefined
+  const sessionId = row.sessionId
+  if (typeof sessionId !== 'string' || sessionId.length === 0) return undefined
+  const projected: Record<string, unknown> = { sessionId }
+  copyOwn(projected, row, [...SESSION_ROW_FIELDS])
+  const values = record(record(row.projections)?.values)
+  if (values === undefined) return projected
+  const kept: Record<string, unknown> = {}
+  copyOwn(kept, values, [...SESSION_VALUE_FIELDS])
+  if (Object.keys(kept).length > 0) projected.projections = { values: kept }
+  return projected
+}
+
+/** Remote session.list. The LAN page keeps the harness payload unchanged. */
+export function projectSessionList(value: unknown): unknown {
+  const body = record(value)
+  if (body === undefined || !Array.isArray(body.items)) return value
+  return {
+    items: body.items.flatMap((item) => {
+      const row = projectSessionRow(item)
+      return row === undefined ? [] : [row]
+    })
+  }
+}
+
+/**
+ * Office catalogue rows the phone sheet can render. Thumbnails, prompts, and
+ * page geometry stay on the desktop; a phone frame cannot carry them.
+ */
+export function projectMobileOfficeCatalog(value: unknown): unknown {
+  const body = record(value)
+  if (body === undefined) return value
+  const listed = templateList(body)
+  if (listed === undefined) return value
+  return { [listed.key]: listed.items }
+}
 
 export function projectMobilePpt(endpoint: string, value: unknown): unknown {
   if (endpoint !== 'state' && endpoint !== 'template/catalog') return value
@@ -48,8 +108,9 @@ export function projectTranscriptHistory(value: unknown): unknown {
     : Array.isArray(body.records)
       ? body.records
       : undefined
+  const events = raw === undefined ? [] : raw.flatMap(projectRecord)
   return {
-    events: raw === undefined ? [] : raw.flatMap(projectRecord),
+    events: keepRecentReasoning(events),
     hasMore: body.hasMore === true
   }
 }
@@ -62,7 +123,7 @@ export function projectTranscriptFrame(value: unknown): unknown | undefined {
     const records = Array.isArray(body.records) ? body.records : []
     return {
       type: 'snapshot',
-      records: records.flatMap(projectRecord),
+      records: [...records.flatMap(projectRecord), ...liveAttemptChunks(body.assistantStream)],
       hasMore: body.hasMore === true
     }
   }
@@ -71,6 +132,67 @@ export function projectTranscriptFrame(value: unknown): unknown | undefined {
   const event = projected[0]
   if (event === undefined) return undefined
   return { type: 'event', event }
+}
+
+/**
+ * One process-local assistant frame, rewritten as the durable chunk the phone
+ * already appends. `turn` is filled from the matching `start` frame because a
+ * later chunk does not repeat it. Tool deltas stay out.
+ */
+export function projectLiveAssistantFrame(
+  frame: unknown,
+  turn: { turn?: number; step?: number }
+): Record<string, unknown> | undefined {
+  const body = record(frame)
+  if (body === undefined) return undefined
+  if (body.type === 'start') {
+    if (typeof body.turn === 'number') turn.turn = body.turn
+    if (typeof body.step === 'number') turn.step = body.step
+    return undefined
+  }
+  if (body.type !== 'chunk') return undefined
+  const chunk = visibleDelta(body.chunk)
+  if (chunk === undefined || typeof turn.turn !== 'number' || typeof turn.step !== 'number') return undefined
+  return {
+    type: 'event',
+    event: {
+      type: 'assistant/chunk',
+      ...(typeof body.time === 'number' ? { time: body.time } : {}),
+      data: { turn: turn.turn, step: turn.step, chunk }
+    }
+  }
+}
+
+/** Text already generated when the phone joins, carried on the follow snapshot. */
+function liveAttemptChunks(value: unknown): Record<string, unknown>[] {
+  const attempt = record(record(value)?.activeAttempt)
+  if (attempt === undefined || typeof attempt.turn !== 'number' || typeof attempt.step !== 'number') return []
+  if (!Array.isArray(attempt.stream)) return []
+  const chunks: Record<string, unknown>[] = []
+  for (const item of attempt.stream) {
+    const row = record(item)
+    if (row === undefined) continue
+    const kind = row.type === 'text-chunks' ? 'text-delta' : row.type === 'reasoning-chunks' ? 'reasoning-delta' : undefined
+    if (kind === undefined || !Array.isArray(row.texts)) continue
+    const text = row.texts.filter((piece): piece is string => typeof piece === 'string').join('')
+    if (text.length === 0) continue
+    const chunk: Record<string, unknown> = { type: kind, text }
+    if (typeof row.index === 'number') chunk.index = row.index
+    chunks.push({
+      type: 'assistant/chunk',
+      data: { turn: attempt.turn, step: attempt.step, chunk }
+    })
+  }
+  return chunks
+}
+
+function visibleDelta(value: unknown): Record<string, unknown> | undefined {
+  const chunk = record(value)
+  if (chunk === undefined || (chunk.type !== 'text-delta' && chunk.type !== 'reasoning-delta')) return undefined
+  if (typeof chunk.text !== 'string' || chunk.text.length === 0) return undefined
+  const projected: Record<string, unknown> = { type: chunk.type, text: chunk.text }
+  if (typeof chunk.index === 'number') projected.index = chunk.index
+  return projected
 }
 
 function templateList(
@@ -146,10 +268,13 @@ function projectUserMessage(event: Record<string, unknown>): Record<string, unkn
 function projectAssistantChunk(event: Record<string, unknown>): Record<string, unknown> | undefined {
   const data = record(event.data)
   const chunk = record(data?.chunk)
-  if (chunk?.type !== 'text-delta') return undefined
+  if (chunk === undefined || (chunk.type !== 'text-delta' && chunk.type !== 'reasoning-delta')) {
+    return undefined
+  }
   const projected = copyFields(event, ['type', 'time'])
+  const fields = chunk.type === 'reasoning-delta' ? ['type', 'text', 'delta', 'index'] : ['type', 'text', 'delta']
   const next: Record<string, unknown> = {
-    chunk: copyFields(chunk, ['type', 'text', 'delta'])
+    chunk: copyFields(chunk, fields)
   }
   copyOwn(next, data, ['turn', 'step'])
   projected.data = next
@@ -164,9 +289,9 @@ function projectAssistantMessage(event: Record<string, unknown>): Record<string,
   copyOwn(next, data, ['turn', 'step'])
   const message = record(data.message)
   if (message !== undefined) {
-    next.message = textContent(message.content)
+    next.message = messageContent(message.content)
   } else if (Object.prototype.hasOwnProperty.call(data, 'content')) {
-    Object.assign(next, textContent(data.content))
+    Object.assign(next, messageContent(data.content))
   }
   const usage = projectUsage(data.usage)
   if (usage !== undefined) next.usage = usage
@@ -183,13 +308,90 @@ function humanUser(data: Record<string, unknown>): boolean {
 }
 
 function textContent(content: unknown): Record<string, unknown> {
+  return blocksOf(content, ['text'])
+}
+
+function messageContent(content: unknown): Record<string, unknown> {
+  return blocksOf(content, ['text', 'reasoning'])
+}
+
+function blocksOf(content: unknown, types: readonly string[]): Record<string, unknown> {
   if (!Array.isArray(content)) return {}
   const blocks = content.flatMap((item) => {
     const block = record(item)
-    if (block?.type !== 'text' || typeof block.text !== 'string') return []
-    return [{ type: 'text', text: block.text }]
+    if (block === undefined || !types.includes(String(block.type)) || typeof block.text !== 'string') return []
+    return [{ type: block.type, text: block.text }]
   })
   return blocks.length === 0 ? {} : { content: blocks }
+}
+
+/**
+ * A history page is one gateway frame. Reasoning on older turns is what pushes
+ * it over the cap, so only the latest turns keep it. The answer text stays.
+ */
+function keepRecentReasoning(events: unknown[]): unknown[] {
+  let turns = 0
+  for (const item of events) {
+    if (projectedType(item) === 'turn/start') turns += 1
+  }
+  if (turns <= RECENT_REASONING_TURNS) return events
+  const firstKept = turns - RECENT_REASONING_TURNS + 1
+  let turn = 0
+  const kept: unknown[] = []
+  for (const item of events) {
+    if (projectedType(item) === 'turn/start') turn += 1
+    if (turn >= firstKept) {
+      kept.push(item)
+      continue
+    }
+    const stripped = stripReasoning(item)
+    if (stripped !== undefined) kept.push(stripped)
+  }
+  return kept
+}
+
+function projectedType(item: unknown): string | undefined {
+  const event = projectedEvent(item)
+  return typeof event?.type === 'string' ? event.type : undefined
+}
+
+function projectedEvent(item: unknown): Record<string, unknown> | undefined {
+  const entry = record(item)
+  if (entry === undefined) return undefined
+  return record(entry.event) ?? entry
+}
+
+function stripReasoning(item: unknown): unknown | undefined {
+  const entry = record(item)
+  const event = projectedEvent(item)
+  if (entry === undefined || event === undefined) return item
+  if (event.type === 'assistant/chunk') {
+    const chunk = record(record(event.data)?.chunk)
+    return chunk?.type === 'reasoning-delta' ? undefined : item
+  }
+  if (event.type !== 'assistant/message') return item
+  const data = record(event.data)
+  if (data === undefined) return item
+  const nextData: Record<string, unknown> = { ...data }
+  const message = record(data.message)
+  if (message !== undefined) {
+    nextData.message = withoutReasoning(message)
+  } else if (Array.isArray(data.content)) {
+    const blocks = data.content.filter((block) => record(block)?.type !== 'reasoning')
+    if (blocks.length === 0) delete nextData.content
+    else nextData.content = blocks
+  }
+  const nextEvent: Record<string, unknown> = { ...event, data: nextData }
+  return record(entry.event) !== undefined ? { ...entry, event: nextEvent } : nextEvent
+}
+
+function withoutReasoning(message: Record<string, unknown>): Record<string, unknown> {
+  if (!Array.isArray(message.content)) return message
+  const blocks = message.content.filter((block) => record(block)?.type !== 'reasoning')
+  const next: Record<string, unknown> = { ...message }
+  if (blocks.length === 0) delete next.content
+  else next.content = blocks
+  return next
 }
 
 function projectUsage(value: unknown): Record<string, unknown> | undefined {

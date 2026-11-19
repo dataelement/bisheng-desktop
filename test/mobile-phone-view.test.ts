@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { boundedMobileResponse, chunkFramePieces, MAX_CHUNK_FRAME_BYTES, MAX_MOBILE_FRAME_BYTES } from '../src/main/mobile/mobile-access-client'
-import { projectTranscriptFrame, projectTranscriptHistory } from '../src/main/mobile/mobile-phone-view'
+import { projectLiveAssistantFrame, projectMobileOfficeCatalog, projectTranscriptFrame, projectTranscriptHistory } from '../src/main/mobile/mobile-phone-view'
 
 describe('phone transcript projection', () => {
   it('keeps the fields the phone parser uses and drops tool output', () => {
@@ -59,6 +59,10 @@ describe('phone transcript projection', () => {
         },
         {
           type: 'assistant/chunk',
+          data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', text: 'think' } }
+        },
+        {
+          type: 'assistant/chunk',
           data: { turn: 1, step: 1, chunk: { type: 'text-delta', text: '回' } }
         },
         {
@@ -67,7 +71,12 @@ describe('phone transcript projection', () => {
           data: {
             turn: 1,
             step: 1,
-            message: { content: [{ type: 'text', text: '回复' }] },
+            message: {
+              content: [
+                { type: 'reasoning', text: 'think' },
+                { type: 'text', text: '回复' }
+              ]
+            },
             usage: { inputTokens: 3, outputTokens: 1, totalTokens: 4, cacheReadTokens: 0 }
           }
         },
@@ -75,6 +84,110 @@ describe('phone transcript projection', () => {
       ],
       hasMore: false
     })
+  })
+
+  it('keeps reasoning on the latest turns and drops it from earlier ones', () => {
+    const turn = (index: number, thinking: string) => [
+      { type: 'turn/start', time: index },
+      {
+        type: 'assistant/chunk',
+        data: { turn: index, step: 1, chunk: { type: 'reasoning-delta', text: thinking, index: 0 } }
+      },
+      {
+        type: 'assistant/message',
+        time: index + 1,
+        data: {
+          turn: index,
+          step: 1,
+          message: {
+            content: [
+              { type: 'reasoning', text: thinking },
+              { type: 'text', text: `答案${index}` }
+            ]
+          }
+        }
+      },
+      { type: 'turn/end', time: index + 2, data: { reason: { kind: 'completed' } } }
+    ]
+    const events = [1, 2, 3, 4].flatMap((index) => turn(index, `思考${index}`))
+    const projected = projectTranscriptHistory({ events, hasMore: false }) as {
+      events: Array<{
+        data?: {
+          message?: { content?: Array<{ type: string; text: string }> }
+          chunk?: { type: string; text?: string }
+        }
+      }>
+    }
+    const thinking = projected.events.flatMap((event) => {
+      const chunk = event.data?.chunk
+      if (chunk?.type === 'reasoning-delta') return [`chunk:${chunk.text}`]
+      const blocks = event.data?.message?.content ?? []
+      return blocks.filter((block) => block.type === 'reasoning').map((block) => `message:${block.text}`)
+    })
+    expect(thinking).toEqual([
+      'chunk:思考2',
+      'message:思考2',
+      'chunk:思考3',
+      'message:思考3',
+      'chunk:思考4',
+      'message:思考4'
+    ])
+    const answers = projected.events.flatMap((event) => {
+      const blocks = event.data?.message?.content ?? []
+      return blocks.filter((block) => block.type === 'text').map((block) => block.text)
+    })
+    expect(answers).toEqual(['答案1', '答案2', '答案3', '答案4'])
+  })
+
+  it('replays the in-progress assistant stream on a snapshot and forwards later deltas', () => {
+    expect(projectTranscriptFrame({
+      type: 'snapshot',
+      records: [{ type: 'turn/start', time: 1 }],
+      hasMore: false,
+      assistantStream: {
+        activeAttempt: {
+          turn: 2,
+          step: 1,
+          stream: [
+            { type: 'reasoning-chunks', index: 0, texts: ['先', '想'] },
+            { type: 'text-chunks', index: 0, texts: ['正', '文'] },
+            { type: 'tool-call-chunks', index: 1, args: ['{}'] }
+          ]
+        }
+      }
+    })).toEqual({
+      type: 'snapshot',
+      hasMore: false,
+      records: [
+        { type: 'turn/start', time: 1 },
+        {
+          type: 'assistant/chunk',
+          data: { turn: 2, step: 1, chunk: { type: 'reasoning-delta', text: '先想', index: 0 } }
+        },
+        {
+          type: 'assistant/chunk',
+          data: { turn: 2, step: 1, chunk: { type: 'text-delta', text: '正文', index: 0 } }
+        }
+      ]
+    })
+    const turn: { turn?: number; step?: number } = {}
+    expect(projectLiveAssistantFrame({ type: 'start', turn: 2, step: 1 }, turn)).toBeUndefined()
+    expect(projectLiveAssistantFrame({
+      type: 'chunk',
+      time: 5,
+      chunk: { type: 'reasoning-delta', index: 0, text: '下一步' }
+    }, turn)).toEqual({
+      type: 'event',
+      event: {
+        type: 'assistant/chunk',
+        time: 5,
+        data: { turn: 2, step: 1, chunk: { type: 'reasoning-delta', text: '下一步', index: 0 } }
+      }
+    })
+    expect(projectLiveAssistantFrame({
+      type: 'chunk',
+      chunk: { type: 'tool-call-delta', index: 1, argumentsDelta: '{}' }
+    }, turn)).toBeUndefined()
   })
 
   it('drops a snapshot header and a follow event the phone does not render', () => {
@@ -127,5 +240,24 @@ describe('mobile response frame cap', () => {
       expect(last < 0xd800 || last > 0xdbff).toBe(true)
     }
     expect(pieces.map((piece) => piece.data).join('')).toBe(text)
+  })
+})
+
+describe('phone office catalogue projection', () => {
+  it('keeps the fields the template sheet renders', () => {
+    expect(projectMobileOfficeCatalog({
+      mode: null,
+      templates: [{
+        id: 'minutes',
+        title: '会议纪要',
+        revision: '9',
+        mode: 'word',
+        description: '不应下发',
+        thumbnail: 'data:image/webp;base64,AAAA',
+        pageAspectRatios: [1.4]
+      }]
+    })).toEqual({
+      templates: [{ id: 'minutes', title: '会议纪要', revision: '9', mode: 'word' }]
+    })
   })
 })

@@ -116,6 +116,7 @@ export class EnterpriseChatView {
   private offWorkspaceRecovery = false
   private unsubscribe: () => void
   private state: EnterpriseChatViewState = { phase: 'idle' }
+  private connectionError?: unknown
   private presentation?: EnterpriseChatPresentation
   private settingsSection?: EnterpriseSettingsSection
   private settingsReturnRoute?: string
@@ -321,7 +322,7 @@ export class EnterpriseChatView {
   /** Fixed self-service reads reuse the identity-owned cookie session, never renderer URLs. */
   async usage(): Promise<EnterpriseUsage> {
     const epoch = this.generation
-    if (this.state.phase !== 'ready') await this.connect()
+    if (this.state.phase !== 'ready') await this.connect(true)
     if (epoch !== this.generation || !this.isolated || !this.origin || !this.enterprise.snapshot().connected) throw new Error('Usage identity changed.')
     const isolated = this.isolated, origin = this.origin
     const assertCurrent = () => {
@@ -704,15 +705,21 @@ export class EnterpriseChatView {
     })
   }
 
-  private connect(): Promise<void> {
+  private connect(explicitRetry = false): Promise<void> {
+    // Sidebar/history reads retain the failure. User and scheduled retries may
+    // leave it; logout and account changes discard the old connection entirely.
     if (this.backoffScheduled) return this.pending ?? Promise.resolve()
     if (this.pending) return this.pending
+    if (this.state.phase === 'error' && !explicitRetry) {
+      return Promise.reject(this.connectionError ?? new Error('Enterprise Chat connection failed.'))
+    }
     const state = this.enterprise.snapshot()
     if (!state.connected || !state.connectionKey || !this.owner || this.owner.isDestroyed()) return Promise.resolve()
     const generation = this.generation
     const key = state.connectionKey
     this.key = key
-    if (!this.view) this.state = { phase: 'loading' }
+    this.connectionError = undefined
+    if (!this.view || this.state.phase === 'error') this.state = { phase: 'loading' }
     this.layout()
     this.notify()
     const operation = this.exchange(key, generation)
@@ -989,12 +996,13 @@ export class EnterpriseChatView {
       if (generation !== this.generation || this.key !== key) return
       const state = this.enterprise.snapshot()
       if (!state.connected || state.connectionKey !== key) return
-      void this.connect()
+      void this.connect(true)
     }, delayMs)
   }
 
   private failExchange(key: string, error: unknown, stage: ExchangeStage): void {
     this.clear()
+    this.connectionError = error
     this.key = key
     this.state = { phase: 'error' }
     this.note(`[enterprise-chat] session_failed stage=${stage} ${exchangeErrorLabel(error)}`)
@@ -1096,6 +1104,7 @@ export class EnterpriseChatView {
   }
 
   private clear(): void {
+    this.connectionError = undefined
     if (this.projectFocusBound) { app.removeListener('browser-window-focus', this.refreshProjectsOnFocus); this.projectFocusBound = false }
     this.projects?.dispose()
     this.projects = undefined

@@ -99,7 +99,11 @@ export function registerOfficeRoutes(ctx, library, modes) {
           if (payload.revision !== library.entry(payload.templateId).revision) throw new Error('The example was updated; reload the catalogue')
           return ok(await library.preview(payload.templateId, payload.page))
         }
-        if (endpoint === 'catalog' || (endpoint === 'state' && !sessionId)) return ok({ templates: await library.list(), mode: null })
+        if (endpoint === 'catalog' || (endpoint === 'state' && !sessionId)) {
+          // The phone bridge asks for summary so the catalogue skips thumbnail files.
+          const templates = await library.list(endpoint === 'catalog' && payload.summary === true ? { thumbnails: false } : {})
+          return ok({ templates, mode: null })
+        }
         if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.length > 512) throw new Error('Choose an active session')
         if (!modes) throw new Error('The document composer service is unavailable')
         let templates
