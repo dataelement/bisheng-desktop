@@ -2,6 +2,8 @@ import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EnterpriseChatView } from '../src/main/enterprise/chat-view'
 import { chatLandingTextMotionScript } from '../src/main/enterprise/chat-landing-text-motion'
+import { chatLayoutCss } from '../src/main/enterprise/chat-layout'
+import { MODULE_THEME_CSS } from '../src/main/enterprise/chat-module-theme'
 import { EnterprisePlatformError } from '../src/main/enterprise/enterprise-request'
 import { parseChatPresentation } from '../src/shared/enterprise-chat-view'
 import { parseWebSession } from '../src/main/enterprise/web-session'
@@ -156,7 +158,7 @@ describe('enterprise Chat host boundary', () => {
       f.host.present(f.owner, presentation)
       await flush()
       expect(f.host.snapshot().phase).toBe('ready')
-      expect(fake.views[0].webContents.insertCSS).toHaveBeenCalledWith(expect.stringContaining('.dsh-chat-header .dsh-chat-section-row { display: none !important; }'))
+      expect(fake.views[0].webContents.insertCSS).toHaveBeenCalledExactlyOnceWith(`${MODULE_THEME_CSS}\n${chatLayoutCss(process.platform)}`)
       expect(fake.views[0].options.webPreferences).toMatchObject({ sandbox: true, nodeIntegration: false, contextIsolation: true, webSecurity: true })
       expect(fake.views[0].options.webPreferences.preload).toMatch(/enterprise-chat\.cjs$/u)
       expect(fake.sessions[0].cookies.set).toHaveBeenCalledWith(expect.objectContaining({ httpOnly: true, sameSite: 'lax', secure: true, name: 'bs_credits_3007' }))
@@ -382,7 +384,7 @@ it('pushes landing state from the current remote main frame and rejects stale or
   try {
     f.host.present(f.owner, presentation)
     await flush()
-    const wc = fake.views[0].webContents
+    const view = fake.views[0], wc = view.webContents
     await wc.loadURL('https://enterprise.example/workspace/c/new')
     const report = (frame: unknown, input: unknown) => wc.emit('ipc-message', { senderFrame: frame }, 'enterprise-chat:landing', input)
     report(wc.mainFrame, { landing: false, path: '/workspace/c/new' })
@@ -395,20 +397,20 @@ it('pushes landing state from the current remote main frame and rejects stale or
     expect(wc.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
     report(wc.mainFrame, { landing: true, path: '/workspace/c/new' })
     expect(f.host.snapshot().landing).toBe(true)
-    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(1001, [{ code: expect.stringContaining('"active":true') }])
     f.host.present(f.owner, { ...presentation, visible: false })
-    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(1001, [{ code: expect.stringContaining('"active":false') }])
+    expect(view.getVisible()).toBe(false)
     f.host.present(f.owner, presentation)
-    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(1001, [{ code: expect.stringContaining('"active":true') }])
+    expect(view.getVisible()).toBe(true)
     report(wc.mainFrame, { landing: false, path: '/workspace/c/new' })
-    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(1001, [{ code: expect.stringContaining('"active":false') }])
+    expect(f.host.snapshot().landing).toBe(false)
     f.change({ connected: false, connectionKey: 'tenant-a' })
     report(wc.mainFrame, { landing: false, path: '/workspace/c/new' })
     expect(f.host.snapshot().landing).toBeUndefined()
+    expect(wc.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
   } finally { f.host.dispose() }
 })
 
-it('keeps verified welcome cases when New Chat navigates to the same blank page without another landing report', async () => {
+it('preserves the verified landing state when New Chat reopens the same page without another report', async () => {
   const f = fixture()
   try {
     f.host.present(f.owner, presentation)
@@ -421,8 +423,7 @@ it('keeps verified welcome cases when New Chat navigates to the same blank page 
     expect(wc.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('resetDraft: true'))
     wc.emit('did-navigate-in-page', {}, wc.getURL(), true)
     expect(f.host.snapshot().landing).toBe(true)
-    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(1)
-    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(1001, [{ code: expect.stringContaining('"active":true') }])
+    expect(wc.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
   } finally { f.host.dispose() }
 })
 
@@ -441,16 +442,13 @@ it.each(['before', 'after'])('keeps a current-path landing report delivered %s t
     wc.emit('did-navigate-in-page', {}, wc.getURL(), true)
     if (order === 'after') report(true)
     expect(f.host.snapshot().landing).toBe(true)
-    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(1)
     report(false)
     wc.emit('did-navigate-in-page', {}, wc.getURL(), true)
     expect(f.host.snapshot().landing).toBe(false)
-    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(1001, [{ code: expect.stringContaining('"active":false') }])
     report(true)
     wc.setURL('https://enterprise.example/workspace/c/old')
     wc.emit('did-navigate-in-page', {}, wc.getURL(), true)
     expect(f.host.snapshot().landing).toBeUndefined()
-    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenLastCalledWith(1001, [{ code: expect.stringContaining('"active":false') }])
     report(true)
     expect(f.host.snapshot().landing).toBeUndefined()
     wc.setURL('https://enterprise.example/workspace/c/new')
@@ -460,6 +458,7 @@ it.each(['before', 'after'])('keeps a current-path landing report delivered %s t
     expect(f.host.snapshot().landing).toBe(true)
     wc.emit('did-start-navigation', {}, wc.getURL(), false, true)
     expect(f.host.snapshot().landing).toBeUndefined()
+    expect(wc.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
   } finally { f.host.dispose() }
 })
 
@@ -890,7 +889,6 @@ it('measures only a confirmed blank Chat, updating a hidden seat without showing
     const seat = { x: 200, y: 64, width: 620, height: 500 }
     f.host.present(f.owner, { ...presentation, visible: false, bounds: seat })
     view.setVisible.mockClear()
-    wc.executeJavaScriptInIsolatedWorld.mockClear()
     wc.executeJavaScriptInIsolatedWorld.mockResolvedValueOnce({
       title: { x: 200, y: 50, width: 220, height: 32 },
       composer: { x: 10, y: 140, width: 600, height: 140 },
@@ -962,7 +960,7 @@ it('skips the landing wait for ordinary, hidden, unconfirmed, or navigated prese
     await f.host.presentWithLandingHandoff(f.owner, { ...presentation, visible: false, landingHandoff: true })
     wc.setURL('https://enterprise.example/workspace/c/another')
     await f.host.presentWithLandingHandoff(f.owner, { ...presentation, landingHandoff: true })
-    expect(wc.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalledWith(1001, [{ code: expect.stringContaining(LANDING_HANDOFF_FRAME_REQUEST) }])
+    expect(wc.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
   } finally { f.host.dispose() }
 })
 
@@ -1000,7 +998,6 @@ it('prepares Chat text only in the owned landing view, without changing native v
     await f.host.landingTextMotion(f.owner, 'out')
     expect(wc.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
     wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:landing', { landing: true, path: '/workspace/c/new' })
-    wc.executeJavaScriptInIsolatedWorld.mockClear()
     view.setVisible.mockClear()
     await f.host.landingTextMotion({ ...f.owner }, 'out')
     await f.host.landingTextMotion(f.owner, 'in')
