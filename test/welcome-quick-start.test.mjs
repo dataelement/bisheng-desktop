@@ -185,6 +185,37 @@ it.each([true, false])('shows PPT templates when the case catalogue fails and le
   if (bound) expect(f.input().read().draft).toBe('')
 })
 
+it.each([false, true])('overlaps Work batches with the Chat stagger unless motion is reduced (%s)', async reduced => {
+  const original = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')
+  const fade = { cancel: vi.fn(), onfinish: null }
+  const animate = vi.fn(() => fade)
+  Object.defineProperty(Element.prototype, 'animate', { configurable: true, value: animate })
+  vi.stubGlobal('matchMedia', () => ({ matches: reduced }))
+  try {
+    const f = await fixture()
+    const grid = () => container.querySelector('.dso-quick-grid:not([data-leaving])')
+    const first = grid()
+    expect([...first.children].map(row => row.style.getPropertyValue('--dso-row-delay'))).toEqual(['0ms', '100ms', '200ms', '300ms'])
+    await f.click('切换一批')
+    if (!reduced) {
+      expect(first.getAttribute('aria-hidden')).toBe('true')
+      expect(grid().style.getPropertyValue('--dso-entry-delay')).toBe('40ms')
+      expect(animate).toHaveBeenCalledWith([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: 'ease-in-out', fill: 'forwards' })
+      await f.click('切换一批')
+      expect(container.querySelectorAll('.dso-quick-grid')).toHaveLength(2)
+      await act(async () => fade.onfinish())
+      await act(async () => fade.onfinish())
+    } else expect(animate).not.toHaveBeenCalled()
+    expect(first.isConnected).toBe(false)
+    expect(grid().hasAttribute('inert')).toBe(false)
+    expect(f.ids()).toEqual(catalogue.batches.work[reduced ? 1 : 2])
+  } finally {
+    if (original) Object.defineProperty(Element.prototype, 'animate', original)
+    else delete Element.prototype.animate
+    vi.unstubAllGlobals()
+  }
+})
+
 it('rotates diverse four-case batches in Work, covers all cases, and never changes the draft', async () => {
   const f = await fixture({ initial: 'Keep my working notes' }), batches = []
   for (let i = 0; i < catalogue.batches.work.length; i++) {
@@ -254,6 +285,54 @@ it('selects Creator mode for a staged Creator case before filling the English dr
   await release()
   expect(f.input().read().draft).toBe(workCase(creatorCaseId).promptEn)
   expect(f.input().submit).not.toHaveBeenCalled()
+})
+
+it('switches back to Standard on the first ordinary case after a Creator case', async () => {
+  const f = await fixture()
+  await f.choose('event-minutes')
+  await f.choose(creatorCaseId)
+  const release = f.hold('preset-select')
+  await f.choose('subscription-analysis')
+  expect(f.input().read().draft).toBe(workCase(creatorCaseId).prompt)
+  await release()
+  expect(f.input().read().draft).toBe(workCase('subscription-analysis').prompt)
+  await f.choose('event-minutes')
+  expect(f.calls.filter(c => c.operation === 'preset-select').map(c => c.payload.agentPreset)).toEqual(['cordis', 'standard'])
+  expect(f.input().submit).not.toHaveBeenCalled()
+})
+
+it('undoes the selected Creator case only after Standard is confirmed', async () => {
+  const f = await fixture()
+  await f.choose(creatorCaseId)
+  const release = f.hold('preset-select')
+  await f.choose(creatorCaseId)
+  expect(f.input().read().draft).toBe(workCase(creatorCaseId).prompt)
+  await release()
+  expect(f.input().read().draft).toBe('')
+  expect(container.querySelector('[data-welcome-case][aria-pressed=true]')).toBeNull()
+  await f.choose('event-minutes')
+  expect(f.calls.filter(c => c.operation === 'preset-select').map(c => c.payload.agentPreset)).toEqual(['cordis', 'standard'])
+  expect(f.input().submit).not.toHaveBeenCalled()
+})
+
+it('keeps the Creator case selected if undo cannot return to Standard', async () => {
+  const f = await fixture()
+  await f.choose(creatorCaseId)
+  f.fail('preset-select', 'locked')
+  await f.choose(creatorCaseId)
+  expect(f.input().read().draft).toBe(workCase(creatorCaseId).prompt)
+  expect(container.querySelector('[data-welcome-case][aria-pressed=true]')?.dataset.welcomeCase).toBe(creatorCaseId)
+  expect(container.querySelector('[role=alert]').textContent).toContain('无法切回标准模式')
+})
+
+it('keeps the Creator draft when the switch back to Standard is refused', async () => {
+  const f = await fixture()
+  await f.choose(creatorCaseId)
+  f.fail('preset-select', 'locked')
+  await f.choose('event-minutes')
+  expect(f.input().read().draft).toBe(workCase(creatorCaseId).prompt)
+  expect(container.querySelector('[role=alert]').textContent).toContain('无法切回标准模式')
+  expect(f.calls.filter(c => c.operation === 'case-mode')).toHaveLength(1)
 })
 
 it('keeps the draft and office mode when Harness refuses Creator mode', async () => {
