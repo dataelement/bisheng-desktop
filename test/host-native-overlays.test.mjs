@@ -72,6 +72,220 @@ function cloudObserver() {
   return { setCloudHostOccluded, dispose }
 }
 
+function cloudBackingObserver(capture = vi.fn(async () => ({ dataURL: 'data:image/png;base64,cloud', bounds }))) {
+  const seat = document.querySelector('section')
+  seat.setAttribute('data-dsh-cloud-surface', 'app-a')
+  seat.getBoundingClientRect = () => bounds
+  const send = vi.fn(async () => {})
+  window.dshDesktopEnterprise = { captureCloudWorkbench: capture, setCloudHostOccluded: send }
+  const dispose = observeCloudHostOcclusion()
+  disposers.push(dispose)
+  return { seat, send, capture, dispose }
+}
+
+it('resynchronizes on cloud surface readiness and removes its dedicated listener on unload', async () => {
+  const remove = vi.spyOn(window, 'removeEventListener')
+  const { seat, send, capture, dispose } = cloudBackingObserver()
+  await flush()
+  overlay('menu', { x: 1100, y: 100, width: 100, height: 100 }); await flush()
+  expect(capture).not.toHaveBeenCalled()
+  seat.getBoundingClientRect = () => ({ x: 1000, y: 48, width: 300, height: 700 })
+  window.dispatchEvent(new Event('dsh-cloud-surface-ready')); await flush()
+  expect(capture).toHaveBeenCalledTimes(1)
+  expect(send).toHaveBeenLastCalledWith(true)
+  dispose()
+  expect(remove).toHaveBeenCalledWith('dsh-cloud-surface-ready', expect.any(Function))
+  const captures = capture.mock.calls.length, calls = send.mock.calls.length
+  window.dispatchEvent(new Event('dsh-cloud-surface-ready')); await flush()
+  expect(capture).toHaveBeenCalledTimes(captures)
+  expect(send).toHaveBeenCalledTimes(calls)
+})
+
+it('keeps a cloud seat visible under a nonoverlapping sidebar menu', async () => {
+  const { send, capture } = cloudBackingObserver()
+  await flush()
+  overlay('menu', { x: 20, y: 100, width: 100, height: 100 }); await flush()
+  expect(send).toHaveBeenCalledExactlyOnceWith(false)
+  expect(capture).not.toHaveBeenCalled()
+})
+
+it('keeps cloud and Chat menu gates independent across release and disposal', async () => {
+  const menu = overlay('menu', bounds)
+  const chat = observe()
+  const cloud = observeHostOverlays(vi.fn(), { gateName: 'cloud', gateModals: true })
+  disposers.push(cloud.dispose)
+  const releaseChat = chat.defer(bounds)
+  const releaseCloud = cloud.defer(bounds)
+  expect(menu.hasAttribute('data-dsh-native-overlay-pending')).toBe(true)
+  expect(menu.hasAttribute('data-dsh-native-overlay-pending-cloud')).toBe(true)
+  releaseCloud()
+  expect(menu.hasAttribute('data-dsh-native-overlay-pending')).toBe(true)
+  expect(document.documentElement.hasAttribute('data-dsh-native-overlay-handoff')).toBe(true)
+  expect(menu.hasAttribute('data-dsh-native-overlay-pending-cloud')).toBe(false)
+  cloud.defer(bounds)
+  releaseChat()
+  expect(menu.hasAttribute('data-dsh-native-overlay-pending-cloud')).toBe(true)
+  expect(document.documentElement.hasAttribute('data-dsh-native-overlay-handoff-cloud')).toBe(true)
+  chat.dispose()
+  expect(menu.hasAttribute('data-dsh-native-overlay-pending-cloud')).toBe(true)
+  cloud.dispose()
+  expect(menu.hasAttribute('data-dsh-native-overlay-pending-cloud')).toBe(false)
+  expect(document.documentElement.hasAttribute('data-dsh-native-overlay-handoff-cloud')).toBe(false)
+})
+
+it('gates the Settings mask and dialog until capture, decode, two paints and native yield finish', async () => {
+  const captured = deferred(), decoding = deferred(), hidden = deferred(), paints = []
+  vi.stubGlobal('requestAnimationFrame', vi.fn(callback => { paints.push(callback); return paints.length }))
+  HTMLImageElement.prototype.decode.mockReturnValueOnce(decoding.promise)
+  const { seat, send } = cloudBackingObserver(vi.fn(() => captured.promise))
+  await flush()
+  send.mockImplementationOnce(() => hidden.promise)
+  const layer = document.createElement('div')
+  layer.setAttribute('role', 'presentation')
+  layer.innerHTML = '<div aria-hidden="true"></div><div role="dialog" aria-modal="true" data-shortcut-modal="settings"></div>'
+  document.body.append(layer); await flush()
+  const gated = () => layer.hasAttribute('data-dsh-native-overlay-pending-cloud')
+  expect(gated()).toBe(true)
+  expect(getComputedStyle(layer).opacity).toBe('0')
+  expect(send).toHaveBeenCalledExactlyOnceWith(false)
+  captured.resolve({ dataURL: 'data:image/png;base64,cloud', bounds }); await flush()
+  expect(gated()).toBe(true)
+  expect(seat.querySelector('img')).toBeNull()
+  decoding.resolve(); await flush()
+  expect(seat.querySelector('img')).not.toBeNull()
+  expect(gated()).toBe(true)
+  paints.shift()(0); await flush()
+  expect(gated()).toBe(true)
+  expect(send).toHaveBeenCalledExactlyOnceWith(false)
+  paints.shift()(0); await flush()
+  expect(send).toHaveBeenLastCalledWith(true)
+  expect(gated()).toBe(true)
+  hidden.resolve(); await flush()
+  expect(gated()).toBe(false)
+})
+
+it('keeps an owning settings layer ungated and gates only a nested confirmation', async () => {
+  const layer = document.createElement('div')
+  layer.setAttribute('role', 'presentation')
+  layer.innerHTML = '<div aria-hidden="true"></div><div role="dialog" aria-modal="true"><section></section></div>'
+  document.body.append(layer)
+  const surface = layer.querySelector('section')
+  const nested = overlay('alertdialog', bounds, layer.querySelector('[role="dialog"]'))
+  nested.setAttribute('aria-modal', 'true')
+  const cloud = observeHostOverlays(vi.fn(), { gateName: 'cloud', gateModals: true })
+  disposers.push(cloud.dispose)
+  cloud.defer(bounds, surface)
+  expect(layer.hasAttribute('data-dsh-native-overlay-pending-cloud')).toBe(false)
+  expect(layer.querySelector('[role="dialog"]').hasAttribute('data-dsh-native-overlay-pending-cloud')).toBe(false)
+  expect(nested.hasAttribute('data-dsh-native-overlay-pending-cloud')).toBe(true)
+})
+
+it('paints a cloud backing before Settings yields and restores the native page before removing it', async () => {
+  const decoding = deferred(), restored = deferred()
+  HTMLImageElement.prototype.decode.mockReturnValueOnce(decoding.promise)
+  const { seat, send, capture } = cloudBackingObserver()
+  await flush()
+  const settings = overlay('dialog', bounds)
+  settings.setAttribute('aria-modal', 'true'); await flush()
+  expect(capture).toHaveBeenCalledTimes(1)
+  expect(send).toHaveBeenCalledExactlyOnceWith(false)
+  expect(seat.querySelector('img')).toBeNull()
+  decoding.resolve(); await flush()
+  expect(seat.querySelector('[data-dsh-native-frame]')).not.toBeNull()
+  expect(send).toHaveBeenLastCalledWith(true)
+  send.mockImplementationOnce(() => restored.promise)
+  settings.remove(); await flush()
+  expect(send).toHaveBeenLastCalledWith(false)
+  expect(seat.querySelector('img')).not.toBeNull()
+  restored.resolve(); await flush()
+  expect(seat.querySelector('img')).toBeNull()
+})
+
+it.each(['unmount', 'replace', 'identity'])('discards late cloud capture after seat %s', async change => {
+  const captured = deferred()
+  const { seat, capture } = cloudBackingObserver(vi.fn().mockReturnValueOnce(captured.promise).mockResolvedValue(undefined))
+  await flush()
+  const settings = overlay('dialog', bounds)
+  settings.setAttribute('aria-modal', 'true'); await flush()
+  expect(capture).toHaveBeenCalledTimes(1)
+  if (change === 'unmount') seat.remove()
+  else if (change === 'replace') {
+    const replacement = document.createElement('section')
+    replacement.setAttribute('data-dsh-cloud-surface', 'app-b')
+    replacement.getBoundingClientRect = () => bounds
+    seat.replaceWith(replacement)
+  } else seat.setAttribute('data-dsh-cloud-surface', 'app-b')
+  await flush()
+  captured.resolve({ dataURL: 'data:image/png;base64,stale', bounds }); await flush()
+  expect(seat.querySelector('img')).toBeNull()
+  expect(document.querySelector('img')).toBeNull()
+})
+
+it('discards a decoded cloud backing when the same DOM seat changes workbench identity', async () => {
+  const decoding = deferred()
+  HTMLImageElement.prototype.decode.mockReturnValueOnce(decoding.promise)
+  const { seat } = cloudBackingObserver(vi.fn().mockResolvedValueOnce({ dataURL: 'data:image/png;base64,old', bounds }).mockResolvedValue(undefined))
+  await flush()
+  const settings = overlay('dialog', bounds)
+  settings.setAttribute('aria-modal', 'true'); await flush()
+  seat.setAttribute('data-dsh-cloud-surface', 'app-b'); await flush()
+  decoding.resolve(); await flush()
+  expect(document.querySelector('img')).toBeNull()
+})
+
+it('updates held cloud backing geometry on seat resize and disconnects replaced seats', async () => {
+  const observers = []
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(callback) { this.callback = callback; this.nodes = new Set(); this.disconnect = vi.fn(() => this.nodes.clear()); observers.push(this) }
+    observe(node) { this.nodes.add(node) }
+    unobserve(node) { this.nodes.delete(node) }
+  })
+  const { seat, capture, dispose } = cloudBackingObserver()
+  const resize = observers.find(observer => observer.nodes.has(seat))
+  await flush()
+  const settings = overlay('dialog', bounds)
+  settings.setAttribute('aria-modal', 'true'); await flush()
+  expect(seat.querySelector('img')).not.toBeNull()
+  const resized = { x: 320, y: 48, width: 680, height: 700 }
+  seat.getBoundingClientRect = () => resized
+  resize.callback(); await flush()
+  expect(seat.querySelector('img').style.width).toBe('680px')
+  expect(seat.querySelector('img').style.left).toBe('0px')
+  expect(capture).toHaveBeenCalledTimes(1)
+  const replacement = document.createElement('section')
+  replacement.setAttribute('data-dsh-cloud-surface', 'app-b')
+  replacement.getBoundingClientRect = () => bounds
+  seat.replaceWith(replacement); await flush()
+  expect(resize.nodes.has(seat)).toBe(false)
+  expect(resize.nodes.has(replacement)).toBe(true)
+  dispose()
+  expect(resize.nodes.size).toBe(0)
+  const captures = capture.mock.calls.length
+  resize.callback(); await flush()
+  expect(capture).toHaveBeenCalledTimes(captures)
+})
+
+it('releases a cloud backing after a failed restore succeeds on retry and captures anew next time', async () => {
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  const { seat, send, capture } = cloudBackingObserver()
+  await flush()
+  const settings = overlay('dialog', bounds)
+  settings.setAttribute('aria-modal', 'true'); await flush()
+  expect(seat.querySelector('img')).not.toBeNull()
+  vi.useFakeTimers()
+  disposers.push(() => vi.useRealTimers())
+  send.mockRejectedValueOnce(new Error('temporary restore failure'))
+  settings.remove(); await flush()
+  expect(send).toHaveBeenLastCalledWith(false)
+  expect(seat.querySelector('img')).not.toBeNull()
+  await vi.advanceTimersByTimeAsync(100); await flush()
+  expect(send).toHaveBeenLastCalledWith(false)
+  expect(seat.querySelector('img')).toBeNull()
+  document.body.append(settings); await flush()
+  expect(capture).toHaveBeenCalledTimes(2)
+  expect(seat.querySelector('img')).not.toBeNull()
+})
+
 it('registers cloud occlusion as a plugin effect without mounting DesktopContent', () => {
   const sentinel = new Error('stop after first effect')
   const effect = vi.fn(() => { throw sentinel })
@@ -284,6 +498,29 @@ it.each(['tooltip', 'listbox', 'dialog'])('coordinates overlapping %s surfaces w
   expect(observer.intersects(bounds)).toBe(false)
 })
 
+it.each([false, true])('claims an entering Modal before its opacity animation paints (passive=%s)', async passive => {
+  Element.prototype.checkVisibility = function (options) {
+    return !this.closest('[hidden]') && this.style.visibility !== 'hidden' && !(options?.opacityProperty && this.style.opacity === '0')
+  }
+  const modal = overlay('dialog', bounds)
+  modal.setAttribute('aria-modal', 'true')
+  modal.style.opacity = '0'
+  modal.getAnimations = () => [{ playState: 'running', effect: { getKeyframes: () => [{ opacity: '0' }, { opacity: '1' }] } }]
+  const observer = observeHostOverlays(vi.fn(), { passive })
+  disposers.push(observer.dispose)
+  // No animation progress, animationend, resize or subsequent mutation is needed.
+  expect(observer.isModal()).toBe(true)
+  modal.hidden = true; await flush()
+  expect(observer.isModal()).toBe(false)
+  modal.hidden = false; modal.style.visibility = 'hidden'; await flush()
+  expect(observer.isModal()).toBe(false)
+  modal.style.visibility = ''; modal.getAnimations = () => []; await flush()
+  expect(observer.isModal()).toBe(false)
+  modal.getAnimations = () => [{ playState: 'running', effect: { getKeyframes: () => [{ opacity: '1' }, { opacity: '0' }] } }]
+  window.dispatchEvent(new Event('resize'))
+  expect(observer.isModal()).toBe(false)
+})
+
 it('tracks modal state changes and ignores persistent inline dialog content and streaming mutations', async () => {
   const inline = overlay('dialog', bounds, document.getElementById('root'))
   const report = vi.fn(), observer = observe(report)
@@ -300,6 +537,25 @@ it('tracks modal state changes and ignores persistent inline dialog content and 
   expect(report).not.toHaveBeenCalled()
 })
 
+it('recognizes the installed SettingsPanel portal while preserving its own embedded settings surface', async () => {
+  // SettingsPanel owns a body portal; unlike primitives.Modal its panel has no entry animation.
+  const portal = document.createElement('div')
+  portal.setAttribute('role', 'presentation')
+  portal.style.position = 'fixed'
+  portal.innerHTML = '<div aria-hidden="true"></div><div role="dialog" aria-modal="true" data-shortcut-modal="settings" data-dsh-settings-section="general" style="position:relative;display:flex"><section data-dsh-native-surface="general"></section></div>'
+  const observer = observe()
+  const { setCloudHostOccluded: send } = cloudObserver()
+  expect(send).toHaveBeenLastCalledWith(false)
+  document.body.append(portal); await flush()
+  const surface = portal.querySelector('section')
+  expect(observer.isModal()).toBe(true)
+  expect(observer.isModal(surface)).toBe(false)
+  expect(send).toHaveBeenLastCalledWith(true)
+  portal.remove(); await flush()
+  expect(observer.isModal()).toBe(false)
+  expect(send).toHaveBeenLastCalledWith(false)
+})
+
 it('keeps an embedded settings surface inside its owning modal and yields to a nested confirmation', async () => {
   const settings = overlay('dialog', bounds)
   settings.setAttribute('aria-modal', 'true')
@@ -313,6 +569,20 @@ it('keeps an embedded settings surface inside its owning modal and yields to a n
   expect(observer.isModal(surface)).toBe(true)
   confirm.remove(); await flush()
   expect(observer.isModal(surface)).toBe(false)
+})
+
+it('places a frame at current seat bounds when layout changes during decode', async () => {
+  const decode = deferred()
+  HTMLImageElement.prototype.decode.mockReturnValueOnce(decode.promise)
+  const { instance, bridge, target } = presenter()
+  instance.present(value, true); await flush()
+  const resized = { ...bounds, width: 540, height: 600 }
+  instance.present({ ...value, bounds: resized }, true)
+  decode.resolve(); await flush()
+  const backing = target.querySelector('img')
+  expect(backing.style.width).toBe('540px')
+  expect(backing.style.height).toBe('600px')
+  expect(bridge.present).toHaveBeenLastCalledWith({ ...value, bounds: resized, visible: false })
 })
 
 it('decodes the backing before hiding the native surface and restores it after the final overlay', async () => {

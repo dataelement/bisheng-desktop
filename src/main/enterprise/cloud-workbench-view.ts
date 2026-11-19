@@ -152,6 +152,27 @@ export class CloudWorkbenchView {
     await item.partition.clearStorageData()
   }
 
+  async capture(parent: BrowserWindow): Promise<{ dataURL: string; bounds: CloudBounds } | undefined> {
+    const item = this.active, generation = this.generation
+    if (parent !== this.parent || parent.isDestroyed() || !item || !this.attached || item.view.webContents.isDestroyed()) return
+    const bounds = item.view.getBounds()
+    const url = item.view.webContents.getURL()
+    let timeout: NodeJS.Timeout | undefined
+    try {
+      const image = await Promise.race([item.view.webContents.capturePage(), new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error('Cloud backing capture timed out.')), 1500)
+      })])
+      // A mode/account change or resize must never paint an old page into a new seat.
+      if (generation !== this.generation || item !== this.active || !this.attached || parent.isDestroyed() ||
+        item.view.webContents.isDestroyed() || url !== item.view.webContents.getURL() ||
+        JSON.stringify(bounds) !== JSON.stringify(item.view.getBounds()) || image.isEmpty()) return
+      return { dataURL: image.toDataURL(), bounds }
+    } catch (error) {
+      console.warn('[cloud-workbench] overlay capture failed', error)
+      return undefined
+    } finally { clearTimeout(timeout) }
+  }
+
   setHostOccluded(occluded: boolean): void {
     if (this.hostOccluded === occluded) return
     this.hostOccluded = occluded

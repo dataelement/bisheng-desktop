@@ -4202,6 +4202,22 @@ describe('workbench market screenshot and metadata display', () => {
     expect(typeof service.removeWorkbench).toBe('function')
   })
 
+  it('closes the uninstall confirmation before a slow removal finishes', async () => {
+    const { service } = await fixture({ ...emptyState(), added: ['o/helper'], pinned: ['o/helper'] })
+    service.remoteCatalog = [listed()]
+    service.installs = { 'o/helper': { catalogId: 'o/helper', pluginName: 'helper', version: '1.0.0' } }
+    service.publish()
+    let finish
+    service.removeWorkbench = vi.fn(() => new Promise(resolve => { finish = resolve }))
+    const ui = interactiveMarket(service, 'mine')
+    ui.find(ui.render(), node => node.props?.className === 'dshWbUninstall')[0].props.onClick()
+    const modal = ui.modal(ui.render())
+    modal.props.onConfirm()
+    expect(ui.modal(ui.render())).toBeUndefined()
+    finish()
+    await vi.waitFor(() => expect(service.removeWorkbench).toHaveBeenCalledWith('o/helper'))
+  })
+
   it('offers local native uninstall but disables unknown failed Installed cards', async () => {
     const { service, ctx } = await fixture({ ...emptyState(), added: ['owner/local', 'o/helper'] })
     service.remoteCatalog = [listed()]

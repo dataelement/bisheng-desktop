@@ -1714,7 +1714,7 @@ async function uninstallMarketAndRestart(): Promise<{ ok: boolean }> {
 function registerHarnessHandlers(): void {
   const disposeNotifications = registerDesktopNotificationBridge(() => mainWindow, desktopIconPath, harnessLocale)
   app.once('will-quit', disposeNotifications)
-  for (const channel of ['enterprise-cloud:request', 'enterprise-cloud:open', 'enterprise-cloud:bounds', 'enterprise-cloud:close', 'enterprise-cloud:release', 'enterprise-cloud:host-occluded']) ipcMain.removeHandler(channel)
+  for (const channel of ['enterprise-cloud:request', 'enterprise-cloud:open', 'enterprise-cloud:bounds', 'enterprise-cloud:close', 'enterprise-cloud:release', 'enterprise-cloud:host-occluded', 'enterprise-cloud:capture']) ipcMain.removeHandler(channel)
   const checkCloudHost = (event: IpcMainInvokeEvent) => {
     assertTrustedMainWindowEvent(event)
     if (!sameHarnessOrigin(event.sender.getURL(), runtime.snapshot().url)) throw new Error('Trusted workbench host required.')
@@ -1761,6 +1761,11 @@ function registerHarnessHandlers(): void {
     if (!sameHarnessOrigin(event.sender.getURL(), runtime.snapshot().url)) throw new Error('Trusted workbench host required.')
     if (typeof occluded !== 'boolean') throw new Error('Invalid cloud host visibility.')
     cloudWorkbenchView.setHostOccluded(occluded)
+  })
+  ipcMain.handle('enterprise-cloud:capture', event => {
+    assertTrustedMainWindowEvent(event)
+    if (!sameHarnessOrigin(event.sender.getURL(), runtime.snapshot().url) || !mainWindow) throw new Error('Trusted workbench host required.')
+    return cloudWorkbenchView.capture(mainWindow)
   })
   ipcMain.handle('enterprise-cloud:bounds', (event, bounds: unknown, owner: unknown) => { checkCloudHost(event); cloudWorkbenchView.resizeFor(owner, bounds) })
   ipcMain.handle('enterprise-cloud:close', (event, owner: unknown) => {
