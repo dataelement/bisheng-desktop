@@ -1227,26 +1227,30 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
           } }, t('more'))))
     }
     /** Track semantic overlays, including inline menus and nested menus, without rescanning streamed content. */
-    function observeHostOverlays(report, { passive = false } = {}) {
+    function observeHostOverlays(report, { passive = false, gateName = '', gateModals = false } = {}) {
       // HoverCard exposes its content, not the portal element. Measure the entire card,
       // including its padding, when a cloud history preview crosses into the native view.
       const selector = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [role="tooltip"], dialog, [popover], [data-dsh-host-overlay], :has(> [data-dsh-chat-history-preview])'
       const elements = new Set()
       const identities = new WeakMap()
       const pending = new Set()
-      let style = document.querySelector('style[data-plugin-css="dsh-native-overlay-handoff"]')
+      const suffix = gateName ? `-${gateName}` : ''
+      const pendingAttribute = `data-dsh-native-overlay-pending${suffix}`
+      const handoffAttribute = `data-dsh-native-overlay-handoff${suffix}`
+      const styleId = `dsh-native-overlay-handoff${suffix}`
+      let style = document.querySelector(`style[data-plugin-css="${styleId}"]`)
       if (!passive && !style) {
         style = document.createElement('style')
-        style.dataset.pluginCss = 'dsh-native-overlay-handoff'
-        style.textContent = '[data-dsh-native-overlay-pending]{opacity:0!important;pointer-events:none!important}html[data-dsh-native-overlay-handoff] [data-menu-backing]{opacity:0!important}'
+        style.dataset.pluginCss = styleId
+        style.textContent = `[${pendingAttribute}]{opacity:0!important;pointer-events:none!important}html[${handoffAttribute}] [data-menu-backing]{opacity:0!important}`
         document.head.append(style)
       }
       if (!passive) style.dataset.observers = String(Number(style.dataset.observers || 0) + 1)
       const release = () => {
         if (!pending.size) return
-        for (const element of pending) element.removeAttribute('data-dsh-native-overlay-pending')
+        for (const element of pending) element.removeAttribute(pendingAttribute)
         pending.clear()
-        document.documentElement.removeAttribute('data-dsh-native-overlay-handoff')
+        document.documentElement.removeAttribute(handoffAttribute)
       }
       const intersects = (rect, bounds, surface) => (!surface || !rect.element.contains(surface)) && rect.x < bounds.x + bounds.width && rect.x + rect.width > bounds.x && rect.y < bounds.y + bounds.height && rect.y + rect.height > bounds.y
       let nextId = 0, modals = [], rectangles = [], previous = '', initialized = false, disposed = false
@@ -1267,7 +1271,21 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
             resize.unobserve(element); elements.delete(element); continue
           }
           // Our paint gate must not look like a dismissed menu to this observer.
-          if (!element.checkVisibility({ checkVisibilityCSS: true, opacityProperty: !(passive ? element.hasAttribute('data-dsh-native-overlay-pending') : pending.has(element)) })) continue
+          // Another native sibling may own a separate gate, including the Modal's mask wrapper.
+          let gated = false
+          for (let ancestor = element; ancestor && !gated; ancestor = ancestor.parentElement) {
+            gated = ancestor.getAttributeNames().some(name => name === 'data-dsh-native-overlay-pending' || name.startsWith('data-dsh-native-overlay-pending-'))
+          }
+          if (!element.checkVisibility({ checkVisibilityCSS: true, opacityProperty: !gated })) {
+            // Modal's CSS entry animation starts at opacity 0 before the first paint.
+            // Animation progress is not a DOM mutation or a resize; claim its boundary
+            // now, while retaining the visibility checks for hidden and static opacity-0 content.
+            const entering = element.checkVisibility({ checkVisibilityCSS: true }) && element.getAnimations?.().some(animation => {
+              const frames = animation.effect?.getKeyframes()
+              return animation.playState === 'running' && Number(frames?.at(-1)?.opacity) > 0
+            })
+            if (!entering) continue
+          }
           const nativeModal = element instanceof HTMLDialogElement && element.matches(':modal')
           if (element.getAttribute('aria-modal') === 'true' || nativeModal) { modals.push(element); continue }
           if (element.matches('dialog:not([open])') || element.hasAttribute('popover') && !element.matches(':popover-open')) continue
@@ -1314,11 +1332,15 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
           if (passive) return () => {}
           // MutationObserver runs before paint. Keep both the surface and its native
           // menu material out of that first paint until Main confirms the view yielded.
-          for (const rect of rectangles) if (intersects(rect, bounds, surface)) {
-            pending.add(rect.element)
-            rect.element.setAttribute('data-dsh-native-overlay-pending', '')
+          const gate = element => { pending.add(element); element.setAttribute(pendingAttribute, '') }
+          for (const rect of rectangles) if (intersects(rect, bounds, surface)) gate(rect.element)
+          if (gateModals) for (const modal of modals) if (!surface || !modal.contains(surface)) {
+            // SettingsPanel and Modal keep the mask beside the dialog in a presentation layer.
+            // Hold the whole portal so its mask cannot dim the host before the native view yields.
+            const layer = modal.parentElement
+            gate(layer?.matches('[role="presentation"]') && (!surface || !layer.contains(surface)) ? layer : modal)
           }
-          if (pending.size) document.documentElement.setAttribute('data-dsh-native-overlay-handoff', '')
+          if (pending.size) document.documentElement.setAttribute(handoffAttribute, '')
           return release
         },
         dispose() {
@@ -1340,13 +1362,15 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
       const bridge = window.dshDesktopEnterprise
       // Older Desktop hosts do not expose this optional presentation bridge.
       if (typeof bridge?.setCloudHostOccluded !== 'function') return () => {}
-      let stop, disposed = false, desired, confirmed, inFlight = false, revision = 0, retryTimer, retries = 0
+      let stop, resync, disposed = false, desired, confirmed, inFlight = false, pendingSend, revision = 0, retryTimer, retries = 0
       const send = value => {
         if (desired !== value) {
           desired = value; confirmed = undefined; inFlight = false; retries = 0; revision++
           clearTimeout(retryTimer); retryTimer = undefined
         }
-        if (confirmed === value || inFlight || retryTimer !== undefined) return
+        if (confirmed === value) return Promise.resolve(true)
+        if (inFlight) return pendingSend
+        if (retryTimer !== undefined) return Promise.resolve(false)
         const request = ++revision
         inFlight = true
         const failed = error => {
@@ -1356,33 +1380,72 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
           // A transient IPC failure must not leave an unchanged open overlay uncovered.
           // Bound retries; subsequent observations may also retry after this budget is spent.
           if (!disposed && retries < 2) {
-            retryTimer = setTimeout(() => { retryTimer = undefined; send(desired) }, [100, 500][retries++])
+            retryTimer = setTimeout(() => {
+              retryTimer = undefined
+              // A successful restore retry must release the presenter's retained backing too.
+              void send(desired).then(applied => { if (applied && !disposed) resync?.() })
+            }, [100, 500][retries++])
           }
         }
         // Invoke immediately to preserve IPC ordering, including the final fail-closed state.
         try {
-          Promise.resolve(bridge.setCloudHostOccluded(value)).then(() => {
-            if (revision !== request) return
+          pendingSend = Promise.resolve(bridge.setCloudHostOccluded(value)).then(() => {
+            if (revision !== request) return false
             confirmed = value; inFlight = false
-          }, failed)
-        } catch (error) { failed(error) }
+            return true
+          }, error => { failed(error); return false })
+          return pendingSend
+        } catch (error) { failed(error); return Promise.resolve(false) }
       }
       const start = () => {
         if (disposed || stop) return
+        let surface, surfaceId, presenter
         const sync = () => {
+          if (disposed) return
+          const next = document.querySelector('[data-dsh-cloud-surface]')
+          const nextId = next?.getAttribute('data-dsh-cloud-surface')
+          if (next !== surface || nextId !== surfaceId) {
+            seatResize.disconnect()
+            presenter?.dispose(); presenter = undefined; surface = next; surfaceId = nextId
+            if (surface) seatResize.observe(surface)
+            if (surface && typeof bridge.captureCloudWorkbench === 'function') {
+              const target = surface
+              presenter = createNativeSurfacePresenter({
+                capture: () => bridge.captureCloudWorkbench(),
+                present: async value => { if (!await send(!value.visible)) throw new Error('Cloud handoff failed.') }
+              }, () => target)
+            }
+          }
           const html = document.documentElement
-          send(Boolean(document.getElementById('root')?.inert ||
+          const rect = surface?.getBoundingClientRect()
+          const bounds = rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+            : { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight }
+          const occluded = Boolean(document.getElementById('root')?.inert ||
             html.hasAttribute('data-dsh-about-open') || html.hasAttribute('data-dsh-safe-mode-page') ||
-            overlays.isModal() || overlays.intersects({ x: 0, y: 0, width: window.innerWidth, height: window.innerHeight })))
+            overlays.isModal(surface) || overlays.intersects(bounds, surface))
+          // Preserve the cloud page under host menus/settings before yielding the native sibling.
+          if (presenter) presenter.present({ visible: true, bounds }, occluded, () => overlays.defer(bounds, surface))
+          else send(occluded)
         }
-        // Read-only: never own or release Chat's pending opacity handoff gate.
-        const overlays = observeHostOverlays(sync, { passive: true })
+        resync = sync
+        // Sidebar/layout changes can resize the cloud seat without resizing the window.
+        const seatResize = new ResizeObserver(sync)
+        // Cloud and Chat have separate handoff gates; neither may release the other's paint.
+        const overlays = observeHostOverlays(sync, { gateName: 'cloud', gateModals: true })
         const interaction = new MutationObserver(sync)
         interaction.observe(document.documentElement, { subtree: true, attributes: true,
           attributeFilter: ['inert', 'data-dsh-about-open', 'data-dsh-safe-mode-page'] })
-        // The viewport can change even when every overlay rectangle stays identical.
+        // Track seat ownership independently of overlay changes; a workbench can unmount
+        // while settings stay open. Ignore ordinary streamed text/content mutations.
+        const seats = new MutationObserver(records => {
+          if (surface && (!surface.isConnected || !surface.hasAttribute('data-dsh-cloud-surface')) || records.some(record =>
+            record.type === 'attributes' || [...record.addedNodes].some(node => node instanceof Element &&
+              (node.matches('[data-dsh-cloud-surface]') || node.querySelector('[data-dsh-cloud-surface]'))))) sync()
+        })
+        seats.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-dsh-cloud-surface'] })
         window.addEventListener('resize', sync)
-        stop = () => { interaction.disconnect(); overlays.dispose(); window.removeEventListener('resize', sync) }
+        window.addEventListener('dsh-cloud-surface-ready', sync)
+        stop = () => { resync = undefined; seatResize.disconnect(); seats.disconnect(); presenter?.dispose(); interaction.disconnect(); overlays.dispose(); window.removeEventListener('resize', sync); window.removeEventListener('dsh-cloud-surface-ready', sync) }
         sync()
       }
       if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true })
@@ -1524,7 +1587,8 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
               const backing = prepared?.backing ?? backingFor(frame)
               if (!prepared) await decode(backing)
               if (disposed || captureCycle !== cycle || !latest.value.visible || !latest.occluded) return
-              image = backing; place(frame.bounds)
+              // The seat may resize while decode() waits; scale the retained frame to its current bounds.
+              image = backing; place(latest.value.bounds)
               if (!prepared) await paint()
             }
           } catch {

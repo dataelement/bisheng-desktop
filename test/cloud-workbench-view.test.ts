@@ -2,10 +2,11 @@ import type { BrowserWindow } from 'electron'
 import { EventEmitter } from 'node:events'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 function mockContents() { return Object.assign(new EventEmitter(), { setWindowOpenHandler: vi.fn(), loadURL: vi.fn(async () => { if (loadFailure) throw new Error('Load failed') }),
-  isDestroyed: vi.fn(() => false), close: vi.fn() }) }
+  isDestroyed: vi.fn(() => false), close: vi.fn(), getURL: vi.fn(() => 'https://enterprise.test/apps/a/'),
+  capturePage: vi.fn(async () => ({ isEmpty: () => false, toDataURL: () => 'data:image/png;base64,fixture' })) }) }
 function mockPartition() { return { setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn(), clearStorageData: vi.fn(async () => {}),
   fetch: vi.fn(async () => new Response(null, { status: 204 })) } }
-const views: Array<{ webContents: ReturnType<typeof mockContents>; setBounds: ReturnType<typeof vi.fn> }> = []
+const views: Array<{ webContents: ReturnType<typeof mockContents>; setBounds: ReturnType<typeof vi.fn>; getBounds: ReturnType<typeof vi.fn> }> = []
 const partitions: Array<ReturnType<typeof mockPartition>> = []
 let loadFailure = false
 function view(index: number) { const value = views[index]; if (!value) throw new Error('Missing view'); return value }
@@ -13,6 +14,7 @@ function partition(index: number) { const value = partitions[index]; if (!value)
 vi.mock('electron', () => ({
   WebContentsView: class {
     webContents = mockContents()
+    getBounds = vi.fn(() => ({ ...bounds }))
     setBounds = vi.fn()
     constructor() { views.push(this) }
   },
@@ -322,4 +324,43 @@ it('waits for isolated session cleanup before uninstall completes', async () => 
   finish?.()
   await pending
   expect(complete).toBe(true)
+})
+
+it('captures only the attached active page for its owning host', async () => {
+  const host = parent()
+  expect(await controller.capture(host)).toBeUndefined()
+  await controller.open(host, launch('a'), bounds, 'first', () => 'one')
+  expect(await controller.capture(parent())).toBeUndefined()
+  expect(await controller.capture(host)).toEqual({ dataURL: 'data:image/png;base64,fixture', bounds })
+  controller.setHostOccluded(true)
+  expect(await controller.capture(host)).toBeUndefined()
+  expect(view(0).webContents.capturePage).toHaveBeenCalledOnce()
+})
+
+it.each(['close', 'switch', 'resize', 'navigation'])('discards a capture after %s', async change => {
+  const host = parent()
+  await controller.open(host, launch('a'), bounds, 'first', () => 'one')
+  let finish: (() => void) | undefined
+  view(0).webContents.capturePage.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve({ isEmpty: () => false, toDataURL: () => 'data:image/png;base64,fixture' }) }))
+  const capture = controller.capture(host)
+  if (change === 'close') controller.closeFor('first')
+  if (change === 'switch') await controller.open(host, launch('b'), bounds, 'second', () => 'one')
+  if (change === 'resize') view(0).getBounds.mockReturnValue({ ...bounds, width: 600 })
+  if (change === 'navigation') view(0).webContents.getURL.mockReturnValue('https://enterprise.test/apps/a/next')
+  if (!finish) throw new Error('Missing capture completion')
+  finish()
+  expect(await capture).toBeUndefined()
+})
+
+it('bounds capture failure so host overlays remain usable', async () => {
+  vi.useFakeTimers()
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  const host = parent()
+  await controller.open(host, launch('a'), bounds, 'first', () => 'one')
+  view(0).webContents.capturePage.mockImplementationOnce(() => new Promise(() => {}))
+  const capture = controller.capture(host)
+  await vi.advanceTimersByTimeAsync(1500)
+  expect(await capture).toBeUndefined()
+  expect(warn).toHaveBeenCalledOnce()
+  warn.mockRestore()
 })
