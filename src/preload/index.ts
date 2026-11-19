@@ -668,6 +668,8 @@ contextBridge.exposeInMainWorld(
       ipcRenderer.on('enterprise-cloud:access-required', handler)
       return () => ipcRenderer.removeListener('enterprise-cloud:access-required', handler)
     },
+    // Host-only presentation signal; hosted application renderers never receive this bridge.
+    setCloudHostOccluded: (occluded: boolean): Promise<void> => ipcRenderer.invoke('enterprise-cloud:host-occluded', occluded),
     cloudRequest: (input: unknown): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:request', input),
     openCloudWorkbench: (appId: string, bounds: unknown, connectionKey: string, owner: string): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:open', appId, bounds, connectionKey, owner),
     resizeCloudWorkbench: (bounds: unknown, owner: string): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:bounds', bounds, owner),
