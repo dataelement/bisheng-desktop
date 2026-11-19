@@ -8,8 +8,8 @@ it('keeps the rendered theme across minimize and restore, including an explicit 
     setVibrancy: vi.fn(), setBackgroundColor: vi.fn() }
   for (const dark of [true, false, true]) {
     applyMacosWindowBackdrop(window, dark)
-    expect(window.setVibrancy).toHaveBeenLastCalledWith(dark ? 'sidebar' : null)
-    expect(window.setBackgroundColor).toHaveBeenLastCalledWith(dark ? '#00000000' : '#f9fafb')
+    expect(window.setVibrancy).toHaveBeenLastCalledWith('sidebar')
+    expect(window.setBackgroundColor).toHaveBeenLastCalledWith('#00000000')
     for (const state of ['minimized', 'hidden']) {
       minimized = state === 'minimized'
       visible = state !== 'hidden'
@@ -20,7 +20,7 @@ it('keeps the rendered theme across minimize and restore, including an explicit 
     visible = true
     minimized = false
     applyMacosWindowBackdrop(window)
-    expect(window.setVibrancy).toHaveBeenLastCalledWith(dark ? 'sidebar' : null)
-    expect(window.setBackgroundColor).toHaveBeenLastCalledWith(dark ? '#00000000' : '#f9fafb')
+    expect(window.setVibrancy).toHaveBeenLastCalledWith('sidebar')
+    expect(window.setBackgroundColor).toHaveBeenLastCalledWith('#00000000')
   }
 })
