@@ -1227,7 +1227,7 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
           } }, t('more'))))
     }
     /** Track semantic overlays, including inline menus and nested menus, without rescanning streamed content. */
-    function observeHostOverlays(report) {
+    function observeHostOverlays(report, { passive = false } = {}) {
       // HoverCard exposes its content, not the portal element. Measure the entire card,
       // including its padding, when a cloud history preview crosses into the native view.
       const selector = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [role="tooltip"], dialog, [popover], [data-dsh-host-overlay], :has(> [data-dsh-chat-history-preview])'
@@ -1235,13 +1235,13 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
       const identities = new WeakMap()
       const pending = new Set()
       let style = document.querySelector('style[data-plugin-css="dsh-native-overlay-handoff"]')
-      if (!style) {
+      if (!passive && !style) {
         style = document.createElement('style')
         style.dataset.pluginCss = 'dsh-native-overlay-handoff'
         style.textContent = '[data-dsh-native-overlay-pending]{opacity:0!important;pointer-events:none!important}html[data-dsh-native-overlay-handoff] [data-menu-backing]{opacity:0!important}'
         document.head.append(style)
       }
-      style.dataset.observers = String(Number(style.dataset.observers || 0) + 1)
+      if (!passive) style.dataset.observers = String(Number(style.dataset.observers || 0) + 1)
       const release = () => {
         if (!pending.size) return
         for (const element of pending) element.removeAttribute('data-dsh-native-overlay-pending')
@@ -1267,7 +1267,7 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
             resize.unobserve(element); elements.delete(element); continue
           }
           // Our paint gate must not look like a dismissed menu to this observer.
-          if (!element.checkVisibility({ checkVisibilityCSS: true, opacityProperty: !pending.has(element) })) continue
+          if (!element.checkVisibility({ checkVisibilityCSS: true, opacityProperty: !(passive ? element.hasAttribute('data-dsh-native-overlay-pending') : pending.has(element)) })) continue
           const nativeModal = element instanceof HTMLDialogElement && element.matches(':modal')
           if (element.getAttribute('aria-modal') === 'true' || nativeModal) { modals.push(element); continue }
           if (element.matches('dialog:not([open])') || element.hasAttribute('popover') && !element.matches(':popover-open')) continue
@@ -1311,6 +1311,7 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
         isModal: surface => modals.some(element => !surface || !element.contains(surface)),
         intersects: (bounds, surface) => rectangles.some(rect => intersects(rect, bounds, surface)),
         defer: (bounds, surface) => {
+          if (passive) return () => {}
           // MutationObserver runs before paint. Keep both the surface and its native
           // menu material out of that first paint until Main confirms the view yielded.
           for (const rect of rectangles) if (intersects(rect, bounds, surface)) {
@@ -1323,12 +1324,77 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
         dispose() {
           if (disposed) return
           disposed = true; body.disconnect(); resize.disconnect(); elements.clear(); release()
-          const users = Number(style.dataset.observers) - 1
-          if (users) style.dataset.observers = String(users)
-          else style.remove()
+          if (!passive) {
+            const users = Number(style.dataset.observers) - 1
+            if (users) style.dataset.observers = String(users)
+            else style.remove()
+          }
           document.removeEventListener('visibilitychange', resume)
           window.removeEventListener('scroll', refresh, true); window.removeEventListener('resize', refresh)
         }
+      }
+    }
+
+    /** Cloud workbenches outlive DesktopContent; own this boundary at plugin scope. */
+    function observeCloudHostOcclusion() {
+      const bridge = window.dshDesktopEnterprise
+      // Older Desktop hosts do not expose this optional presentation bridge.
+      if (typeof bridge?.setCloudHostOccluded !== 'function') return () => {}
+      let stop, disposed = false, desired, confirmed, inFlight = false, revision = 0, retryTimer, retries = 0
+      const send = value => {
+        if (desired !== value) {
+          desired = value; confirmed = undefined; inFlight = false; retries = 0; revision++
+          clearTimeout(retryTimer); retryTimer = undefined
+        }
+        if (confirmed === value || inFlight || retryTimer !== undefined) return
+        const request = ++revision
+        inFlight = true
+        const failed = error => {
+          console.warn('[desktop] cloud host occlusion sync failed', { occluded: value, error })
+          if (revision !== request) return
+          inFlight = false
+          // A transient IPC failure must not leave an unchanged open overlay uncovered.
+          // Bound retries; subsequent observations may also retry after this budget is spent.
+          if (!disposed && retries < 2) {
+            retryTimer = setTimeout(() => { retryTimer = undefined; send(desired) }, [100, 500][retries++])
+          }
+        }
+        // Invoke immediately to preserve IPC ordering, including the final fail-closed state.
+        try {
+          Promise.resolve(bridge.setCloudHostOccluded(value)).then(() => {
+            if (revision !== request) return
+            confirmed = value; inFlight = false
+          }, failed)
+        } catch (error) { failed(error) }
+      }
+      const start = () => {
+        if (disposed || stop) return
+        const sync = () => {
+          const html = document.documentElement
+          send(Boolean(document.getElementById('root')?.inert ||
+            html.hasAttribute('data-dsh-about-open') || html.hasAttribute('data-dsh-safe-mode-page') ||
+            overlays.isModal() || overlays.intersects({ x: 0, y: 0, width: window.innerWidth, height: window.innerHeight })))
+        }
+        // Read-only: never own or release Chat's pending opacity handoff gate.
+        const overlays = observeHostOverlays(sync, { passive: true })
+        const interaction = new MutationObserver(sync)
+        interaction.observe(document.documentElement, { subtree: true, attributes: true,
+          attributeFilter: ['inert', 'data-dsh-about-open', 'data-dsh-safe-mode-page'] })
+        // The viewport can change even when every overlay rectangle stays identical.
+        window.addEventListener('resize', sync)
+        stop = () => { interaction.disconnect(); overlays.dispose(); window.removeEventListener('resize', sync) }
+        sync()
+      }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true })
+      else start()
+      return () => {
+        if (disposed) return
+        disposed = true
+        document.removeEventListener('DOMContentLoaded', start)
+        stop?.()
+        clearTimeout(retryTimer); retryTimer = undefined
+        // Without an observer, no one can prove that the host foreground is clear.
+        send(true)
       }
     }
 
@@ -2573,6 +2639,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
 
     const inject = ['slots', 'locale', 'remote', 'remote.session', 'sessions', 'uiWorkspace', 'layout']
     function apply(ctx) {
+      ctx.effect(observeCloudHostOcclusion, 'desktop cloud host occlusion')
       ctx.effect(() => ctx.locale.register(DELETE_SESSION_NS, {
         zh: {
           menu: '永久删除会话', title: '删除会话', close: '关闭', cancel: '取消', confirm: '删除会话',
