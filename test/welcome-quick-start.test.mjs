@@ -102,12 +102,12 @@ async function fixture({ mode = null, presentationMode = null, selectedTemplateI
   disposers.push(core.register({ name: 'root', children: Object.fromEntries(nativeSeats.map(name => [name, { kind: 'list', scope: 'root' }])) }, () => null))
   const ctx = {
     get: () => connection, effect(run) { disposers.push(run()) }, on() {},
-    remote: { agentPresets: { async select(sessionId, agentPreset) {
+    desktopCasePreset: { async select(sessionId, agentPreset) {
       calls.push({ operation: 'preset-select', payload: { sessionId, agentPreset } })
       if (held.has('preset-select')) await held.get('preset-select')
       if (failures.has('preset-select')) return { ok: false, error: { message: failures.get('preset-select') } }
       return { ok: true, value: agentPreset }
-    } } },
+    } },
     sessions: { scope: id => id }, conversation: { input: { for: getEditor } },
     locale: { register(ns, values) { dictionaries.set(ns, values); return () => {} }, bind(ns) { return key => dictionaries.get(ns)?.[english ? 'en' : 'zh'][key] ?? key } },
     slots: { inject(_seat, run) { run() }, register(meta, component) { const dispose = core.register(meta, component); disposers.push(dispose); seats.push({ meta, component }); return dispose }, registerFactory(meta, component) { const dispose = core.registerFactory(meta, component); factoryDisposers.set(meta.name, dispose); disposers.push(dispose); return dispose } }
