@@ -2149,9 +2149,10 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
     }
     const TOOL_REFERENCE_SOURCE = 'desktop-tool'
     const validToolLabel = label => typeof label === 'string' && label.trim().length > 0 && !/[\u0000-\u001f\u007f]/u.test(label)
+    const validToolName = name => typeof name === 'string' && name.startsWith('mcp__bisheng__') && name.length > 'mcp__bisheng__'.length
     const decodeToolReference = ref => {
       const tool = JSON.parse(ref)
-      if (!tool || !/^mcp__bisheng__bisheng_tool_[1-9][0-9]*$/.test(tool.name) || !validToolLabel(tool.label) || typeof tool.connectionKey !== 'string' || !tool.connectionKey) throw new Error('Invalid tool reference.')
+      if (!tool || !validToolName(tool.name) || !validToolLabel(tool.label) || typeof tool.connectionKey !== 'string' || !tool.connectionKey) throw new Error('Invalid tool reference.')
       return tool
     }
     const toolReferenceSource = {
@@ -2170,7 +2171,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
     const workToolMessageRule = {
       id: TOOL_REFERENCE_SOURCE, order: 20,
       match(text, from) {
-        const pattern = /\[Selected tool: (mcp__bisheng__bisheng_tool_[1-9][0-9]*)(?:; label: ("(?:[^"\\\r\n]|\\.)*"))?\]/gu
+        const pattern = /\[Selected tool: (mcp__bisheng__[^;\]\r\n]+)(?:; label: ("(?:[^"\\\r\n]|\\.)*"))?\]/gu
         pattern.lastIndex = from
         for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
           let label
