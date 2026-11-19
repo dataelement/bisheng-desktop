@@ -1191,24 +1191,26 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
     function SharedCollection({ projects, items, mode, query, archivedOnly, searchPending = false, navigation, t, projectText, deleteText }) {
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
       const projectState = React.useSyncExternalStore(navigation.projects.subscribe, navigation.projects.snapshot)
-      const initialHistoryLoading = state.historyPhase === 'loading' && state.page === 0
-      const resultsPending = initialHistoryLoading || (mode === 'search' && searchPending) || projectState.search.phase === 'loading'
+      // Cloud Chat has no workbench ownership; keep its rows and controls in the native scope.
+      const showCloud = state.nativeWork !== false && !archivedOnly
+      const initialHistoryLoading = showCloud && state.historyPhase === 'loading' && state.page === 0
+      const resultsPending = initialHistoryLoading || (mode === 'search' && searchPending) || (showCloud && projectState.search.phase === 'loading')
       const search = query.trim().toLocaleLowerCase()
       const now = Date.now()
       React.useEffect(() => {
-        const timer = setTimeout(() => { void navigation.projects.search(archivedOnly || !state.connected ? '' : search) }, search ? 200 : 0)
+        const timer = setTimeout(() => { void navigation.projects.search(!showCloud || !state.connected ? '' : search) }, search ? 200 : 0)
         return () => clearTimeout(timer)
-      }, [navigation, search, archivedOnly, state.connected, state.epoch])
-      const showProjects = mode === 'projects' && !archivedOnly && !search
+      }, [navigation, search, showCloud, state.connected, state.epoch])
+      const showProjects = showCloud && mode === 'projects' && !search
       const local = items.map(item => ({ ...item, key: `work:${item.id}`, kind: 'work' }))
       const cloudItems = [...new Map([...state.items, ...(search && projectState.search.query === search ? projectState.search.items : [])].map(item => [item.id, item])).values()]
-      const cloud = archivedOnly ? [] : cloudItems.filter(item => (!showProjects || !Object.hasOwn(projectState.assignments, item.id)) && (item.title || t('newChat')).toLocaleLowerCase().includes(search))
+      const cloud = !showCloud ? [] : cloudItems.filter(item => (!showProjects || !Object.hasOwn(projectState.assignments, item.id)) && (item.title || t('newChat')).toLocaleLowerCase().includes(search))
         .map(conversation => ({ key: `chat:${state.epoch}:${conversation.id}`, kind: 'chat', updatedAt: Date.parse(conversation.updatedAt) || 0, conversation }))
       const rows = [...local, ...cloud].sort((a, b) => Number(!!b.blank) - Number(!!a.blank) || Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt || a.key.localeCompare(b.key))
       return React.createElement('div', { className: 'dshSharedCollection', 'data-mode': state.mode },
         projects(state.mode === 'work'),
         showProjects && React.createElement(ChatProjects, { navigation, t, projectText, deleteText, now }),
-        projectState.editor && React.createElement(ChatProjectDialog, { key: `${projectState.scope}:${projectState.editor.mode}:${projectState.editor.id || ''}`, store: navigation.projects, state: projectState, t: projectText }),
+        showCloud && projectState.editor && React.createElement(ChatProjectDialog, { key: `${projectState.scope}:${projectState.editor.mode}:${projectState.editor.id || ''}`, store: navigation.projects, state: projectState, t: projectText }),
         React.createElement('section', { className: 'dshRecentHistory', 'aria-label': t(mode === 'projects' ? 'recent' : mode === 'search' ? 'results' : 'all') },
           React.createElement('div', { className: 'dshHistoryHeading' },
             React.createElement('span', null, t(mode === 'projects' ? 'recent' : mode === 'search' ? 'results' : 'all'))),
@@ -1216,12 +1218,12 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
             rows.map(row => row.kind === 'work'
               ? React.createElement('div', { key: row.key, 'data-history-kind': 'work' }, row.render(state.mode === 'work'))
               : React.createElement(CloudHistoryRow, { key: row.key, item: row.conversation, now, selected: state.mode === 'chat' && !state.pageId && state.conversationId === row.conversation.id, navigation, t, projectText, deleteText }))),
-          state.historyPhase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => navigation.refreshHistory() }, t('historyError')),
-          !showProjects && projectState.error === 'failed' && !projectState.editor && React.createElement('div', { role: 'alert', className: 'dshHistoryNotice' }, projectText('failed')),
+          showCloud && state.historyPhase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => navigation.refreshHistory() }, t('historyError')),
+          showCloud && !showProjects && projectState.error === 'failed' && !projectState.editor && React.createElement('div', { role: 'alert', className: 'dshHistoryNotice' }, projectText('failed')),
           initialHistoryLoading && React.createElement('div', { className: 'dshHistoryNotice', role: 'status' }, t('historyLoading')),
           rows.length === 0 && !resultsPending && React.createElement('div', { className: 'dshHistoryNotice' }, t(search ? 'recentSearchEmpty' : 'recentEmpty')),
-          search && projectState.search.phase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => { void navigation.projects.search(search) } }, projectText('unavailable')),
-          (state.hasMore || (search && projectState.search.nextCursor)) && !archivedOnly && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: state.historyPhase === 'loading' || projectState.search.phase === 'loading', onClick: () => {
+          showCloud && search && projectState.search.phase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => { void navigation.projects.search(search) } }, projectText('unavailable')),
+          (state.hasMore || (search && projectState.search.nextCursor)) && showCloud && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: state.historyPhase === 'loading' || projectState.search.phase === 'loading', onClick: () => {
             if (state.hasMore) void navigation.refreshHistory(true)
             if (search && projectState.search.nextCursor) void navigation.projects.search(search, true)
           } }, t('more'))))
