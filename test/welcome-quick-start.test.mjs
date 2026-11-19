@@ -12,6 +12,7 @@ HTMLDialogElement.prototype.showModal ??= function () { this.setAttribute('open'
 HTMLDialogElement.prototype.close ??= function () { this.removeAttribute('open') }
 const catalogue = JSON.parse(await readFile(resolve('packages/dsh-desktop-office/welcome-cases.json'), 'utf8'))
 const workCase = id => catalogue.work.find(item => item.id === id)
+const creatorCaseId = catalogue.batches.work[0].find(id => workCase(id).preset === 'cordis')
 const referenceTemplates = ['word', 'excel'].map(mode => ({
   id: `${mode}-reference`, mode, title: `${mode} reference`, pages: 1, pageAspectRatios: [1], revision: 'a'.repeat(24),
   thumbnail: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"/>'
@@ -101,6 +102,12 @@ async function fixture({ mode = null, presentationMode = null, selectedTemplateI
   disposers.push(core.register({ name: 'root', children: Object.fromEntries(nativeSeats.map(name => [name, { kind: 'list', scope: 'root' }])) }, () => null))
   const ctx = {
     get: () => connection, effect(run) { disposers.push(run()) }, on() {},
+    remote: { agentPresets: { async select(sessionId, agentPreset) {
+      calls.push({ operation: 'preset-select', payload: { sessionId, agentPreset } })
+      if (held.has('preset-select')) await held.get('preset-select')
+      if (failures.has('preset-select')) return { ok: false, error: { message: failures.get('preset-select') } }
+      return { ok: true, value: agentPreset }
+    } } },
     sessions: { scope: id => id }, conversation: { input: { for: getEditor } },
     locale: { register(ns, values) { dictionaries.set(ns, values); return () => {} }, bind(ns) { return key => dictionaries.get(ns)?.[english ? 'en' : 'zh'][key] ?? key } },
     slots: { inject(_seat, run) { run() }, register(meta, component) { const dispose = core.register(meta, component); disposers.push(dispose); seats.push({ meta, component }); return dispose }, registerFactory(meta, component) { const dispose = core.registerFactory(meta, component); factoryDisposers.set(meta.name, dispose); disposers.push(dispose); return dispose } }
@@ -152,6 +159,7 @@ async function fixture({ mode = null, presentationMode = null, selectedTemplateI
       button.click()
     }) },
     async unloadQuickStart() { await act(async () => { factoryDisposers.get('desktop.office.quickStart')?.(); render() }) },
+    async setEnglish(value) { english = value; await act(async () => render()) },
     async switchSession(id) { sessionId = id; await act(async () => render()) },
     async edit(text, refs) { await act(async () => getEditor(sessionId).edit(text, refs)) },
     async existingConversation() { blank = false; await act(async () => render()) },
@@ -175,6 +183,37 @@ it.each([true, false])('shows PPT templates when the case catalogue fails and le
   expect(f.ids()).toHaveLength(4)
   expect(host.querySelector('[role=alert]')).toBeNull()
   if (bound) expect(f.input().read().draft).toBe('')
+})
+
+it.each([false, true])('overlaps Work batches with the Chat stagger unless motion is reduced (%s)', async reduced => {
+  const original = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')
+  const fade = { cancel: vi.fn(), onfinish: null }
+  const animate = vi.fn(() => fade)
+  Object.defineProperty(Element.prototype, 'animate', { configurable: true, value: animate })
+  vi.stubGlobal('matchMedia', () => ({ matches: reduced }))
+  try {
+    const f = await fixture()
+    const grid = () => container.querySelector('.dso-quick-grid:not([data-leaving])')
+    const first = grid()
+    expect([...first.children].map(row => row.style.getPropertyValue('--dso-row-delay'))).toEqual(['0ms', '100ms', '200ms', '300ms'])
+    await f.click('切换一批')
+    if (!reduced) {
+      expect(first.getAttribute('aria-hidden')).toBe('true')
+      expect(grid().style.getPropertyValue('--dso-entry-delay')).toBe('40ms')
+      expect(animate).toHaveBeenCalledWith([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: 'ease-in-out', fill: 'forwards' })
+      await f.click('切换一批')
+      expect(container.querySelectorAll('.dso-quick-grid')).toHaveLength(2)
+      await act(async () => fade.onfinish())
+      await act(async () => fade.onfinish())
+    } else expect(animate).not.toHaveBeenCalled()
+    expect(first.isConnected).toBe(false)
+    expect(grid().hasAttribute('inert')).toBe(false)
+    expect(f.ids()).toEqual(catalogue.batches.work[reduced ? 1 : 2])
+  } finally {
+    if (original) Object.defineProperty(Element.prototype, 'animate', original)
+    else delete Element.prototype.animate
+    vi.unstubAllGlobals()
+  }
 })
 
 it('rotates diverse four-case batches in Work, covers all cases, and never changes the draft', async () => {
@@ -214,11 +253,95 @@ it.each([false, true])('directly fills the exact sourced prompt without success 
   button.focus(); expect(document.activeElement).toBe(button)
   // jsdom does not supply the keyboard activation default of native buttons.
   await act(async () => { button.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); button.click() })
-  expect(f.input().read().draft).toBe(item.prompt)
+  expect(f.input().read().draft).toBe(english ? item.promptEn : item.prompt)
   expect(f.input().submit).not.toHaveBeenCalled()
   expect(f.input().setDraft).not.toHaveBeenCalled()
   expect(container.querySelector('.dso-quick-status')).toBeNull()
   expect([...container.querySelectorAll('button')].some(button => button.textContent === (english ? 'Undo text' : '撤销填词'))).toBe(false)
+})
+
+it('uses the current interface language when reselecting a case after a locale change', async () => {
+  const f = await fixture()
+  const id = f.ids()[0], item = workCase(id)
+  await f.choose(id)
+  expect(f.input().read().draft).toBe(item.prompt)
+  await f.setEnglish(true)
+  expect(f.input().read().draft).toBe(item.prompt)
+  await f.choose(id)
+  expect(f.input().read().draft).toBe(item.promptEn)
+  await f.choose(id)
+  expect(f.input().read().draft).toBe('')
+})
+
+it('selects Creator mode for a staged Creator case before filling the English draft', async () => {
+  const f = await fixture({ english: true, bound: false })
+  await f.choose(creatorCaseId)
+  expect(f.calls.some(call => call.operation === 'preset-select')).toBe(false)
+  const release = f.hold('preset-select')
+  await f.switchSession('session-a')
+  expect(f.input().read().draft).toBe('')
+  expect(f.calls.find(call => call.operation === 'preset-select')?.payload).toEqual({ sessionId: 'session-a', agentPreset: 'cordis' })
+  expect(f.calls.some(call => call.operation === 'case-mode')).toBe(false)
+  await release()
+  expect(f.input().read().draft).toBe(workCase(creatorCaseId).promptEn)
+  expect(f.input().submit).not.toHaveBeenCalled()
+})
+
+it('switches back to Standard on the first ordinary case after a Creator case', async () => {
+  const f = await fixture()
+  await f.choose('event-minutes')
+  await f.choose(creatorCaseId)
+  const release = f.hold('preset-select')
+  await f.choose('subscription-analysis')
+  expect(f.input().read().draft).toBe(workCase(creatorCaseId).prompt)
+  await release()
+  expect(f.input().read().draft).toBe(workCase('subscription-analysis').prompt)
+  await f.choose('event-minutes')
+  expect(f.calls.filter(c => c.operation === 'preset-select').map(c => c.payload.agentPreset)).toEqual(['cordis', 'standard'])
+  expect(f.input().submit).not.toHaveBeenCalled()
+})
+
+it('undoes the selected Creator case only after Standard is confirmed', async () => {
+  const f = await fixture()
+  await f.choose(creatorCaseId)
+  const release = f.hold('preset-select')
+  await f.choose(creatorCaseId)
+  expect(f.input().read().draft).toBe(workCase(creatorCaseId).prompt)
+  await release()
+  expect(f.input().read().draft).toBe('')
+  expect(container.querySelector('[data-welcome-case][aria-pressed=true]')).toBeNull()
+  await f.choose('event-minutes')
+  expect(f.calls.filter(c => c.operation === 'preset-select').map(c => c.payload.agentPreset)).toEqual(['cordis', 'standard'])
+  expect(f.input().submit).not.toHaveBeenCalled()
+})
+
+it('keeps the Creator case selected if undo cannot return to Standard', async () => {
+  const f = await fixture()
+  await f.choose(creatorCaseId)
+  f.fail('preset-select', 'locked')
+  await f.choose(creatorCaseId)
+  expect(f.input().read().draft).toBe(workCase(creatorCaseId).prompt)
+  expect(container.querySelector('[data-welcome-case][aria-pressed=true]')?.dataset.welcomeCase).toBe(creatorCaseId)
+  expect(container.querySelector('[role=alert]').textContent).toContain('无法切回标准模式')
+})
+
+it('keeps the Creator draft when the switch back to Standard is refused', async () => {
+  const f = await fixture()
+  await f.choose(creatorCaseId)
+  f.fail('preset-select', 'locked')
+  await f.choose('event-minutes')
+  expect(f.input().read().draft).toBe(workCase(creatorCaseId).prompt)
+  expect(container.querySelector('[role=alert]').textContent).toContain('无法切回标准模式')
+  expect(f.calls.filter(c => c.operation === 'case-mode')).toHaveLength(1)
+})
+
+it('keeps the draft and office mode when Harness refuses Creator mode', async () => {
+  const f = await fixture({ english: true, initial: 'Keep my draft' })
+  f.fail('preset-select', 'This session has already started')
+  await f.choose(creatorCaseId)
+  expect(f.input().read().draft).toBe('Keep my draft')
+  expect(f.calls.some(call => call.operation === 'case-mode')).toBe(false)
+  expect(container.querySelector('[role=alert]').textContent).toContain('Could not switch to Creator mode')
 })
 
 it('keeps the mixed case batch beside templates when a case activates an Office mode', async () => {
@@ -302,7 +425,7 @@ it('resizes the composer when switching cases and continues from the visible hei
   expect(f.input().read().draft).toBe(workCase('customer-success-review').prompt)
 })
 
-it.each(['customer-success-review', 'pomodoro-timer'])('clears the case highlight when the draft for %s is emptied', async id => {
+it.each(['customer-success-review', creatorCaseId])('clears the case highlight when the draft for %s is emptied', async id => {
   const f = await fixture()
   await f.choose(id)
   const pressed = () => container.querySelector('[data-welcome-case][aria-pressed=true]')?.dataset.welcomeCase
@@ -317,7 +440,7 @@ it.each(['customer-success-review', 'pomodoro-timer'])('clears the case highligh
   expect(f.ids()).toEqual(catalogue.batches.work[0])
 })
 
-it.each(['customer-success-review', 'event-minutes', 'subscription-analysis', 'pomodoro-timer'])('toggles %s off and clears the input without changing the case batch', async id => {
+it.each(['customer-success-review', 'event-minutes', 'subscription-analysis', creatorCaseId])('toggles %s off and clears the input without changing the case batch', async id => {
   const f = await fixture({ officeTemplates: linkedTemplates, attachmentIds: ['uploaded-a'], withComposer: true })
   await f.choose(id)
   if (id === 'customer-success-review') await f.click('PPT example')
@@ -586,7 +709,7 @@ it('fills a blank Word draft and can switch from a template without a paired exa
   await f.click('Select example Company research report')
   expect(f.input().read().draft).toContain('Use the “Company research report” template to create an editable DOCX')
   await f.click(`Select example ${workCase('tea-market').template}`)
-  expect(f.input().read().draft).toBe(workCase('tea-market').prompt)
+  expect(f.input().read().draft).toBe(workCase('tea-market').promptEn)
 })
 
 it('updates a restored prompt between user notes and references while keeping attachments', async () => {

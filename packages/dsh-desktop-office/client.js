@@ -2,9 +2,12 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
   const React = require('react'), h = React.createElement
   const NS = 'desktop-office', EVENT = 'dsh-office-mode-change', staged = '@staged'
   const zh = {
+    quickCreator: '创造模式',
     quickPending: '已有草稿，请再次点击案例确认填入',
     quickTitle: '从一个案例开始',
     quickChanged: '草稿或模式已变化，请重新选择案例',
+    quickPresetFailed: '无法切换到创造模式：{reason}',
+    quickStandardFailed: '无法切回标准模式：{reason}',
     quickWorkspace: '先选择工作空间，再开始任务',
     quickTemplates: '参考模板',
     quickNext: '切换一批',
@@ -32,9 +35,12 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     'empty': '暂无案例'
   }
   const en = {
+    quickCreator: 'Creator mode',
     quickPending: 'A draft already exists. Click the case again to fill the prompt.',
     quickTitle: 'Start with an example',
     quickChanged: 'The draft or mode changed. Choose the case again.',
+    quickPresetFailed: 'Could not switch to Creator mode: {reason}',
+    quickStandardFailed: 'Could not switch back to Standard mode: {reason}',
     quickWorkspace: 'Select a workspace to start',
     quickTemplates: 'Reference templates',
     quickNext: 'Try another set',
@@ -83,7 +89,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
   }
 
   class OfficeStore {
-    constructor(connection) { this.connection = connection; this.states = new Map(); this.listeners = new Map(); this.revisions = new Map(); this.requests = new Map(); this.adopted = new Set(); this.cases = emptyCases; this.caseListeners = new Set() }
+    constructor(connection, selectPreset) { this.connection = connection; this.selectPreset = selectPreset; this.states = new Map(); this.listeners = new Map(); this.revisions = new Map(); this.requests = new Map(); this.adopted = new Set(); this.cases = emptyCases; this.caseListeners = new Set() }
     snapshotCases = () => this.cases
     subscribeCases = listener => { this.caseListeners.add(listener); return () => this.caseListeners.delete(listener) }
     updateCases(change) { this.cases = { ...this.cases, ...change }; for (const listener of this.caseListeners) listener() }
@@ -137,7 +143,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
         if (this.revisions.get(key) === revision) this.update(id, { loading: false, error: error.message })
       } finally { if (this.requests.get(key) === controller) this.requests.delete(key) }
     }
-    async mutate(id, endpoint, payload, { fromTemplate = false, clearCase = false, beforeApply } = {}) {
+    async mutate(id, endpoint, payload, { fromTemplate = false, clearCase = false, beforeApply, beforeRequest } = {}) {
       if (this.snapshot(id).busy || this.snapshot(id).loading) return false
       const revision = this.bump(id), key = keyOf(id)
       if (!id) {
@@ -157,6 +163,8 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
       const caseBusy = busy => window.dispatchEvent(new CustomEvent(EVENT, { detail: { sessionId: id, origin: 'office-case', busy } }))
       if (caseAction) caseBusy(true)
       try {
+        if (beforeRequest && !await beforeRequest()) return false
+        if (this.revisions.get(key) !== revision) return false
         const state = await this.call(id, endpoint, payload)
         if (this.revisions.get(key) !== revision) return false
         beforeApply?.()
@@ -169,7 +177,10 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
         announce(id, mode, state.selectedPptTemplateId, caseAction)
         return true
       } catch (error) { if (this.revisions.get(key) === revision) this.update(id, { busy: false, error: error.message }); return false }
-      finally { if (caseAction) caseBusy(false) }
+      finally {
+        if (this.revisions.get(key) === revision && this.snapshot(id).busy) this.update(id, { busy: false })
+        if (caseAction) caseBusy(false)
+      }
     }
     syncPpt(detail) {
       if (detail.origin !== 'ppt') return
@@ -334,7 +345,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     writing: 'M13 5H5v15h14v-8M10 15l1-4 7-7 3 3-7 7-4 1Z',
     next: 'M7 17 17 7M7 7h10v10'
   }
-  const categoryIcons = { '设计': 'design', '定时任务': 'schedule', '开发': 'code', '分析数据': 'analysis', '金融服务': 'finance', '创作文档': 'writing' }
+  const categoryIcons = { '设计': 'design', '定时任务': 'schedule', '开发': 'code', '分析数据': 'analysis', '金融服务': 'finance', '创作文档': 'writing', '创作模式': 'code' }
   function QuickIcon({ kind }) {
     return h('svg', { width: 17, height: 17, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true }, h('path', { d: iconPaths[kind] ?? iconPaths.normal }))
   }
@@ -373,14 +384,16 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     return hasSeparator ? { ...span, start: span.start - 2 } : span
   }
 
+  const caseLanguage = t => t('quickTitle') === zh.quickTitle ? 'zh' : 'en'
+  const casePrompt = (item, language) => language === 'en' ? item.promptEn ?? item.prompt : item.prompt
   const formatPrompt = (copy, title, mode) => copy.replace('{format}', mode === 'word' ? 'DOCX' : 'XLSX').replace('{name}', () => title)
   function templatePromptEdit(input, template, templates, cases, t) {
     if (input?.phase !== 'plain') return
     const example = caseForTemplate(template, templates, cases)
-    const text = example?.prompt ?? formatPrompt(t('templatePrompt'), titleOf(template, t), template.mode)
+    const text = (example ? casePrompt(example, caseLanguage(t)) : undefined) ?? formatPrompt(t('templatePrompt'), titleOf(template, t), template.mode)
     if (!input.draft && !input.occurrences?.length) return { text, span: { start: 0, end: 0, draftRev: input.draftRev } }
     // Recover unedited automatic prompts even after a reload or a locale change.
-    const prompts = new Set(cases.map(item => item.prompt))
+    const prompts = new Set(cases.flatMap(item => [item.prompt, item.promptEn]).filter(Boolean))
     for (const item of templates) {
       prompts.add(formatPrompt(zh.templatePrompt, item.title, item.mode))
       prompts.add(formatPrompt(en.templatePrompt, item.titleEn ?? item.title, item.mode))
@@ -419,8 +432,40 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     return { choose, notice }
   }
 
+  // Mirror the Chat welcome list's stagger and overlapping batch fade. React
+  // keeps the previous grid mounted (and inert) until its fade finishes.
+  function CaseStage({ batch, cards, renderCard }) {
+    const stage = React.useRef(null)
+    const [view, setView] = React.useState(() => ({ batch, cards, outgoing: null }))
+    React.useLayoutEffect(() => {
+      if (view.batch === batch || view.outgoing) return
+      const animate = canAnimate(stage.current)
+      setView({ batch, cards, delayed: animate, outgoing: animate ? view : null })
+    }, [batch, cards, view])
+    React.useEffect(() => {
+      if (!view.outgoing) return
+      const done = () => setView(current => current === view ? { ...current, outgoing: null } : current)
+      const node = stage.current.firstElementChild
+      // Animation.finished also settles on cancellation (e.g. reduced motion).
+      const fade = node.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: 'ease-in-out', fill: 'forwards' })
+      let active = true
+      fade.onfinish = fade.oncancel = () => { if (active) done() }
+      const media = window.matchMedia?.('(prefers-reduced-motion: reduce)')
+      const reduce = () => { if (media.matches) done() }
+      media?.addEventListener?.('change', reduce)
+      return () => { active = false; media?.removeEventListener?.('change', reduce); fade.cancel() }
+    }, [view])
+    const grid = (id, list, old, delayed) => h('div', { key: id, className: 'dso-quick-grid',
+      'data-leaving': old || undefined, 'aria-hidden': old || undefined,
+      inert: old || view.outgoing ? '' : undefined, style: { '--dso-entry-delay': delayed ? '40ms' : '0ms' } }, list.map(renderCard))
+    return h('div', { ref: stage, className: 'dso-quick-stage' },
+      view.outgoing && grid(view.outgoing.batch, view.outgoing.cards, true, view.outgoing.delayed),
+      grid(view.batch, view.batch === batch ? cards : view.cards, false, view.delayed))
+  }
+
   function QuickStartBody({ store, mode, sessionId, inputActions, input: liveInput, inputFor, t }) {
     const officeState = useOffice(store, sessionId)
+    const language = caseLanguage(t)
     const showCases = mode === 'normal' || officeState.caseMode === mode
     const pendingState = React.useSyncExternalStore(listener => store.subscribe(undefined, listener), () => store.snapshot(undefined), () => store.snapshot(undefined))
     const catalog = React.useSyncExternalStore(store.subscribeCases, store.snapshotCases, store.snapshotCases)
@@ -458,19 +503,36 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
       // instead so references and independent attachments stay intact.
       const append = !!liveInput.occurrences?.length
       const start = append ? end : 0
-      const text = clear ? '' : append && end ? '\n\n' + item.prompt : item.prompt
-      const span = clear ? caseClearSpan(liveInput, item.prompt) : { start, end, draftRev: liveInput.draftRev }
+      const prompt = casePrompt(item, language)
+      const previous = promptSpan(liveInput, casePrompt(item, language === 'zh' ? 'en' : 'zh'))
+      const text = clear ? '' : append && end && !previous ? '\n\n' + prompt : prompt
+      const span = clear ? caseClearSpan(liveInput, prompt) : (append && previous) || { start, end, draftRev: liveInput.draftRev }
       if (!span) return
       store.update(undefined, { pendingCase: null })
+      // Use the same Harness selection as the preset picker. A refused switch
+      // must leave the existing draft and Office mode alone.
+      const creatorCase = item.preset === 'cordis'
+      const preset = creatorCase ? (clear ? 'standard' : 'cordis') : (!clear && officeState.creatorCaseActive ? 'standard' : null)
+      const beforeRequest = preset ? async () => {
+        const result = await store.selectPreset(sessionId, preset)
+        if (!result.ok) throw new Error(t(preset === 'cordis' ? 'quickPresetFailed' : 'quickStandardFailed', { reason: result.error.message }))
+        // Track confirmed case-driven switches per session, not the user's default preset.
+        store.update(sessionId, { creatorCaseActive: preset === 'cordis' })
+        return stillActive() && inputFor?.(sessionId)?.state.getSnapshot().draftRev === liveInput.draftRev
+      } : undefined
       running.current = true
       setMessage(''); setError('')
       try {
         if (!clear || (mode !== 'normal' && officeState.caseMode === mode)) {
           const saved = clear
-            ? await store.mutate(sessionId, 'mode', { mode: null }, { clearCase: true, beforeApply })
-            : await store.mutate(sessionId, 'case-mode', { caseId: item.id }, { fromTemplate, beforeApply })
+            ? await store.mutate(sessionId, 'mode', { mode: null }, { clearCase: true, beforeApply, beforeRequest })
+            : await store.mutate(sessionId, 'case-mode', { caseId: item.id }, { fromTemplate, beforeApply, beforeRequest })
           if (!saved) throw new Error(store.snapshot(sessionId).error || t('quickChanged'))
-        } else beforeApply()
+        } else {
+          // A Creator case in the normal Office dock only owns the preset, not an Office format.
+          if (beforeRequest && !await beforeRequest()) throw new Error(t('quickChanged'))
+          beforeApply()
+        }
         if (!stillActive()) return
         if (!inputActions.insertText(text, span)) throw new Error(t('quickChanged'))
         inputActions.persistDraft?.()
@@ -502,9 +564,8 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     const cards = ids.map(id => catalog.cases.find(item => item.id === id)).filter(Boolean)
     const pending = pendingState.pendingCase
     // With a composer, the draft is the source of the selection highlight.
-    const selectedId = liveInput ? cards.find(item => promptSpan(liveInput, item.prompt))?.id
+    const selectedId = liveInput ? cards.find(item => promptSpan(liveInput, casePrompt(item, language)))?.id
       : !sessionId && !pending?.targetId ? pending?.id : undefined
-    const language = t('quickTitle') === zh.quickTitle ? 'zh' : 'en'
     const status = catalog.loading ? t('loading') : message || (!inputActions ? t('quickWorkspace') : '')
     return h('section', { ref: section, className: 'dso-quick', 'data-welcome-cases': mode, 'aria-label': t('quickTitle'), 'aria-busy': officeState.busy || catalog.loading },
       h('header', { className: 'dso-dock-heading dso-quick-heading' },
@@ -513,10 +574,9 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
           type: 'button', className: 'dso-quick-batch',
           onClick: () => setBatch(value => (value + 1) % batchCount)
         }, t('quickNext')) : null),
-      h('div', { className: 'dso-quick-grid' }, cards.map(item => h('button', { key: item.id, type: 'button', className: 'dso-quick-card', 'data-welcome-case': item.id, 'aria-pressed': selectedId === item.id, disabled, onClick: () => choose(item, { clear: selectedId === item.id }) },
+      cards.length > 0 && h(CaseStage, { key: `${sessionId ?? staged}:${language}`, batch, cards, renderCard: (item, index) => h('button', { key: item.id, type: 'button', className: 'dso-quick-card', style: { '--dso-row-delay': `${index * 100}ms` }, 'data-welcome-case': item.id, 'aria-pressed': selectedId === item.id, disabled, onClick: () => choose(item, { clear: selectedId === item.id }) },
         h('span', { className: 'dso-quick-icon', 'aria-hidden': true }, h(QuickIcon, { kind: categoryIcons[item.category] ?? item.officeMode })),
-        h('span', { className: 'dso-quick-copy' }, h('strong', null, item.title[language]), h('span', null, item.description[language])),
-        h('span', { className: 'dso-quick-arrow', 'aria-hidden': true }, h(QuickIcon, { kind: 'next' }))))),
+        h('span', { className: 'dso-quick-title', title: item.preset === 'cordis' ? `${t('quickCreator')} · ${item.title[language]}` : item.title[language] }, item.title[language])) }),
       !catalog.loading && !catalog.error && !cards.length ? h('p', { role: 'status' }, t('empty')) : null,
       catalog.error ? h('div', { role: 'alert' }, t('quickLoadError'), ' ', h('button', { type: 'button', className: 'dso-reference-toggle', onClick: () => store.loadCases() }, t('retry'))) : null,
       error ? h('div', { role: 'alert' }, error) : null,
@@ -589,7 +649,16 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
 .dso-quick-batch{flex:none;margin-inline-start:auto;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:18px;padding:5px 8px;white-space:nowrap;cursor:pointer}
 .dso-quick-batch:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dso-quick-batch:focus-visible{outline:2px solid currentColor;outline-offset:2px}
-.dso-quick-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.dso-quick-card{display:flex;align-items:center;gap:11px;min-width:0;text-align:left;padding:14px;border:1px solid var(--dsw-alias-border-l2-darkmode-thin);border-radius:12px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;cursor:pointer;transition:background 120ms,border-color 120ms}.dso-quick-card:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-label-tertiary)}.dso-quick-card[aria-pressed=true]{border-color:var(--dsw-alias-state-business-primary)}.dso-quick-card:disabled{opacity:.55;cursor:default}.dso-quick-card:focus-visible,.dso-reference-toggle:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:3px}.dso-quick-icon{display:grid;place-items:center;flex:none;width:30px;height:30px;border-radius:7px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);font-size:15px;font-weight:600}.dso-quick-copy{display:flex;flex:1;flex-direction:column;gap:5px;min-width:0}.dso-quick-copy strong{font-size:13px;font-weight:500}.dso-quick-copy>span{font-size:11px;color:var(--dsw-alias-label-tertiary);line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dso-quick-arrow{color:var(--dsw-alias-label-tertiary)}.dso-quick-status{min-height:18px;padding-top:9px;font-size:11px;color:var(--dsw-alias-label-secondary)}.dso-reference{margin-top:6px;padding-top:12px}.dso-reference-toggle{border:0;background:transparent;padding:0;font:inherit;line-height:18px;font-size:11px;white-space:nowrap;color:var(--dsw-alias-label-secondary);cursor:pointer}.dso-reference-toggle:hover{text-decoration:underline}@media(prefers-reduced-motion:reduce){.dso-quick-card{transition:none}}
+.dso-quick-stage{position:relative}
+.dso-quick-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 10px}
+.dso-quick-grid[data-leaving]{position:absolute;inset:0 0 auto;pointer-events:none}
+@keyframes dso-case-enter{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
+@media(prefers-reduced-motion:no-preference){.dso-quick-card{animation:dso-case-enter 280ms cubic-bezier(.25,.55,.35,1) calc(var(--dso-entry-delay) + var(--dso-row-delay)) backwards}.dso-quick-grid[data-leaving] .dso-quick-card{animation-play-state:paused}}
+.dso-quick-card{display:flex;min-width:0;align-items:center;gap:10px;min-height:40px;padding:8px 12px;text-align:start;font:inherit;font-size:13px;line-height:18px;border:0;border-radius:12px;background:transparent;color:var(--dsw-alias-label-primary);cursor:pointer}
+.dso-quick-icon{display:grid;place-items:center;flex:none;width:18px;color:var(--dsw-alias-label-secondary)}
+.dso-quick-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dso-quick-card:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}.dso-quick-card[aria-pressed=true]{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-state-business-primary)}.dso-quick-card:disabled{opacity:.55;cursor:default}.dso-quick-card:focus-visible,.dso-reference-toggle:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+.dso-quick-status{min-height:18px;padding-top:9px;font-size:11px;color:var(--dsw-alias-label-secondary)}.dso-reference{margin-top:6px;padding-top:12px}.dso-reference-toggle{border:0;background:transparent;padding:0;font:inherit;line-height:18px;font-size:11px;white-space:nowrap;color:var(--dsw-alias-label-secondary);cursor:pointer}.dso-reference-toggle:hover{text-decoration:underline}@media(prefers-reduced-motion:reduce){.dso-quick-card{transition:none}}
 
 .dso-opening-row{display:flex;align-items:center;gap:6px;min-width:0}.dso-opening-row:not(:first-child){margin-top:8px;padding-top:8px;border-top:.5px solid var(--dsw-alias-border-l2)}.dso-opening-file{flex:none;color:var(--dsw-alias-state-business-primary)}.dso-opening-row[data-mode=excel] .dso-opening-file{color:var(--dsw-alias-state-success-primary)}.dso-opening-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:0;background:transparent;padding:0;color:var(--dsw-alias-state-business-primary);font:inherit;font-size:13px;line-height:20px;text-align:left;cursor:pointer}.dso-opening-title:hover{text-decoration:underline}.dso-opening-title:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
 .dso-preview-actions{display:flex;gap:12px;align-items:center}
@@ -627,7 +696,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
 .dso-viewport{padding:4px 4px 12px}
 .dso-reference-panel{display:flow-root}
 .dso-reference-panel[data-closing]{overflow:clip}
-@container (max-width:480px){.dso-quick-grid{grid-template-columns:1fr}.dso-quick-heading{gap:8px}.dso-quick-card{padding:11px 12px}}
+@container (max-width:480px){.dso-quick-grid{grid-template-columns:1fr}.dso-quick-heading{gap:8px}.dso-quick-card{padding:7px 12px}}
 .dso-dock [data-office-ppt-template-viewport]{overflow:visible;overscroll-behavior:auto}.dso-sheets{display:flex;align-items:center;flex:none;overflow:auto;gap:4px;scrollbar-width:none}.dso-sheets::-webkit-scrollbar{display:none}.dso-sheets button{font:inherit;font-size:11px;line-height:16px;border:0;border-radius:999px;padding:5px 10px;flex:none;color:var(--dsw-alias-label-caption);background:transparent;cursor:pointer}.dso-sheets button:hover{color:var(--dsw-alias-label-primary)}.dso-sheets button[aria-pressed=true]{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .dso-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 14px}.dso-card{min-width:0;position:relative}.dso-card-select{font:inherit;display:flex;flex-direction:column;width:100%;padding:0;min-width:0;border:0;text-align:center;background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer}.dso-card-select:disabled{cursor:default;opacity:.65}.dso-cover{box-sizing:border-box;display:block;position:relative;width:100%;aspect-ratio:16/9;border:2px solid transparent;border-radius:9px;overflow:hidden;background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 5%,var(--dsw-alias-bg-layer-1))}.dso-cover[data-mode=excel]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 6%,var(--dsw-alias-bg-layer-1))}.dso-thumbnail{display:block;width:100%;border-radius:8px;overflow:hidden}.dso-thumbnail img{display:block;width:100%;height:auto}.dso-cover>.dso-thumbnail{position:absolute;left:13%;top:14%;width:74%;box-shadow:0 2px 10px color-mix(in srgb,var(--dsw-alias-label-primary) 15%,transparent);transform-origin:center top;transition:transform 180ms cubic-bezier(.23,1,.32,1)}.dso-cover[data-mode=excel]>.dso-thumbnail{left:8%;width:84%;height:100%}.dso-card[data-selected=true] .dso-cover{border-color:var(--dsw-alias-state-business-primary)}.dso-card-name{display:block;box-sizing:border-box;width:100%;padding-top:5px;text-align:center;font-size:12px;line-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dso-card[data-selected=true] .dso-card-name{color:var(--dsw-alias-label-primary)}.dso-card-preview{position:absolute;left:10px;top:10px;z-index:1;display:grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid var(--dsw-alias-border-l2-darkmode-thin);border-radius:7px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);cursor:pointer;opacity:0;transition:opacity 120ms ease}.dso-card:hover .dso-card-preview,.dso-card:focus-within .dso-card-preview{opacity:1}.dso-card-preview:disabled{cursor:default}.dso-card-select:active:not(:focus-visible) .dso-thumbnail{transform:scale(.98)}
 @media(hover:hover) and (pointer:fine){.dso-card:has(.dso-card-select:enabled):hover .dso-thumbnail{transform:translateY(-3px) scale(1.045)}}@media(hover:none){.dso-card-preview{opacity:1}}@media(prefers-reduced-motion:reduce){.dso-cover>.dso-thumbnail,.dso-card-preview{transition:none}.dso-card:has(.dso-card-select:enabled):hover .dso-thumbnail,.dso-card-select:active:not(:focus-visible) .dso-thumbnail{transform:none}}
@@ -660,7 +729,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
 .dso-spread figcaption{width:100%;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:20px;flex:none}
 .dso-selected{display:flex;align-items:flex-start}.dso-selected button{cursor:pointer}.dso-selected-frame{position:relative;display:block;flex:none;width:clamp(76px,10vw,92px);aspect-ratio:16/9;transform:rotate(-3deg);transform-origin:center}.dso-selected-preview{font:inherit;display:block;box-sizing:border-box;width:100%;height:100%;padding:0;border:2px solid var(--dsw-alias-state-business-primary);border-radius:9px;overflow:hidden;background:var(--dsw-alias-bg-base);box-shadow:0 4px 14px color-mix(in srgb,var(--dsw-alias-label-primary) 18%,transparent)}.dso-selected .dso-thumbnail{width:100%;height:100%;border-radius:0}.dso-selected .dso-thumbnail img{height:100%;object-fit:cover;object-position:top}.dso-selected-remove{position:absolute;top:-8px;right:-8px;z-index:2;display:grid;place-items:center;width:20px;height:20px;padding:0;border:1px solid var(--dsw-alias-border-l2);border-radius:50%;background:var(--dsw-alias-label-primary);color:var(--dsw-alias-bg-base);font:500 15px/1 ui-sans-serif,system-ui,sans-serif;opacity:0;pointer-events:none;transform:rotate(3deg);transition:opacity 120ms ease}.dso-selected-frame:hover .dso-selected-remove,.dso-selected-frame:focus-within .dso-selected-remove{opacity:1;pointer-events:auto}.dso-selected-remove:disabled{cursor:default}.dso-selected .dso-selected-preview:focus-visible{outline-offset:2px}@media(hover:none){.dso-selected-remove{opacity:1;pointer-events:auto}}@media(prefers-reduced-motion:reduce){.dso-selected-frame{transform:none}.dso-selected-remove{transform:none;transition:none}}.dso-mode-action:focus-visible,.dso-card-select:focus-visible,.dso-card-preview:focus-visible,.dso-modal button:focus-visible,.dso-selected button:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:3px}@media(max-width:540px){.dso-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.dso-modal{padding:10px}.dso-modal footer{gap:12px}.dso-pagination{gap:8px}}`
   function apply(ctx) {
-    const store = new OfficeStore(ctx.get('connection'))
+    const store = new OfficeStore(ctx.get('connection'), (id, preset) => ctx.remote.agentPresets.select(id, preset))
     const inputFor = id => { const scope = ctx.sessions?.scope(id); return scope ? ctx.conversation.input.for(scope) : undefined }
     ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'Office dictionaries')
     ctx.effect(() => { if (document.querySelector('style[data-plugin-css="desktop-office/styles"]')) return; const tag = document.createElement('style'); tag.dataset.plugin = NS; tag.dataset.pluginCss = 'desktop-office/styles'; tag.textContent = css; document.head.append(tag); return () => tag.remove() }, 'Office styles')
@@ -671,5 +740,5 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
       ctx.slots.inject(seat, () => ctx.slots.register({ name: seat, id: NS, order: seat === 'conversation.hero.modeActions' ? 30 : 10, locale: NS, inject: () => component === Dock ? { store, inputFor } : { store } }, component))
     }
   }
-  return { apply, inject: ['slots', 'locale', 'connection', 'sessions', 'conversation'] }
+  return { apply, inject: ['slots', 'locale', 'connection', 'sessions', 'conversation', 'remote', 'remote.agentPresets'] }
 } })

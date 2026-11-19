@@ -287,7 +287,9 @@ function installWelcomeCases(options: Options, cases: Case[], batches: string[][
       title.className = 'dsh-case-title'
       title.textContent = item.title[current.locale]
       button.append(caseIcon(item), title)
-      button.addEventListener('click', () => { void apply(item.prompt, item.deepResearch) })
+      button.addEventListener('click', () => {
+        void apply(current.locale === 'en' ? item.promptEn : item.prompt, item.deepResearch)
+      })
       list.append(button)
     }
     enterList(startDelay)
