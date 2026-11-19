@@ -16,7 +16,7 @@ function get<T extends HTMLElement = HTMLElement>(query: string): T {
 }
 
 /** Markup follows the enterprise ComposerEditor and Add menu contracts. */
-function fixture({ hasResearch = true, closeDelay = 0 } = {}) {
+function fixture({ hasResearch = true, closeDelay = 0, researchLabel = '深度研究' } = {}) {
   document.body.innerHTML = `<main class="dsh-chat-surface"><div class="dsh-chat-landing"><div class="dsh-chat-hero">
     <div class="dsh-chat-input-shell"><div class="dsh-chat-composer">
       <div role="textbox" contenteditable="true" data-testid="ai-chat-input"></div>
@@ -37,7 +37,7 @@ function fixture({ hasResearch = true, closeDelay = 0 } = {}) {
     const chip = document.createElement('button')
     chip.className = 'dsh-active-capability'
     chip.setAttribute('aria-pressed', 'true')
-    chip.textContent = '深度研究'
+    chip.textContent = researchLabel
     chip.addEventListener('click', () => setMode(false))
     capabilities.append(chip)
   }
@@ -56,7 +56,7 @@ function fixture({ hasResearch = true, closeDelay = 0 } = {}) {
     if (hasResearch) {
       const item = document.createElement('div')
       item.setAttribute('role', 'menuitemcheckbox')
-      item.setAttribute('aria-label', '深度研究')
+      item.setAttribute('aria-label', researchLabel)
       item.setAttribute('aria-checked', String(mode))
       item.addEventListener('click', () => { setMode(!mode); close() })
       menu.append(item)
@@ -119,6 +119,24 @@ afterEach(() => {
   if (originalAnimate) Object.defineProperty(Element.prototype, 'animate', originalAnimate)
   else Reflect.deleteProperty(Element.prototype, 'animate')
   vi.unstubAllGlobals()
+})
+
+it('fills English prompts and keeps research selection working after a language switch', async () => {
+  const f = fixture({ researchLabel: 'Deep research' })
+  deliver()
+  const direct = choose('confirm-event')
+  await done()
+  expect(f.editor.textContent).toBe(direct.prompt)
+  deliver(true, 'en')
+  expect(cards()[0]?.textContent).toBe(direct.title.en)
+  choose(direct.id)
+  await done()
+  expect(f.editor.textContent).toBe(direct.promptEn)
+  const research = choose('enterprise-agents')
+  await done()
+  expect(f.editor.textContent).toBe(research.promptEn)
+  expect(f.mode()).toBe(true)
+  expect(f.submit).not.toHaveBeenCalled()
 })
 
 it('overlaps batch fades, preserves the row stagger and keeps header focus through repeated clicks', async () => {
@@ -262,7 +280,7 @@ it.each(['zh', 'en'] as const)('fills the editor and switches mode without succe
   const research = choose('enterprise-agents')
   await done()
   expect(f.mode()).toBe(true)
-  expect(f.editor.textContent).toBe(research.prompt)
+  expect(f.editor.textContent).toBe(locale === 'en' ? research.promptEn : research.prompt)
   expect(document.activeElement).toBe(f.editor)
   expect(get(`${selector} .dsh-case-feedback`).hidden).toBe(true)
   expect(get(`${selector} [role=status]`).textContent).toBe('')
@@ -270,7 +288,7 @@ it.each(['zh', 'en'] as const)('fills the editor and switches mode without succe
   const ordinary = choose('confirm-event')
   await done()
   expect(f.mode()).toBe(false)
-  expect(f.editor.textContent).toBe(ordinary.prompt)
+  expect(f.editor.textContent).toBe(locale === 'en' ? ordinary.promptEn : ordinary.prompt)
   expect(get(`${selector} .dsh-case-feedback`).hidden).toBe(true)
   expect(get(`${selector} [role=status]`).textContent).toBe('')
   expect(document.querySelector(`${selector} .dsh-case-feedback button`)).toBeNull()

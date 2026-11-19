@@ -5,6 +5,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     quickPending: '已有草稿，请再次点击案例确认填入',
     quickTitle: '从一个案例开始',
     quickChanged: '草稿或模式已变化，请重新选择案例',
+    quickPresetFailed: '无法切换到创造模式：{reason}',
     quickWorkspace: '先选择工作空间，再开始任务',
     quickTemplates: '参考模板',
     quickNext: '切换一批',
@@ -35,6 +36,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     quickPending: 'A draft already exists. Click the case again to fill the prompt.',
     quickTitle: 'Start with an example',
     quickChanged: 'The draft or mode changed. Choose the case again.',
+    quickPresetFailed: 'Could not switch to Creator mode: {reason}',
     quickWorkspace: 'Select a workspace to start',
     quickTemplates: 'Reference templates',
     quickNext: 'Try another set',
@@ -83,7 +85,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
   }
 
   class OfficeStore {
-    constructor(connection) { this.connection = connection; this.states = new Map(); this.listeners = new Map(); this.revisions = new Map(); this.requests = new Map(); this.adopted = new Set(); this.cases = emptyCases; this.caseListeners = new Set() }
+    constructor(connection, selectPreset) { this.connection = connection; this.selectPreset = selectPreset; this.states = new Map(); this.listeners = new Map(); this.revisions = new Map(); this.requests = new Map(); this.adopted = new Set(); this.cases = emptyCases; this.caseListeners = new Set() }
     snapshotCases = () => this.cases
     subscribeCases = listener => { this.caseListeners.add(listener); return () => this.caseListeners.delete(listener) }
     updateCases(change) { this.cases = { ...this.cases, ...change }; for (const listener of this.caseListeners) listener() }
@@ -137,7 +139,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
         if (this.revisions.get(key) === revision) this.update(id, { loading: false, error: error.message })
       } finally { if (this.requests.get(key) === controller) this.requests.delete(key) }
     }
-    async mutate(id, endpoint, payload, { fromTemplate = false, clearCase = false, beforeApply } = {}) {
+    async mutate(id, endpoint, payload, { fromTemplate = false, clearCase = false, beforeApply, beforeRequest } = {}) {
       if (this.snapshot(id).busy || this.snapshot(id).loading) return false
       const revision = this.bump(id), key = keyOf(id)
       if (!id) {
@@ -157,6 +159,8 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
       const caseBusy = busy => window.dispatchEvent(new CustomEvent(EVENT, { detail: { sessionId: id, origin: 'office-case', busy } }))
       if (caseAction) caseBusy(true)
       try {
+        if (beforeRequest && !await beforeRequest()) return false
+        if (this.revisions.get(key) !== revision) return false
         const state = await this.call(id, endpoint, payload)
         if (this.revisions.get(key) !== revision) return false
         beforeApply?.()
@@ -169,7 +173,10 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
         announce(id, mode, state.selectedPptTemplateId, caseAction)
         return true
       } catch (error) { if (this.revisions.get(key) === revision) this.update(id, { busy: false, error: error.message }); return false }
-      finally { if (caseAction) caseBusy(false) }
+      finally {
+        if (this.revisions.get(key) === revision && this.snapshot(id).busy) this.update(id, { busy: false })
+        if (caseAction) caseBusy(false)
+      }
     }
     syncPpt(detail) {
       if (detail.origin !== 'ppt') return
@@ -334,7 +341,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     writing: 'M13 5H5v15h14v-8M10 15l1-4 7-7 3 3-7 7-4 1Z',
     next: 'M7 17 17 7M7 7h10v10'
   }
-  const categoryIcons = { '设计': 'design', '定时任务': 'schedule', '开发': 'code', '分析数据': 'analysis', '金融服务': 'finance', '创作文档': 'writing' }
+  const categoryIcons = { '设计': 'design', '定时任务': 'schedule', '开发': 'code', '分析数据': 'analysis', '金融服务': 'finance', '创作文档': 'writing', '创作模式': 'code' }
   function QuickIcon({ kind }) {
     return h('svg', { width: 17, height: 17, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true }, h('path', { d: iconPaths[kind] ?? iconPaths.normal }))
   }
@@ -373,14 +380,16 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     return hasSeparator ? { ...span, start: span.start - 2 } : span
   }
 
+  const caseLanguage = t => t('quickTitle') === zh.quickTitle ? 'zh' : 'en'
+  const casePrompt = (item, language) => language === 'en' ? item.promptEn ?? item.prompt : item.prompt
   const formatPrompt = (copy, title, mode) => copy.replace('{format}', mode === 'word' ? 'DOCX' : 'XLSX').replace('{name}', () => title)
   function templatePromptEdit(input, template, templates, cases, t) {
     if (input?.phase !== 'plain') return
     const example = caseForTemplate(template, templates, cases)
-    const text = example?.prompt ?? formatPrompt(t('templatePrompt'), titleOf(template, t), template.mode)
+    const text = (example ? casePrompt(example, caseLanguage(t)) : undefined) ?? formatPrompt(t('templatePrompt'), titleOf(template, t), template.mode)
     if (!input.draft && !input.occurrences?.length) return { text, span: { start: 0, end: 0, draftRev: input.draftRev } }
     // Recover unedited automatic prompts even after a reload or a locale change.
-    const prompts = new Set(cases.map(item => item.prompt))
+    const prompts = new Set(cases.flatMap(item => [item.prompt, item.promptEn]).filter(Boolean))
     for (const item of templates) {
       prompts.add(formatPrompt(zh.templatePrompt, item.title, item.mode))
       prompts.add(formatPrompt(en.templatePrompt, item.titleEn ?? item.title, item.mode))
@@ -421,6 +430,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
 
   function QuickStartBody({ store, mode, sessionId, inputActions, input: liveInput, inputFor, t }) {
     const officeState = useOffice(store, sessionId)
+    const language = caseLanguage(t)
     const showCases = mode === 'normal' || officeState.caseMode === mode
     const pendingState = React.useSyncExternalStore(listener => store.subscribe(undefined, listener), () => store.snapshot(undefined), () => store.snapshot(undefined))
     const catalog = React.useSyncExternalStore(store.subscribeCases, store.snapshotCases, store.snapshotCases)
@@ -458,17 +468,26 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
       // instead so references and independent attachments stay intact.
       const append = !!liveInput.occurrences?.length
       const start = append ? end : 0
-      const text = clear ? '' : append && end ? '\n\n' + item.prompt : item.prompt
-      const span = clear ? caseClearSpan(liveInput, item.prompt) : { start, end, draftRev: liveInput.draftRev }
+      const prompt = casePrompt(item, language)
+      const previous = promptSpan(liveInput, casePrompt(item, language === 'zh' ? 'en' : 'zh'))
+      const text = clear ? '' : append && end && !previous ? '\n\n' + prompt : prompt
+      const span = clear ? caseClearSpan(liveInput, prompt) : (append && previous) || { start, end, draftRev: liveInput.draftRev }
       if (!span) return
       store.update(undefined, { pendingCase: null })
+      // Use the same Harness selection as the preset picker. A refused switch
+      // must leave the existing draft and Office mode alone.
+      const beforeRequest = !clear && item.preset === 'cordis' ? async () => {
+        const result = await store.selectPreset(sessionId, item.preset)
+        if (!result.ok) throw new Error(t('quickPresetFailed', { reason: result.error.message }))
+        return stillActive() && inputFor?.(sessionId)?.state.getSnapshot().draftRev === liveInput.draftRev
+      } : undefined
       running.current = true
       setMessage(''); setError('')
       try {
         if (!clear || (mode !== 'normal' && officeState.caseMode === mode)) {
           const saved = clear
             ? await store.mutate(sessionId, 'mode', { mode: null }, { clearCase: true, beforeApply })
-            : await store.mutate(sessionId, 'case-mode', { caseId: item.id }, { fromTemplate, beforeApply })
+            : await store.mutate(sessionId, 'case-mode', { caseId: item.id }, { fromTemplate, beforeApply, beforeRequest })
           if (!saved) throw new Error(store.snapshot(sessionId).error || t('quickChanged'))
         } else beforeApply()
         if (!stillActive()) return
@@ -502,9 +521,8 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     const cards = ids.map(id => catalog.cases.find(item => item.id === id)).filter(Boolean)
     const pending = pendingState.pendingCase
     // With a composer, the draft is the source of the selection highlight.
-    const selectedId = liveInput ? cards.find(item => promptSpan(liveInput, item.prompt))?.id
+    const selectedId = liveInput ? cards.find(item => promptSpan(liveInput, casePrompt(item, language)))?.id
       : !sessionId && !pending?.targetId ? pending?.id : undefined
-    const language = t('quickTitle') === zh.quickTitle ? 'zh' : 'en'
     const status = catalog.loading ? t('loading') : message || (!inputActions ? t('quickWorkspace') : '')
     return h('section', { ref: section, className: 'dso-quick', 'data-welcome-cases': mode, 'aria-label': t('quickTitle'), 'aria-busy': officeState.busy || catalog.loading },
       h('header', { className: 'dso-dock-heading dso-quick-heading' },
@@ -660,7 +678,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
 .dso-spread figcaption{width:100%;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:20px;flex:none}
 .dso-selected{display:flex;align-items:flex-start}.dso-selected button{cursor:pointer}.dso-selected-frame{position:relative;display:block;flex:none;width:clamp(76px,10vw,92px);aspect-ratio:16/9;transform:rotate(-3deg);transform-origin:center}.dso-selected-preview{font:inherit;display:block;box-sizing:border-box;width:100%;height:100%;padding:0;border:2px solid var(--dsw-alias-state-business-primary);border-radius:9px;overflow:hidden;background:var(--dsw-alias-bg-base);box-shadow:0 4px 14px color-mix(in srgb,var(--dsw-alias-label-primary) 18%,transparent)}.dso-selected .dso-thumbnail{width:100%;height:100%;border-radius:0}.dso-selected .dso-thumbnail img{height:100%;object-fit:cover;object-position:top}.dso-selected-remove{position:absolute;top:-8px;right:-8px;z-index:2;display:grid;place-items:center;width:20px;height:20px;padding:0;border:1px solid var(--dsw-alias-border-l2);border-radius:50%;background:var(--dsw-alias-label-primary);color:var(--dsw-alias-bg-base);font:500 15px/1 ui-sans-serif,system-ui,sans-serif;opacity:0;pointer-events:none;transform:rotate(3deg);transition:opacity 120ms ease}.dso-selected-frame:hover .dso-selected-remove,.dso-selected-frame:focus-within .dso-selected-remove{opacity:1;pointer-events:auto}.dso-selected-remove:disabled{cursor:default}.dso-selected .dso-selected-preview:focus-visible{outline-offset:2px}@media(hover:none){.dso-selected-remove{opacity:1;pointer-events:auto}}@media(prefers-reduced-motion:reduce){.dso-selected-frame{transform:none}.dso-selected-remove{transform:none;transition:none}}.dso-mode-action:focus-visible,.dso-card-select:focus-visible,.dso-card-preview:focus-visible,.dso-modal button:focus-visible,.dso-selected button:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:3px}@media(max-width:540px){.dso-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.dso-modal{padding:10px}.dso-modal footer{gap:12px}.dso-pagination{gap:8px}}`
   function apply(ctx) {
-    const store = new OfficeStore(ctx.get('connection'))
+    const store = new OfficeStore(ctx.get('connection'), (id, preset) => ctx.remote.agentPresets.select(id, preset))
     const inputFor = id => { const scope = ctx.sessions?.scope(id); return scope ? ctx.conversation.input.for(scope) : undefined }
     ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'Office dictionaries')
     ctx.effect(() => { if (document.querySelector('style[data-plugin-css="desktop-office/styles"]')) return; const tag = document.createElement('style'); tag.dataset.plugin = NS; tag.dataset.pluginCss = 'desktop-office/styles'; tag.textContent = css; document.head.append(tag); return () => tag.remove() }, 'Office styles')
@@ -671,5 +689,5 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
       ctx.slots.inject(seat, () => ctx.slots.register({ name: seat, id: NS, order: seat === 'conversation.hero.modeActions' ? 30 : 10, locale: NS, inject: () => component === Dock ? { store, inputFor } : { store } }, component))
     }
   }
-  return { apply, inject: ['slots', 'locale', 'connection', 'sessions', 'conversation'] }
+  return { apply, inject: ['slots', 'locale', 'connection', 'sessions', 'conversation', 'remote', 'remote.agentPresets'] }
 } })

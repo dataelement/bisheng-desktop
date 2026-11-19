@@ -15,6 +15,25 @@ describe('welcome case catalog', () => {
     })
   }
 
+  it.each(['chat', 'work'] as const)('provides distinct Chinese and English prompts for every %s case', mode => {
+    for (const item of catalog[mode]) {
+      expect(item.prompt.trim(), item.id).not.toBe('')
+      expect(item.promptEn.trim(), item.id).not.toBe('')
+      expect(item.promptEn, item.id).not.toBe(item.prompt)
+    }
+  })
+
+  it('marks only the Creator cases for the Creator preset and puts the timer in the first Work batch', () => {
+    const creator = catalog.work.filter(item => 'preset' in item)
+    expect(creator).toHaveLength(8)
+    expect(catalog.batches.work[0]).toContain('creator-pomodoro')
+    for (const item of creator) {
+      expect(item).toMatchObject({ category: '创作模式', officeMode: 'normal', preset: 'cordis' })
+      expect(item.prompt).not.toMatch(/\bDSH\b/i)
+      expect(item.promptEn).not.toMatch(/\bDSH\b/i)
+    }
+  })
+
   it('includes a PPT task and different categories in every Work batch', () => {
     const work = new Map(catalog.work.map(item => [item.id, item]))
     for (const batch of catalog.batches.work) {
