@@ -11,6 +11,14 @@ import feishu_release_notes as sender
 
 
 class SignedNotificationTest(unittest.TestCase):
+    def setUp(self):
+        # Notification tests exercise assembly, not repository history or Copilot.
+        # The summary generator has its own tests; real git scans here repeat six
+        # times and can exceed the wrapper deadline under full-suite contention.
+        changes = patch.object(module, "build_test_changes", return_value="测试变更摘要")
+        self.changes = changes.start()
+        self.addCleanup(changes.stop)
+
     def test_current_packaging_names(self):
         package = json.loads((Path(__file__).resolve().parents[1] / "package.json").read_text())
         build = package["build"]
@@ -54,6 +62,8 @@ class SignedNotificationTest(unittest.TestCase):
                     self.assertEqual("mac-arm64" in links, target != "windows")
                     self.assertNotIn("/releases/latest/", links)
                     self.assertNotIn("smoke", send.call_args.args[2])
+                    self.assertIn("测试变更摘要", send.call_args.args[2])
+            self.assertEqual(self.changes.call_count, 3)
             with patch.object(module, "verify_download", side_effect=RuntimeError("not public")), patch.object(module, "send_feishu_notification") as send:
                 with self.assertRaises(RuntimeError):
                     module.notify(directory, "all", "1.0.2", "owner/product", "hook")

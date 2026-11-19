@@ -157,7 +157,7 @@ describe('workbench market install routes', () => {
     if (desktopPnpm && typeof desktopPnpm.authorizeWorkbenchMarketInstall !== 'function') {
       desktopPnpm = { ...desktopPnpm, authorizeWorkbenchMarketInstall: async () => {} }
     }
-    apply({ effect: fn => fn(), reflect: { provide() {} }, connection, inject(deps, callback) { if (desktopPnpm) callback({ connection, desktopPnpm }) } }, { root })
+    apply({ effect: fn => fn(), reflect: { provide() {} }, connection, inject(deps, callback) { if (desktopPnpm && deps.every(name => name === 'desktopPnpm')) callback({ connection, desktopPnpm }) } }, { root })
     const call = async (path, body) => {
       const route = routes.find(value => value.path === path)
       if (!route) return undefined

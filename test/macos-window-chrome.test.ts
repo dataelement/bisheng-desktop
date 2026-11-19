@@ -57,3 +57,33 @@ it('shares sidebar theme ownership across repeated mounts', () => {
   second()
   expect(doc.querySelectorAll('[data-dsh-macos-sidebar-theme]')).toHaveLength(0)
 })
+
+it('applies the solid sidebar fill only while Harness uses its light palette', () => {
+  const frame = document.createElement('iframe')
+  document.body.append(frame)
+  try {
+    const doc = frame.contentDocument
+    if (!doc) throw new Error('Missing window chrome fixture document')
+    const sidebar = doc.createElement('aside')
+    sidebar.dataset.dshSidebarRoot = ''
+    const content = doc.createElement('main')
+    doc.body.append(sidebar, content)
+    const dispose = mountMacosWindowChrome(doc, () => () => {})
+    try {
+      const style = doc.querySelector<HTMLStyleElement>('[data-dsh-macos-sidebar-theme]')
+      const fill = style?.sheet?.cssRules[0]
+      if (!fill || !('selectorText' in fill) || typeof fill.selectorText !== 'string') {
+        throw new Error('Missing macOS sidebar fill rule')
+      }
+      for (const dark of [true, false, true]) {
+        doc.body.toggleAttribute('data-ds-dark-theme', dark)
+        expect(sidebar.matches(fill.selectorText)).toBe(!dark)
+        expect(content.matches(fill.selectorText)).toBe(false)
+      }
+    } finally {
+      dispose()
+    }
+  } finally {
+    frame.remove()
+  }
+})

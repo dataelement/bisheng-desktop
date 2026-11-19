@@ -14,8 +14,9 @@ export interface OfficeTemplateSelection {
 }
 /** Shared, persisted workflow selection and audit owned by the Desktop composer. */
 export interface OfficeModes {
-  state(sessionId: string): Promise<{ documentMode?: 'word' | 'excel'; selectedDocumentTemplate?: OfficeTemplateSelection; presentationMode?: 'ppt' }>
+  state(sessionId: string): Promise<{ documentMode?: 'word' | 'excel'; selectedDocumentTemplate?: OfficeTemplateSelection; presentationMode?: 'ppt'; selectedTemplateId?: string }>
   select(sessionId: string, mode: 'word' | 'excel' | null): Promise<boolean>
+  selectCaseMode(sessionId: string, mode: 'normal' | 'word' | 'excel' | 'ppt', template: OfficeTemplateSelection | undefined, keepPresentationTemplate: boolean): Promise<boolean>
   selectTemplate(sessionId: string, template: OfficeTemplateSelection): Promise<boolean>
   deselectTemplate(sessionId: string): Promise<boolean>
   record(sessionId: string, operation: string, facts: Record<string, unknown>): Promise<boolean>

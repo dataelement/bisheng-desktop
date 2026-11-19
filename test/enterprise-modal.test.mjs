@@ -35,15 +35,18 @@ function portal(markup = '<div role="dialog" aria-modal="true" data-state="open"
 it('reports upload portals, keeps the window during closing animation, and restores after removal', async () => {
   await flush()
   expect(report.mock.calls).toEqual([[false]])
+  expect(document.documentElement.hasAttribute('data-dsh-modal-open')).toBe(false)
   const node = portal()
   await flush()
   expect(report.mock.calls).toEqual([[false], [true]])
+  expect(document.documentElement.hasAttribute('data-dsh-modal-open')).toBe(true)
   node.firstElementChild.dataset.state = 'closed'
   await flush()
   expect(report).toHaveBeenCalledTimes(2)
   node.remove()
   await flush()
   expect(report.mock.calls).toEqual([[false], [true], [false]])
+  expect(document.documentElement.hasAttribute('data-dsh-modal-open')).toBe(false)
 })
 
 it('keeps the window covered until every nested dialog is dismissed', async () => {
@@ -54,6 +57,7 @@ it('keeps the window covered until every nested dialog is dismissed', async () =
   confirm.remove()
   await flush()
   expect(report.mock.calls).toEqual([[true]])
+  expect(document.documentElement.hasAttribute('data-dsh-modal-open')).toBe(true)
   details.remove()
   await flush()
   expect(report.mock.calls).toEqual([[true], [false]])
@@ -116,6 +120,7 @@ it('refreshes the presentation after navigation and releases observers on dispos
   await flush()
   expect(report.mock.calls).toEqual([[true], [true]])
   observer.dispose()
+  expect(document.documentElement.hasAttribute('data-dsh-modal-open')).toBe(false)
   node.remove()
   await flush()
   expect(report).toHaveBeenCalledTimes(2)

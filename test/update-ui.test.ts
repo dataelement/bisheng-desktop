@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import type { UpdateStatus } from '../src/shared/contracts'
 import {
   isUpdateDismissed,
+  isUpdateSkipEnabled,
   rollbackReleases,
   rollbackEmptyMessage,
   isNewManualPresentation,
+  shouldPresentUpdateCard,
   shouldShowUpdate,
   updateHeadline,
   updateMessage
@@ -26,6 +28,26 @@ const downloaded: UpdateStatus = {
 }
 
 describe('desktop update card visibility', () => {
+  it('treats another explicit check as a new presentation of the same offer', () => {
+    expect(isNewManualPresentation(
+      { phase: 'available', currentVersion: '1.0.1', manual: true, presentationId: 2 },
+      { phase: 'available', currentVersion: '1.0.1', manual: false }
+    )).toBe(true)
+  })
+
+  it('hides the corner card while About is open and brings it back when About closes', () => {
+    const available: UpdateStatus = {
+      phase: 'available',
+      currentVersion: '1.2.0',
+      availableVersion: '1.3.0',
+      manual: false
+    }
+    expect(shouldPresentUpdateCard(available, null, null, true)).toBe(false)
+    expect(shouldPresentUpdateCard(available, null, null, false)).toBe(true)
+    expect(shouldPresentUpdateCard(downloading, null, null, true)).toBe(false)
+    expect(shouldPresentUpdateCard(downloading, '1.1.0', null, false)).toBe(false)
+  })
+
   it('shows automatic downloads but keeps automatic background checks quiet', () => {
     expect(shouldShowUpdate(downloading)).toBe(true)
     expect(
@@ -56,6 +78,14 @@ describe('desktop update card visibility', () => {
 })
 
 describe('accepting an update is what starts the download', () => {
+  it('locks skip after accept and while the download is still running', () => {
+    expect(isUpdateSkipEnabled('available', false)).toBe(true)
+    expect(isUpdateSkipEnabled('available', true)).toBe(false)
+    expect(isUpdateSkipEnabled('downloading', false)).toBe(false)
+    expect(isUpdateSkipEnabled('downloaded', false)).toBe(true)
+    expect(isUpdateSkipEnabled('error', true)).toBe(false)
+  })
+
   it('asks rather than announcing a download already under way', () => {
     const available: UpdateStatus = {
       phase: 'available',

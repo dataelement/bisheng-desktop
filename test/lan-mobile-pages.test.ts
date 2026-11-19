@@ -361,6 +361,9 @@ describe('LAN mobile page', () => {
     expect(desktop).toContain('--bg:#141416')
     expect(desktop).toContain('.qr{display:inline-flex;background:#fff')
     expect(desktop).toContain('Creating a global network link')
+    expect(desktop).toContain(
+      'Control remotely over the internet, including 4G/5G or other WiFi networks, with moderate real-time responsiveness.'
+    )
     expect(desktop).toContain('Copied')
     expect(desktop).not.toContain('Link copied')
     expect(desktop).not.toContain('id="copyToast"')
@@ -854,7 +857,9 @@ describe('LAN mobile page', () => {
     expect(elements.tunnelError?.classList.contains('show')).toBe(true)
     expect(elements.tunnelError?.textContent).toContain('隧道建立失败：')
     expect(elements.tunnelError?.textContent).toContain('Unable to create an internet tunnel')
-    expect(elements.modeHint?.textContent).toContain('4G/5G')
+    expect(elements.modeHint?.textContent).toBe(
+      '移动设备通过互联网（如 4G/5G 或其他WiFi网络等）均可远程操控，同步实时性中等'
+    )
 
     await api.switchMode(false)
     expect(api.selectedTunnelTab()).toBe(false)

@@ -34,7 +34,7 @@ it.each([
     get: () => ({ rpc: { async call() { return { ok: true, value: { mode: null, templates: [], status: 'ok', data: { templates: [] } } } } } }),
     effect(run) { disposers.push(run()) }, on() {},
     locale: { register(ns, values) { dictionaries.set(ns, values); return () => {} } },
-    slots: { inject(_seat, run) { run() }, register(meta, component) { seats.push({ meta, component, props: meta.inject('session-a') }) } }
+    slots: { registerFactory() {}, inject(_seat, run) { run() }, register(meta, component) { seats.push({ meta, component, props: meta.inject('session-a') }) } }
   }
   function load(source) {
     let plugin

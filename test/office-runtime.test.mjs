@@ -121,6 +121,40 @@ describe('Office runtime assembly', () => {
     }
   })
 
+  it('retries a timeout while reading an Office download body', async () => {
+    const cache = await temporary()
+    const payload = Buffer.from('office-runtime-body')
+    const digest = createHash('sha256').update(payload).digest('hex')
+    const original = globalThis.fetch
+    const warnings = []
+    const warn = console.warn
+    let calls = 0
+    console.warn = message => warnings.push(String(message))
+    globalThis.fetch = async () => {
+      calls += 1
+      if (calls === 1) {
+        return {
+          ok: true,
+          status: 200,
+          arrayBuffer: async () => {
+            throw new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+          }
+        }
+      }
+      return new Response(payload)
+    }
+    try {
+      const saved = await downloadAsset('https://example.test/runtime-body.tar.gz', digest, cache)
+      expect(calls).toBe(2)
+      expect(await readFile(saved)).toEqual(payload)
+      expect(warnings.some(message => message.includes('(TimeoutError)'))).toBe(true)
+      expect(warnings.some(message => message.includes('(23)'))).toBe(false)
+    } finally {
+      globalThis.fetch = original
+      console.warn = warn
+    }
+  })
+
   it('does not retry an Office download that the server rejects', async () => {
     const cache = await temporary()
     const digest = createHash('sha256').update('missing').digest('hex')
@@ -266,6 +300,8 @@ export async function apply(ctx) {
     dshSafePatchPath: patch,
     dshHome: home,
     logPath: join(home, 'harness.log'),
+    // Concurrent subprocess fixtures must not race for the Desktop's stable port.
+    preferredPort: 0,
     startupTimeoutMs: harnessReadyTimeoutMs,
     // Node mode here uses the same real Electron runtime as the packaged CLI.
     launchProcess: (executable, args, options) => spawn(executable, args, { ...options, env: { ...options.env, ELECTRON_RUN_AS_NODE: '1' } }),
@@ -371,6 +407,8 @@ it('reports a missing Office payload during activation and keeps Safe Mode usabl
     dshSafePatchPath: join(root, 'build/dsh-desktop-safe.patch.yml'),
     dshHome: home,
     logPath: join(home, 'harness.log'),
+    // Concurrent subprocess fixtures must not race for the Desktop's stable port.
+    preferredPort: 0,
     startupTimeoutMs: harnessReadyTimeoutMs,
     launchProcess: (executable, args, options) => {
       const child = spawn(executable, args, { ...options, env: { ...options.env, ELECTRON_RUN_AS_NODE: '1' } })

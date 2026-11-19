@@ -149,7 +149,7 @@ The button keeps its accessible name, configuration action and viewer focus-retu
 
 `dsh-client-ui-layout` 声明 root/single 的 `desktop.mode.content`，owner 为 `work: ReactNode`、`columns: string`、`resizeHandle: ReactNode`。位置只覆盖第二、三列；贡献项占据这两列并保持 Work 挂载一次。默认 fallback 使用原内容和 frame 坐标的拖拽柄；桌面贡献项使用内容区域坐标的拖拽柄。左侧原生 SidebarRoot 始终挂载。
 
-`dsh-client-ui-workspace` 声明 root/single 的 `sidebar.workspaces.collection`，由 WorkspaceBrowser 内的 SessionTree、FlatList 和 SearchResults 呈现。owner 提供 `mode: projects | flat | search`、`query`、`archivedOnly`、`projects(active): ReactNode` 和只读 `items`。每项包含 id、updatedAt、pinned、blank、`render(active): ReactNode`。项目视图的 items 来自原生 deriveFlat 对未分组 sessionIds 的投影，项目成员与归档过滤继续由 Harness 拥有；原生 renderer 保持行菜单、状态及选择行为。默认 fallback 保持原项目树、单列表或搜索结果。
+`dsh-client-ui-workspace` 声明 root/single 的 `sidebar.workspaces.collection`，由 WorkspaceBrowser 内的 SessionTree、FlatList 和 SearchResults 呈现。owner 提供 `mode: projects | flat | search`、`query`、`archivedOnly`、`projects(active): ReactNode` 和只读 `items`。每项包含 id、updatedAt、pinned、blank、`render(active): ReactNode`。项目视图的 projects 包含原生未分组节点，items 为空，避免未分组 Work 混入云端对话；项目成员与归档过滤继续由 Harness 拥有；原生 renderer 保持行菜单、状态及选择行为。默认 fallback 保持原项目树、单列表或搜索结果。
 
 WorkspaceBrowser 向 SessionTree、FlatList、SearchResults 完整传递同一个 `renderSlot`，搜索结果和结果行沿用宿主集合及行扩展协议。`test/session-search-recovery.test.mjs` 运行已安装组件，覆盖原生 fallback、桌面合并集合、两种分组，以及输入、打开结果、清空、Escape、延迟返回和请求失败；`node scripts/verify-session-search.mjs` 在隔离 Electron 窗口运行同一组件流程。
 
@@ -385,3 +385,33 @@ Windows installed-package and real-account acceptance remain separate checks.
 `sidebar.workspaces.collection` 的搜索贡献项拥有合并后列表的空态。搜索组件通过可选 owner 字段 `searchPending` 传递本地历史搜索进度；桌面贡献项按本地与云端结果总数、搜索进度和云端首屏加载状态决定空态。上游原有“无匹配会话”随默认结果行一起放入 slot fallback，保留无贡献项时的独立搜索体验。搜索加载提示、结果数量上限提示与远程搜索生命周期继续由搜索组件管理。
 
 本次直接修正已有搜索组件与共享列表的渲染条件，发行安装使用现有 `dsh-client-ui-workspace@0.2.1-rc.2` 重放文件保存修改；宿主改动位于 `packages/dsh-desktop-client-ui/client.js`。当前 single/root slot 的挂载次数、筛选范围、归档和行操作保持原契约。上游提供等价的完整搜索列表组合协议后迁移并移除该兼容段。行为回归见 `test/session-search-recovery.test.mjs`，macOS 原生组件验证见 `scripts/verify-session-search-empty.mjs`；目录与搜索接口使用隔离数据。
+
+### 欢迎页快速案例（V1.3.0）
+
+`desktop.office.quickStart` 是宿主自有 root Factory，由 Office dock 在空会话中呈现一次，覆盖普通、Word、Excel 和 PPT 模式。owner 提供 `mode`、`sessionId`、`input` / `useInput`、`inputActions` 和可选的参考模板节点。PPT adapter 通过 `desktop.office.pptReferences` root Factory 提供既有模板选择器；原 PPT dock 只做无状态的 `probe`，未安装 Office 时沿用原选择器。参考模板区归 Office dock 管理：PPT 模式自动显示，用户可以不选；Word/Excel 保留按需展开，在切换模式或会话时收起。
+
+Work 案例通过已认证的 Office `welcome-cases` 只读操作按运行时加载一次；点击后提交限定的 `case-mode` 案例标识，服务端按已发布数据校验办公模式并一次持久化。Word/Excel 按当前目录的模板名和版本绑定，有歧义或缺少真实模板时提示用户选择；需要 PPT 模板时保留已经选中的真实 PPT 模板或提示选择。输入用现有修订保护的 `insertText` API，纯文本直接替换，带引用时追加以保留 chip；操作不提交消息。原工作区、预设、附件、权限和模型控件不移动。无会话时将案例意图暂存，只在第一个空白会话中应用，不覆盖已有草稿。Office 在案例模式请求期间通知 PPT 暂停选择，使用现有 Office/PPT 事件同步已确认状态。此变更不新增上游 patch 或跨插件客户端导入。
+
+Chat 和 Work 共用 `packages/dsh-desktop-office/welcome-cases.json`，保留飞书来源版本、原提示词和各模式的换批顺序。Chat 的宿主适配只在可信企业来源的 `/workspace/c/new` 收到空白欢迎页状态后运行，通过独立的脚本世界挂载案例。填词使用网页原编辑器，深度研究使用原菜单和已启用标记；找不到这些接缝时不替换原草稿，也不新增 IPC 或发送消息。企业网页提供正式的案例填充与模式接口后，应移除这一 DOM 适配；升级网页时用 `test/chat-welcome-cases.test.ts`、`test/enterprise-chat-view.test.ts` 并在已登录租户中新建 Chat 验证。
+
+Work 欢迎页的案例和参考模板跟随输入框进入同一会话滚动区。嵌入 PPT 模板时不再额外设置内部滚动区；独立 PPT 选择器保留原滚动布局。草稿滚至边缘时继续使用上游编辑器向会话滚动区转发滚动的行为。
+
+点击案例将可编辑任务填入原生输入框，使用 detect 坐标与 `draftRev` CAS，不发送消息、不重置引用和附件。选择前尚无工作空间时，仅在本地暂存案例并提示选择工作空间；暂存选择认领到首次可编辑目标会话，只有空草稿才能自动填入，已有内容须再次点击案例才能填词。切模式清除暂存选择，切会话或输入变化使异步插入失效。模式事件显式传递 `mode: ppt | null`，避免退出 PPT 后仍显示 PPT 案例。
+
+### 积分倍率展示与未配置价格提示（毕昇 F016，Harness 0.2.1-rc.2，2026-11-12）
+
+毕昇 `/api/v1/dsh/models` 为每个模型增加可选的 `pricing_hint`（`ratio`、`base`、`free`），表示相对租户基准模型的积分倍率，按输入与输出 3:1 估算，只用于展示；扣费仍由服务端按每次调用的实际用量计算。`contract.js` 只接受两位小数或 `<0.01` 的倍率，格式不对时丢弃该提示，不丢弃模型；旧服务端不返回该字段，桌面照常工作。主进程 `EnterpriseService` 把提示随模型目录发布到公开状态；账号页模型列表在服务商名称后显示倍率（基准、免费另有文字）。
+
+Work 模型下拉框的模型名由 `dsh-client-ui-model-selection` 渲染，外层固定带 `data-provider-id` 和 `data-model-id`。名字本身走 `conversation.input.model.label`，这是 single 类型的插槽，随包的 `dsh-client-ui-deepseek-model-label-1017` 已在其中注册。企业插件不占这个插槽：它按包 README 给出的方式，只用这两个属性定位，注入一段样式（`#dsh-desktop-enterprise-model-ratio`），在毕昇企业服务商（`bisheng-enterprise`）下带倍率提示的模型名后面用 `::after` 显示倍率标签。标签配色照搬 Tag 原语，模型 ID 和文案都以 CSS 字符串转义后写入。所以 DeepSeek 的 1017 标签和倍率标签可以同时出现，不再互相遮挡（2026-11-13 Callum 定）。未登录、连接旧服务端或没有企业模型时样式为空；提示随现有前台目录刷新（启动、回到前台、账号变化）更新，语言切换时重新生成；插件卸载时删除样式。已知局限：倍率是生成内容，屏幕阅读器可能不朗读，触发按钮的无障碍名称也不包含倍率。上游以后若把插槽改为可组合（chain/list），或提供模型附加信息的正式接缝，再改用正式接缝。
+
+服务端对没有价格记录的模型返回 HTTP 503、`code: model_pricing_missing`（毕昇错误码 26176）。`openai.js` 将其列为平台错误码；`dsh-client-ui-chat` 与 `dsh-client-ui-trajectory` 的现有平台错误本地化补丁各增加一条对应的中英文提示。没有新增补丁文件。随上游提供平台错误码本地化接缝时一并移除。
+
+回归：`test/enterprise-contract.test.ts`、`test/enterprise-service.test.ts`、`test/enterprise-package.test.ts`、`test/enterprise-model-sync.test.mjs`、`test/enterprise-model-label.test.mjs`、`test/enterprise-openai-adapter.test.mjs`、`test/provider-error-patch.test.ts`。补丁由干净的原始包重新生成，`patch-package` 可完整撤销并重新应用。实际 Work 下拉框与账号页显示需连接已升级的毕昇服务端验收。
+
+### ASAR 路径的 stat 权限位（Harness 0.2.1-rc.2，Electron 43）
+
+`@deepseek-ai/dsh-fs-local@0.2.1-rc.2` 的 `probe()` 与 `probeNoFollow()` 在 `stat` / `lstat(..., { bigint: true })` 之后执行 `Number(info.mode & 511n)`。Electron 43 的 ASAR 视图对 `.asar` 路径忽略 `bigint`，返回普通 `Stats`，`mode` 仍是 Number，于是抛出 `Cannot mix BigInt and other types`。`read`、`lstat` 和目录列举都会先走到这两处。普通磁盘文件返回 `BigIntStats`，不受影响。已发布的 `0.2.2-rc.3` 仍是同一表达式，升级依赖不能消除。
+
+补丁只把两处改成 `Number(info.mode) & 0o777`，不改 `Stats` 对象本身。`Stats.prototype.isFile()` 仍用 Number 做位运算，把 `mode` 改成 BigInt 会在类型判断处抛同样的错。上游删除 `info.mode & 511n` 后移除 `patches/@deepseek-ai+dsh-fs-local+0.2.1-rc.2.patch`，并保留 `test/fs-local-asar-stat.test.ts`。
+
+这个补丁不改变 Electron 把 `app.asar` 本体显示成目录的行为。修复后读取归档文件本身会得到 `FS_NOT_REGULAR_FILE`，读取归档内文件可以继续。ASAR 路径的 `mtimeNs` / `ctimeNs` 仍可能缺失，版本令牌不能用于新鲜度判断。

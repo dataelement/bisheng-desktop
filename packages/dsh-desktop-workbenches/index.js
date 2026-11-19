@@ -1,4 +1,6 @@
+import { adoptEnterpriseInstalls, checkEnterpriseWorkbenchAccess, createEnterpriseInstallStore } from './enterprise-access.mjs'
 import { installEnterpriseWorkbench } from './enterprise-install.mjs'
+import { registerCloudTools } from './cloud-tools.mjs'
 import { readInstallEvidence } from './install-evidence.mjs'
 import Schema from '@deepseek-ai/schemastery'
 import { CatalogError, createCatalogReader } from './catalog.mjs'
@@ -77,8 +79,19 @@ async function recordLocalInstall(root, install) {
   await rename(temporary, path)
 }
 
+async function readLocalInstalls(root) {
+  try {
+    const value = JSON.parse(await readFile(join(root, 'local-installs.json'), 'utf8'))
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  } catch (error) {
+    if (error?.code === 'ENOENT' || error instanceof SyntaxError) return {}
+    throw error
+  }
+}
+
 export function apply(ctx, config) {
   const store = createStateStore(config.root)
+  registerCloudTools(ctx, store)
   const readCatalog = createCatalogReader({
     fetch: selectMarketFetch(),
     cachePath: join(config.root, 'workbench-catalog-cache.json'),
@@ -123,7 +136,38 @@ export function apply(ctx, config) {
       }
     }
   })
+  ctx.inject(['desktopCloud'], scoped => {
+    scoped.connection.fetch.register({
+      path: '/api/desktop-workbenches/cloud', methods: ['POST'], requestBody: 'buffered',
+      async fetch(request) {
+        try {
+          const input = await readPayload(request)
+          if (!['guide', 'list', 'limits', 'progress'].includes(input.operation)) throw new Error('Use the development tool for cloud source and publishing operations.')
+          return Response.json(await scoped.desktopCloud.request(input))
+        }
+        catch (error) { return Response.json({ error: error.message }, { status: 400 }) }
+      }
+    })
+  })
+  ctx.connection.fetch.register(documentRoute('/api/desktop-workbenches/cloud-guide', 'cloud-guide.zh.md'))
+  ctx.connection.fetch.register(documentRoute('/api/desktop-workbenches/cloud-guide-en', 'cloud-guide.en.md'))
+  ctx.connection.fetch.register({
+    path: '/api/desktop-workbenches/cloud-client.mjs', methods: ['GET'], requestBody: 'buffered',
+    async fetch() {
+      return new Response(await readFile(new URL('./cloud-client.mjs', import.meta.url), 'utf8'), {
+        headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' }
+      })
+    }
+  })
   ctx.connection.fetch.register(documentRoute('/api/desktop-workbenches/development-guide', 'development-guide.zh.md'))
+  ctx.connection.fetch.register({
+    path: '/api/desktop-workbenches/create-workbench.mjs', methods: ['GET'], requestBody: 'buffered',
+    async fetch() {
+      return new Response(await readFile(new URL('./create-workbench.mjs', import.meta.url), 'utf8'), {
+        headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' }
+      })
+    }
+  })
   ctx.connection.fetch.register(documentRoute('/api/desktop-workbenches/author-guide', 'development-guide.zh.md'))
   ctx.connection.fetch.register(documentRoute('/api/desktop-workbenches/market-acceptance', 'market-acceptance.zh.md'))
   ctx.connection.fetch.register(documentRoute('/api/desktop-workbenches/development-guide-en', 'development-guide.en.md'))
@@ -337,6 +381,7 @@ export function apply(ctx, config) {
     })
   })
   ctx.inject(['pluginManager', 'enterpriseWorkbenchPackages'], (scoped) => {
+    const enterpriseInstalls = createEnterpriseInstallStore(config.root)
     scoped.connection.fetch.register({
       path: '/api/desktop-workbenches/enterprise-install',
       methods: ['POST'],
@@ -345,9 +390,51 @@ export function apply(ctx, config) {
         try {
           const payload = await readPayload(request, 4096, 'Request is too large.')
           const result = await installEnterpriseWorkbench(scoped.pluginManager, scoped.enterpriseWorkbenchPackages, payload?.id)
+          // Remember the catalog id: a revoked workbench disappears from the catalog (F022).
+          if (result.body.install) await enterpriseInstalls.record(result.body.install)
           return Response.json(result.body, { status: result.status, headers: { 'cache-control': 'no-store' } })
         } catch (error) {
           return installFailure(error, 'Could not install the enterprise workbench.')
+        }
+      }
+    })
+    // Bind workbenches installed before these records existed while the enterprise
+    // catalog still lists them; market and local installs are never adopted (F022).
+    scoped.connection.fetch.register({
+      path: '/api/desktop-workbenches/enterprise-installs/adopt',
+      methods: ['POST'],
+      requestBody: 'buffered',
+      async fetch(request) {
+        try {
+          const payload = await readPayload(request, 256 * 1024, 'Request is too large.')
+          const items = Array.isArray(payload?.items) ? payload.items.slice(0, 500) : []
+          const excluded = new Set([
+            ...Object.values(await marketInstalls.read()).map(install => install?.pluginName),
+            ...Object.values(await readLocalInstalls(config.root)).map(install => install?.pluginName)
+          ].filter(name => typeof name === 'string'))
+          const result = await adoptEnterpriseInstalls({ installs: enterpriseInstalls, manager: scoped.pluginManager, items, excluded })
+          return Response.json(result, { headers: { 'cache-control': 'no-store' } })
+        } catch (error) {
+          return installFailure(error, 'Could not record enterprise workbench installs.')
+        }
+      }
+    })
+    // Disable installed enterprise workbenches whose grant was revoked (F022).
+    // Network and server failures keep every workbench as it was.
+    scoped.connection.fetch.register({
+      path: '/api/desktop-workbenches/enterprise-access-check',
+      methods: ['POST'],
+      requestBody: 'buffered',
+      async fetch() {
+        try {
+          const result = await checkEnterpriseWorkbenchAccess({
+            installs: enterpriseInstalls,
+            access: ids => scoped.enterpriseWorkbenchPackages.access(ids),
+            manager: scoped.pluginManager
+          })
+          return Response.json(result, { headers: { 'cache-control': 'no-store' } })
+        } catch (error) {
+          return installFailure(error, 'Could not check enterprise workbench access.')
         }
       }
     })

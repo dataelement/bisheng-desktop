@@ -39,6 +39,7 @@ async function createService(
     ...options,
     vault,
     fetchImpl,
+    cloudRoot: join(directory, 'cloud-projects'),
     allowInsecureLoopback: true,
     note: (entry) => { notes.push(entry.event); entries.push(entry) }
   })
@@ -67,13 +68,65 @@ async function completeBrowserLogin(origin: string, authorizationUrl: string) {
   expect(await fetch(callback).then((response) => response.status)).toBe(200)
 }
 
+it('reads the cloud protocol from the currently signed-in enterprise and stops after logout', async () => {
+  const first = createMockEnterpriseServer({ port: 0 })
+  const second = createMockEnterpriseServer({ port: 0 })
+  const firstOrigin = await first.listen()
+  const secondOrigin = await second.listen()
+  cleanups.push(() => first.close(), () => second.close())
+  const guideRequests: string[] = []
+  const { service } = await createService(createEnterpriseFetch(async (input, init) => {
+    if (new URL(input).pathname === '/api/v1/dev-toolkit/workbench-guide.md') {
+      expect(new Headers(init?.headers).get('authorization')).toMatch(/^Bearer .+/u)
+      guideRequests.push(input)
+      return new Response('# Enterprise protocol\n', { headers: { 'content-type': 'text/markdown' } })
+    }
+    return fetch(input, init)
+  }))
+  for (const origin of [firstOrigin, secondOrigin]) {
+    await completeBrowserLogin(origin, (await service.startLogin(origin)).authorizationUrl)
+    await waitFor(() => service.snapshot().connected)
+    const result = await service.cloudRequest({ operation: 'guide' })
+    expect(result).toMatchObject({ guideUrl: `${origin}/api/v1/dev-toolkit/workbench-guide.md` })
+  }
+  expect(guideRequests).toEqual([
+    `${firstOrigin}/api/v1/dev-toolkit/workbench-guide.md`,
+    `${secondOrigin}/api/v1/dev-toolkit/workbench-guide.md`
+  ])
+  await service.logout()
+  await expect(service.cloudRequest({ operation: 'guide' })).rejects.toThrow()
+  expect(guideRequests).toHaveLength(2)
+})
+
+it('discards an old enterprise protocol response when the account changes during the request', async () => {
+  const first = createMockEnterpriseServer({ port: 0 })
+  const second = createMockEnterpriseServer({ port: 0 })
+  const firstOrigin = await first.listen()
+  const secondOrigin = await second.listen()
+  cleanups.push(() => first.close(), () => second.close())
+  let finishGuide: ((response: Response) => void) | undefined
+  const { service } = await createService(createEnterpriseFetch(async (input, init) => {
+    if (input === `${firstOrigin}/api/v1/dev-toolkit/workbench-guide.md`) {
+      return new Promise<Response>(resolve => { finishGuide = resolve })
+    }
+    return fetch(input, init)
+  }))
+  await completeBrowserLogin(firstOrigin, (await service.startLogin(firstOrigin)).authorizationUrl)
+  await waitFor(() => service.snapshot().connected)
+  const pending = expect(service.cloudRequest({ operation: 'guide' })).rejects.toThrow('Enterprise account changed.')
+  await waitFor(() => finishGuide !== undefined)
+  await service.startLogin(secondOrigin)
+  finishGuide?.(new Response('# Old enterprise protocol', { headers: { 'content-type': 'text/markdown' } }))
+  await pending
+})
+
 async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
   const started = Date.now()
-  while (Date.now() - started < timeoutMs) {
-    if (predicate()) return
+  // Check readiness before the deadline so a delayed timer cannot discard it.
+  while (!predicate()) {
+    if (Date.now() - started >= timeoutMs) throw new Error('Timed out waiting for enterprise service.')
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
-  throw new Error('Timed out waiting for enterprise service.')
 }
 
 describe('enterprise service login loop', () => {
@@ -170,7 +223,7 @@ describe('enterprise service login loop', () => {
     expect(service.snapshot()).toMatchObject({ connected: false, modelsAvailable: false, models: [] })
   })
 
-  it('retains reasoning metadata through login, refresh and detached public snapshots', async () => {
+  it('retains model metadata through login, refresh, catalog polling and detached public snapshots', async () => {
     const platform = createMockEnterpriseServer({ port: 0 })
     const origin = await platform.listen()
     cleanups.push(async () => platform.close())
@@ -179,7 +232,12 @@ describe('enterprise service login loop', () => {
       const response = await globalThis.fetch(input, init)
       if (!String(input).endsWith('/api/v1/dsh/models')) return response
       const body = await response.json()
-      body.data = body.data.map((model: Record<string, unknown>) => ({ ...model, reasoning }))
+      body.data = body.data.map((model: Record<string, unknown>) => ({
+        ...model, reasoning, slug: 'org/model-v1', context_window: 500000,
+        input_modalities: ['text', 'image'],
+        capabilities: { ...(model.capabilities as Record<string, boolean>), vision: true },
+        supported_reasoning_levels: [{ effort: 'high', description: 'High' }], default_reasoning_level: 'high'
+      }))
       return Response.json(body)
     }
     const { service } = await createService(createEnterpriseFetch(fetchImpl))
@@ -187,11 +245,49 @@ describe('enterprise service login loop', () => {
     await completeBrowserLogin(origin, started.authorizationUrl)
     await waitFor(() => service.snapshot().modelsAvailable)
     const snapshot = service.snapshot()
-    expect(snapshot.models[0]?.reasoning).toEqual(reasoning)
+    const metadata = {
+      slug: 'org/model-v1', context_window: 500000, input_modalities: ['text', 'image'],
+      supported_reasoning_levels: [{ effort: 'high', description: 'High' }], default_reasoning_level: 'high', reasoning
+    }
+    expect(snapshot.models[0]).toMatchObject(metadata)
+    snapshot.models[0]?.input_modalities?.splice(0)
+    snapshot.models[0]?.supported_reasoning_levels?.splice(0)
     snapshot.models[0]?.reasoning?.efforts.splice(0)
-    expect(service.snapshot().models[0]?.reasoning).toEqual(reasoning)
+    expect(service.snapshot().models[0]).toMatchObject(metadata)
     await service.refresh()
-    expect(service.snapshot().models[0]?.reasoning).toEqual(reasoning)
+    expect(service.snapshot().models[0]).toMatchObject(metadata)
+    await service.refreshModels()
+    expect(service.snapshot().models[0]).toMatchObject(metadata)
+  })
+
+  it('F016: carries credit ratio hints through login, catalog refresh and detached public snapshots', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    let ratio = '3.00'
+    const fetchImpl: EnterpriseFetch = async (input, init) => {
+      const response = await globalThis.fetch(input, init)
+      if (!String(input).endsWith('/api/v1/dsh/models')) return response
+      const body = await response.json()
+      body.data = body.data.map((model: Record<string, unknown>, index: number) => index === 0
+        ? { ...model, pricing_hint: { ratio, base: false, free: false } }
+        : model)
+      return Response.json(body)
+    }
+    const { service } = await createService(createEnterpriseFetch(fetchImpl))
+    const started = await service.startLogin(origin)
+    await completeBrowserLogin(origin, started.authorizationUrl)
+    await waitFor(() => service.snapshot().modelsAvailable)
+    const snapshot = service.snapshot()
+    expect(snapshot.models[0]?.pricing_hint).toEqual({ ratio: '3.00', base: false, free: false })
+    expect(snapshot.models.slice(1).every(model => model.pricing_hint === undefined)).toBe(true)
+    snapshot.models[0]!.pricing_hint!.ratio = 'tampered'
+    expect(service.snapshot().models[0]?.pricing_hint?.ratio).toBe('3.00')
+    const before = service.snapshot().revision
+    ratio = '1.50'
+    await service.refreshModels()
+    expect(service.snapshot().models[0]?.pricing_hint?.ratio).toBe('1.50')
+    expect(service.snapshot().revision).toBeGreaterThan(before)
   })
 
   it('AC-T05/AC-T07: title broker binds the current epoch, refreshes once, and never sends broker identity fields', async () => {
@@ -230,6 +326,41 @@ describe('enterprise service login loop', () => {
     expect(service.snapshot().connectionKey).toBe(state.connectionKey)
     expect(service.snapshot().auditTitleEpoch).not.toBe(state.auditTitleEpoch)
     await expect(service.reportAuditTitle(request)).rejects.toMatchObject({ status: 409 })
+    expect(bodies).toHaveLength(2)
+  })
+
+  it('forwards a message rating without broker identity and rejects a stale epoch', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(() => platform.close())
+    const bodies: unknown[] = []
+    let first = true
+    const { service } = await createService(createEnterpriseFetch(async (input, init) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/api/v1/dsh/audit/message-feedback') {
+        bodies.push(JSON.parse(String(init?.body)))
+        if (first) {
+          first = false
+          return Response.json({ error: { message: 'Expired', type: 'authentication_error', code: 'invalid_access_token' } }, { status: 401 })
+        }
+        return Response.json({ status: 'UPDATED', event_seq: 12 })
+      }
+      const response = await fetch(input, init)
+      if (path === '/api/v1/dsh/config') return Response.json({ ...await response.json(), audit_message_feedback: { version: 1 } })
+      return response
+    }))
+    await completeBrowserLogin(origin, (await service.startLogin(origin)).authorizationUrl)
+    await waitFor(() => service.snapshot().phase === 'connected')
+    const state = service.snapshot()
+    const update = {
+      conversation_id: 'e2e-feedback-main', message_id: 'msg-1', event_seq: 12, op: 'put', rating: 'positive', note: 'kept-on-server'
+    }
+    const request = { connectionKey: state.connectionKey, auditFeedbackEpoch: state.auditFeedbackEpoch, update }
+    expect(await service.reportAuditFeedback(request)).toEqual({ status: 'UPDATED', event_seq: 12 })
+    expect(bodies).toEqual([update, update])
+    expect(JSON.stringify(bodies)).not.toContain(String(state.connectionKey))
+    await expect(service.reportAuditFeedback({ ...request, auditFeedbackEpoch: Number(state.auditFeedbackEpoch) - 1 })).rejects.toMatchObject({ status: 409 })
+    await expect(service.reportAuditFeedback({ ...request, update: { ...update, user_id: 1 } })).rejects.toMatchObject({ status: 400 })
     expect(bodies).toHaveLength(2)
   })
 
@@ -316,9 +447,14 @@ describe('enterprise service login loop', () => {
       if (String(input).endsWith('/api/v1/dsh/authorizations')) requests.push(JSON.parse(String(init?.body)))
       return globalThis.fetch(input, init)
     }
+    // Observe the login lifecycle directly; filesystem/bootstrap latency is
+    // bounded by the test deadline, not an unrelated five-second polling loop.
+    let notifyActivation: () => void = () => { throw new Error('Activation observer is not initialized') }
+    const activated = new Promise<void>(resolve => { notifyActivation = resolve })
     const activateDesktop = vi.fn(() => {
       expect(service.snapshot().phase).toBe('connected')
     expect(service.snapshot().desktopVersion).toBe('0.1.1-beta.2+build.7')
+      notifyActivation()
       if (failActivation) throw new Error('window unavailable')
     })
     const { service, notes } = await createService(createEnterpriseFetch(fetchImpl), {
@@ -328,7 +464,7 @@ describe('enterprise service login loop', () => {
     expect(requests[0]).toMatchObject({ client_version: '0.1.1-beta.2+build.7', device_name: 'BISHENG' })
     expect(activateDesktop).not.toHaveBeenCalled()
     await completeBrowserLogin(origin, started.authorizationUrl)
-    await waitFor(() => activateDesktop.mock.calls.length === 1)
+    await activated
     expect(service.snapshot().phase).toBe('connected')
     expect(notes).toContain('login_committed')
     expect(notes.includes('desktop_activation_failed')).toBe(failActivation)
@@ -433,7 +569,7 @@ describe('enterprise service login loop', () => {
     const fetchImpl: EnterpriseFetch = async (input, init) => {
       if (rejectRefresh && String(input).includes('/api/v1/dsh/token') && String(init?.body).includes('refresh_token')) {
         return new Response(JSON.stringify({
-          error: { message: 'Refresh token is invalid.', type: 'authentication_error', code: 'invalid_refresh_token' }
+          error: { message: 'Refresh token is invalid.', type: 'authentication_error', code: 'refresh_token_reused' }
         }), {
           status: 401,
           headers: { 'content-type': 'application/json' }
@@ -441,7 +577,7 @@ describe('enterprise service login loop', () => {
       }
       return globalThis.fetch(input, init)
     }
-    const { service } = await createService(createEnterpriseFetch(fetchImpl))
+    const { service, entries } = await createService(createEnterpriseFetch(fetchImpl))
     const started = await service.startLogin(origin)
     await completeBrowserLogin(origin, started.authorizationUrl)
     await waitFor(() => {
@@ -453,8 +589,9 @@ describe('enterprise service login loop', () => {
     expect(cleared.connected).toBe(false)
     expect(cleared.phase).toBe('idle')
     expect(cleared.models).toEqual([])
-    expect(cleared.errorCode).toBe('invalid_refresh_token')
+    expect(cleared.errorCode).toBe('refresh_token_reused')
     expect(cleared.error).toBe('Refresh token is invalid.')
+    expect(entries).toContainEqual(expect.objectContaining({ event: 'refresh_invalid', code: 'refresh_token_reused' }))
   })
 
   it('clears the session and keeps the reason when the session has expired', async () => {
@@ -473,7 +610,7 @@ describe('enterprise service login loop', () => {
       }
       return globalThis.fetch(input, init)
     }
-    const { service, notes } = await createService(createEnterpriseFetch(fetchImpl))
+    const { service, notes, entries } = await createService(createEnterpriseFetch(fetchImpl))
     const started = await service.startLogin(origin)
     await completeBrowserLogin(origin, started.authorizationUrl)
     await waitFor(() => {
@@ -488,6 +625,7 @@ describe('enterprise service login loop', () => {
     expect(cleared.errorCode).toBe('session_expired')
     expect(cleared.error).toBe('session expired')
     expect(notes).toContain('refresh_invalid')
+    expect(entries).toContainEqual(expect.objectContaining({ event: 'refresh_invalid', code: 'session_expired' }))
   })
 
   it('publishes access_denied when browser sign-in is cancelled', async () => {
@@ -573,14 +711,14 @@ describe('enterprise service login loop', () => {
     expect(notes).toContain('logout_committed')
   })
 
-  it('inspects intranet HTTP but refuses to start login without confirmation', async () => {
+  it('inspects non-loopback HTTP and requires confirmation before login', async () => {
     const { service } = await createService()
     await expect(service.inspectBase('http://192.168.106.119:30006')).resolves.toEqual({
       base: 'http://192.168.106.119:30006',
       insecurePrivateHttp: true
     })
     await expect(service.startLogin('http://192.168.106.119:30006')).rejects.toMatchObject({
-      message: 'HTTP intranet addresses require explicit confirmation.',
+      message: 'HTTP addresses require explicit confirmation.',
       status: 400
     })
   })
@@ -705,6 +843,73 @@ describe('enterprise service login loop', () => {
     expect(connected.modelUsage?.['bisheng:42']?.limit).toBeGreaterThan(0)
     expect(connected.loginExpiresAt).toBeUndefined()
     expect(JSON.stringify(connected)).not.toMatch(/access_token|refresh_token|identity_ticket|ticket_/u)
+  })
+})
+
+describe('enterprise mobile access authorization', () => {
+  it('hands off refreshed credentials synchronously before logout revokes mobile access', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    const { service } = await createService()
+    await completeBrowserLogin(origin, (await service.startLogin(origin)).authorizationUrl)
+    await waitFor(() => service.snapshot().modelsAvailable)
+    const events: Array<ReturnType<EnterpriseService['readMobileAccessAccount']>> = []
+    const unsubscribe = service.subscribeMobileAccessAccount(account => { events.push(account) })
+    const oldToken = events.at(-1)?.accessToken
+    expect(oldToken).toEqual(expect.any(String))
+    await service.refresh()
+    const fresh = service.readMobileAccessAccount()
+    expect(fresh.accessToken).toEqual(expect.any(String))
+    expect(fresh.accessToken).not.toBe(oldToken)
+    expect(events.at(-1)).toEqual(fresh)
+    events.length = 0
+    // No mobile watcher tick between refresh and logout. The departing credential
+    // must be delivered before the authoritative getter starts returning {}.
+    const logout = service.logout()
+    expect(events).toEqual([fresh, {}])
+    expect(service.readMobileAccessAccount()).toEqual({})
+    expect(JSON.stringify(service.snapshot())).not.toContain(fresh.accessToken)
+    unsubscribe()
+    await logout
+    expect(events).toEqual([fresh, {}])
+  })
+
+  it('revokes desktop access before remote logout completes and when the session expires', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    let now = Date.now()
+    let finishLogout: (() => void) | undefined
+    const { service, vault } = await createService(async (url, init) => {
+      if (new URL(url).pathname.endsWith('/logout')) {
+        await new Promise<void>(resolve => { finishLogout = resolve })
+        return Response.json({})
+      }
+      return fetch(url, init)
+    }, { now: () => now })
+    await completeBrowserLogin(origin, (await service.startLogin(origin)).authorizationUrl)
+    await waitFor(() => service.snapshot().modelsAvailable)
+    const account = service.readMobileAccessAccount()
+    expect(account).toMatchObject({ base: origin, accessToken: expect.any(String), userId: expect.any(String) })
+    const session = (await vault.read()).session
+    expect(session?.session_expires_at).toBeTruthy()
+    const validNow = now
+    now = Date.parse(session?.session_expires_at ?? '') + 1
+    expect(service.readMobileAccessAccount()).toEqual({})
+    const expiredEvents: Array<ReturnType<EnterpriseService['readMobileAccessAccount']>> = []
+    const unsubscribeExpired = service.subscribeMobileAccessAccount(value => { expiredEvents.push(value) })
+    expect(expiredEvents).toEqual([{}])
+    unsubscribeExpired()
+    now = validNow
+    expect(service.readMobileAccessAccount()).toEqual(account)
+    const logout = service.logout()
+    // Local revocation is synchronous; it must not depend on the logout server.
+    expect(service.readMobileAccessAccount()).toEqual({})
+    await waitFor(() => finishLogout !== undefined)
+    finishLogout?.()
+    await logout
+    expect(service.readMobileAccessAccount()).toEqual({})
   })
 })
 

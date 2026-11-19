@@ -297,6 +297,44 @@ describe('LanMobileBridge tunnel state and endpoints', () => {
     expect(toggleOffJson.active).toBe(false)
   })
 
+  it('returns a browser pairing URL over HTTP and serves its password page without an app', async () => {
+    const bridge = new LanMobileBridge({
+      harnessUrl: () => 'http://127.0.0.1:3000',
+      port: 0,
+      createCloudflareTunnel: async () =>
+        fakeTunnel('cloudflare', 'https://browser-mobile.trycloudflare.com')
+    })
+    bridges.push(bridge)
+    const snapshot = await bridge.start()
+    const cookie = await authorizeDesktop(bridge)
+    const response = await fetch(`http://127.0.0.1:${snapshot.port}/desktop/tunnel/toggle`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ enable: true })
+    })
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body).toMatchObject({ ok: true, active: true, provider: 'cloudflare' })
+    const pairingUrl = new URL(body.pairingUrl)
+    expect(pairingUrl.origin).toBe('https://browser-mobile.trycloudflare.com')
+    expect(pairingUrl.pathname).toBe('/pair')
+    expect(pairingUrl.searchParams.get('token')).toBeTruthy()
+    expect(body.pairingPin).toMatch(/^\d{6}$/)
+    expect(body.qrSvg).toContain('<svg')
+
+    // Model the tunnel forwarding the browser URL to the local HTTP listener.
+    const phone = await fetch(`http://127.0.0.1:${snapshot.port}${pairingUrl.pathname}${pairingUrl.search}`, {
+      headers: { host: pairingUrl.host, 'cf-connecting-ip': '203.0.113.40', 'cf-ray': 'test-ray' },
+      redirect: 'manual'
+    })
+    expect(phone.status).toBe(200)
+    expect(phone.headers.get('content-type')).toContain('text/html')
+    expect(phone.headers.get('location')).toBeNull()
+    expect(phone.headers.get('set-cookie')).toBeNull()
+    expect(await phone.text()).toContain('Enter pairing password')
+    expect(bridge.snapshot().connected).toBe(false)
+  })
+
   it('starts Pinggy and stops Cloudflare when the user asks for a backup link', async () => {
     const stopped: string[] = []
     const bridge = new LanMobileBridge({

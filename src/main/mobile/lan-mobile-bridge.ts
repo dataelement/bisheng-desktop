@@ -23,6 +23,30 @@ import {
   renderPairingPinPage
 } from './lan-mobile-pages'
 import type { PairingPinState, PairingPinStore } from './pairing-pin-store'
+import {
+  REMOTE_CHANNEL_HEADER,
+  REMOTE_CHANNEL_TOKEN_HEADER,
+  REMOTE_TENANT_HEADER,
+  REMOTE_USER_HEADER,
+  accountsMatch
+} from './mobile-access-protocol'
+import {
+  isWorkRpcMethod,
+  MobileWorkUploads,
+  parseWorkDispatch,
+  readUploadResult,
+  readWorkEnvelope,
+  readWorkJson
+} from './mobile-work-rpc'
+import {
+  projectMobileOfficeCatalog,
+  projectMobilePpt,
+  projectSessionList,
+  projectSessionRow,
+  projectLiveAssistantFrame,
+  projectTranscriptFrame,
+  projectTranscriptHistory
+} from './mobile-phone-view'
 
 const MAX_BODY_BYTES = 64 * 1024
 const PAIRING_TTL_MS = 5 * 60 * 1000
@@ -84,10 +108,22 @@ const HARNESS_ENDPOINTS: Record<
     endpoint: 'session/prompt',
     args: (payload) => ({ request: { requestId: randomUUID(), ...payload } })
   },
-  'session.cancel': { endpoint: 'session/cancel', args: (payload) => ({ request: payload }) }
+  'session.cancel': { endpoint: 'session/cancel', args: (payload) => ({ request: payload }) },
+  // The process catalog is not a session setting. The phone renders it and
+  // never sends a command line of its own.
+  'permission.catalog': { endpoint: 'permissionPresets/catalog', args: () => ({}) }
 }
 
-const RPC_ALLOWLIST = new Set([...Object.keys(HARNESS_ENDPOINTS), 'session.history', 'workspace.list'])
+const PERMISSION_PRESET_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+const RPC_ALLOWLIST = new Set([
+  ...Object.keys(HARNESS_ENDPOINTS),
+  'session.history',
+  'workspace.list',
+  'permission.current',
+  'permission.select',
+  'session.listPage'
+])
 
 export interface LanMobileBridgeOptions {
   harnessUrl(): string | undefined
@@ -108,6 +144,7 @@ export interface LanMobileBridgeOptions {
   onReconnectRequested?: () => void
   onConnectedChange?: (connected: boolean) => void
   pairingPinStore?: PairingPinStore
+  currentAccount?: () => { userId?: string, tenantId?: string }
 }
 
 export interface LanMobileBridgeSnapshot {
@@ -187,6 +224,7 @@ export class LanMobileBridge {
   /** Sessions moved here only by a desktop disconnect. Reconnect will not honor anything else. */
   private readonly resumableSessions = new Map<string, MobileSession>()
   private readonly pendingQuestions = new Map<string, PendingMobileQuestion>()
+  private readonly workUploads = new MobileWorkUploads()
   private ephemeralPin?: string
   private ephemeralPinExpiresAt?: number
   private readonly pinFailuresByIp = new Map<string, number[]>()
@@ -203,8 +241,13 @@ export class LanMobileBridge {
   private muxAbort?: AbortController
   private muxTask?: Promise<void>
   private readonly sessionStreamAborts = new Set<AbortController>()
+  private readonly sessionStreamWriters = new Map<string, Set<ServerResponse>>()
   private lastConnected = false
+  /** Keep the workspace follow alive after an app RPC, without marking a browser session connected. */
+  private remoteMuxUntil = 0
+  private remoteMuxTimer?: ReturnType<typeof setTimeout>
   private readonly desktopSessionToken = randomBytes(32).toString('base64url')
+  private readonly accessChannelToken = randomBytes(32).toString('base64url')
   private desktopBootstrapToken?: string
 
   constructor(private readonly options: LanMobileBridgeOptions) {
@@ -267,6 +310,7 @@ export class LanMobileBridge {
     this.suspendedSessions.clear()
     this.resumableSessions.clear()
     this.pendingQuestions.clear()
+    this.workUploads.clear()
     this.ephemeralPin = undefined
     this.ephemeralPinExpiresAt = undefined
     this.clearPinFailures()
@@ -274,6 +318,9 @@ export class LanMobileBridge {
     this.tunnelExpiresAt = undefined
     for (const abort of this.sessionStreamAborts) abort.abort()
     this.sessionStreamAborts.clear()
+    this.remoteMuxUntil = 0
+    if (this.remoteMuxTimer) clearTimeout(this.remoteMuxTimer)
+    this.remoteMuxTimer = undefined
     this.syncConnected()
     this.muxAbort?.abort()
     const muxTask = this.muxTask
@@ -293,6 +340,8 @@ export class LanMobileBridge {
     if (targetState && this.sessions.size > 0 && !this.tunnelActive) {
       throw new Error('Disconnect the phone before switching connection modes.')
     }
+    // Browser URL pairing remains available independently of the mobile app
+    // and its signed-in account channel.
     if (!targetState) {
       // Wait for an in-flight launch, then stop the tunnel it spawned:
       // otherwise the just-launched process is orphaned (or silently revives
@@ -680,6 +729,10 @@ export class LanMobileBridge {
         : transportAddress
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`)
 
+    if (firstHeaderValue(request.headers[REMOTE_CHANNEL_HEADER]) === 'remote') {
+      return this.handleRemoteChannel(request, response, url, transportAddress)
+    }
+
     if (request.method === 'GET' && url.pathname.startsWith('/brand-logo/')) {
       const variant = url.pathname === '/brand-logo/dark' ? 'dark' : 'light'
       const path = this.options.brandLogoPaths?.[variant]
@@ -1049,17 +1102,83 @@ export class LanMobileBridge {
       this.verifyTrustedOrigin(request)
       const sessionId = url.searchParams.get('sessionId')
       if (!sessionId) return this.text(response, 400, 'Session id is required.')
-      return this.streamSession(request, response, sessionId)
+      return this.streamSession(request, response, sessionId, url.searchParams.get('view') === 'transcript')
     }
     if (request.method === 'POST' && url.pathname === '/api/rpc') {
       this.verifySameOrigin(request)
       const input = JSON.parse(await readBody(request)) as { method?: unknown; payload?: unknown }
+      const result = await this.dispatchMobileRpc(input)
+      return this.json(response, result.status, result.body)
+    }
+    this.text(response, 404, 'Not found.')
+  }
+
+  listeningPort(): number | undefined {
+    return this.port
+  }
+
+  remoteChannelToken(): string {
+    return this.accessChannelToken
+  }
+
+  private async handleRemoteChannel(
+    request: IncomingMessage,
+    response: ServerResponse,
+    url: URL,
+    transportAddress: string
+  ): Promise<void> {
+    const token = firstHeaderValue(request.headers[REMOTE_CHANNEL_TOKEN_HEADER]) ?? ''
+    if (!isLoopbackAddress(transportAddress) || !this.pinsEqual(token, this.accessChannelToken)) {
+      return this.json(response, 401, { ok: false, error: 'account_switched' })
+    }
+    const account = this.options.currentAccount?.() ?? {}
+    const presented = {
+      userId: firstHeaderValue(request.headers[REMOTE_USER_HEADER]),
+      tenantId: firstHeaderValue(request.headers[REMOTE_TENANT_HEADER])
+    }
+    if (!accountsMatch(account, presented)) {
+      return this.json(response, 401, { ok: false, error: 'account_switched' })
+    }
+    // The signed-in app is a client too. The follow stream used to start only
+    // for a browser session, so workspace.list from the app answered before
+    // any baseline existed.
+    this.noteRemoteClient()
+    if (request.method === 'GET' && url.pathname === '/api/v1/status') {
+      return this.json(response, 200, { ok: true, accepted: true })
+    }
+    if (request.method === 'POST' && url.pathname === '/api/v1/rpc') {
+      let input: { method?: unknown, payload?: unknown }
+      try {
+        input = JSON.parse(await readBody(request)) as { method?: unknown, payload?: unknown }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (message.includes('too large')) return this.json(response, 413, { ok: false, error: message })
+        return this.json(response, 400, { ok: false, error: 'Invalid JSON.' })
+      }
+      const result = await this.dispatchMobileRpc(input, true)
+      return this.json(response, result.status, result.body)
+    }
+    if (request.method === 'GET' && url.pathname === '/api/v1/session/stream') {
+      const sessionId = url.searchParams.get('sessionId')
+      if (!sessionId) return this.text(response, 400, 'Session id is required.')
+      return this.streamSession(request, response, sessionId, url.searchParams.get('view') === 'transcript')
+    }
+    return this.json(response, 404, { ok: false, error: 'Not found.' })
+  }
+
+  private async dispatchMobileRpc(
+    input: { method?: unknown, payload?: unknown },
+    remote = false
+  ): Promise<{
+    status: number
+    body: Record<string, unknown>
+  }> {
       if (input.method === 'interaction.pending') {
         const sessionId = requiredStringField(input.payload, 'sessionId')
         const pending = [...this.pendingQuestions.values()].find(
           (item) => item.sessionId === sessionId
         )
-        return this.json(response, 200, { ok: true, value: pending ?? null })
+        return { status: 200, body: { ok: true, value: pending ?? null } }
       }
       if (input.method === 'interaction.answer') {
         const answer = parseQuestionResponse(input.payload)
@@ -1069,7 +1188,7 @@ export class LanMobileBridge {
           kind: 'result',
           value: { answers: answer.answers }
         })
-        return this.json(response, result.ok ? 200 : 400, result)
+        return { status: result.ok ? 200 : 400, body: result }
       }
       if (input.method === 'interaction.cancel') {
         const rpcId = requiredStringField(input.payload, 'rpcId')
@@ -1083,15 +1202,17 @@ export class LanMobileBridge {
             code: 'cancelled'
           }
         })
-        return this.json(response, result.ok ? 200 : 400, result)
+        return { status: result.ok ? 200 : 400, body: result }
+      }
+      if (typeof input.method === 'string' && isWorkRpcMethod(input.method)) {
+        const result = await this.forwardWork(input.method, input.payload ?? {})
+        return { status: result.ok ? 200 : 400, body: result }
       }
       if (typeof input.method !== 'string' || !RPC_ALLOWLIST.has(input.method)) {
-        return this.json(response, 403, { ok: false, error: 'RPC method is not available on mobile.' })
+        return { status: 403, body: { ok: false, error: 'RPC method is not available on mobile.' } }
       }
-      const result = await this.forwardRpc(input.method, input.payload ?? {})
-      return this.json(response, result.ok ? 200 : 400, result)
-    }
-    this.text(response, 404, 'Not found.')
+      const result = await this.forwardRpc(input.method, input.payload ?? {}, remote)
+      return { status: result.ok ? 200 : 400, body: result }
   }
 
   private pageProduct(url: URL): string | undefined {
@@ -1321,7 +1442,11 @@ export class LanMobileBridge {
    * the session list row, so the read is two calls here rather than a
    * protocol the page has to learn.
    */
-  private async forwardRpc(method: string, payload: unknown): Promise<{ ok: boolean; value?: unknown; error?: string }> {
+  private async forwardRpc(
+    method: string,
+    payload: unknown,
+    remote = false
+  ): Promise<{ ok: boolean; value?: unknown; error?: string }> {
     const fields = typeof payload === 'object' && payload !== null
       ? payload as Record<string, unknown>
       : {}
@@ -1330,11 +1455,14 @@ export class LanMobileBridge {
       // The Host kept no unary workspace read: `workspace/follow` is a stream,
       // and its opening `baseline` frame is exactly the projection this call
       // used to return. The mux consumer keeps that baseline, so the answer is
-      // whatever the carrier last observed.
-      const snapshot = this.workspaceSnapshot
-      if (snapshot === undefined) return { ok: false, error: 'Harness workspaces are not loaded yet.' }
-      return { ok: true, value: snapshot }
+      // whatever the carrier last observed. An app request has to wait for
+      // that first frame instead of failing while the socket is still opening.
+      const ready = await this.readyWorkspaceSnapshot()
+      if (!ready.ok) return ready
+      return { ok: true, value: ready.value }
     }
+
+    if (method === 'session.listPage') return this.forwardSessionPage(fields)
 
     if (method === 'session.history') {
       const sessionId = fields.sessionId
@@ -1365,19 +1493,258 @@ export class LanMobileBridge {
       // Harness 0.1.2 calls the durable entries `records` and serves
       // projections on the list row. Keep the stable mobile-page contract so
       // cached pages can still render messages, running state, and todos.
+      const history = {
+        events: value.records,
+        projections,
+        hasMore: value.hasMore === true
+      }
       return {
         ok: true,
-        value: {
-          events: value.records,
-          projections,
-          hasMore: value.hasMore === true
-        }
+        value: fields.view === 'transcript' ? projectTranscriptHistory(history) : history
       }
     }
 
+    if (method === 'permission.current') return this.forwardPermissionCurrent(fields)
+    if (method === 'permission.select') return this.forwardPermissionSelect(fields)
+
     const route = HARNESS_ENDPOINTS[method]
     if (route === undefined) return { ok: false, error: 'RPC method is not available on mobile.' }
-    return this.invokeHarness(route.endpoint, route.args(fields))
+    const listed = await this.invokeHarness(route.endpoint, route.args(fields))
+    // The LAN page has no frame cap. Only the platform channel needs the trim.
+    if (remote && method === 'session.list' && listed.ok) {
+      return { ok: true, value: projectSessionList(listed.value) }
+    }
+    return listed
+  }
+
+  /**
+   * Wait for the same workspace baseline `workspace.list` serves. A cold
+   * attach has not received `workspace/follow` yet; an empty page would look
+   * like a workspace with no sessions.
+   */
+  private async readyWorkspaceSnapshot(): Promise<
+    { ok: true; value: WorkspaceSnapshot } | { ok: false; error: string }
+  > {
+    if (!isWorkspaceSnapshot(this.workspaceSnapshot)) {
+      this.noteRemoteClient()
+      const deadline = this.now() + 5_000
+      while (!isWorkspaceSnapshot(this.workspaceSnapshot) && this.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+    }
+    const snapshot = this.workspaceSnapshot
+    if (!isWorkspaceSnapshot(snapshot)) {
+      return { ok: false, error: 'Harness workspaces are not loaded yet.' }
+    }
+    return { ok: true, value: snapshot }
+  }
+
+  /**
+   * One workspace's sessions, ordered and cut on the desktop. The harness
+   * list is unbounded and ignores its cursor, so the page is made here,
+   * before the reply crosses the gateway frame.
+   */
+  private async forwardSessionPage(
+    fields: Record<string, unknown>
+  ): Promise<{ ok: boolean; value?: unknown; error?: string }> {
+    const ready = await this.readyWorkspaceSnapshot()
+    if (!ready.ok) return ready
+    const listed = await this.invokeHarness('session/list', { _request: {} })
+    if (!listed.ok) return listed
+    const items = isRecord(listed.value) && Array.isArray(listed.value.items)
+      ? listed.value.items
+      : []
+    const workspaceId = typeof fields.workspaceId === 'string' ? fields.workspaceId.trim() : ''
+    let sessionIds: Set<string> | undefined
+    if (workspaceId !== '') {
+      const workspace = ready.value.items.find((item) => workspaceIdOf(item) === workspaceId)
+      if (!isRecord(workspace)) return { ok: true, value: { items: [], hasMore: false } }
+      const ids = Array.isArray(workspace.sessionIds) ? workspace.sessionIds : []
+      sessionIds = new Set(ids.filter((id): id is string => typeof id === 'string' && id.length > 0))
+    }
+    const archivedRaw = ready.value.archivedSessionIds
+    const archived = new Set(
+      Array.isArray(archivedRaw)
+        ? archivedRaw.filter((id): id is string => typeof id === 'string' && id.length > 0)
+        : []
+    )
+    return {
+      ok: true,
+      value: pageMobileSessions({
+        items,
+        sessionIds,
+        archivedSessionIds: archived,
+        cursor: fields.cursor,
+        limit: fields.limit
+      })
+    }
+  }
+
+  /**
+   * Work-tab calls stay on the routes the desktop composer already uses.
+   * Upload chunks are reassembled here because a phone RPC body is capped.
+   */
+  private async forwardWork(
+    method: string,
+    payload: unknown
+  ): Promise<{ ok: boolean; value?: unknown; error?: string }> {
+    const dispatch = parseWorkDispatch(method, payload)
+    if ('error' in dispatch) return { ok: false, error: dispatch.error }
+    if (dispatch.kind === 'upload-start') return this.workUploads.start(payload, this.now())
+    if (dispatch.kind === 'upload-chunk') return this.workUploads.chunk(payload, this.now())
+    if (dispatch.kind === 'upload-finish') {
+      const ready = this.workUploads.finish(payload, this.now())
+      if (!ready.ok) return ready
+      return this.postWorkUpload(ready.value)
+    }
+    const base = this.options.harnessUrl()
+    if (!base) return { ok: false, error: 'Harness is not ready.' }
+    const rpcId = randomUUID()
+    if (dispatch.kind === 'json') {
+      const response = await this.harnessFetch(
+        new URL(dispatch.path, base),
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(dispatch.body),
+          signal: AbortSignal.timeout(30_000)
+        },
+        base
+      )
+      return readWorkJson(response.status, await response.text())
+    }
+    if (dispatch.kind === 'office') {
+      // The phone sheet lists names only. Ask the catalogue to skip thumbnail files.
+      const payload = dispatch.payload.endpoint === 'catalog'
+        ? { ...dispatch.payload, summary: true }
+        : dispatch.payload
+      const response = await this.harnessFetch(
+        new URL('/api/office-templates', base),
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            type: 'client-request',
+            rpcId,
+            method: 'office-templates',
+            payload
+          }),
+          signal: AbortSignal.timeout(30_000)
+        },
+        base
+      )
+      if (!response.ok) return { ok: false, error: `Harness transport returned HTTP ${response.status}.` }
+      const envelope = readWorkEnvelope(await response.text(), rpcId)
+      if (!envelope.ok || payload.endpoint !== 'catalog') return envelope
+      return { ok: true, value: projectMobileOfficeCatalog(envelope.value) }
+    }
+    const response = await this.harnessFetch(
+      new URL(`/dsh-ppt/${dispatch.endpoint}`, base),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ rpcId, payload: dispatch.payload }),
+        signal: AbortSignal.timeout(30_000)
+      },
+      base
+    )
+    if (!response.ok) return { ok: false, error: `Harness transport returned HTTP ${response.status}.` }
+    const envelope = readWorkEnvelope(await response.text(), rpcId)
+    if (!envelope.ok || dispatch.kind !== 'ppt') return envelope
+    return { ok: true, value: projectMobilePpt(dispatch.endpoint, envelope.value) }
+  }
+
+  private async postWorkUpload(upload: {
+    sessionId: string
+    name: string
+    body: Buffer
+  }): Promise<{ ok: boolean; value?: unknown; error?: string }> {
+    const base = this.options.harnessUrl()
+    if (!base) return { ok: false, error: 'Harness is not ready.' }
+    const url = new URL('/api/session/uploadFileBinary', base)
+    url.searchParams.set('sessionId', upload.sessionId)
+    url.searchParams.set('name', upload.name)
+    const response = await this.harnessFetch(
+      url,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/octet-stream' },
+        body: new Uint8Array(upload.body),
+        signal: AbortSignal.timeout(60_000)
+      },
+      base
+    )
+    return readUploadResult(response.status, await response.text())
+  }
+
+  /**
+   * The session projection is the only current-value source the composer uses.
+   * A missing `permissions` key means this host has no permission control, so
+   * the phone hides the button instead of inventing a mode.
+   */
+  private async forwardPermissionCurrent(
+    fields: Record<string, unknown>
+  ): Promise<{ ok: boolean; value?: unknown; error?: string }> {
+    const sessionId = fields.sessionId
+    if (typeof sessionId !== 'string' || sessionId.trim() === '') {
+      return { ok: false, error: 'Session id is required.' }
+    }
+    const listed = await this.invokeHarness('session/list', { _request: {} })
+    if (!listed.ok) return listed
+    const items = isRecord(listed.value) && Array.isArray(listed.value.items)
+      ? listed.value.items
+      : []
+    const row = items.find((item) => isRecord(item) && item.sessionId === sessionId)
+    if (!isRecord(row) || !isRecord(row.projections) || !isRecord(row.projections.values)) {
+      return { ok: true, value: {} }
+    }
+    const values = row.projections.values
+    if (!Object.prototype.hasOwnProperty.call(values, 'permissions')) {
+      return { ok: true, value: {} }
+    }
+    const permissions = values.permissions
+    const currentValue = isRecord(permissions) && typeof permissions.currentValue === 'string'
+      ? permissions.currentValue.trim()
+      : ''
+    if (currentValue === '') return { ok: true, value: {} }
+    return { ok: true, value: { currentValue } }
+  }
+
+  /**
+   * Switch one session by the same `/permission` command the desktop composer
+   * submits. The phone names a preset; this bridge builds the command line.
+   */
+  private async forwardPermissionSelect(
+    fields: Record<string, unknown>
+  ): Promise<{ ok: boolean; value?: unknown; error?: string }> {
+    if ('line' in fields || 'command' in fields) {
+      return { ok: false, error: 'Permission changes do not accept a command line.' }
+    }
+    const sessionId = fields.sessionId
+    const preset = fields.preset
+    if (typeof sessionId !== 'string' || sessionId.trim() === '') {
+      return { ok: false, error: 'Session id is required.' }
+    }
+    if (typeof preset !== 'string' || preset === 'custom' || !PERMISSION_PRESET_NAME.test(preset)) {
+      return { ok: false, error: 'Unknown permission preset.' }
+    }
+    const executed = await this.invokeHarness('commands/execute', {
+      agentId: sessionId,
+      line: `/permission ${preset}`,
+      submittedAttachments: []
+    })
+    if (!executed.ok) return executed
+    if (!isRecord(executed.value)) {
+      return { ok: false, error: 'the host offers no /permission command' }
+    }
+    const outcome = isRecord(executed.value.result) ? executed.value.result : undefined
+    if (outcome?.kind === 'error') {
+      const text = typeof outcome.text === 'string' && outcome.text.trim() !== ''
+        ? outcome.text
+        : 'Permission change failed.'
+      return { ok: false, error: text }
+    }
+    return { ok: true, value: { preset } }
   }
 
   private async invokeHarness(
@@ -1412,16 +1779,28 @@ export class LanMobileBridge {
    * running it with no client meant reconnecting twice a second, forever, on
    * every desktop that never used the feature.
    */
+  private noteRemoteClient(): void {
+    const holdMs = 120_000
+    this.remoteMuxUntil = this.now() + holdMs
+    if (this.remoteMuxTimer) clearTimeout(this.remoteMuxTimer)
+    this.remoteMuxTimer = setTimeout(() => {
+      this.remoteMuxTimer = undefined
+      this.syncConnected()
+    }, holdMs)
+    this.remoteMuxTimer.unref?.()
+    this.syncConnected()
+  }
+
   private syncConnected(): void {
-    const connected = this.sessions.size > 0
-    if (connected) this.startMuxMonitor()
+    const browserConnected = this.sessions.size > 0
+    if (browserConnected || this.now() < this.remoteMuxUntil) this.startMuxMonitor()
     else this.muxAbort?.abort()
-    if (connected === this.lastConnected) return
-    this.lastConnected = connected
+    if (browserConnected === this.lastConnected) return
+    this.lastConnected = browserConnected
     // Reconciliation runs off the request path, so a throwing observer must not
     // turn into an unhandled rejection that fails the request behind it.
     try {
-      this.options.onConnectedChange?.(connected)
+      this.options.onConnectedChange?.(browserConnected)
     } catch {
       // A renderer that went away mid-broadcast is not the bridge's problem.
     }
@@ -1565,7 +1944,8 @@ export class LanMobileBridge {
   private async streamSession(
     request: IncomingMessage,
     response: ServerResponse,
-    sessionId: string
+    sessionId: string,
+    transcript = false
   ): Promise<void> {
     const base = this.options.harnessUrl()
     if (!base) return this.text(response, 503, 'Harness is not ready.')
@@ -1573,8 +1953,12 @@ export class LanMobileBridge {
     const url = new URL(REMOTE_STREAM_MUX_PATH, base)
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
     const streamId = `mobile-session-${randomUUID()}`
+    const liveTurn: { turn?: number; step?: number } = {}
     const abort = new AbortController()
     this.sessionStreamAborts.add(abort)
+    const writers = this.sessionStreamWriters.get(sessionId) ?? new Set<ServerResponse>()
+    writers.add(response)
+    this.sessionStreamWriters.set(sessionId, writers)
 
     response.statusCode = 200
     response.setHeader('content-type', 'text/event-stream; charset=utf-8')
@@ -1602,6 +1986,9 @@ export class LanMobileBridge {
         socket.removeEventListener('close', handleClose)
         socket.removeEventListener('error', handleError)
         this.sessionStreamAborts.delete(abort)
+        const openWriters = this.sessionStreamWriters.get(sessionId)
+        openWriters?.delete(response)
+        if (openWriters?.size === 0) this.sessionStreamWriters.delete(sessionId)
       }
       const finish = (): void => {
         if (settled) return
@@ -1618,7 +2005,11 @@ export class LanMobileBridge {
           endpoint: 'session/follow',
           payload: {
             args: {
-              request: { address: { kind: 'session', sessionId }, maxMessages: 100 }
+              request: {
+                address: { kind: 'session', sessionId },
+                maxMessages: 100,
+                assistantStream: true
+              }
             }
           }
         }))
@@ -1632,7 +2023,8 @@ export class LanMobileBridge {
         try { frame = JSON.parse(text) } catch { return }
         if (!isRecord(frame) || frame.streamId !== streamId) return
         if (frame.type === 'item') {
-          const value = frame.value
+          const value = transcriptFollowValue(frame.value, transcript, liveTurn)
+          if (value === undefined) return
           const eventName = isRecord(value) && value.type === 'snapshot' ? 'snapshot' : 'event'
           response.write(`event: ${eventName}\ndata: ${JSON.stringify(value)}\n\n`)
         } else if (frame.type === 'error' || frame.type === 'end') {
@@ -1691,11 +2083,25 @@ export class LanMobileBridge {
       const agentId = typeof value.agentId === 'string' ? value.agentId : undefined
       if (!eventId || !request || !agentId) return
       const pending = parsePendingQuestion(eventId, { ...request, sessionId: agentId })
-      if (pending) this.pendingQuestions.set(eventId, pending)
+      if (pending) {
+        this.pendingQuestions.set(eventId, pending)
+        this.pushQuestionSignal(agentId)
+      }
       return
     }
     if (value.type === 'cancel' && typeof value.eventId === 'string') {
+      const pending = this.pendingQuestions.get(value.eventId)
       this.pendingQuestions.delete(value.eventId)
+      if (pending) this.pushQuestionSignal(pending.sessionId)
+    }
+  }
+
+  /** Empty signal. The phone reads interaction.pending for the actual question. */
+  private pushQuestionSignal(sessionId: string): void {
+    const writers = this.sessionStreamWriters.get(sessionId)
+    if (writers === undefined) return
+    for (const response of writers) {
+      if (!response.writableEnded) response.write('event: question\ndata: {}\n\n')
     }
   }
 
@@ -1830,12 +2236,113 @@ export function isInternetTunnelHost(host: string): boolean {
   )
 }
 
+/** Durable follow items, plus the process-local assistant frames the desktop paints live. */
+function transcriptFollowValue(
+  value: unknown,
+  transcript: boolean,
+  liveTurn: { turn?: number; step?: number }
+): unknown {
+  if (!isRecord(value)) return transcript ? undefined : value
+  if (value.type === 'snapshot') rememberLiveTurn(value.assistantStream, liveTurn)
+  if (value.type === 'assistant-stream') return projectLiveAssistantFrame(value.frame, liveTurn)
+  return transcript ? projectTranscriptFrame(value) : value
+}
+
+function rememberLiveTurn(baseline: unknown, liveTurn: { turn?: number; step?: number }): void {
+  const attempt = isRecord(baseline) && isRecord(baseline.activeAttempt) ? baseline.activeAttempt : undefined
+  if (attempt === undefined) return
+  if (typeof attempt.turn === 'number') liveTurn.turn = attempt.turn
+  if (typeof attempt.step === 'number') liveTurn.step = attempt.step
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 interface WorkspaceSnapshot extends Record<string, unknown> {
   items: unknown[]
+  archivedSessionIds?: unknown
+}
+
+/** Default and cap for one phone page. A page stays far under the gateway frame. */
+export const SESSION_PAGE_LIMIT = 30
+const SESSION_PAGE_MAX = 100
+
+/**
+ * Cut a harness session list into one phone page.
+ *
+ * Harness orders only by `updatedAt`, so equal times are not stable. Sorting
+ * by session id as well makes the keyset cursor repeatable. A cursor names
+ * the last row already delivered; the next page is everything strictly after
+ * that pair. A cursor that cannot be read starts at the first row.
+ */
+export function pageMobileSessions(input: {
+  items: unknown
+  sessionIds?: ReadonlySet<string>
+  archivedSessionIds?: ReadonlySet<string>
+  cursor?: unknown
+  limit?: unknown
+}): { items: Record<string, unknown>[]; nextCursor?: string; hasMore: boolean } {
+  const rows: Array<{ updatedAt: number; sessionId: string; row: Record<string, unknown> }> = []
+  if (Array.isArray(input.items)) {
+    for (const item of input.items) {
+      if (!isRecord(item) || typeof item.sessionId !== 'string' || item.sessionId.length === 0) continue
+      if (input.sessionIds !== undefined && !input.sessionIds.has(item.sessionId)) continue
+      if (input.archivedSessionIds?.has(item.sessionId)) continue
+      const updatedAt = typeof item.updatedAt === 'number' && Number.isFinite(item.updatedAt)
+        ? item.updatedAt
+        : 0
+      rows.push({ updatedAt, sessionId: item.sessionId, row: item })
+    }
+  }
+  rows.sort((left, right) => {
+    if (left.updatedAt !== right.updatedAt) return right.updatedAt - left.updatedAt
+    if (left.sessionId < right.sessionId) return -1
+    if (left.sessionId > right.sessionId) return 1
+    return 0
+  })
+  const cursor = parseSessionCursor(input.cursor)
+  const start = cursor === undefined ? 0 : rows.findIndex((row) => isAfterSessionCursor(row, cursor))
+  const offset = start < 0 ? rows.length : start
+  const limit = sessionPageLimit(input.limit)
+  const slice = rows.slice(offset, offset + limit)
+  const hasMore = offset + slice.length < rows.length
+  const last = slice[slice.length - 1]
+  return {
+    items: slice.flatMap((item) => {
+      const projected = projectSessionRow(item.row)
+      return projected === undefined ? [] : [projected]
+    }),
+    ...(hasMore && last !== undefined ? { nextCursor: sessionCursor(last) } : {}),
+    hasMore
+  }
+}
+
+function sessionPageLimit(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 1) return SESSION_PAGE_LIMIT
+  return Math.min(Math.floor(value), SESSION_PAGE_MAX)
+}
+
+function parseSessionCursor(value: unknown): { updatedAt: number; sessionId: string } | undefined {
+  if (typeof value !== 'string') return undefined
+  const split = value.indexOf(':')
+  if (split <= 0) return undefined
+  const updatedAt = Number(value.slice(0, split))
+  const sessionId = value.slice(split + 1)
+  if (!Number.isFinite(updatedAt) || sessionId.length === 0) return undefined
+  return { updatedAt, sessionId }
+}
+
+function isAfterSessionCursor(
+  row: { updatedAt: number; sessionId: string },
+  cursor: { updatedAt: number; sessionId: string }
+): boolean {
+  if (row.updatedAt !== cursor.updatedAt) return row.updatedAt < cursor.updatedAt
+  return row.sessionId > cursor.sessionId
+}
+
+function sessionCursor(row: { updatedAt: number; sessionId: string }): string {
+  return `${row.updatedAt}:${row.sessionId}`
 }
 
 function isWorkspaceSnapshot(value: unknown): value is WorkspaceSnapshot {

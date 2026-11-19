@@ -161,7 +161,7 @@ Authorization: Bearer <DSH access token>
 用户已开启工作台且企业登录有效：
 
 - `allow_third_party_workbenches === true`：保留「工作台市场」「我的收藏」「已安装」。增加「来自企业」。公开卡片继续提供安装、更新、收藏和投稿。企业卡片不出现在公开列表、收藏或 `market-install` 的身份空间里。
-- `allow_third_party_workbenches === false`：显示「工作台市场」和「已安装」，不显示「我的收藏」。此时「工作台市场」的数据是企业目录。不请求公开 catalog。保留「安装本地工作台」和「制作我的工作台」的本机开发路径，不提供向公开仓库投稿。
+- `allow_third_party_workbenches === false`：显示「工作台市场」和「已安装」，不显示「我的收藏」。此时「工作台市场」的数据是企业目录。不请求公开 catalog。保留「制作我的工作台」这条本机开发路径，不提供向公开仓库投稿。
 
 数据不合并：
 

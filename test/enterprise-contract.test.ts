@@ -4,6 +4,7 @@ import {
   CLIENT_ID,
   createPkceTransaction,
   parseAuthorization,
+  parseAuditFeedbackUpdate,
   parseConfig,
   parseThirdPartyPolicy,
   parseModels,
@@ -119,6 +120,7 @@ describe('BiSheng compatible client API mock', () => {
       '/api/enterprise.workbenches/detail',
       '/api/enterprise.workbenches/verify',
       '/api/enterprise.state',
+      '/api/enterprise.profile.refresh',
       '/api/enterprise.base.inspect',
       '/api/enterprise.login.start',
       '/api/enterprise.login.manual',
@@ -152,6 +154,31 @@ describe('BiSheng compatible client API mock', () => {
       client_id: 'other-client',
       contract_version: '0.5.0'
     })).toThrow('contract version is incompatible')
+    expect(parseConfig({
+      enabled: true,
+      client_id: 'dsh-desktop',
+      contract_version: '0.5.0',
+      audit_message_feedback: { version: 1, extra: true }
+    })).toEqual({
+      enabled: true,
+      client_id: 'dsh-desktop',
+      contract_version: '0.5.0',
+      audit_message_feedback: { version: 1 }
+    })
+    expect(parseConfig({
+      enabled: true,
+      client_id: 'dsh-desktop',
+      contract_version: '0.5.0',
+      audit_message_feedback: { version: 2 }
+    })).toEqual({ enabled: true, client_id: 'dsh-desktop', contract_version: '0.5.0' })
+    expect(parseAuditFeedbackUpdate({
+      conversation_id: 'session', message_id: 'msg-1', event_seq: 3, op: 'put', rating: 'negative', note: 'kept'
+    })).toEqual({
+      conversation_id: 'session', message_id: 'msg-1', event_seq: 3, op: 'put', rating: 'negative', note: 'kept'
+    })
+    expect(() => parseAuditFeedbackUpdate({
+      conversation_id: 'session', message_id: 'msg-1', event_seq: 3, op: 'delete', rating: 'negative'
+    })).toThrow('Invalid audit feedback update.')
   })
 
   it('serves audit negotiation alongside third-party capabilities and the workbench catalog', async () => {
@@ -315,6 +342,29 @@ describe('BiSheng compatible client API mock', () => {
       expect(parseModelsLenient(response).map((model) => model.id)).toEqual(['legacy'])
       expect(() => parseModels(response)).toThrow('invalid model')
     }
+  })
+
+  it('keeps valid credit ratio hints and drops malformed ones without dropping the model', () => {
+    const base = { id: 'bisheng:7', capabilities: { streaming: true, tools: true, reasoning_content: false } }
+    for (const hint of [
+      { ratio: '3.00', base: false, free: false },
+      { ratio: '1.00', base: true, free: false },
+      { ratio: '<0.01', base: false, free: false },
+      { ratio: null, base: false, free: true },
+      { ratio: null, base: true, free: false }
+    ]) {
+      expect(parseModels({ object: 'list', data: [{ ...base, pricing_hint: { ...hint, extra: 'ignored' } }] })[0]?.pricing_hint)
+        .toEqual(hint)
+    }
+    for (const invalid of [null, 'x', {}, { ratio: 3, base: false, free: false }, { ratio: '3', base: false, free: false },
+      { ratio: '-1.00', base: false, free: false }, { ratio: '3.00x', base: false, free: false },
+      { ratio: '3.00', base: 'no', free: false }, { ratio: '3.00', base: false }]) {
+      const [model] = parseModels({ object: 'list', data: [{ ...base, pricing_hint: invalid }] })
+      expect(model?.id).toBe('bisheng:7')
+      expect(model).not.toHaveProperty('pricing_hint')
+    }
+    // Servers before F016 send no hint at all.
+    expect(parseModels({ object: 'list', data: [base] })[0]).not.toHaveProperty('pricing_hint')
   })
 
   it('skips invalid models without failing the whole list', () => {

@@ -11,7 +11,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 const source = readFileSync(process.env.DSH_TEST_DELETE_CLIENT_SOURCE ?? 'packages/dsh-desktop-client-ui/client.js', 'utf8')
 let primitives, cleanup
 beforeAll(async () => {
-  // Exercise the installed Modal/Menu/Button behavior; CSS has no layout in jsdom.
+  // Exercise the installed sidebar primitives; CSS has no layout in jsdom.
   // The distributed ESM also initializes unrelated markdown highlighters. Load
   // the UI prefix through Modal, keeping its implementations and focus helpers.
   const bundle = execFileSync(process.execPath, ['--input-type=module', '-e',
@@ -19,8 +19,10 @@ beforeAll(async () => {
     const require = createRequire(import.meta.url);
     const source = readFileSync(require.resolve('@deepseek-ai/dsh-client-ui-primitives'), 'utf8');
     const boundary = source.indexOf('//#region lib/types/RiskConfirmation.js');
-    if (boundary < 0) throw new Error('Recheck the installed primitive layout');
-    const result = await build({ stdin: { contents: source.slice(0, boundary) + '\\nexport { Modal, Menu, MenuItemButton, Button };', resolveDir: process.cwd() },
+    const timeStart = source.indexOf('//#region lib/types/relative-time.js');
+    const timeEnd = source.indexOf('//#region lib/types/rank-by-name.js', timeStart);
+    if (boundary < 0 || timeStart < boundary || timeEnd < timeStart) throw new Error('Recheck the installed primitive layout');
+    const result = await build({ stdin: { contents: source.slice(0, boundary) + source.slice(timeStart, timeEnd) + '\\nexport { Modal, Menu, MenuItemButton, Button, HoverCard, relativeTime, IconChevronRightOutlineRegular, IconEditOutlineRegular, IconEllipsisOutlineRegular, IconFolderCloseRegular, IconFolderOpenRegular, IconNewChatOutlineRegular, IconPlusOutlineRegular, IconTrashOutlineRegular, IconTriangleRightFillRegular };', resolveDir: process.cwd() },
       bundle: true, write: false, format: 'cjs', platform: 'browser',
       plugins: [{ name: 'ui-only', setup(build) {
         build.onResolve({ filter: /\\.css$/ }, args => ({ path: args.path, namespace: 'css' }));

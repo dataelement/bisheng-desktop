@@ -197,6 +197,7 @@ describe('Harness launch contract', () => {
         NODE_COMPILE_CACHE:
           'C:\\Users\\tester\\AppData\\Roaming\\dsh-desktop\\harness\\cache\\compile-cache',
         NO_COLOR: '1',
+        DSH_TELEMETRY_DISABLED: '1',
         Path: 'windows-path'
       }
     })
@@ -369,6 +370,7 @@ describe('Harness launch contract', () => {
           NODE_COMPILE_CACHE:
             '/Users/tester/Library/Application Support/dsh-desktop/harness/cache/compile-cache',
           NO_COLOR: '1',
+          DSH_TELEMETRY_DISABLED: '1',
           npm_config_side_effects_cache: 'false',
           PNPM_CONFIG_SIDE_EFFECTS_CACHE: 'false'
         },

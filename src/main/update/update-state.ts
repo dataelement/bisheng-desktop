@@ -1,14 +1,14 @@
 import type { UpdateStatus } from '../../shared/contracts'
 
 export type UpdateStateEvent =
-  | { type: 'check'; manual: boolean; source?: UpdateStatus['source'] }
+  | { type: 'check'; manual: boolean; source?: UpdateStatus['source']; presentationId?: number }
   | { type: 'available'; version: string; releaseNotes?: string }
   | { type: 'progress'; percent: number }
   | { type: 'downloaded'; version: string }
   | { type: 'not-available' }
   | { type: 'error'; message: string }
   | { type: 'unsupported'; message: string }
-  | { type: 'present-manual' }
+  | { type: 'present-manual'; presentationId?: number }
   | { type: 'reset' }
 
 export function initialUpdateStatus(currentVersion: string): UpdateStatus {
@@ -23,12 +23,19 @@ export function reduceUpdateStatus(
     currentVersion: current.currentVersion,
     manual: current.manual,
     ...(current.source === undefined ? {} : { source: current.source }),
-    ...(current.releaseNotes === undefined ? {} : { releaseNotes: current.releaseNotes })
+    ...(current.releaseNotes === undefined ? {} : { releaseNotes: current.releaseNotes }),
+    ...(current.presentationId === undefined ? {} : { presentationId: current.presentationId })
   }
 
   switch (event.type) {
     case 'check':
-      return { ...base, phase: 'checking', manual: event.manual, source: event.source ?? (event.manual ? 'manual' : 'runtime') }
+      return {
+        ...base,
+        phase: 'checking',
+        manual: event.manual,
+        source: event.source ?? (event.manual ? 'manual' : 'runtime'),
+        ...(event.presentationId === undefined ? {} : { presentationId: event.presentationId })
+      }
     case 'available':
       return {
         ...base,
@@ -47,7 +54,12 @@ export function reduceUpdateStatus(
     case 'unsupported':
       return { ...base, phase: 'unsupported', message: event.message }
     case 'present-manual':
-      return { ...current, manual: true, source: 'manual' }
+      return {
+        ...current,
+        manual: true,
+        source: 'manual',
+        ...(event.presentationId === undefined ? {} : { presentationId: event.presentationId })
+      }
     case 'reset':
       return initialUpdateStatus(current.currentVersion)
   }

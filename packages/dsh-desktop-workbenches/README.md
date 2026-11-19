@@ -2,7 +2,7 @@
 
 Desktop host plugin for the Awesome DSH Workbench market, local workbench state, navigation and the native conversation frame.
 
-Market metadata comes exclusively from the published Awesome protocol v2 index. Runtime providers register their own component and runtime ID. A provider that wants to be recognized as the installed form of an Awesome entry must include the canonical GitHub URL in its registration descriptor's `repository` field.
+Market metadata comes exclusively from the published Awesome protocol v2 index. Runtime providers register a title and business component. Private packages may omit `repository`: the host derives `local:<npm package name>` from the actual calling client package, including scoped names. Authors do not assign local IDs or need a GitHub repository. Existing repository identities remain compatible; conflicting sources never fall back to a private identity, and later market discovery does not migrate local sessions.
 
 The host does not bundle a separate catalog or third-party workbench packages. It installs, updates and uninstalls catalog entries on the user's request through Desktop's isolated-generation boundary (`desktopPnpm.installWorkbenchGeneration`) and records them in `market-installs.json`; see `docs/workbenches.md`.
 

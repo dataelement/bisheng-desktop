@@ -21,7 +21,7 @@ async function fixture() {
     act: vi.fn(async input => {
       if (input.expectedAccountKey !== state.accountKey) throw new Error('Enterprise account changed.')
       if (input.action === 'uninstall') state.installed = []
-      else if (input.action === 'install') state.installed = [{ plugin_id: id, name: 'company-demo', version: '1.0.0', enabled: true, status: 'enabled' }]
+      else if (input.action === 'install') state.installed = [{ plugin_id: id, name: 'company-demo', display_name: '公司示例', description: '内部报表', version: '1.0.0', enabled: true, status: 'enabled' }]
       else state.installed[0].status = input.action === 'enable' ? 'enabled' : 'disabled'
       return market.state()
     })
@@ -46,7 +46,9 @@ describe('enterprise source through the real Plugin Manager methods', () => {
     expect(installed.result).toMatchObject({ application: 'applied', stage: 'enable', changed: true })
     expect(installed.result.restartReason).toBeUndefined()
     const target = `enterprise:${key}:${id}`
-    expect((await manager.listBundles()).find(row => row.name === target)).toMatchObject({ installed: true, enabled: true })
+    expect((await manager.listBundles()).find(row => row.name === target)).toMatchObject({
+      installed: true, enabled: true, description: '内部报表', meta: { title: '公司示例', description: '内部报表' }
+    })
     expect(await manager.setBundleEnabled(target, false)).toMatchObject({ application: 'applied', enabled: false })
     expect(await manager.setBundleEnabled(target, true)).toMatchObject({ application: 'applied', enabled: true })
     expect(await manager.removeBundle(target)).toMatchObject({ application: 'applied', stage: 'remove', changed: true })
@@ -81,6 +83,46 @@ describe('enterprise source through the real Plugin Manager methods', () => {
     expect(await manager.installBundle('enterprise:forged')).toMatchObject({ application: 'failed' })
     expect(await manager.removeBundle('enterprise:forged')).toMatchObject({ application: 'failed' })
     expect(market.act).not.toHaveBeenCalled()
+  })
+})
+
+describe('enterprise plugin display names', () => {
+  const other = 'd'.repeat(32)
+  function listed(installed) {
+    return createManagedMarketSource({ state: () => ({ accountKey: key, installed }) }).listBundles()
+  }
+
+  it('shows the enterprise name while keeping the operation target', () => {
+    const [row] = listed([{ plugin_id: id, name: 'company-demo', display_name: '  公司示例  ', description: '  内部报表  ', version: '1.0.0', status: 'enabled' }])
+    expect(row).toMatchObject({
+      name: `enterprise:${key}:${id}`,
+      description: '内部报表',
+      meta: { title: '公司示例', description: '内部报表' }
+    })
+    expect(row.meta.icon).toBeUndefined()
+  })
+
+  it('falls back to the package name and omits an empty description', () => {
+    const [row] = listed([{ plugin_id: id, name: 'company-demo', description: '   ', version: '1.0.0', status: 'enabled' }])
+    expect(row.meta).toEqual({ title: 'company-demo' })
+    expect(row.description).toBeUndefined()
+  })
+
+  it('keeps the inventory when display fields are not strings', () => {
+    const rows = listed([
+      { plugin_id: id, name: 'company-demo', display_name: null, description: 12, version: '1.0.0', status: 'enabled' },
+      { plugin_id: other, name: 'typed-badly', display_name: { zh: '对象' }, description: ['说明'], version: '1.0.0', status: 'disabled' }
+    ])
+    expect(rows.map(row => row.meta)).toEqual([{ title: 'company-demo' }, { title: 'typed-badly' }])
+    expect(rows.map(row => row.description)).toEqual([undefined, undefined])
+    expect(rows.map(row => row.name)).toEqual([`enterprise:${key}:${id}`, `enterprise:${key}:${other}`])
+  })
+
+  it('omits display metadata when neither name is usable', () => {
+    const [row] = listed([{ plugin_id: id, name: '   ', display_name: 7, version: '1.0.0', status: 'enabled' }])
+    expect(row.name).toBe(`enterprise:${key}:${id}`)
+    expect(row.meta).toBeUndefined()
+    expect(row.description).toBeUndefined()
   })
 })
 

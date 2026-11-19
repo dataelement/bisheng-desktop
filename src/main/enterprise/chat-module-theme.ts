@@ -171,7 +171,9 @@ export function moduleThemePaletteCss(palette: EnterprisePalette): string {
   return [
     `html.dsh-host-dark:root{${body}}`,
     `html.dsh-module-dark body[data-dsh-chat-theme] :is(${CHAT_LAYOUT_SCOPES}){${body}}`,
-    ...(palette.composer ? [`html[data-dsh-host-theme=dark] body[data-dsh-chat-theme=dark] .dsh-web-chat{--dsh-composer-bg:${palette.composer.join(' ')}}`] : [])
+    ...(palette.composer ? [`html[data-dsh-host-theme=dark] body[data-dsh-chat-theme=dark] .dsh-web-chat{--dsh-composer-bg:${palette.composer.join(' ')}}`] : []),
+    // The tab row and each Square banner share this upstream tint utility.
+    ...(palette.squareBanner ? [`html[data-dsh-page="square"] .dsh-web-chat [class~="bg-blue-500/[0.05]"]{background-color:rgb(${palette.squareBanner.join(' ')})}`] : [])
   ].join('\n')
 }
 

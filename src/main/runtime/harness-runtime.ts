@@ -452,6 +452,9 @@ export function buildHarnessSpawnOptions(
       ...(platform !== 'darwin' && { ELECTRON_RUN_AS_NODE: '1' }),
       DSH_HOME: dshHome,
       NO_COLOR: '1',
+      // Ratings are forwarded to BiSheng by the enterprise plugin. Any non-empty
+      // value stops the Harness from releasing the session log to its default collector.
+      DSH_TELEMETRY_DISABLED: '1',
       // package-import-method/child-concurrency are left at pnpm's defaults
       // (hardlink, auto concurrency): forcing clone-or-copy made every
       // install do a full physical file copy across the profile's 150+

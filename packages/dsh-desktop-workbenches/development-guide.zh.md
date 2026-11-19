@@ -1,6 +1,6 @@
 # 工作台开发规范
 
-版本：2026-10-12 · 以官网版本为准，DSH Desktop 内附文档副本供离线取用。
+版本：2026-11-05 · 以官网版本为准，DSH Desktop 内附文档副本供离线取用。
 
 官方地址：https://dshdesktop.com/workbench/docs/development/
 
@@ -48,15 +48,16 @@ Markdown 原文（供 Agent 读取）：https://dshdesktop.com/workbench/docs/de
 
 - **一个 npm 包**：有 `name`、`version`，可以从本地目录或 `.tgz` 文件安装，上架后也可以从 npm 或 GitHub 安装。
 - **一个 DSH 插件（bundle）**：`package.json` 声明 `dsh.bundle.patch`，由 `cordis.patch.yml` 把服务端入口插入 Harness 的插件树。
-- **一个 Desktop 工作台**：客户端通过 `desktopWorkbenches.register()` 注册业务面板。Desktop 从 `repository`、安装记录和市场分发映射解析仓库身份。
+- **一个 Desktop 工作台**：客户端通过 `desktopWorkbenches.register()` 注册业务面板。本地包省略 `repository` 时，Desktop 根据真实客户端 npm 包名生成稳定的本地身份；已有仓库身份继续兼容。
 
-同一个工作台有三个标识，职责不同，不能混用：
+以下标识职责不同，不能混用：
 
 | 标识 | 在哪里 | 用途 |
 |---|---|---|
 | npm 包名 | `package.json` 的 `name` | 安装、依赖解析、`cordis.patch.yml` 的 `name:` |
 | 插件条目 id | `cordis.patch.yml` 中 `insert` 行的 `id` | Harness 插件树中定位这一行 |
-| 工作台身份 | 规范的 GitHub `repository` URL、市场条目 `id` | 小写 `owner/repository`；市场卡片、侧栏入口和会话归属共用 |
+| 本地工作台身份 | 宿主根据真实客户端 npm 包名生成 | `local:<npm 包名>`，包括 `local:@scope/name`；侧栏和会话归属共用，不由作者手填 |
+| 仓库工作台身份 | 有效的 GitHub `repository` URL、市场条目 `id` 及已有归属记录 | 小写 `owner/repository`，保持既有身份与会话兼容 |
 | 兼容用旧 ID | 老包 `register({ id })`、旧目录 `workbenchId` | 仅迁移旧数据时使用；新包和新投稿都不填写 |
 
 Desktop 将 GitHub owner 和 repo 规范化为小写，例如 `https://github.com/Owner/Repo` 对应 `owner/repo`。仓库改名或转移会改变工作台身份，需按迁移规则处理原有会话，不能仅改 URL。旧版 `wb-owner-repo` 只作为兼容映射，不是新包的注册 ID。
@@ -144,7 +145,6 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       ctx.effect(() => ctx.desktopWorkbenches.register({
         title: '我的工作台',
-        repository: 'https://github.com/owner/repository',
         description: '说明它解决什么问题'
       }, BusinessPanel))
     }
@@ -154,7 +154,8 @@ window.__ModuleLoader__.load({
 ```
 
 - `require` 只能拿到共享基线（React、Cordis 等）、已加载的插件和 `dsh.client.external` 中列出的模块。其他依赖要在构建时打进客户端文件。
-- `register()` **必须**提供 `title`、业务组件和规范的 GitHub `repository` URL。新包**不要填写** `register({ id })`；Desktop 用 `repository` 解析 `owner/repo`，并用调用方客户端包、市场分发或安装记录交叉核对，来源冲突时不会暴露 provider。旧包的 `id` 仅用于迁移，不是新协议。
+- `register()` **必须**提供 `title` 和业务组件。本地开发默认省略 `repository`，由宿主根据真实客户端 npm 包名生成 `local:<npm 包名>`；无需 GitHub 账号、仓库或上传代码，不得填写占位仓库。新包**不要填写** `register({ id })`。已有有效仓库身份仍保留，来源冲突不会回退为本地身份；旧包 `id` 只用于兼容迁移。
+- 只有准备市场投稿且具备真实仓库时才另加 `repository`。升级版本或移动目录不改变本地身份；改 npm 包名会生成新身份。后续出现市场条目不会自动迁移已有本地会话，迁移必须另行确认。
 - `workbench.json` 和投稿 YAML 的 `workbenchId` 不是新工作台的必填协议；运行时包名必须与 `window.__ModuleLoader__.load({ id })` 对应。
 - 可选注册字段：`description`、`panelTitle`、`icon`、`audience`、`requirements`、`layout`（`businessSide` 为 `left` 或 `right`，`businessWidth` 在 0.25–0.7 之间）、`customFrame`（布尔值，见第 4 节）、`headerLayout`（第 4 节）、`initialization`。
 - 注册返回的函数用于注销，要交给 `ctx.effect` 管理。
@@ -259,6 +260,8 @@ React.createElement('header', { 'data-dsh-workbench-toolbar': '' },
 
 ## 8. 本地自测清单
 
+验证省略 `repository` 的本地包（包括 scoped 包名）能显示「本地」条目、进入切换入口并打开业务面板；重载或更新后本地身份、会话归属、笔记与收藏保留。仍须在真实 Desktop 内验收，源码测试通过不等于已加载。
+
 开发完成后按责任逐项确认。“宿主负责”是对当前 Desktop 能力的观察和问题反馈，插件作者不得为此复制宿主界面；标为“仅使用该能力时适用”的项，不使用时记“不适用”及原因。全部适用项有证据通过，才能称为本机自测通过。
 
 **包与加载**
@@ -293,3 +296,20 @@ React.createElement('header', { 'data-dsh-workbench-toolbar': '' },
 
 - DSH 插件打包与发布：deepseek-harness 仓库 `docs/user/develop/basic/publish.md`、`config.md`；包清单类型 `@deepseek-ai/dsh-package-manifest`；客户端模块加载 `@deepseek-ai/dsh-client-modules`。
 - 上架到工作台市场：《工作台市场验收规范》：https://dshdesktop.com/workbench/docs/market-acceptance/ 。
+
+
+## 毕昇云端部署补充
+
+需求确认时必须判断是否需要持续运行、多人协作及本机能力；明确部署理由、共享数据和个人状态、冲突策略。适用毕昇客户端时，先调用 `cloud_workbench` 的 `guide` 操作获取随客户端打包的完整使用、按需开发和验收协议；不要在用户工作区查找 Desktop 仓库或相对文档路径。普通使用直接加载托管网址，修改代码时才按权限获取源码；不要求用户手填发布 Key。
+
+## 由 Agent 完成发布交互
+
+「来自企业」统一展示企业工作台，云端工作台标注「云端」；该页只负责发现和使用工作台，不提供手动发布表单。用户从「制作我的工作台」或已有工作台的开发对话提出需求；Agent 在对话里完成以下流程，不要求用户再去点发布按钮：
+
+1. 复用上下文完成部署需求分析，用业务语言说明本地、云端或混合方案的理由，确认最小范围。
+2. 开发并验证后，向用户展示本次变更、拟发布目标、数据结构影响和建议的团队可见范围。已有明确发布授权时继续执行；没有授权时在对话里确认，不能把同意开发当成同意上线或扩大权限。
+3. 使用 `cloud_workbench` 工具的 create/checkout、publish、progress 操作和真实 projectId、版本基线、发布回执。若会话工作区不包含受管源码目录，使用客户端支持的工作区/开发会话流程进入该目录，不能绕过 sandbox。
+4. Agent 提交现有扫描、预检和审批流程并查询进度；区分“已提交”“等待审批”“已上线”，不替用户或管理员自动审批。失败保留源码、回执和修复说明；版本冲突先比较合并。
+5. 确认正式入口可访问后告诉用户如何在工作台列表打开，并继续引导 owner 设置团队可见范围；未获授权不改变成员权限。
+
+发布是对话里的开发流程；日常打开、查询、修改业务记录都不会触发源码下载或代码发布。

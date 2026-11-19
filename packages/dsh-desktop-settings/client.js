@@ -8,14 +8,14 @@ window.__ModuleLoader__.load({
     const COPY = {
       zh: {
         accountMenu: '账号菜单', enterpriseAccount: '企业账号', signedOut: '未登录', deviceOnly: '本机模式', signInHint: '登录后可使用企业功能', identityLoading: '正在读取账号…', identityError: '暂时无法读取账号', settings: '设置', accountSettings: '账号设置', approvals: '消息', approvalsPending: '待处理审批', phone: '连接手机', login: '登录企业账号', logout: '退出登录', logoutBody: '退出后需要重新登录企业账号。本机设置、已安装插件和本地数据保留。', logoutFailed: '退出登录未完成，请重试。', cancel: '取消', again: '重试', close: '关闭', loggingOut: '正在退出登录…',
-        creditsRemaining: '剩余积分', creditsUnavailable: '积分暂不可用',
+        creditsRemaining: '剩余积分', creditsUnavailable: '积分暂不可用', creditsLine: '剩余 {value} 积分', creditsUnlimited: '积分不限',
         activity: '用量活动', period: '统计范围：{start} — {end}', less: '少', more: '多', totalTokens: '累计 Token', totalMessages: '累计消息',
         tokenWan: '{value}万', tokenYi: '{value}亿', numberLocale: 'zh-CN', modelUsage: '模型用量', tokens: 'Token 用量', messages: '消息数', storage: '个人存储空间', unlimited: '不限', storageValue: '已使用 {used} / {limit}', breakdown: '输入 {input} Token · 输出 {output} Token', missingUsage: '{count} 条记录缺少 Token 用量', usageError: '用量统计加载失败，请重试。', storageError: '存储空间加载失败，请重试。', noUsage: '暂无用量记录', unavailable: '—',
         openContent: '进入设置内容', usage: '用量与存储', about: '关于与帮助', tasks: '我的审批', requests: '我的申请', notifications: '通知', ai: 'AI 助手接入', loading: '正在加载企业设置…', error: '暂时无法加载企业设置，请检查连接后重试。', restart: '请完全退出并重新启动客户端，以启用统一设置。', unsupported: '平台暂不支持统一设置，请联系管理员更新平台。', retry: '重新连接', signIn: '登录企业账号后可查看', openAccount: '前往账号设置', desktopVersion: 'BISHENG 版本', harnessVersion: 'Harness 版本', infoError: '无法读取版本信息', update: '检查更新', logs: '查看日志', recovery: '安全模式与插件恢复', localHint: '本机设置仍可正常使用。', actionError: '操作未完成，请重试。',
       },
       en: {
         accountMenu: 'Account menu', enterpriseAccount: 'Enterprise account', signedOut: 'Not signed in', deviceOnly: 'Device only', signInHint: 'Sign in to use enterprise features', identityLoading: 'Loading account…', identityError: 'Account unavailable', settings: 'Settings', accountSettings: 'Account settings', approvals: 'Messages', approvalsPending: 'Pending approvals', phone: 'Connect phone', login: 'Sign in', logout: 'Log out', logoutBody: 'You will need to sign in again. Device settings, installed plugins and local data are kept.', logoutFailed: 'Logout did not complete. Try again.', cancel: 'Cancel', again: 'Retry', close: 'Close', loggingOut: 'Logging out…',
-        creditsRemaining: 'Credits remaining', creditsUnavailable: 'Credits unavailable',
+        creditsRemaining: 'Credits remaining', creditsUnavailable: 'Credits unavailable', creditsLine: '{value} credits left', creditsUnlimited: 'Unlimited credits',
         activity: 'Usage activity', period: 'Reporting period: {start} — {end}', less: 'Less', more: 'More', totalTokens: 'Total tokens', totalMessages: 'Total messages',
         tokenWan: '{value} ten thousand', tokenYi: '{value} hundred million', numberLocale: 'en-US', modelUsage: 'Model usage', tokens: 'Token usage', messages: 'Messages', storage: 'Personal storage', unlimited: 'Unlimited', storageValue: 'Used {used} / {limit}', breakdown: 'Input {input} tokens · Output {output} tokens', missingUsage: '{count} records are missing token usage', usageError: 'Usage statistics failed to load. Please retry.', storageError: 'Storage failed to load. Please retry.', noUsage: 'No usage recorded', unavailable: '—',
         openContent: 'Enter settings content', usage: 'Usage and storage', about: 'About and help', tasks: 'My approvals', requests: 'My requests', notifications: 'Notifications', ai: 'AI assistant access', loading: 'Loading enterprise settings…', error: 'Enterprise settings could not load. Check the connection and try again.', restart: 'Quit and restart the desktop app to enable unified settings.', unsupported: 'This platform does not support unified settings yet. Ask your administrator to update it.', retry: 'Reconnect', signIn: 'Sign in to view enterprise settings', openAccount: 'Open account settings', desktopVersion: 'BISHENG version', harnessVersion: 'Harness version', infoError: 'Could not read version information', update: 'Check for updates', logs: 'Show logs', recovery: 'Safe Mode and plugin recovery', localHint: 'Device settings remain available.', actionError: 'The action did not complete. Try again.',
@@ -87,7 +87,7 @@ window.__ModuleLoader__.load({
       const failure = failed || state.settingsFailure || state.phase === 'error'
       const supported = state.settingsProtocolVersion === 1
       const ready = supported && state.settingsSection === section && state.settingsReady
-      return h('div', { ref: target, className: 'dshSettingsRemote', tabIndex: ready ? 0 : -1, role: 'group', 'aria-label': t('openContent'), onFocus: () => { if (ready) void window.dshEnterpriseChat.focusSettings().catch(() => { if (alive.current) setFailed(true) }) }, 'aria-busy': state.connected && supported && !ready && !failure },
+      return h('div', { ref: target, className: 'dshSettingsRemote', 'data-dsh-native-surface': section, tabIndex: ready ? 0 : -1, role: 'group', 'aria-label': t('openContent'), onFocus: () => { if (ready) void window.dshEnterpriseChat.focusSettings().catch(() => { if (alive.current) setFailed(true) }) }, 'aria-busy': state.connected && supported && !ready && !failure },
         !state.connected ? h('div', { className: 'dshSettingsStatus' },
           h('p', null, t('signIn')), h('p', { className: 'dshSettingsHint' }, t('localHint')),
           h('button', { type: 'button', onClick: openAccount }, t('openAccount')))
@@ -252,37 +252,117 @@ window.__ModuleLoader__.load({
     }
     /** Reuse the host enterprise endpoints; neither credentials nor account storage live here. */
     async function accountRequest(operation, signal) {
-      const path = operation === 'logout' ? '/api/enterprise.logout' : '/api/enterprise.state'
-      const response = await fetch(path, { credentials: 'same-origin', signal, ...(operation === 'logout' ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' } : {}) })
+      const profile = ['account', 'foreground', 'image'].includes(operation)
+      // F016: `usage` rereads the credit balance with the catalog; the plain state is the host's cache.
+      const usage = operation === 'usage'
+      const path = profile ? '/api/enterprise.profile.refresh' : usage ? '/api/enterprise.models.refresh' : operation === 'logout' ? '/api/enterprise.logout' : '/api/enterprise.state'
+      const body = profile ? JSON.stringify({ reason: operation }) : usage ? '{"includeUsage":true}' : operation === 'logout' ? '{}' : undefined
+      const response = await fetch(path, { credentials: 'same-origin', signal, ...(body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body } : {}) })
       const result = await response.json()
       if (!response.ok || !result || typeof result !== 'object' || typeof result.connected !== 'boolean' || result.ok === false || (operation === 'logout' && result.connected)) throw new Error('Enterprise account request failed')
       return result
     }
 
+    // F016: a finished Chat turn settles within moments; a new conversation's title call (a model call of
+    // its own, around ten seconds with a reasoning model) follows.
+    const CHARGE_SETTLE_MS = [1500, 20_000]
+    // F016: an administrator may have changed the allowance while the app was in the background.
+    const FOREGROUND_USAGE_MS = 30_000
     function useAccountIdentity() {
       const [account, setAccount] = useState()
       const [error, setError] = useState(false)
       const [busy, setBusy] = useState(false)
-      const lifetime = useRef({ alive: true, revision: 0, request: undefined })
-      const refresh = React.useCallback(async () => {
+      const lifetime = useRef({ alive: true, revision: 0, request: undefined, failure: null, actionEpoch: 0 })
+      const [imageAttempt, setImageAttempt] = useState(0)
+      const refresh = React.useCallback(async (reason) => {
         const current = lifetime.current
+        if (current.profile) {
+          current.readAfterProfile = true
+          current.retryImage ||= reason === 'account' || reason === 'foreground'
+          return current.profile
+        }
         current.request?.abort()
         const request = new AbortController(), revision = ++current.revision
         current.request = request
-        try {
-          const next = await accountRequest('state', request.signal)
-          if (current.alive && revision === current.revision) { setAccount(next); setError(false) }
-        } catch {
-          if (current.alive && revision === current.revision && !request.signal.aborted) setError(true)
+        const task = (async () => {
+          try {
+            const next = await accountRequest(reason || 'state', request.signal)
+            if (current.alive && !request.signal.aborted && revision === current.revision) {
+              if (Number.isFinite(next.revision) && next.revision < (current.serverRevision ?? -1)) return
+              current.serverRevision = next.revision
+              const identity = `${next.connectionKey || next.base || ''}:${next.user?.id || ''}:${next.connected}`
+              if (current.identity !== identity || current.avatar !== next.user?.avatar) current.failure = null
+              current.identity = identity; current.avatar = next.user?.avatar
+              setAccount(next); setError(false)
+              const retryImage = reason === 'account' || reason === 'foreground' || current.retryImage
+              if (retryImage) { current.failure = null; current.retryImage = false; setImageAttempt(value => value + 1) }
+              if (reason) window.dispatchEvent(new CustomEvent('dsh-desktop:enterprise-account-changed', { detail: { source: current, retryImage } }))
+            }
+          } catch {
+            // Freshness failures must not replace a usable identity with a connection error.
+            if (!reason && current.alive && revision === current.revision && !request.signal.aborted) setError(true)
+          }
+        })()
+        if (reason) current.profile = task
+        try { return await task } finally {
+          if (current.profile === task) {
+            current.profile = null
+            if (current.readAfterProfile && current.alive) { current.readAfterProfile = false; void refresh() }
+          }
         }
       }, [])
       useEffect(() => {
         lifetime.current.alive = true
-        const changed = () => { void refresh() }
-        let identity
+        const changed = event => {
+          const current = lifetime.current
+          if (event.detail?.source === current) return
+          if (event.detail?.actionStarted) {
+            current.actionEpoch++
+            current.request?.abort(); current.revision++; current.profile = null
+            return
+          }
+          current.retryImage ||= event.detail?.retryImage === true
+          void refresh()
+        }
+        // The identity launcher is always mounted; account pages must not duplicate these listeners.
+        let usageReadAt = -Infinity
+        const foreground = () => {
+          if (document.visibilityState !== 'visible') return
+          const profile = refresh('foreground')
+          // Reread the balance after the profile, at most every 30 s (focus and visibility both fire).
+          if (Date.now() - usageReadAt < FOREGROUND_USAGE_MS) return
+          usageReadAt = Date.now()
+          void profile.then(() => { if (lifetime.current.alive) void refresh('usage') })
+        }
+        window.addEventListener('focus', foreground)
+        document.addEventListener('visibilitychange', foreground)
+        let identity, notification, accountRevision, running = 0, settles = []
         const unsubscribe = window.dshEnterpriseChat?.subscribe(next => {
+          // F016: Chat calls the platform directly, so the host's balance goes stale when a turn ends;
+          // reread it once the charge settles. Host-side changes arrive through accountRevision below.
+          const count = Array.isArray(next.running) ? next.running.length : 0
+          if (count < running) {
+            settles.forEach(timer => window.clearTimeout(timer))
+            settles = CHARGE_SETTLE_MS.map(delay => window.setTimeout(() => { void refresh('usage') }, delay))
+          }
+          running = count
           const key = `${next.epoch}:${next.connected}`
-          if (key === identity) return
+          const version = `${key}:${next.accountRevision}`
+          if (version === notification) return
+          notification = version
+          if (Number.isFinite(accountRevision) && next.accountRevision < accountRevision) lifetime.current.serverRevision = undefined
+          accountRevision = next.accountRevision
+          if (key !== identity) {
+            if (identity !== undefined) {
+              setAccount({ connected: false })
+              // View epochs also change during this very login/logout. Invalidate reads,
+              // not the user action that caused the native transition.
+              window.dispatchEvent(new CustomEvent('dsh-desktop:enterprise-account-changed', { detail: { source: lifetime.current, identityChanged: true } }))
+            }
+            lifetime.current.serverRevision = undefined
+            lifetime.current.request?.abort(); lifetime.current.revision++; lifetime.current.profile = null
+            lifetime.current.failure = null
+          }
           identity = key
           if (!next.connected) setAccount({ connected: false })
           void refresh()
@@ -291,7 +371,8 @@ window.__ModuleLoader__.load({
         void refresh()
         return () => {
           lifetime.current.alive = false; lifetime.current.revision++; lifetime.current.request?.abort(); lifetime.current.action?.abort()
-          unsubscribe?.(); window.removeEventListener('dsh-desktop:enterprise-account-changed', changed)
+          settles.forEach(timer => window.clearTimeout(timer)); unsubscribe?.(); window.removeEventListener('dsh-desktop:enterprise-account-changed', changed)
+          window.removeEventListener('focus', foreground); document.removeEventListener('visibilitychange', foreground)
         }
       }, [refresh])
       const logout = async () => {
@@ -300,12 +381,37 @@ window.__ModuleLoader__.load({
         const request = new AbortController()
         current.action = request
         setBusy(true)
+        window.dispatchEvent(new CustomEvent('dsh-desktop:enterprise-account-changed', { detail: { actionStarted: true } }))
+        const actionEpoch = current.actionEpoch
         try {
-          const next = await accountRequest('logout', request.signal)
-          if (current.alive) { setAccount(next); setError(false); window.dispatchEvent(new CustomEvent('dsh-desktop:enterprise-account-changed')) }
-        } finally { if (current.alive) setBusy(false) }
+          const disconnected = await accountRequest('logout', request.signal)
+          if (request.signal.aborted || actionEpoch !== current.actionEpoch) return
+          let next
+          try {
+            next = await accountRequest('state', request.signal)
+          } catch {
+            if (request.signal.aborted || actionEpoch !== current.actionEpoch) return
+            // The validated disconnected mutation already completed; a failed display
+            // read must not retain the old identity or report that sign-out failed.
+            next = disconnected
+          }
+          if (current.alive && !request.signal.aborted && actionEpoch === current.actionEpoch) {
+            // Invalidate foreground reads started while logout was in flight.
+            current.request?.abort(); current.revision++
+            setAccount(next); setError(false)
+            window.dispatchEvent(new CustomEvent('dsh-desktop:enterprise-account-changed', { detail: { source: current } }))
+          }
+        } catch (cause) {
+          if (current.alive && actionEpoch === current.actionEpoch) throw cause
+        } finally { if (current.action === request) { current.action = undefined; if (current.alive) setBusy(false) } }
       }
-      return { account, error, busy, refresh, logout }
+      const imageFailed = src => {
+        const current = lifetime.current
+        if (current.failure?.src === src && Date.now() - current.failure.at < 60_000) return
+        current.failure = { src, at: Date.now() }
+        void refresh('image')
+      }
+      return { account, error, busy, refresh, logout, imageFailed, imageAttempt }
     }
 
     function ApprovalsDialog({ open, onClose, t }) {
@@ -317,8 +423,12 @@ window.__ModuleLoader__.load({
         open && h(ApprovalsPanel, { onClose, t }))
     }
 
-    function AccountAvatar({ name }) {
-      return h('span', { className: 'dshAccountAvatar', 'aria-hidden': 'true' }, name ? Array.from(name).slice(0, 2).join('').toLocaleUpperCase() : h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5 }, h('circle', { cx: 12, cy: 8, r: 4 }), h('path', { d: 'M4 22v-2a8 8 0 0 1 16 0v2' })))
+    function AccountAvatar({ name, src, attempt, onImageError }) {
+      const [failed, setFailed] = useState(null)
+      useEffect(() => setFailed(null), [src, attempt])
+      return h('span', { className: 'dshAccountAvatar', 'aria-hidden': 'true' }, src && failed !== src
+        ? h('img', { key: `${src}:${attempt}`, src, alt: '', referrerPolicy: 'no-referrer', style: { width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }, onError: () => { setFailed(src); onImageError(src) } })
+        : name ? Array.from(name).slice(0, 2).join('').toLocaleUpperCase() : h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5 }, h('circle', { cx: 12, cy: 8, r: 4 }), h('path', { d: 'M4 22v-2a8 8 0 0 1 16 0v2' })))
     }
 
     function AccountMenuIcon({ kind }) {
@@ -400,9 +510,12 @@ window.__ModuleLoader__.load({
       const label = name || t(identity.account ? 'signedOut' : identity.error ? 'identityError' : 'identityLoading')
       const connected = identity.account?.connected === true
       const quota = identity.account?.usage
-      const credits = !identity.error && quota && quota.source !== 'unavailable' && quota.quota_state !== 'unavailable'
-        && Number.isFinite(quota.limit) && Number.isFinite(quota.used)
-        ? new Intl.NumberFormat(t('numberLocale'), { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(Math.max(0, quota.limit - quota.used) / 1_000_000)
+      const balance = !identity.error && quota && quota.source !== 'unavailable' && quota.quota_state !== 'unavailable'
+        && Number.isFinite(quota.limit) && Number.isFinite(quota.used) ? quota : null
+      // The server's int64 "no cap" arrives as 2 ** 63 once parsed; it is not a number to show.
+      const unlimitedCredits = balance !== null && balance.limit >= 2 ** 63
+      const credits = balance && !unlimitedCredits
+        ? new Intl.NumberFormat(t('numberLocale'), { maximumFractionDigits: 2 }).format(Math.max(0, balance.limit - balance.used) / 1_000_000)
         : null
       const busy = actionBusy || identity.busy
       useEffect(() => {
@@ -434,15 +547,17 @@ window.__ModuleLoader__.load({
         finally { if (alive.current) setActionBusy(false) }
       }
       const badge = pending > 0 ? h(AccountBadge, { count: pending }) : null
-      const triggerLabel = `${t('accountMenu')}: ${label}${pending > 0 ? ` · ${t('approvalsPending')} ${pending}` : ''}`
-      // The sidebar menu does not cover the native Chat view or own its presentation.
+      // F016: the balance sits under the name, so it is visible without opening the menu.
+      const creditsLine = !connected ? null : unlimitedCredits ? t('creditsUnlimited') : credits !== null ? t('creditsLine', { value: credits }) : null
+      const triggerLabel = `${t('accountMenu')}: ${label}${creditsLine ? ` · ${creditsLine}` : ''}${pending > 0 ? ` · ${t('approvalsPending')} ${pending}` : ''}`
+      // The shared native-surface coordinator handles any overlap with embedded content.
       return h('div', { className: 'dshAccountLauncher', 'data-dsh-account-launcher': '' },
         h(Menu, { open: menuOpen, onClose: () => { if (!busy) setMenuOpen(false) }, side: 'top', align: 'start', portal: true, autoFocus: true, className: 'dshAccountMenuAnchor', listClassName: `dshAccountMenu${wide ? ' dshAccountMenuWide' : ''}`,
-          anchor: h('button', { ref: trigger, type: 'button', className: `dshAccountTrigger${wide ? '' : ' dshAccountTriggerRail'}`, 'aria-label': triggerLabel, title: wide ? undefined : label, 'aria-haspopup': 'menu', 'aria-expanded': menuOpen, disabled: settingsOpen || busy, onClick: () => { setMenuOpen(previous => !previous); setActionError(false); void identity.refresh() } },
-            h('span', { className: 'dshAccountAvatarWrap' }, h(AccountAvatar, { name }), badge),
-            wide && h('span', { className: 'dshAccountTriggerCopy' }, h('span', null, label)), wide && h(IconChevronDownOutlineRegular)) },
-          h('div', { className: 'dshAccountMenuIdentity' }, h(AccountAvatar, { name }), h('div', null, h('strong', null, label), h('small', null, t(connected ? 'enterpriseAccount' : 'signInHint'))),
-            connected && h('div', { className: 'dshAccountMenuCredits', role: 'status' }, h('strong', null, credits ?? '—'), h('small', null, t(credits === null ? 'creditsUnavailable' : 'creditsRemaining')))),
+          anchor: h('button', { ref: trigger, type: 'button', className: `dshAccountTrigger${wide ? '' : ' dshAccountTriggerRail'}`, 'aria-label': triggerLabel, title: wide ? undefined : label, 'aria-haspopup': 'menu', 'aria-expanded': menuOpen, disabled: settingsOpen || busy, onClick: () => { setMenuOpen(previous => !previous); setActionError(false); if (!menuOpen) void identity.refresh('account') } },
+            h('span', { className: 'dshAccountAvatarWrap' }, h(AccountAvatar, { name, src: connected ? identity.account?.user?.avatar : null, attempt: identity.imageAttempt, onImageError: identity.imageFailed }), badge),
+            wide && h('span', { className: 'dshAccountTriggerCopy' }, h('span', null, label), creditsLine && h('small', { 'data-dsh-account-credits': '' }, creditsLine)), wide && h(IconChevronDownOutlineRegular)) },
+          h('div', { className: 'dshAccountMenuIdentity' }, h(AccountAvatar, { name, src: connected ? identity.account?.user?.avatar : null, attempt: identity.imageAttempt, onImageError: identity.imageFailed }), h('div', null, h('strong', null, label), h('small', null, t(connected ? 'enterpriseAccount' : 'signInHint'))),
+            connected && h('div', { className: 'dshAccountMenuCredits', role: 'status' }, h('strong', null, unlimitedCredits ? t('unlimited') : credits ?? '—'), h('small', null, t(credits === null && !unlimitedCredits ? 'creditsUnavailable' : 'creditsRemaining')))),
           h(MenuItemButton, { icon: h(IconSettingsOutlineRegular), shortcut: settingsShortcut, disabled: busy, onSelect: () => { setMenuOpen(false); openSettings() } }, t('settings')),
           connected && h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'account' }), disabled: busy, onSelect: openAccountSettings }, t('accountSettings')),
           h(MenuItemButton, { icon: h(IconChecklistOutlineRegular), disabled: busy || !connected, onSelect: () => { setMenuOpen(false); setApprovalsOpen(true) } },

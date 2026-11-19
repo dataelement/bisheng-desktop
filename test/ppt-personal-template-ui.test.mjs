@@ -91,9 +91,14 @@ async function fixture(prepareError, waitForPrepare, resourcePlaceholders = [], 
   function render() { root.render(React.createElement(Component, { client, mode, sessionId, state, choose, t: key => key })); }
   await act(async () => render());
   async function click(label) {
-    const scope = container.querySelector('dialog[open]') ?? container;
-    const button = [...scope.querySelectorAll('button')].find(item => item.textContent === label || item.getAttribute('aria-label') === label);
-    expect(button, label).toBeDefined();
+    let button;
+    // FileReader may finish after upload() returns; wait for the requested action.
+    await vi.waitFor(async () => {
+      await act(async () => {});
+      const scope = container.querySelector('dialog[open]') ?? container;
+      button = [...scope.querySelectorAll('button')].find(item => item.textContent === label || item.getAttribute('aria-label') === label);
+      expect(button, label).toBeDefined();
+    }, { timeout: 5000 });
     await act(async () => button.click());
   }
   async function upload(file) {
@@ -479,7 +484,11 @@ it('shows page request failures and retries without losing the uploaded draft', 
 it('pages through representative layouts and isolates late page responses', async () => {
   const f = await fixture(undefined, undefined, [], Manager, { representativePages: [1, 3] });
   await f.upload(new File(['source'],'Samples.pptx'));
-  expect(container.querySelector('dialog[open]').textContent).toContain('personal.layouts 1 / 2');
+  // FileReader and the completion pause finish asynchronously under CI load.
+  await vi.waitFor(async () => {
+    await act(async () => {});
+    expect(container.querySelector('dialog[open]').textContent).toContain('personal.layouts 1 / 2');
+  }, { timeout: 5000 });
   expect(container.querySelector('.personal-view-toggle')).toBeNull();
   const release=f.hold('template/preview-page');
   await f.click('personal.next');

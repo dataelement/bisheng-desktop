@@ -195,7 +195,8 @@ jobs:
             .build/office-downloads
             .build/office-template-cache
             .build/ppt-runtime
-          key: shared-runtime-assets-v2-${{ hashFiles('scripts/office-runtime/**', 'packages/dsh-desktop-office/**', 'packages/ppt-runtime/**', 'scripts/ppt/**', 'package-lock.json') }}
+          # v3 busts the immutable v2 entry, which was saved before the Intel Python archive was prefetched.
+          key: shared-runtime-assets-v3-${{ hashFiles('scripts/office-runtime/**', 'packages/dsh-desktop-office/**', 'packages/ppt-runtime/**', 'scripts/ppt/**', 'package-lock.json') }}
           restore-keys: |
             shared-runtime-assets-
       - name: Build PPT runtime
@@ -204,6 +205,19 @@ jobs:
         run: npm run office:prepare
       - name: Download Intel Office runtime inputs
         run: node scripts/office-runtime/prepare.mjs --download-only mac-x64
+      # A run-scoped key is immutable, so a repeated attempt restores the archives already stored for this run.
+      - name: Check this run's Office download cache
+        id: office-run-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/office-runtime-downloads-probe
+          key: office-runtime-downloads-${{ github.run_id }}
+      - name: Save this run's Office downloads
+        if: steps.office-run-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .build/office-downloads
+          key: office-runtime-downloads-${{ github.run_id }}
   macos:
     name: macOS ${{ matrix.label }}
     needs: [validate-dispatch, prepare-shared-runtime-assets]
@@ -224,7 +238,11 @@ jobs:
             app-directory: mac
     runs-on: ${{ matrix.runner }}
     env:
+      # arch keeps Electron on the target binary under Rosetta. cpu selects optional
+      # native packages such as Koffi; a host cpu=arm64 setting would install the
+      # arm64 prebuild, which the x64 Node cannot load and then tries to compile.
       npm_config_arch: ${{ matrix.arch }}
+      npm_config_cpu: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -266,7 +284,13 @@ jobs:
             .build/office-downloads
             .build/office-template-cache
             .build/ppt-runtime
-          key: shared-runtime-assets-v2-${{ hashFiles('scripts/office-runtime/**', 'packages/dsh-desktop-office/**', 'packages/ppt-runtime/**', 'scripts/ppt/**', 'package-lock.json') }}
+          key: shared-runtime-assets-v3-${{ hashFiles('scripts/office-runtime/**', 'packages/dsh-desktop-office/**', 'packages/ppt-runtime/**', 'scripts/ppt/**', 'package-lock.json') }}
+      # A miss leaves office:prepare to download on this packaging machine.
+      - name: Restore this run's Office downloads
+        uses: actions/cache/restore@v4
+        with:
+          path: .build/office-downloads
+          key: office-runtime-downloads-${{ github.run_id }}
       - run: npm run typecheck
       - run: npm run build
       - name: Run complete macOS test suite on prepared inputs

@@ -1,7 +1,8 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { access, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { skippedVersionPath } from '../src/main/update/skipped-version'
 
 const mocks = vi.hoisted(() => ({
   ipc: new Map<string, (...args: unknown[]) => unknown>(),
@@ -154,6 +155,76 @@ it('preserves a download error and permits checking again', async () => {
   expect(manager.getUpdateStatus()).toMatchObject({ phase: 'error', message: 'download failed' })
   await manager.checkForUpdates(true)
   expect(manager.getUpdateStatus().phase).toBe('available')
+})
+
+it('refuses to skip a version after the user accepts it and until the download finishes', async () => {
+  start()
+  mocks.updater.checkForUpdates.mockImplementation(async () => emit('update-available', { version: '1.0.2' }))
+  await manager.checkForUpdates(true)
+  let release: (() => void) | undefined
+  mocks.updater.downloadUpdate.mockImplementation(() => new Promise<void>((resolve) => {
+    release = resolve
+  }))
+  const pending = manager.downloadAvailableUpdate()
+  expect(manager.getUpdateStatus()).toMatchObject({ phase: 'downloading', availableVersion: '1.0.2', percent: 0 })
+  emit('checking-for-update')
+  emit('update-available', { version: '1.0.2' })
+  emit('update-not-available')
+  expect(manager.getUpdateStatus()).toMatchObject({ phase: 'downloading', availableVersion: '1.0.2' })
+  expect(manager.skipUpdate('1.0.2').phase).toBe('downloading')
+  await expect(access(skippedVersionPath(mocks.userData))).rejects.toThrow()
+  emit('download-progress', { percent: 20 })
+  expect(manager.skipUpdate('1.0.2').phase).toBe('downloading')
+  emit('update-downloaded', { version: '1.0.2' })
+  expect(manager.skipUpdate('1.0.2').phase).toBe('idle')
+  release?.()
+  await pending
+})
+
+it('does not reopen a skipped version when the updater repeats the available event', async () => {
+  start()
+  mocks.updater.checkForUpdates.mockImplementation(async () => emit('update-available', { version: '1.0.2' }))
+  await manager.checkForUpdates(true)
+  manager.skipUpdate('1.0.2')
+  emit('update-available', { version: '1.0.2' })
+  expect(manager.getUpdateStatus().phase).toBe('idle')
+})
+
+it('presents an update that is already known when the user checks again', async () => {
+  start()
+  mocks.updater.checkForUpdates.mockImplementation(async () => emit('update-available', { version: '1.0.2' }))
+  await manager.checkForUpdates()
+  expect(manager.getUpdateStatus()).toMatchObject({ phase: 'available', manual: false, availableVersion: '1.0.2' })
+  mocks.updater.checkForUpdates.mockClear()
+  await manager.checkForUpdates(true)
+  expect(mocks.updater.checkForUpdates).not.toHaveBeenCalled()
+  expect(manager.getUpdateStatus()).toMatchObject({
+    phase: 'available',
+    availableVersion: '1.0.2',
+    manual: true,
+    source: 'manual',
+    presentationId: 1
+  })
+})
+
+it('offers a skipped version when the user checks during a background check', async () => {
+  start()
+  manager.skipUpdate('1.0.2')
+  let release: (() => void) | undefined
+  mocks.updater.checkForUpdates.mockImplementation(() => new Promise<void>((resolve) => {
+    release = () => {
+      emit('update-available', { version: '1.0.2' })
+      resolve()
+    }
+  }))
+  const background = manager.checkForUpdates()
+  await Promise.resolve()
+  const manual = manager.checkForUpdates(true)
+  expect(manager.getUpdateStatus()).toMatchObject({ phase: 'checking', manual: true })
+  release?.()
+  await background
+  await manual
+  expect(manager.getUpdateStatus()).toMatchObject({ phase: 'available', availableVersion: '1.0.2', manual: true })
 })
 
 it('honors a skipped version in the background and offers it again on manual request', async () => {

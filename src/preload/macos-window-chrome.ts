@@ -14,9 +14,13 @@ export function mountMacosWindowChrome(
   theme.owners++
   const style = theme.style
   style.dataset.dshMacosSidebarTheme = ''
-  // The Desktop sidebar uses Harness theme colors over the native window material.
-  // This is window chrome: the host owns the transparent macOS BrowserWindow.
-  style.textContent = 'html[data-platform="darwin"][data-dsh-desktop-web-shortcuts="true"] [data-dsh-sidebar-root] { background: var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-base, #f8f8f6)); }'
+  // Harness's translucent sidebar column reveals the window's native material.
+  // Keep the solid fill only for light mode, where the host disables vibrancy.
+  style.textContent = `
+    html[data-platform="darwin"] body:not([data-ds-dark-theme]) [data-dsh-sidebar-root] {
+      background: var(--dsw-specific-sidebar-fill, var(--dsw-alias-bg-base, #f8f8f6));
+    }
+  `
   const mark = (): void => {
     const root = doc.documentElement
     if (!root) return

@@ -1,0 +1,61 @@
+name: Cloud workbench checks
+
+on:
+  pull_request:
+    branches: [V1.3.0]
+    paths:
+      - '.github/workflows/cloud-workbench-checks.yml'
+      - 'src/main/enterprise/**'
+      - 'src/preload/**'
+      - 'src/shared/**'
+      - 'packages/dsh-desktop-enterprise/**'
+      - 'packages/dsh-desktop-workbenches/**'
+      - 'test/**'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloud-workbench-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  boundary-regressions:
+    name: Cloud boundaries (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --prefer-offline
+      - run: npm run typecheck
+      - name: Verify cloud and workbench boundaries
+        run: >-
+          npx --no-install vitest run --maxWorkers=1
+          --reporter=default --reporter=junit
+          --outputFile.junit=artifacts/cloud-workbench-junit.xml
+          test/cloud-confirmation.test.ts
+          test/cloud-workbench-service.test.ts
+          test/cloud-workbench-tools.test.mjs
+          test/cloud-workbench-view.test.ts
+          test/enterprise-credential-broker.test.ts
+          test/enterprise-login-policy.test.ts
+          test/enterprise-deep-link.test.ts
+          test/enterprise-workbench-market.test.ts
+          test/enterprise-community-package.test.ts
+          test/workbench-client.test.mjs
+          test/workbench-creation.test.mjs
+          test/workbench-guide-sync.test.mjs
+          test/workbench-state.test.mjs

@@ -193,7 +193,9 @@ describe('enterprise policy', () => {
 
 async function fixture() {
   const root = await home(), ctx = new Context()
-  let current = bundle(), currentId = versionId, disabled = false, online = true, revision = 2, connected = true
+  // `revoked` stands for an administrator withdrawing this employee's access (F022):
+  // the server then leaves the plugin out of both the catalog and the sync policies.
+  let current = bundle(), currentId = versionId, disabled = false, online = true, revision = 2, connected = true, revoked = false
   let identity = account
   const approved = new Map([[versionId, current.expected.digest]])
   const request = vi.fn(async (path: string, body?: { device_id: string }) => {
@@ -202,8 +204,8 @@ async function fixture() {
     let data: unknown
     if (path.endsWith('/capabilities')) data = { enabled: true, contract_version: 2, tenant_id: '2', sync_seconds: 60 }
     else if (path.endsWith('/sync')) data = { tenant_id: '2', user_id: '20', device_id: body!.device_id, synced_at: Math.floor(Date.now() / 1000),
-      policies: [{ plugin_id: pluginId, name: 'company-demo', disabled, revision, current_version_id: disabled ? null : currentId, versions: [...approved].map(([id, digest]) => ({ id, digest })) }] }
-    else data = { total: disabled ? 0 : 1, data: disabled ? [] : [{ id: pluginId, name: 'company-demo', display_name: 'Company Demo', current_version_id: currentId, revision,
+      policies: revoked ? [] : [{ plugin_id: pluginId, name: 'company-demo', disabled, revision, current_version_id: disabled ? null : currentId, versions: [...approved].map(([id, digest]) => ({ id, digest })) }] }
+    else data = { total: disabled || revoked ? 0 : 1, data: disabled || revoked ? [] : [{ id: pluginId, name: 'company-demo', display_name: 'Company Demo', current_version_id: currentId, revision,
       versions: [{ id: currentId, version: current.expected.version, digest: current.expected.digest, manifest: current.manifest }] }] }
     return { status_code: 200, data }
   })
@@ -217,7 +219,7 @@ async function fixture() {
       return { dispose: async () => { active.delete(record.version); await fiber.dispose() } }
     } })
   controllers.push(market)
-  return { root, market, request, active, setDesktopVersion: (value: string) => { identity = { ...identity, desktopVersion: value } }, swap: () => { identity = { ...account, user: { id: '21' } } }, disconnect: () => { connected = false }, offline: () => { online = false }, reconnect: () => { online = true }, disable: () => { disabled = true; revision++ }, update: (source?: string) => {
+  return { root, market, request, active, revoke: () => { revoked = true }, restore: () => { revoked = false }, setDesktopVersion: (value: string) => { identity = { ...identity, desktopVersion: value } }, swap: () => { identity = { ...account, user: { id: '21' } } }, disconnect: () => { connected = false }, offline: () => { online = false }, reconnect: () => { online = true }, disable: () => { disabled = true; revision++ }, update: (source?: string) => {
     current = bundle('1.1.0', source); currentId = 'c'.repeat(32); approved.set(currentId, current.expected.digest); revision++
   } }
 }
@@ -312,6 +314,40 @@ describe('account-bound lifecycle', () => {
     await market.act({ action: 'disable', plugin_id: pluginId })
     await expect(market.act({ action: 'enable', plugin_id: pluginId })).rejects.toThrow(/Network unavailable/)
     expect(active.size).toBe(0)
+  })
+})
+
+describe('revoked access (F022)', () => {
+  it('stops and disables a plugin whose access was revoked, and re-enables it only after access returns', async () => {
+    const { market, active, revoke, restore } = await fixture()
+    await market.act({ action: 'install', plugin_id: pluginId })
+    revoke(); await market.synchronize()
+    expect(active.size).toBe(0)
+    expect(market.state().installed[0]).toMatchObject({ status: 'disabled', enabled: false, reason: 'revoked' })
+    await expect(market.act({ action: 'enable', plugin_id: pluginId })).rejects.toThrow(/authorization/)
+    expect(market.state().installed[0]).toMatchObject({ enabled: false, reason: 'revoked' })
+
+    restore(); await market.synchronize()
+    // Access is back, but the installation stays off until the employee turns it on again.
+    expect(active.size).toBe(0)
+    expect(market.state().installed[0]).toMatchObject({ status: 'disabled', enabled: false })
+    expect(market.state().installed[0]).not.toHaveProperty('reason')
+    await market.act({ action: 'enable', plugin_id: pluginId })
+    expect(active.has('1.0.0')).toBe(true)
+    expect(market.state().installed[0]).toMatchObject({ status: 'enabled', enabled: true })
+  })
+  it('tells an administrator-disabled plugin apart from a revoked one', async () => {
+    const { market, disable } = await fixture()
+    await market.act({ action: 'install', plugin_id: pluginId })
+    disable(); await market.synchronize()
+    expect(market.state().installed[0]).toMatchObject({ enabled: false, reason: 'disabled' })
+  })
+  it('never reports a revocation while the enterprise market is unreachable', async () => {
+    const { market, offline, revoke } = await fixture()
+    await market.act({ action: 'install', plugin_id: pluginId })
+    revoke(); offline(); await market.synchronize()
+    expect(market.state().installed[0]).toMatchObject({ enabled: true, status: 'failed' })
+    expect(market.state().installed[0]).not.toHaveProperty('reason')
   })
 })
 

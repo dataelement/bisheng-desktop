@@ -9,41 +9,12 @@ function isLoopbackHost(hostname) {
   return hostname === '127.0.0.1' || hostname === '[::1]' || hostname === '::1'
 }
 
-function parseIpv4(hostname) {
-  const parts = hostname.split('.')
-  if (parts.length !== 4) return undefined
-  const octets = []
-  for (const part of parts) {
-    if (!/^\d{1,3}$/u.test(part)) return undefined
-    const value = Number(part)
-    if (!Number.isInteger(value) || value < 0 || value > 255) return undefined
-    octets.push(value)
-  }
-  return octets
-}
-
-function isPrivateIpv4(octets) {
-  const [first, second] = octets
-  return first === 10
-    || (first === 192 && second === 168)
-    || (first === 172 && second >= 16 && second <= 31)
-}
-
-function ipv6Hostname(hostname) {
-  return hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname
-}
-
-function isPrivateNetworkHost(hostname) {
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/iu.exec(ipv6Hostname(hostname))
-  const ipv4 = parseIpv4(mapped?.[1] ?? hostname)
-  if (ipv4) return isPrivateIpv4(ipv4)
-  return /^f[cd][0-9a-f]{2}:/iu.test(ipv6Hostname(hostname))
-}
-
+// Keep the legacy API name for broker/client compatibility. It now covers all
+// non-loopback HTTP origins, including public IPs and domain names.
 export function isInsecurePrivateHttpOrigin(value) {
   try {
     const url = new URL(value)
-    return url.protocol === 'http:' && isPrivateNetworkHost(url.hostname)
+    return url.protocol === 'http:' && !isLoopbackHost(url.hostname)
   } catch {
     return false
   }
@@ -69,20 +40,10 @@ export function normalizeEnterpriseServerUrl(value, options = {}) {
     return url.origin
   }
   if (url.protocol === 'http:') {
-    if (options.allowInsecureLoopback === true && isLoopbackHost(url.hostname)) {
+    if (isLoopbackHost(url.hostname) || options.allowInsecurePrivateHttp === true) {
       return url.origin
     }
-    if (options.allowInsecurePrivateHttp === true && isPrivateNetworkHost(url.hostname)) {
-      return url.origin
-    }
-    if (isPrivateNetworkHost(url.hostname)) {
-      throw new Error('HTTP intranet addresses require explicit confirmation.')
-    }
-    throw new Error(
-      options.allowInsecureLoopback === true
-        ? 'HTTP BiSheng addresses are limited to 127.0.0.1 or [::1].'
-        : 'The BiSheng platform address must use HTTPS.'
-    )
+    throw new Error('HTTP addresses require explicit confirmation.')
   }
   throw new Error('The BiSheng platform address must use HTTP or HTTPS.')
 }

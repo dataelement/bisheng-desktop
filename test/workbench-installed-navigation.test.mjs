@@ -11,7 +11,7 @@ let root
 let previousWindow, previousDocument, previousAct
 function client() {
   let exports
-  vm.runInNewContext(source.replace('return { apply, inject:', 'return { Preview, ScreenshotGallery, apply, inject:'), {
+  vm.runInNewContext(source.replace('return { apply, inject:', 'return { createCopy, cloudCardCopy, Preview, ScreenshotGallery, apply, inject:'), {
     window: { localStorage: { getItem: key => key === 'dsh-workbench-enabled' ? 'true' : null, setItem() {} }, __ModuleLoader__: { load({ factory }) {
       exports = factory(name => name === 'react' ? React : name === '@deepseek-ai/cordis' ? { Service: { tracker: Symbol() } } : { Switch: () => null })
     } } }, document: dom.window.document, setTimeout, clearTimeout, AbortController
@@ -19,8 +19,8 @@ function client() {
   return exports
 }
 function service({ listed = true, added = true } = {}) {
-  const { Workbenches } = client()
-  const ctx = { fiber: { entry: { options: { name: 'animation-package' } } }, layout: { beginNavigation() {} } }
+  const { Workbenches, createCopy, cloudCardCopy } = client()
+  const ctx = { locale: { bind: ns => key => (ns.endsWith('.create') ? createCopy : cloudCardCopy).zh[key] }, fiber: { entry: { options: { name: 'animation-package' } } }, layout: { beginNavigation() {} } }
   const value = new Workbenches(ctx)
   value.ready = true
   value.state.added = added ? ['example/animation'] : []
