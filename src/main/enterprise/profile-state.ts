@@ -1,6 +1,6 @@
 import type { EnterprisePublicIdentity } from './enterprise-service'
 
-export type ProfileRefreshReason = 'account' | 'foreground' | 'image'
+export type ProfileRefreshReason = 'account' | 'foreground' | 'image' | 'window-focus' | 'profile-update'
 
 /** Display metadata is memory-only: storage signatures must not enter the credential vault. */
 export class EnterpriseProfileState {
@@ -20,8 +20,12 @@ export class EnterpriseProfileState {
 
   due(reason: ProfileRefreshReason, now: number): boolean {
     if (this.unsupported) return false
-    const retryMs = Math.min(300_000, 60_000 * 2 ** Math.min(this.failures, 3))
-    return now - this.attemptedAt >= retryMs && now - this.succeededAt >= (reason === 'foreground' ? 300_000 : 60_000)
+    if (reason === 'profile-update') return true
+    // Returning to the native window can follow an external web save even
+    // when the previous profile read was very recent.
+    const freshnessMs = reason === 'window-focus' ? 0 : reason === 'foreground' ? 5_000 : 60_000
+    const retryMs = this.failures ? Math.min(300_000, 60_000 * 2 ** Math.min(this.failures, 3)) : freshnessMs
+    return now - this.attemptedAt >= retryMs && now - this.succeededAt >= freshnessMs
   }
 
   begin(now: number): void { this.attemptedAt = now }
@@ -35,6 +39,7 @@ export class EnterpriseProfileState {
     if (typeof user.username !== 'string' || !user.username.trim() || typeof user.display_name !== 'string' || !user.display_name.trim()) {
       throw new Error('Invalid enterprise display profile.')
     }
+    const account = typeof user.external_id === 'string' && user.external_id.trim() ? user.external_id : undefined
     let avatar: string | null | undefined
     if (Object.hasOwn(user, 'avatar')) {
       if (user.avatar === null || user.avatar === '') avatar = null
@@ -49,6 +54,7 @@ export class EnterpriseProfileState {
       }
     }
     this.user = { id: userId, username: user.username, display_name: user.display_name,
+      ...(account === undefined ? {} : { external_id: account }),
       ...(avatar === undefined ? {} : { avatar }) }
     this.succeededAt = now
     this.failures = 0

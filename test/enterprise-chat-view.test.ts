@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { app } from 'electron'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EnterpriseChatView } from '../src/main/enterprise/chat-view'
 import { chatLandingTextMotionScript } from '../src/main/enterprise/chat-landing-text-motion'
@@ -49,16 +50,30 @@ const networkError = () => new EnterprisePlatformError('Could not reach the BiSh
 const elapse = async (ms: number) => { await vi.advanceTimersByTimeAsync(ms); await flush() }
 const presentation = { visible: true, theme: 'dark', bounds: { x: 0, y: 56, width: 1100, height: 700 } }
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve() }
-function fixture() {
+function fixture(hasMainWindow = false) {
   let state: { connected: boolean; connectionKey: string; revision?: number } = { connected: true, connectionKey: 'tenant-a' }
   let change: (state: any) => void = () => {}
-  const enterprise = { snapshot: () => state, subscribe: (listener: typeof change) => { change = listener; return vi.fn() }, webSession: vi.fn(async () => ({ base: 'https://enterprise.example', cookie: 'test-cookie', cookieName: 'bs_credits_3007', connectionKey: 'tenant-a', expiresAt: Date.now() + 300_000 })) }
+  const enterprise = { snapshot: () => state, subscribe: (listener: typeof change) => { change = listener; return vi.fn() }, profileUpdated: vi.fn(async () => {}), profileWindowFocused: vi.fn(async () => {}), webSession: vi.fn(async () => ({ base: 'https://enterprise.example', cookie: 'test-cookie', cookieName: 'bs_credits_3007', connectionKey: 'tenant-a', expiresAt: Date.now() + 300_000 })) }
   const owner: any = Object.assign(new EventEmitter(), { isDestroyed: () => false, getContentSize: () => [1100, 800], contentView: { addChildView: vi.fn(), removeChildView: vi.fn() }, webContents: Object.assign(new EventEmitter(), { send: vi.fn(), focus: vi.fn(), getZoomFactor: () => 1, isDestroyed: () => false, executeJavaScript: vi.fn(async () => true) }) })
-  const host = new EnterpriseChatView(enterprise as any, vi.fn())
+  const host = new EnterpriseChatView(enterprise as any, vi.fn(), hasMainWindow ? () => owner : undefined)
   return { host, owner, enterprise, change: (next: typeof state) => { state = next; change(next) } }
 }
 
 describe('enterprise Chat host boundary', () => {
+  it('refreshes on native main window focus even before a workspace view exists', () => {
+    const f = fixture(true)
+    const unrelatedWindow = { isDestroyed: () => false }
+    try {
+      app.emit('browser-window-focus', {}, unrelatedWindow)
+      expect(f.enterprise.profileWindowFocused).not.toHaveBeenCalled()
+      app.emit('browser-window-focus', {}, f.owner)
+      expect(fake.views).toHaveLength(0)
+      expect(f.enterprise.profileWindowFocused).toHaveBeenCalledTimes(1)
+    } finally { f.host.dispose() }
+    app.emit('browser-window-focus', {}, f.owner)
+    expect(f.enterprise.profileWindowFocused).toHaveBeenCalledTimes(1)
+  })
+
   it('notifies a profile revision change through the existing subscription without changing the view epoch', async () => {
     const f = fixture()
     try {
@@ -1114,7 +1129,7 @@ it('refreshes tools only after a current account browser completes an availabili
     await flush()
     const view = fake.views[0], isolated = fake.sessions[0]
     const [filter, completed] = isolated.webRequest.onCompleted.mock.calls[0]
-    expect(filter.urls).toEqual(['https://enterprise.example/api/v1/dsh/capabilities/*/availability'])
+    expect(filter.urls).toContain('https://enterprise.example/api/v1/dsh/capabilities/*/availability')
     const saved = { url: 'https://enterprise.example/api/v1/dsh/capabilities/38/availability',
       method: 'PUT', statusCode: 200, webContentsId: view.webContents.id }
     f.owner.webContents.send.mockClear()
@@ -1130,6 +1145,32 @@ it('refreshes tools only after a current account browser completes an availabili
     f.owner.webContents.send.mockClear()
     completed(saved)
     expect(f.owner.webContents.send).toHaveBeenCalledTimes(0)
+  } finally { f.host.dispose() }
+})
+
+it.each([
+  ['/api/v1/user/avatar', 'POST'],
+  ['/api/v1/user/profile/nickname', 'PATCH']
+])('refreshes the signed-in profile after %s is saved from the current workspace view', async (path, method) => {
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    const [filter, completed] = fake.sessions[0].webRequest.onCompleted.mock.calls[0]
+    const paths = [path, `/workspace${path}`]
+    expect(filter.urls).toEqual(expect.arrayContaining(paths.map(path => `https://enterprise.example${path}`)))
+    const saved = { url: `https://enterprise.example${paths[1]}`, method, statusCode: 200,
+      webContentsId: fake.views[0].webContents.id }
+    for (const change of [{ method: 'GET' }, { statusCode: 403 }, { webContentsId: 999 },
+      { url: `https://other.example${paths[1]}` },
+      { url: `https://enterprise.example${paths[1]}-other` }]) completed({ ...saved, ...change })
+    expect(f.enterprise.profileUpdated).not.toHaveBeenCalled()
+
+    for (const path of paths) completed({ ...saved, url: `https://enterprise.example${path}` })
+    expect(f.enterprise.profileUpdated.mock.calls).toEqual([['tenant-a'], ['tenant-a']])
+    f.change({ connected: true, connectionKey: 'tenant-b' })
+    completed(saved)
+    expect(f.enterprise.profileUpdated).toHaveBeenCalledTimes(2)
   } finally { f.host.dispose() }
 })
 

@@ -24,6 +24,10 @@ const LANDING_HANDOFF_TIMEOUT_MS = 120
 const LANDING_TEXT_MOTION_TIMEOUT_MS = 155
 const INITIAL_BACKOFF_MS = [2_000, 5_000, 10_000]
 const RENEWAL_BACKOFF_MS = [2_000, 5_000, 10_000, 30_000]
+const PROFILE_WRITE_METHODS = new Map([
+  ['/api/v1/user/avatar', 'POST'],
+  ['/api/v1/user/profile/nickname', 'PATCH']
+])
 const RETRYABLE_NETWORK_CODES = new Set([
   'ERR_CONNECTION_RESET',
   'ERR_CONNECTION_REFUSED',
@@ -81,6 +85,11 @@ export class EnterpriseChatView {
   private projectsRequested = false
   // Projects have no server push; re-read when any Desktop window regains focus.
   private readonly refreshProjectsOnFocus = (): void => { this.projects?.refreshIfStale() }
+  private readonly refreshProfileOnFocus = (_event: Electron.Event, window: BrowserWindow): void => {
+    const main = this.notificationWindow?.()
+    if (main !== window || window.isDestroyed()) return
+    void this.enterprise.profileWindowFocused().catch(() => this.note('[enterprise-chat] foreground_profile_refresh_failed'))
+  }
   private projectFocusBound = false
   private modalOpen = false
   private modalRequest = 0
@@ -126,6 +135,7 @@ export class EnterpriseChatView {
   private landingTextMotionRevision = 0
 
   constructor(private enterprise: EnterpriseDesktopRuntime, private note: (line: string) => void, private notificationWindow?: () => BrowserWindow | undefined) {
+    app.on('browser-window-focus', this.refreshProfileOnFocus)
     this.unsubscribe = enterprise.subscribe((state) => {
       if (!state.connected || (this.key !== undefined && state.connectionKey !== this.key)) this.clear()
       this.notify()
@@ -714,14 +724,22 @@ export class EnterpriseChatView {
         })
         isolated.setPermissionCheckHandler((_contents, permission, requestingOrigin) => permission === 'clipboard-sanitized-write' && requestingOrigin === origin)
         const view = new WebContentsView({ webPreferences: { session: isolated, preload: join(import.meta.dirname, '../preload/enterprise-chat.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true } })
-        // Observe successful saves on this identity-owned browser session. The
-        // notification carries no remote data or authority; Harness rereads permissions.
-        isolated.webRequest.onCompleted({ urls: [origin + '/api/v1/dsh/capabilities/*/availability'] }, details => {
+        // Observe successful saves on this identity-owned browser session. Use the
+        // server's current profile and permissions rather than request data.
+        isolated.webRequest.onCompleted({ urls: [
+          origin + '/api/v1/dsh/capabilities/*/availability',
+          ...[...PROFILE_WRITE_METHODS.keys()].flatMap(path => [origin + path, origin + '/workspace' + path])
+        ] }, details => {
           if (generation !== this.generation || this.view !== view || this.key !== key) return
-          if (details.webContentsId !== view.webContents.id || details.method !== 'PUT' || details.statusCode !== 200) return
+          if (details.webContentsId !== view.webContents.id || details.statusCode !== 200) return
           const saved = new URL(details.url)
-          if (saved.origin !== origin || !/^\/api\/v1\/dsh\/capabilities\/[1-9][0-9]*\/availability$/u.test(saved.pathname)) return
-          if (this.owner && !this.owner.isDestroyed()) this.owner.webContents.send('enterprise-chat:tools-changed')
+          if (saved.origin !== origin) return
+          const apiPath = saved.pathname.replace(/^\/workspace\//u, '/')
+          if (PROFILE_WRITE_METHODS.get(apiPath) === details.method) {
+            void this.enterprise.profileUpdated(key).catch(() => this.note('[enterprise-chat] saved_profile_refresh_failed'))
+          } else if (details.method === 'PUT' && /^\/api\/v1\/dsh\/capabilities\/[1-9][0-9]*\/availability$/u.test(saved.pathname)) {
+            if (this.owner && !this.owner.isDestroyed()) this.owner.webContents.send('enterprise-chat:tools-changed')
+          }
         })
         view.setVisible(false)
         view.setBackgroundColor(this.presentation?.theme === 'dark' ? '#141416' : '#ffffff')
@@ -1119,5 +1137,9 @@ export class EnterpriseChatView {
     this.state = { phase: 'idle' }
   }
 
-  dispose(): void { this.unsubscribe(); this.clear() }
+  dispose(): void {
+    app.removeListener('browser-window-focus', this.refreshProfileOnFocus)
+    this.unsubscribe()
+    this.clear()
+  }
 }

@@ -66,7 +66,6 @@ window.__ModuleLoader__.load({
       nav: '账号与用量',
       title: '账号与用量',
       managedModels: '企业提供的模型',
-      accountLabel: '当前账号',
       platform: '企业平台地址',
       signInTitle: '登录企业账号',
       signInIntro: '登录后可使用聊天，以及企业为你授权的模型、工具和技能。',
@@ -133,7 +132,6 @@ window.__ModuleLoader__.load({
       nav: 'Account and usage',
       title: 'Account and usage',
       managedModels: 'Models provided by your enterprise',
-      accountLabel: 'Current account',
       platform: 'Enterprise platform URL',
       signInTitle: 'Sign in to your enterprise account',
       signInIntro: 'Sign in to use Chat and the models, tools, and skills authorized by your organization.',
@@ -331,8 +329,13 @@ window.__ModuleLoader__.load({
           border-radius: 50%;
           font-size: 22px;
           font-weight: 500;
-          color: var(--dsw-alias-label-secondary);
-          background: var(--dsw-alias-interactive-bg-hover);
+        }
+        /* Harness sets color-scheme; use the BiSheng Web fill-4 palette for initials. */
+        .dshEnterpriseAvatar[data-avatar-variant='initial'] {
+          --dsw-alias-user-avatar-fill: light-dark(rgb(202 205 212), rgb(95 95 96));
+          --dsw-alias-user-avatar-ink: white;
+          color: var(--dsw-alias-user-avatar-ink);
+          background: var(--dsw-alias-user-avatar-fill);
         }
         /* Keep sign-out as the final, explicitly destructive account action. */
         .dshEnterprise .dshEnterpriseLogout {
@@ -979,12 +982,13 @@ window.__ModuleLoader__.load({
             vision) : null))
     }
 
-    function EnterpriseAvatar({ name, src, attempt, onImageError }) {
+    function EnterpriseAvatar({ nickname, src, attempt, onImageError }) {
       const [failed, setFailed] = useState(null)
       useEffect(() => setFailed(null), [src, attempt])
-      return h('span', { className: 'dshEnterpriseAvatar', 'aria-hidden': 'true' }, src && failed !== src
+      const showImage = src && failed !== src
+      return h('span', { className: 'dshEnterpriseAvatar', 'data-avatar-variant': showImage ? 'image' : 'initial', 'aria-hidden': 'true' }, showImage
         ? h('img', { key: `${src}:${attempt}`, src, alt: '', referrerPolicy: 'no-referrer', style: { width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }, onError: () => { setFailed(src); onImageError(src) } })
-        : Array.from(String(name)).slice(0, 2).join('').toLocaleUpperCase())
+        : (Array.from(nickname?.trim() ?? '')[0] ?? '?').toUpperCase())
     }
 
     function EnterpriseSection({ t, renderSlot }) {
@@ -1102,6 +1106,13 @@ window.__ModuleLoader__.load({
           // Profile freshness is best effort; a local read keeps sign-in usable offline.
           if (current.alive) void refreshState().catch(cause => { if (current.alive) showFailure(cause) })
         })
+        let accountRevision
+        const unsubscribeAccount = window.dshEnterpriseChat?.subscribe?.(next => {
+          if (!next.connected || !Number.isFinite(next.accountRevision) || next.accountRevision === accountRevision) return
+          accountRevision = next.accountRevision
+          // The native event only invalidates the local broker snapshot.
+          if (accountRevision !== stateRef.current?.revision) void refreshState().catch(() => {})
+        })
         const bridge = window.dshDesktopEnterprise
         const unsubscribe = bridge?.onLoginLink?.((url) => {
           openEnterpriseSettingsSection()
@@ -1110,6 +1121,7 @@ window.__ModuleLoader__.load({
         })
         return () => {
           current.alive = false; current.revision++; accountActionEpoch++; current.request?.abort()
+          unsubscribeAccount?.()
           unsubscribe?.(); window.removeEventListener(ACCOUNT_CHANGED_EVENT, changed)
           window.removeEventListener(ACCOUNT_CHANGED_EVENT, observeAction)
         }
@@ -1168,10 +1180,10 @@ window.__ModuleLoader__.load({
       }, t('logout'))
       const status = connected
         ? h('div', { className: 'dshEnterpriseIdentity' },
-          h(EnterpriseAvatar, { name: userLabel, src: state?.user?.avatar, attempt: imageAttempt, onImageError: imageFailed }),
+          h(EnterpriseAvatar, { nickname: state?.user?.username, src: state?.user?.avatar, attempt: imageAttempt, onImageError: imageFailed }),
           h('div', { className: 'dshEnterpriseAccount' },
             h('strong', null, userLabel),
-            h('span', { className: 'dshEnterpriseAccountLabel' }, state?.user?.username || t('accountLabel'))))
+            h('span', { className: 'dshEnterpriseAccountLabel' }, state?.user?.external_id || '—')))
         : null
 
       const accountContent = connected
