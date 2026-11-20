@@ -2,10 +2,11 @@ import type { BrowserWindow } from 'electron'
 import { EventEmitter } from 'node:events'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 function mockContents() { return Object.assign(new EventEmitter(), { setWindowOpenHandler: vi.fn(), loadURL: vi.fn(async () => { if (loadFailure) throw new Error('Load failed') }),
-  isDestroyed: vi.fn(() => false), close: vi.fn() }) }
+  isDestroyed: vi.fn(() => false), close: vi.fn(), getURL: vi.fn(() => 'https://enterprise.test/apps/a/'),
+  capturePage: vi.fn(async () => ({ isEmpty: () => false, toDataURL: () => 'data:image/png;base64,fixture' })) }) }
 function mockPartition() { return { setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn(), clearStorageData: vi.fn(async () => {}),
   fetch: vi.fn(async () => new Response(null, { status: 204 })) } }
-const views: Array<{ webContents: ReturnType<typeof mockContents>; setBounds: ReturnType<typeof vi.fn> }> = []
+const views: Array<{ webContents: ReturnType<typeof mockContents>; setBounds: ReturnType<typeof vi.fn>; getBounds: ReturnType<typeof vi.fn> }> = []
 const partitions: Array<ReturnType<typeof mockPartition>> = []
 let loadFailure = false
 function view(index: number) { const value = views[index]; if (!value) throw new Error('Missing view'); return value }
@@ -13,6 +14,7 @@ function partition(index: number) { const value = partitions[index]; if (!value)
 vi.mock('electron', () => ({
   WebContentsView: class {
     webContents = mockContents()
+    getBounds = vi.fn(() => ({ ...bounds }))
     setBounds = vi.fn()
     constructor() { views.push(this) }
   },
@@ -29,7 +31,7 @@ afterEach(() => { controller.close(); vi.useRealTimers() })
 function parent() {
   // The Electron adapter boundary is represented by the exact methods exercised here.
   return Object.assign(new EventEmitter(), { contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
-  isDestroyed: () => false, getContentSize: () => [1200, 800], webContents: { send: vi.fn() } }) as unknown as BrowserWindow }
+  isDestroyed: () => false, getContentSize: () => [1200, 800], webContents: { send: vi.fn(), focus: vi.fn() } }) as unknown as BrowserWindow }
 const bounds = { x: 300, y: 20, width: 900, height: 780 }
 function launch(appId: string, connectionKey = 'one'): CloudLaunch {
   return { appId, connectionKey, slug: appId, ticket: 't'.repeat(43), entryUrl: `https://enterprise.test/apps/${appId}/`, launchUrl: `https://enterprise.test/apps/${appId}/_desktop` }
@@ -69,6 +71,108 @@ it('stale page callbacks cannot resize or hide a different active workbench', as
   expect(view(1).setBounds).not.toHaveBeenCalled()
   controller.resizeFor('second', bounds)
   expect(view(1).setBounds).toHaveBeenCalledOnce()
+})
+
+it('detaches for host overlays without reloading or losing bounds and returns input to the host', async () => {
+  const host = parent()
+  await controller.open(host, launch('a'), bounds, 'first', () => 'one')
+  controller.setHostOccluded(true)
+  controller.setHostOccluded(true)
+  expect(host.contentView.removeChildView).toHaveBeenCalledExactlyOnceWith(view(0))
+  expect(host.webContents.focus).toHaveBeenCalledOnce()
+  expect(view(0).setBounds).toHaveBeenCalledExactlyOnceWith(bounds)
+  const resized = { ...bounds, width: 600 }
+  controller.resizeFor('first', resized)
+  controller.setHostOccluded(false)
+  controller.setHostOccluded(false)
+  expect(host.contentView.addChildView).toHaveBeenCalledTimes(2)
+  expect(host.contentView.addChildView).toHaveBeenLastCalledWith(view(0))
+  expect(view(0).setBounds).toHaveBeenCalledTimes(2)
+  expect(view(0).setBounds).toHaveBeenLastCalledWith(resized)
+  expect(view(0).webContents.loadURL).toHaveBeenCalledOnce()
+  expect(view(0).webContents.close).not.toHaveBeenCalled()
+  expect(partition(0).fetch).toHaveBeenCalledOnce()
+  expect(partition(0).clearStorageData).not.toHaveBeenCalled()
+})
+
+it('respects host occlusion when an initial page finishes loading', async () => {
+  const host = parent()
+  const opening = controller.open(host, launch('a'), bounds, 'first', () => 'one')
+  let finish: (() => void) | undefined
+  view(0).webContents.loadURL.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve }))
+  await vi.waitFor(() => expect(view(0).webContents.loadURL).toHaveBeenCalledOnce())
+  controller.setHostOccluded(true)
+  finish?.()
+  await opening
+  expect(host.contentView.addChildView).not.toHaveBeenCalled()
+  expect(view(0).setBounds).toHaveBeenCalledExactlyOnceWith(bounds)
+  controller.setHostOccluded(false)
+  expect(host.contentView.addChildView).toHaveBeenCalledExactlyOnceWith(view(0))
+})
+
+it('restores only the selected workbench after switching behind an overlay', async () => {
+  const host = parent()
+  await controller.open(host, launch('a'), bounds, 'first', () => 'one')
+  controller.setHostOccluded(true)
+  await controller.open(host, launch('b'), bounds, 'second', () => 'one')
+  controller.closeFor('first')
+  expect(host.contentView.addChildView).toHaveBeenCalledTimes(1)
+  controller.setHostOccluded(false)
+  expect(host.contentView.addChildView).toHaveBeenCalledTimes(2)
+  expect(host.contentView.addChildView).toHaveBeenLastCalledWith(view(1))
+  expect(view(0).webContents.close).not.toHaveBeenCalled()
+})
+
+it.each(['owner', 'release', 'controller', 'access'] as const)('does not revive an occluded page after %s closes it', async reason => {
+  const host = parent()
+  await controller.open(host, launch('a'), bounds, 'first', () => 'one')
+  controller.setHostOccluded(true)
+  if (reason === 'owner') controller.closeFor('first')
+  if (reason === 'release') await controller.release('a', 'one')
+  if (reason === 'controller') controller.close()
+  if (reason === 'access') view(0).webContents.emit('will-navigate', { preventDefault: vi.fn() }, 'https://enterprise.test/login')
+  controller.setHostOccluded(false)
+  expect(host.contentView.addChildView).toHaveBeenCalledTimes(1)
+  expect(host.contentView.removeChildView).toHaveBeenCalledTimes(1)
+})
+
+it('preserves host occlusion across controller cleanup and account changes', async () => {
+  const host = parent()
+  await controller.open(host, launch('a'), bounds, 'first', () => 'one')
+  controller.setHostOccluded(true)
+  controller.close()
+  await controller.open(host, launch('b', 'two'), bounds, 'second', () => 'two')
+  expect(host.contentView.addChildView).toHaveBeenCalledTimes(1)
+  controller.setHostOccluded(false)
+  expect(host.contentView.addChildView).toHaveBeenLastCalledWith(view(1))
+  expect(host.contentView.addChildView).toHaveBeenCalledTimes(2)
+})
+
+it('does not restore a stale opening when the selected workbench changes while occluded', async () => {
+  const host = parent()
+  controller.setHostOccluded(true)
+  const opening = controller.open(host, launch('a'), bounds, 'first', () => 'one')
+  let finish: (() => void) | undefined
+  view(0).webContents.loadURL.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve }))
+  const rejected = expect(opening).rejects.toThrow('cancelled')
+  await vi.waitFor(() => expect(view(0).webContents.loadURL).toHaveBeenCalledOnce())
+  await controller.open(host, launch('b'), bounds, 'second', () => 'one')
+  controller.setHostOccluded(false)
+  finish?.()
+  await rejected
+  expect(host.contentView.addChildView).toHaveBeenCalledExactlyOnceWith(view(1))
+  expect(host.contentView.removeChildView).not.toHaveBeenCalled()
+})
+
+it('does not revive a pending page closed by its owner while occluded', async () => {
+  const host = parent()
+  controller.setHostOccluded(true)
+  const opening = controller.open(host, launch('a'), bounds, 'first', () => 'one')
+  const rejected = expect(opening).rejects.toThrow('cancelled')
+  controller.closeFor('first')
+  controller.setHostOccluded(false)
+  await rejected
+  expect(host.contentView.addChildView).not.toHaveBeenCalled()
 })
 
 it('clamps native view bounds to the trusted parent content area', () => {
@@ -220,4 +324,43 @@ it('waits for isolated session cleanup before uninstall completes', async () => 
   finish?.()
   await pending
   expect(complete).toBe(true)
+})
+
+it('captures only the attached active page for its owning host', async () => {
+  const host = parent()
+  expect(await controller.capture(host)).toBeUndefined()
+  await controller.open(host, launch('a'), bounds, 'first', () => 'one')
+  expect(await controller.capture(parent())).toBeUndefined()
+  expect(await controller.capture(host)).toEqual({ dataURL: 'data:image/png;base64,fixture', bounds })
+  controller.setHostOccluded(true)
+  expect(await controller.capture(host)).toBeUndefined()
+  expect(view(0).webContents.capturePage).toHaveBeenCalledOnce()
+})
+
+it.each(['close', 'switch', 'resize', 'navigation'])('discards a capture after %s', async change => {
+  const host = parent()
+  await controller.open(host, launch('a'), bounds, 'first', () => 'one')
+  let finish: (() => void) | undefined
+  view(0).webContents.capturePage.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve({ isEmpty: () => false, toDataURL: () => 'data:image/png;base64,fixture' }) }))
+  const capture = controller.capture(host)
+  if (change === 'close') controller.closeFor('first')
+  if (change === 'switch') await controller.open(host, launch('b'), bounds, 'second', () => 'one')
+  if (change === 'resize') view(0).getBounds.mockReturnValue({ ...bounds, width: 600 })
+  if (change === 'navigation') view(0).webContents.getURL.mockReturnValue('https://enterprise.test/apps/a/next')
+  if (!finish) throw new Error('Missing capture completion')
+  finish()
+  expect(await capture).toBeUndefined()
+})
+
+it('bounds capture failure so host overlays remain usable', async () => {
+  vi.useFakeTimers()
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  const host = parent()
+  await controller.open(host, launch('a'), bounds, 'first', () => 'one')
+  view(0).webContents.capturePage.mockImplementationOnce(() => new Promise(() => {}))
+  const capture = controller.capture(host)
+  await vi.advanceTimersByTimeAsync(1500)
+  expect(await capture).toBeUndefined()
+  expect(warn).toHaveBeenCalledOnce()
+  warn.mockRestore()
 })

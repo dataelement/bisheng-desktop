@@ -21,6 +21,8 @@ export class CloudWorkbenchView {
   private active: RetainedView | undefined
   private owner: string | undefined
   private generation = 0
+  private hostOccluded = false
+  private attached = false
   private connectionKey: string | undefined
   private parent: BrowserWindow | undefined
   private timer: NodeJS.Timeout | undefined
@@ -32,6 +34,8 @@ export class CloudWorkbenchView {
     const generation = ++this.generation
     this.parent?.removeListener('closed', this.onParentClosed)
     this.parent = parent
+    // Owner closure must also cancel an open that is still loading behind an overlay.
+    this.owner = owner
     parent.once('closed', this.onParentClosed)
     this.connectionKey = launch.connectionKey
     if (this.timer) clearInterval(this.timer)
@@ -104,8 +108,8 @@ export class CloudWorkbenchView {
       }
       this.active = item
       this.owner = owner
-      parent.contentView.addChildView(item.view)
       this.resize(bounds)
+      this.attach()
     } catch (error) {
       // Superseded opens may share a retained page with the newer open.
       if (!superseded && created && item && this.retained.get(cacheKey) === item) {
@@ -148,8 +152,52 @@ export class CloudWorkbenchView {
     await item.partition.clearStorageData()
   }
 
+  async capture(parent: BrowserWindow): Promise<{ dataURL: string; bounds: CloudBounds } | undefined> {
+    const item = this.active, generation = this.generation
+    if (parent !== this.parent || parent.isDestroyed() || !item || !this.attached || item.view.webContents.isDestroyed()) return
+    const bounds = item.view.getBounds()
+    const url = item.view.webContents.getURL()
+    let timeout: NodeJS.Timeout | undefined
+    try {
+      const image = await Promise.race([item.view.webContents.capturePage(), new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error('Cloud backing capture timed out.')), 1500)
+      })])
+      // A mode/account change or resize must never paint an old page into a new seat.
+      if (generation !== this.generation || item !== this.active || !this.attached || parent.isDestroyed() ||
+        item.view.webContents.isDestroyed() || url !== item.view.webContents.getURL() ||
+        JSON.stringify(bounds) !== JSON.stringify(item.view.getBounds()) || image.isEmpty()) return
+      return { dataURL: image.toDataURL(), bounds }
+    } catch (error) {
+      console.warn('[cloud-workbench] overlay capture failed', error)
+      return undefined
+    } finally { clearTimeout(timeout) }
+  }
+
+  setHostOccluded(occluded: boolean): void {
+    if (this.hostOccluded === occluded) return
+    this.hostOccluded = occluded
+    if (occluded) {
+      // Keep the logical selection and native bounds; host overlays own input.
+      this.detach()
+      if (this.parent && !this.parent.isDestroyed()) this.parent.webContents.focus()
+    } else {
+      this.attach()
+    }
+  }
+
+  private attach(): void {
+    if (this.hostOccluded || this.attached || !this.active || !this.parent || this.parent.isDestroyed() || this.active.view.webContents.isDestroyed()) return
+    this.parent.contentView.addChildView(this.active.view)
+    this.attached = true
+  }
+
+  private detach(): void {
+    if (this.attached && this.active && this.parent && !this.parent.isDestroyed()) this.parent.contentView.removeChildView(this.active.view)
+    this.attached = false
+  }
+
   private hide(): void {
-    if (this.active && this.parent && !this.parent.isDestroyed()) this.parent.contentView.removeChildView(this.active.view)
+    this.detach()
     this.active = undefined
     this.owner = undefined
   }

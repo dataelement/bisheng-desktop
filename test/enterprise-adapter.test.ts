@@ -7,7 +7,7 @@ import { skillContentHash } from '../packages/dsh-desktop-enterprise/work-skills
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { requestImageDimensions } from '@deepseek-ai/dsh-attachment'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { apply as applyEnterprise } from '../packages/dsh-desktop-enterprise/index.js'
 import { startEnterpriseCredentialBroker } from '../src/main/enterprise/credential-broker'
@@ -384,6 +384,12 @@ describe('enterprise adapter with a Broker', () => {
     expect(after.map(model => model.id)).toEqual(before.map(model => model.id))
     expect(after[0]?.name).toBe(displayName)
     expect(replacements).toBeGreaterThan(oldReplacements)
+    // F016: only `includeUsage` reaches the broker, so the balance is reread with the catalog.
+    const refreshModels = vi.spyOn(service, 'refreshModels')
+    expect((await invoke(routes, '/api/enterprise.models.refresh', 'POST', { includeUsage: true, base: 'ignored' })).status).toBe(200)
+    expect(refreshModels).toHaveBeenLastCalledWith(true)
+    expect((await invoke(routes, '/api/enterprise.models.refresh', 'POST', {})).status).toBe(200)
+    expect(refreshModels).toHaveBeenLastCalledWith(false)
   })
 })
 

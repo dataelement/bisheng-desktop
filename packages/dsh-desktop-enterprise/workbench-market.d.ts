@@ -38,11 +38,12 @@ export interface EnterpriseWorkbenchCatalogResult {
   error?: string
 }
 
+export const MAX_ACCESS_IDS: number
 export function parseWorkbenchListItem(value: unknown): EnterpriseWorkbenchListItem | null
 export function parseWorkbenchDetail(value: unknown, expectedId: string): EnterpriseWorkbenchDetail | null
 export function createWorkbenchMarketController(accountController: {
   state: () => { connected?: boolean, connectionKey?: string }
-  marketRequest: (path: string) => Promise<{ status_code?: number, status_message?: string, data?: unknown }>
+  marketRequest: (path: string, body?: unknown) => Promise<{ status_code?: number, status_message?: string, data?: unknown }>
   verifyWorkbenchArtifact?: (input: unknown) => Promise<{ ok: boolean, stage?: string, error?: string }>
   materializeWorkbenchArtifact?: (input: unknown) => Promise<{ ok: boolean, path?: string, ticket?: string, stage?: string, error?: string }>
   releaseWorkbenchArtifact?: (ticket: string, connectionKey: string) => Promise<unknown>
@@ -52,6 +53,7 @@ export function createWorkbenchMarketController(accountController: {
   catalog: () => Promise<EnterpriseWorkbenchCatalogResult>
   detail: (id: string) => Promise<{ status: string, accountKey: string, detail: EnterpriseWorkbenchDetail | null }>
   verify: (id: string) => Promise<{ ok: boolean, stage?: string, error?: string }>
+  checkAccess: (ids: string[]) => Promise<Record<string, boolean>>
   packageForInstall: (id: string) => Promise<{ path: string, ticket: string, connectionKey: string, packageName: string, version: string }>
 }
 export function applyEnterpriseWorkbenchMarket(ctx: unknown, accountController: unknown): {

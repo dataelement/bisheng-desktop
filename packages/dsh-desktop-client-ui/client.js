@@ -1191,24 +1191,26 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
     function SharedCollection({ projects, items, mode, query, archivedOnly, searchPending = false, navigation, t, projectText, deleteText }) {
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
       const projectState = React.useSyncExternalStore(navigation.projects.subscribe, navigation.projects.snapshot)
-      const initialHistoryLoading = state.historyPhase === 'loading' && state.page === 0
-      const resultsPending = initialHistoryLoading || (mode === 'search' && searchPending) || projectState.search.phase === 'loading'
+      // Cloud Chat has no workbench ownership; keep its rows and controls in the native scope.
+      const showCloud = state.nativeWork !== false && !archivedOnly
+      const initialHistoryLoading = showCloud && state.historyPhase === 'loading' && state.page === 0
+      const resultsPending = initialHistoryLoading || (mode === 'search' && searchPending) || (showCloud && projectState.search.phase === 'loading')
       const search = query.trim().toLocaleLowerCase()
       const now = Date.now()
       React.useEffect(() => {
-        const timer = setTimeout(() => { void navigation.projects.search(archivedOnly || !state.connected ? '' : search) }, search ? 200 : 0)
+        const timer = setTimeout(() => { void navigation.projects.search(!showCloud || !state.connected ? '' : search) }, search ? 200 : 0)
         return () => clearTimeout(timer)
-      }, [navigation, search, archivedOnly, state.connected, state.epoch])
-      const showProjects = mode === 'projects' && !archivedOnly && !search
+      }, [navigation, search, showCloud, state.connected, state.epoch])
+      const showProjects = showCloud && mode === 'projects' && !search
       const local = items.map(item => ({ ...item, key: `work:${item.id}`, kind: 'work' }))
       const cloudItems = [...new Map([...state.items, ...(search && projectState.search.query === search ? projectState.search.items : [])].map(item => [item.id, item])).values()]
-      const cloud = archivedOnly ? [] : cloudItems.filter(item => (!showProjects || !Object.hasOwn(projectState.assignments, item.id)) && (item.title || t('newChat')).toLocaleLowerCase().includes(search))
+      const cloud = !showCloud ? [] : cloudItems.filter(item => (!showProjects || !Object.hasOwn(projectState.assignments, item.id)) && (item.title || t('newChat')).toLocaleLowerCase().includes(search))
         .map(conversation => ({ key: `chat:${state.epoch}:${conversation.id}`, kind: 'chat', updatedAt: Date.parse(conversation.updatedAt) || 0, conversation }))
       const rows = [...local, ...cloud].sort((a, b) => Number(!!b.blank) - Number(!!a.blank) || Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt || a.key.localeCompare(b.key))
       return React.createElement('div', { className: 'dshSharedCollection', 'data-mode': state.mode },
         projects(state.mode === 'work'),
         showProjects && React.createElement(ChatProjects, { navigation, t, projectText, deleteText, now }),
-        projectState.editor && React.createElement(ChatProjectDialog, { key: `${projectState.scope}:${projectState.editor.mode}:${projectState.editor.id || ''}`, store: navigation.projects, state: projectState, t: projectText }),
+        showCloud && projectState.editor && React.createElement(ChatProjectDialog, { key: `${projectState.scope}:${projectState.editor.mode}:${projectState.editor.id || ''}`, store: navigation.projects, state: projectState, t: projectText }),
         React.createElement('section', { className: 'dshRecentHistory', 'aria-label': t(mode === 'projects' ? 'recent' : mode === 'search' ? 'results' : 'all') },
           React.createElement('div', { className: 'dshHistoryHeading' },
             React.createElement('span', null, t(mode === 'projects' ? 'recent' : mode === 'search' ? 'results' : 'all'))),
@@ -1216,37 +1218,41 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
             rows.map(row => row.kind === 'work'
               ? React.createElement('div', { key: row.key, 'data-history-kind': 'work' }, row.render(state.mode === 'work'))
               : React.createElement(CloudHistoryRow, { key: row.key, item: row.conversation, now, selected: state.mode === 'chat' && !state.pageId && state.conversationId === row.conversation.id, navigation, t, projectText, deleteText }))),
-          state.historyPhase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => navigation.refreshHistory() }, t('historyError')),
-          !showProjects && projectState.error === 'failed' && !projectState.editor && React.createElement('div', { role: 'alert', className: 'dshHistoryNotice' }, projectText('failed')),
+          showCloud && state.historyPhase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => navigation.refreshHistory() }, t('historyError')),
+          showCloud && !showProjects && projectState.error === 'failed' && !projectState.editor && React.createElement('div', { role: 'alert', className: 'dshHistoryNotice' }, projectText('failed')),
           initialHistoryLoading && React.createElement('div', { className: 'dshHistoryNotice', role: 'status' }, t('historyLoading')),
           rows.length === 0 && !resultsPending && React.createElement('div', { className: 'dshHistoryNotice' }, t(search ? 'recentSearchEmpty' : 'recentEmpty')),
-          search && projectState.search.phase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => { void navigation.projects.search(search) } }, projectText('unavailable')),
-          (state.hasMore || (search && projectState.search.nextCursor)) && !archivedOnly && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: state.historyPhase === 'loading' || projectState.search.phase === 'loading', onClick: () => {
+          showCloud && search && projectState.search.phase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => { void navigation.projects.search(search) } }, projectText('unavailable')),
+          (state.hasMore || (search && projectState.search.nextCursor)) && showCloud && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: state.historyPhase === 'loading' || projectState.search.phase === 'loading', onClick: () => {
             if (state.hasMore) void navigation.refreshHistory(true)
             if (search && projectState.search.nextCursor) void navigation.projects.search(search, true)
           } }, t('more'))))
     }
     /** Track semantic overlays, including inline menus and nested menus, without rescanning streamed content. */
-    function observeHostOverlays(report) {
+    function observeHostOverlays(report, { passive = false, gateName = '', gateModals = false } = {}) {
       // HoverCard exposes its content, not the portal element. Measure the entire card,
       // including its padding, when a cloud history preview crosses into the native view.
       const selector = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [role="tooltip"], dialog, [popover], [data-dsh-host-overlay], :has(> [data-dsh-chat-history-preview])'
       const elements = new Set()
       const identities = new WeakMap()
       const pending = new Set()
-      let style = document.querySelector('style[data-plugin-css="dsh-native-overlay-handoff"]')
-      if (!style) {
+      const suffix = gateName ? `-${gateName}` : ''
+      const pendingAttribute = `data-dsh-native-overlay-pending${suffix}`
+      const handoffAttribute = `data-dsh-native-overlay-handoff${suffix}`
+      const styleId = `dsh-native-overlay-handoff${suffix}`
+      let style = document.querySelector(`style[data-plugin-css="${styleId}"]`)
+      if (!passive && !style) {
         style = document.createElement('style')
-        style.dataset.pluginCss = 'dsh-native-overlay-handoff'
-        style.textContent = '[data-dsh-native-overlay-pending]{opacity:0!important;pointer-events:none!important}html[data-dsh-native-overlay-handoff] [data-menu-backing]{opacity:0!important}'
+        style.dataset.pluginCss = styleId
+        style.textContent = `[${pendingAttribute}]{opacity:0!important;pointer-events:none!important}html[${handoffAttribute}] [data-menu-backing]{opacity:0!important}`
         document.head.append(style)
       }
-      style.dataset.observers = String(Number(style.dataset.observers || 0) + 1)
+      if (!passive) style.dataset.observers = String(Number(style.dataset.observers || 0) + 1)
       const release = () => {
         if (!pending.size) return
-        for (const element of pending) element.removeAttribute('data-dsh-native-overlay-pending')
+        for (const element of pending) element.removeAttribute(pendingAttribute)
         pending.clear()
-        document.documentElement.removeAttribute('data-dsh-native-overlay-handoff')
+        document.documentElement.removeAttribute(handoffAttribute)
       }
       const intersects = (rect, bounds, surface) => (!surface || !rect.element.contains(surface)) && rect.x < bounds.x + bounds.width && rect.x + rect.width > bounds.x && rect.y < bounds.y + bounds.height && rect.y + rect.height > bounds.y
       let nextId = 0, modals = [], rectangles = [], previous = '', initialized = false, disposed = false
@@ -1267,7 +1273,21 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
             resize.unobserve(element); elements.delete(element); continue
           }
           // Our paint gate must not look like a dismissed menu to this observer.
-          if (!element.checkVisibility({ checkVisibilityCSS: true, opacityProperty: !pending.has(element) })) continue
+          // Another native sibling may own a separate gate, including the Modal's mask wrapper.
+          let gated = false
+          for (let ancestor = element; ancestor && !gated; ancestor = ancestor.parentElement) {
+            gated = ancestor.getAttributeNames().some(name => name === 'data-dsh-native-overlay-pending' || name.startsWith('data-dsh-native-overlay-pending-'))
+          }
+          if (!element.checkVisibility({ checkVisibilityCSS: true, opacityProperty: !gated })) {
+            // Modal's CSS entry animation starts at opacity 0 before the first paint.
+            // Animation progress is not a DOM mutation or a resize; claim its boundary
+            // now, while retaining the visibility checks for hidden and static opacity-0 content.
+            const entering = element.checkVisibility({ checkVisibilityCSS: true }) && element.getAnimations?.().some(animation => {
+              const frames = animation.effect?.getKeyframes()
+              return animation.playState === 'running' && Number(frames?.at(-1)?.opacity) > 0
+            })
+            if (!entering) continue
+          }
           const nativeModal = element instanceof HTMLDialogElement && element.matches(':modal')
           if (element.getAttribute('aria-modal') === 'true' || nativeModal) { modals.push(element); continue }
           if (element.matches('dialog:not([open])') || element.hasAttribute('popover') && !element.matches(':popover-open')) continue
@@ -1311,24 +1331,135 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
         isModal: surface => modals.some(element => !surface || !element.contains(surface)),
         intersects: (bounds, surface) => rectangles.some(rect => intersects(rect, bounds, surface)),
         defer: (bounds, surface) => {
+          if (passive) return () => {}
           // MutationObserver runs before paint. Keep both the surface and its native
           // menu material out of that first paint until Main confirms the view yielded.
-          for (const rect of rectangles) if (intersects(rect, bounds, surface)) {
-            pending.add(rect.element)
-            rect.element.setAttribute('data-dsh-native-overlay-pending', '')
+          const gate = element => { pending.add(element); element.setAttribute(pendingAttribute, '') }
+          for (const rect of rectangles) if (intersects(rect, bounds, surface)) gate(rect.element)
+          if (gateModals) for (const modal of modals) if (!surface || !modal.contains(surface)) {
+            // SettingsPanel and Modal keep the mask beside the dialog in a presentation layer.
+            // Hold the whole portal so its mask cannot dim the host before the native view yields.
+            const layer = modal.parentElement
+            gate(layer?.matches('[role="presentation"]') && (!surface || !layer.contains(surface)) ? layer : modal)
           }
-          if (pending.size) document.documentElement.setAttribute('data-dsh-native-overlay-handoff', '')
+          if (pending.size) document.documentElement.setAttribute(handoffAttribute, '')
           return release
         },
         dispose() {
           if (disposed) return
           disposed = true; body.disconnect(); resize.disconnect(); elements.clear(); release()
-          const users = Number(style.dataset.observers) - 1
-          if (users) style.dataset.observers = String(users)
-          else style.remove()
+          if (!passive) {
+            const users = Number(style.dataset.observers) - 1
+            if (users) style.dataset.observers = String(users)
+            else style.remove()
+          }
           document.removeEventListener('visibilitychange', resume)
           window.removeEventListener('scroll', refresh, true); window.removeEventListener('resize', refresh)
         }
+      }
+    }
+
+    /** Cloud workbenches outlive DesktopContent; own this boundary at plugin scope. */
+    function observeCloudHostOcclusion() {
+      const bridge = window.dshDesktopEnterprise
+      // Older Desktop hosts do not expose this optional presentation bridge.
+      if (typeof bridge?.setCloudHostOccluded !== 'function') return () => {}
+      let stop, resync, disposed = false, desired, confirmed, inFlight = false, pendingSend, revision = 0, retryTimer, retries = 0
+      const send = value => {
+        if (desired !== value) {
+          desired = value; confirmed = undefined; inFlight = false; retries = 0; revision++
+          clearTimeout(retryTimer); retryTimer = undefined
+        }
+        if (confirmed === value) return Promise.resolve(true)
+        if (inFlight) return pendingSend
+        if (retryTimer !== undefined) return Promise.resolve(false)
+        const request = ++revision
+        inFlight = true
+        const failed = error => {
+          console.warn('[desktop] cloud host occlusion sync failed', { occluded: value, error })
+          if (revision !== request) return
+          inFlight = false
+          // A transient IPC failure must not leave an unchanged open overlay uncovered.
+          // Bound retries; subsequent observations may also retry after this budget is spent.
+          if (!disposed && retries < 2) {
+            retryTimer = setTimeout(() => {
+              retryTimer = undefined
+              // A successful restore retry must release the presenter's retained backing too.
+              void send(desired).then(applied => { if (applied && !disposed) resync?.() })
+            }, [100, 500][retries++])
+          }
+        }
+        // Invoke immediately to preserve IPC ordering, including the final fail-closed state.
+        try {
+          pendingSend = Promise.resolve(bridge.setCloudHostOccluded(value)).then(() => {
+            if (revision !== request) return false
+            confirmed = value; inFlight = false
+            return true
+          }, error => { failed(error); return false })
+          return pendingSend
+        } catch (error) { failed(error); return Promise.resolve(false) }
+      }
+      const start = () => {
+        if (disposed || stop) return
+        let surface, surfaceId, presenter
+        const sync = () => {
+          if (disposed) return
+          const next = document.querySelector('[data-dsh-cloud-surface]')
+          const nextId = next?.getAttribute('data-dsh-cloud-surface')
+          if (next !== surface || nextId !== surfaceId) {
+            seatResize.disconnect()
+            presenter?.dispose(); presenter = undefined; surface = next; surfaceId = nextId
+            if (surface) seatResize.observe(surface)
+            if (surface && typeof bridge.captureCloudWorkbench === 'function') {
+              const target = surface
+              presenter = createNativeSurfacePresenter({
+                capture: () => bridge.captureCloudWorkbench(),
+                present: async value => { if (!await send(!value.visible)) throw new Error('Cloud handoff failed.') }
+              }, () => target)
+            }
+          }
+          const html = document.documentElement
+          const rect = surface?.getBoundingClientRect()
+          const bounds = rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+            : { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight }
+          const occluded = Boolean(document.getElementById('root')?.inert ||
+            html.hasAttribute('data-dsh-about-open') || html.hasAttribute('data-dsh-safe-mode-page') ||
+            overlays.isModal(surface) || overlays.intersects(bounds, surface))
+          // Preserve the cloud page under host menus/settings before yielding the native sibling.
+          if (presenter) presenter.present({ visible: true, bounds }, occluded, () => overlays.defer(bounds, surface))
+          else send(occluded)
+        }
+        resync = sync
+        // Sidebar/layout changes can resize the cloud seat without resizing the window.
+        const seatResize = new ResizeObserver(sync)
+        // Cloud and Chat have separate handoff gates; neither may release the other's paint.
+        const overlays = observeHostOverlays(sync, { gateName: 'cloud', gateModals: true })
+        const interaction = new MutationObserver(sync)
+        interaction.observe(document.documentElement, { subtree: true, attributes: true,
+          attributeFilter: ['inert', 'data-dsh-about-open', 'data-dsh-safe-mode-page'] })
+        // Track seat ownership independently of overlay changes; a workbench can unmount
+        // while settings stay open. Ignore ordinary streamed text/content mutations.
+        const seats = new MutationObserver(records => {
+          if (surface && (!surface.isConnected || !surface.hasAttribute('data-dsh-cloud-surface')) || records.some(record =>
+            record.type === 'attributes' || [...record.addedNodes].some(node => node instanceof Element &&
+              (node.matches('[data-dsh-cloud-surface]') || node.querySelector('[data-dsh-cloud-surface]'))))) sync()
+        })
+        seats.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-dsh-cloud-surface'] })
+        window.addEventListener('resize', sync)
+        window.addEventListener('dsh-cloud-surface-ready', sync)
+        stop = () => { resync = undefined; seatResize.disconnect(); seats.disconnect(); presenter?.dispose(); interaction.disconnect(); overlays.dispose(); window.removeEventListener('resize', sync); window.removeEventListener('dsh-cloud-surface-ready', sync) }
+        sync()
+      }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true })
+      else start()
+      return () => {
+        if (disposed) return
+        disposed = true
+        document.removeEventListener('DOMContentLoaded', start)
+        stop?.()
+        clearTimeout(retryTimer); retryTimer = undefined
+        // Without an observer, no one can prove that the host foreground is clear.
+        send(true)
       }
     }
 
@@ -1458,7 +1589,8 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
               const backing = prepared?.backing ?? backingFor(frame)
               if (!prepared) await decode(backing)
               if (disposed || captureCycle !== cycle || !latest.value.visible || !latest.occluded) return
-              image = backing; place(frame.bounds)
+              // The seat may resize while decode() waits; scale the retained frame to its current bounds.
+              image = backing; place(latest.value.bounds)
               if (!prepared) await paint()
             }
           } catch {
@@ -2126,6 +2258,11 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
       if (!response.ok) throw new Error(result.error || `Knowledge request failed (${response.status})`)
       return result
     }
+    // Skill picker groups in display order: the user's own BISHENG uploads; skills the
+    // organization publishes or the client bundles; skills installed on this computer.
+    const SKILL_GROUPS = [['uploaded', 'skillGroupUploaded'], ['provided', 'skillGroupProvided'], ['local', 'skillGroupLocal']]
+    Object.assign(RESOURCE_COPY.zh, { skillGroupUploaded: '我上传的 ({count})', skillGroupProvided: '企业提供 ({count})', skillGroupLocal: '本地安装 ({count})' })
+    Object.assign(RESOURCE_COPY.en, { skillGroupUploaded: 'Uploaded by you ({count})', skillGroupProvided: 'Provided by your organization ({count})', skillGroupLocal: 'Installed locally ({count})' })
     async function workSkillRequest(body, signal) {
       const response = await fetch('/api/enterprise.work-skills', {
         method: 'POST', headers: { 'content-type': 'application/json' }, signal, body: JSON.stringify(body)
@@ -2144,9 +2281,10 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
     }
     const TOOL_REFERENCE_SOURCE = 'desktop-tool'
     const validToolLabel = label => typeof label === 'string' && label.trim().length > 0 && !/[\u0000-\u001f\u007f]/u.test(label)
+    const validToolName = name => typeof name === 'string' && name.startsWith('mcp__bisheng__') && name.length > 'mcp__bisheng__'.length
     const decodeToolReference = ref => {
       const tool = JSON.parse(ref)
-      if (!tool || !/^mcp__bisheng__bisheng_tool_[1-9][0-9]*$/.test(tool.name) || !validToolLabel(tool.label) || typeof tool.connectionKey !== 'string' || !tool.connectionKey) throw new Error('Invalid tool reference.')
+      if (!tool || !validToolName(tool.name) || !validToolLabel(tool.label) || typeof tool.connectionKey !== 'string' || !tool.connectionKey) throw new Error('Invalid tool reference.')
       return tool
     }
     const toolReferenceSource = {
@@ -2165,7 +2303,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
     const workToolMessageRule = {
       id: TOOL_REFERENCE_SOURCE, order: 20,
       match(text, from) {
-        const pattern = /\[Selected tool: (mcp__bisheng__bisheng_tool_[1-9][0-9]*)(?:; label: ("(?:[^"\\\r\n]|\\.)*"))?\]/gu
+        const pattern = /\[Selected tool: (mcp__bisheng__[^;\]\r\n]+)(?:; label: ("(?:[^"\\\r\n]|\\.)*"))?\]/gu
         pattern.lastIndex = from
         for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
           let label
@@ -2431,14 +2569,26 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           options: ({ sessionId }, signal) => ctx.sessions.using(sessionId, { source: 'workSkillPicker', signal }, async () => {
             const catalog = await workSkillRequest({ operation: 'catalog' }, signal)
             const labels = new Map(catalog.skills.map(skill => [skill.name, skill.displayName]))
+            const uploaded = new Set(catalog.skills.filter(skill => skill.uploaded === true).map(skill => skill.name))
             const result = await ctx.remote.skills.list({ sessionId }, signal)
             if (!result.ok) throw new Error(result.error.message)
-            return result.value.skills.map(skill => ({
+            // Within "provided", published skills come before the client's bundled ones;
+            // each keeps the registry's order.
+            const options = result.value.skills.map(skill => ({
+              rank: uploaded.has(skill.name) ? 0 : labels.has(skill.name) ? 1 : skill.source === 'bundled' ? 2 : 3,
               id: JSON.stringify({ name: skill.name, label: labels.get(skill.name) || skill.name, enterprise: labels.has(skill.name) }),
               label: labels.get(skill.name) || skill.name,
               badgeIcon: labels.has(skill.name) ? props => React.createElement(ResourceIcon, { ...props, id: 'skills', size: 12 }) : undefined,
               detail: skill.description
             }))
+            const groupOf = rank => SKILL_GROUPS[[0, 1, 1, 2][rank]]
+            const counts = new Map()
+            for (const { rank } of options) counts.set(groupOf(rank), (counts.get(groupOf(rank)) || 0) + 1)
+            // The popup keeps groups in first-occurrence order, so emit them in display order.
+            return options.sort((a, b) => a.rank - b.rank).map(({ rank, ...option }) => {
+              const [name, key] = groupOf(rank)
+              return { ...option, group: { name, label: t(key, { count: counts.get(groupOf(rank)) }) } }
+            })
           }),
           onSelect: (option, { sessionId }) => {
             const scope = ctx.sessions.scope(sessionId)
@@ -2506,6 +2656,12 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           .dshWorkKnowledgeConfirm:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 88%,var(--dsw-alias-label-primary))}
           .dshWorkKnowledgeConfirm:disabled{opacity:.5}
           .dshWorkResourceError{padding:8px 12px;color:var(--dsw-alias-state-error-primary);font-size:12px}
+          /* /skills group headings read as section titles, in the skill reference blue so they stand
+             apart from skill names, and scroll with their rows. The upstream sticky heading stays
+             transparent until an async observer marks it stuck, so rows showed through it
+             mid-scroll. Only this picker is grouped. */
+          [role=listbox][aria-label^="/skills "]>[data-menu-group]+[data-menu-group]{margin-top:4px}
+          [role=listbox][aria-label^="/skills "]>[data-menu-group]>[data-menu-group-heading]{position:static;background:transparent;padding:10px 7px 4px;color:var(--dsw-alias-link);font-size:12px;font-weight:500}
           @media(max-width:1023px){.dshWorkKnowledgeDialog{width:min(400px,100%)}}
           @media(max-width:575px){.dshWorkKnowledgeModified{max-width:80px}.dshWorkKnowledgeFooter{flex-wrap:wrap}.dshWorkSelectionCount{flex:1 0 100%}}
         `
@@ -2550,6 +2706,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
 
     const inject = ['slots', 'locale', 'remote', 'remote.session', 'sessions', 'uiWorkspace', 'layout']
     function apply(ctx) {
+      ctx.effect(observeCloudHostOcclusion, 'desktop cloud host occlusion')
       ctx.effect(() => ctx.locale.register(DELETE_SESSION_NS, {
         zh: {
           menu: '永久删除会话', title: '删除会话', close: '关闭', cancel: '取消', confirm: '删除会话',

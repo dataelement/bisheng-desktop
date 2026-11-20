@@ -12,6 +12,8 @@ window.__ModuleLoader__.load({
     const ENTERPRISE_SECTION_ID = 'enterprise-account'
     const LEARN_MORE_URL = 'https://dshdesktop.com/zh/enterprise/deployment/'
     const OPEN_SETTINGS_SECTION_EVENT = 'dsh-desktop:open-settings-section'
+    // Mirrors BISHENG_PROVIDER_ROUTE in index.js; the client bundle cannot import the server entry.
+    const BISHENG_PROVIDER_ROUTE = 'bisheng-enterprise'
     const NS = 'settings.desktopEnterprise'
     const SAFETY_NS = 'enterprise.contentSafety'
     const safetyCopy = {
@@ -79,6 +81,9 @@ window.__ModuleLoader__.load({
       learnMore: '了解企业版',
       vision: '视觉',
       visionHint: '企业已开启图片输入',
+      ratioBase: '基准',
+      ratioFree: '免费',
+      ratioHint: '积分倍率：按输入与输出 3:1 估算，相对企业设置的基准模型；实际按每次用量扣积分。',
       usageLabel: '剩余积分',
       creditsHelp: 'Chat 和 Work 共用积分，每月重置。',
       ticket: '一次性登录码',
@@ -145,6 +150,9 @@ window.__ModuleLoader__.load({
       learnMore: 'Learn about Enterprise',
       vision: 'Vision',
       visionHint: 'Image input enabled by your enterprise',
+      ratioBase: 'Base',
+      ratioFree: 'Free',
+      ratioHint: 'Credit ratio, estimated at 3:1 input to output against the base model set by your organization. Each call is charged by its actual usage.',
       usageLabel: 'Credits remaining',
       creditsHelp: 'Chat and Work share credits, reset monthly.',
       ticket: 'One-time code',
@@ -469,6 +477,13 @@ window.__ModuleLoader__.load({
         .dshEnterpriseModelVision svg {
           flex: none;
         }
+        .dshEnterpriseModelRatio {
+          color: var(--dsw-alias-label-secondary);
+          font-size: 12px;
+          line-height: 18px;
+          font-variant-numeric: tabular-nums;
+          white-space: nowrap;
+        }
         .dshEnterpriseModels.paused {
           opacity: .5;
         }
@@ -521,7 +536,7 @@ window.__ModuleLoader__.load({
       failed: '暂时无法读取企业插件，请重试或联系管理员。',
       protocolMismatch: '当前客户端需要更新后的企业市场，请联系管理员升级服务端。',
       install: '安装', update: '更新',
-      installed: '已安装', uninstall: '卸载', enable: '启用', disable: '停用', disabled: '已停用',
+      installed: '已安装', uninstall: '卸载', enable: '启用', disable: '停用', disabled: '已停用', revoked: '管理员已收回使用权限',
       version: '版本', incompatible: '当前系统或版本暂不支持',
       installing: '安装中…', updating: '更新中…', enabling: '启用中…', disabling: '停用中…', uninstalling: '卸载中…', unsupported: '暂不支持', setup: '企业市场暂未就绪，可联系管理员完成配置。'
     }
@@ -531,7 +546,7 @@ window.__ModuleLoader__.load({
       failed: 'Enterprise plugins are unavailable. Try again or contact your administrator.',
       protocolMismatch: 'This Desktop requires a newer enterprise market. Ask an administrator to upgrade the server.',
       install: 'Install', update: 'Update',
-      installed: 'Installed', uninstall: 'Uninstall', enable: 'Enable', disable: 'Disable', disabled: 'Disabled',
+      installed: 'Installed', uninstall: 'Uninstall', enable: 'Enable', disable: 'Disable', disabled: 'Disabled', revoked: 'Your administrator revoked access',
       version: 'Version', incompatible: 'Unsupported system or Desktop version',
       installing: 'Installing…', updating: 'Updating…', enabling: 'Enabling…', disabling: 'Disabling…', uninstalling: 'Uninstalling…', unsupported: 'Unavailable', setup: 'The enterprise market is not ready. Contact your administrator.'
     }
@@ -673,7 +688,10 @@ window.__ModuleLoader__.load({
                   h('button', { type: 'button', disabled: busy || (!local.enabled && !catalog.installReady), 'aria-busy': activeAction === 'enable' || activeAction === 'disable', onClick: () => operate(local.enabled ? 'disable' : 'enable', plugin) }, activeAction === 'enable' ? marketCopy.enabling : activeAction === 'disable' ? marketCopy.disabling : local.enabled ? marketCopy.disable : marketCopy.enable),
                   h('button', { type: 'button', disabled: busy, 'aria-busy': activeAction === 'uninstall', onClick: () => operate('uninstall', plugin) }, activeAction === 'uninstall' ? marketCopy.uninstalling : marketCopy.uninstall)) : null)),
             h('p', { className: 'dshEnterpriseMarketDescription', title: plugin.description }, plugin.description),
-            (operation?.error || local?.error) ? h('p', { role: 'alert', className: 'dshEnterpriseMarketError' }, operation?.error || local.error) : null,
+            // A revoked grant is not the user's own "Disabled" switch: say who turned it
+            // off, also in place of the generic error a retried "Enable" then reports.
+            (local?.reason === 'revoked' || operation?.error || local?.error) ? h('p', { role: 'alert', className: 'dshEnterpriseMarketError' },
+              local?.reason === 'revoked' ? marketCopy.revoked : operation?.error || local.error) : null,
             h('div', { className: 'dshEnterpriseMarketCardFooter' },
               h('span', { className: 'dshEnterpriseMarketVersion' }, `${marketCopy.version} ${current?.version || local?.version || '—'}`),
               local ? h('span', { className: 'dshEnterpriseMarketInstalled' }, local.enabled ? marketCopy.installed : marketCopy.disabled) : null))
@@ -717,14 +735,105 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function bindEnterpriseModelSync() {
+    /**
+     * F016 credit-ratio hints of the signed-in account's BiSheng models, keyed by catalog model id.
+     * Fed by the foreground catalog refresh, whose response is the full account state.
+     */
+    function createPricingHintStore() {
+      let hints = new Map()
+      let version = 0
+      const listeners = new Set()
+      return {
+        ingest(state) {
+          const next = new Map()
+          if (state?.connected === true && Array.isArray(state.models)) {
+            for (const model of state.models) {
+              if (typeof model?.id === 'string' && model.pricing_hint) next.set(model.id, model.pricing_hint)
+            }
+          }
+          const unchanged = next.size === hints.size && [...next].every(([id, hint]) => {
+            const current = hints.get(id)
+            return current?.ratio === hint.ratio && current.base === hint.base && current.free === hint.free
+          })
+          if (unchanged) return
+          hints = next
+          version += 1
+          for (const listener of [...listeners]) listener()
+        },
+        get: (id) => hints.get(id),
+        entries: () => hints.entries(),
+        get size() { return hints.size },
+        version: () => version,
+        subscribe(listener) {
+          listeners.add(listener)
+          return () => { listeners.delete(listener) }
+        }
+      }
+    }
+
+    // Tag primitive palettes (dsh-client-ui-primitives Tag.module.css), applied to generated content.
+    const RATIO_TONES = {
+      neutral: 'background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-secondary);',
+      info: 'background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 10%, transparent); color: var(--dsw-alias-state-business-primary);',
+      success: 'background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 10%, transparent); color: var(--dsw-alias-state-success-primary);'
+    }
+    const MODEL_RATIO_STYLE_ID = 'dsh-desktop-enterprise-model-ratio'
+
+    /** A CSS string literal; ids and copy come from the server and the locale, never raw into CSS. */
+    function cssString(value) {
+      return `"${String(value).replace(/[\\"]/g, '\\$&').replace(/[\n\r\f]/g, ' ')}"`
+    }
+
+    /** Ratio badges for BiSheng model names, keyed by the picker's provider and model attributes. */
+    function modelRatioCss(hints, t) {
+      const owner = `[data-provider-id=${cssString(BISHENG_PROVIDER_ROUTE)}]`
+      const rules = []
+      for (const [id, hint] of hints.entries()) {
+        // The picker is narrow: the base model reads a plain "1.00x" here; the account page names it.
+        const badge = hint && !hint.free && hint.ratio ? { text: `${hint.ratio}x`, tone: hint.base ? 'info' : 'neutral' } : pricingHintBadge(hint, t)
+        if (!badge) continue
+        rules.push(`${owner}[data-model-id=${cssString(id)}]::after { content: ${cssString(badge.text)}; ${RATIO_TONES[badge.tone]} }`)
+      }
+      if (!rules.length) return ''
+      return `${owner}[data-model-id]::after { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px; font-size: 11px; line-height: 17px; font-weight: 500; white-space: nowrap; vertical-align: baseline; font-variant-numeric: tabular-nums; }\n${rules.join('\n')}`
+    }
+
+    /**
+     * Show the credit ratio after BiSheng model names in the Work model picker. The label slot is
+     * single-kind and the bundled DeepSeek 1017 badge lives there, so the ratio does not take the slot:
+     * the picker wraps every name in `data-provider-id` / `data-model-id`, which its README offers for
+     * styling without replacing the component. Both badges therefore show; signed out, on an older
+     * BiSheng server, or without enterprise models the style is empty.
+     */
+    function bindModelPricingLabel(locale, hints) {
+      const t = locale.bind(NS)
+      const update = () => {
+        let style = document.getElementById(MODEL_RATIO_STYLE_ID)
+        if (!style) {
+          style = document.createElement('style')
+          style.id = MODEL_RATIO_STYLE_ID
+          style.setAttribute('data-plugin-css', 'dsh-desktop-enterprise')
+          document.head.appendChild(style)
+        }
+        const css = modelRatioCss(hints, t)
+        if (style.textContent !== css) style.textContent = css
+      }
+      const unsubscribeHints = hints.subscribe(update)
+      const unsubscribeLocale = locale.subscribe?.(update)
+      update()
+      return () => { unsubscribeHints(); unsubscribeLocale?.(); document.getElementById(MODEL_RATIO_STYLE_ID)?.remove() }
+    }
+
+    function bindEnterpriseModelSync(onState) {
       let pending, disposed = false, resync = false
       const sync = () => {
         if (disposed || document.visibilityState !== 'visible' || pending) return
         const controller = new AbortController()
         const timeout = window.setTimeout(() => controller.abort(), 30_000)
         pending = { controller, timeout }
-        void api('/api/enterprise.models.refresh', {}, controller.signal).catch(error => {
+        void api('/api/enterprise.models.refresh', {}, controller.signal).then(state => {
+          if (!disposed) onState?.(state)
+        }).catch(error => {
           if (!disposed && !controller.signal.aborted) console.warn('[enterprise-models] Catalog refresh failed', error)
         }).finally(() => {
           window.clearTimeout(timeout)
@@ -807,7 +916,7 @@ window.__ModuleLoader__.load({
       if (!usage || usage.source === 'unavailable' || usage.quota_state === 'unavailable') {
         return t('usageUnavailable')
       }
-      const formatter = new Intl.NumberFormat(language || 'en', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+      const formatter = new Intl.NumberFormat(language || 'en', { maximumFractionDigits: 2 })
       if (usage.limit === 0) return formatter.format(0)
       if (usage.used === null || usage.limit === null) return t('usageUnavailable')
       return formatter.format(Math.max(0, usage.limit - usage.used) / 1_000_000)
@@ -960,6 +1069,16 @@ window.__ModuleLoader__.load({
         && usage.used < usage.limit
     }
 
+    /** Short credit-ratio text for a server hint, or null when no ratio can be shown. */
+    function pricingHintBadge(hint, t) {
+      if (!hint) return null
+      if (hint.free) return { text: t('ratioFree'), tone: 'success' }
+      if (!hint.ratio) return null
+      return hint.base
+        ? { text: `${hint.ratio}x · ${t('ratioBase')}`, tone: 'info' }
+        : { text: `${hint.ratio}x`, tone: 'neutral' }
+    }
+
     function renderModelRow(model, state, language, t) {
       const display = modelDisplayParts(model.display_name)
       const usage = state.usage
@@ -967,6 +1086,10 @@ window.__ModuleLoader__.load({
         ? h('span', { className: 'dshEnterpriseModelVision', title: t('visionHint') },
           createVisionIcon(),
           t('vision'))
+        : null
+      const badge = pricingHintBadge(model.pricing_hint, t)
+      const ratio = badge
+        ? h('span', { className: 'dshEnterpriseModelRatio', title: t('ratioHint') }, badge.text)
         : null
 
       return h('li', { key: model.id },
@@ -977,9 +1100,10 @@ window.__ModuleLoader__.load({
               className: 'dshEnterpriseModelStatus', role: 'img',
               title: t('modelAvailable'), 'aria-label': t('modelAvailable')
             }) : null),
-          display.provider || vision ? h('span', { className: 'dshEnterpriseModelDetails' },
+          display.provider || vision || ratio ? h('span', { className: 'dshEnterpriseModelDetails' },
             display.provider ? h('span', { className: 'dshEnterpriseModelProvider' }, display.provider) : null,
-            vision) : null))
+            vision,
+            ratio) : null))
     }
 
     function EnterpriseAvatar({ nickname, src, attempt, onImageError }) {
@@ -1362,7 +1486,9 @@ window.__ModuleLoader__.load({
       accountTranslate = t
       ctx.effect(() => ctx.locale.register('settings.enterpriseMarket', { zh: marketZh, en: marketEn }), 'enterprise-market: translations')
       marketTranslate = ctx.locale.bind('settings.enterpriseMarket')
-      ctx.effect(() => bindEnterpriseModelSync(), 'enterprise: foreground model catalog sync')
+      const pricingHints = createPricingHintStore()
+      ctx.effect(() => bindEnterpriseModelSync(pricingHints.ingest), 'enterprise: foreground model catalog sync')
+      ctx.effect(() => bindModelPricingLabel(ctx.locale, pricingHints), 'enterprise: credit ratio in the Work model picker')
       ctx.effect(() => bindEnterpriseMarketTab(ctx), 'enterprise-market: account-bound plugins tab')
       ctx.effect(() => {
         const bridge = window.dshDesktopEnterprise

@@ -1,5 +1,5 @@
 diff --git a/node_modules/@deepseek-ai/dsh-client-ui-agent-preset/lib/client.js b/node_modules/@deepseek-ai/dsh-client-ui-agent-preset/lib/client.js
-index af47dcc..fe375ca 100644
+index af47dcc..e467ef9 100644
 --- a/node_modules/@deepseek-ai/dsh-client-ui-agent-preset/lib/client.js
 +++ b/node_modules/@deepseek-ai/dsh-client-ui-agent-preset/lib/client.js
 @@ -905,6 +905,7 @@ window.__ModuleLoader__.load({
@@ -247,3 +247,39 @@ index af47dcc..fe375ca 100644
  					(0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Modal, {
  						open: viewed !== null,
  						onClose: closeViewer,
+@@ -2044,7 +2196,7 @@ window.__ModuleLoader__.load({
+ 			* List updates do not repeat a selection while its response is pending.
+ 			* @returns this attempt's Host refusal, or undefined when successful or no switch starts.
+ 			*/
+-			async apply() {
++			async apply(forceSelection = false) {
+ 				if (this.store.getSnapshot().busy) return;
+ 				const staged = this.staged.id;
+ 				const session = this.currentSession();
+@@ -2054,7 +2206,7 @@ window.__ModuleLoader__.load({
+ 					return;
+ 				}
+ 				if (session === void 0) return;
+-				if (!session.blank || presetOf(session) === staged) {
++				if (!session.blank || (!forceSelection && presetOf(session) === staged)) {
+ 					this.clearStage();
+ 					return;
+ 				}
+@@ -2300,6 +2452,17 @@ window.__ModuleLoader__.load({
+ 				boundSeatDisposers.add(dispose);
+ 				return seat;
+ 			};
++			// Desktop welcome cases must share the hero chip's pending write and staged choice.
++			ctx.provide("desktopCasePreset", { async select(sessionId, id) {
++				const binding = ctx.sessions.binding(sessionId);
++				const seat = binding && seatFor(binding);
++				while (seat?.pendingSelection) await seat.pendingSelection;
++				if (!seat || seat.blankSessionId() !== sessionId) return { ok: false, error: { message: "The blank session is no longer active." } };
++				seat.stage(id);
++				// A recent chip write may not have reached the session projection yet.
++				const reason = await seat.apply(true);
++				return reason === void 0 ? { ok: true, value: id } : { ok: false, error: { message: reason } };
++			} });
+ 			const section = new AgentPresetSectionController(ctx);
+ 			const developerTools = ctx.configForms.developerTools.enabled;
+ 			ctx.effect(() => developerTools.subscribe(() => {

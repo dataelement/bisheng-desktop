@@ -1931,3 +1931,55 @@ describe('cloud conversation activity', () => {
     } finally { f.host.dispose() }
   })
 })
+
+it('keeps a missing web-session endpoint terminal across sidebar reads until explicit retry', async () => {
+  const f = fixture()
+  try {
+    const failure = new EnterprisePlatformError('Missing endpoint', { status: 404, code: 'request_failed' })
+    f.enterprise.webSession.mockRejectedValue(failure)
+    f.host.present(f.owner, presentation)
+    await flush()
+    const epoch = f.host.snapshot().epoch
+    expect(f.host.snapshot().phase).toBe('error')
+    for (let i = 0; i < 5; i++) {
+      await expect(f.host.projectsState()).rejects.toBe(failure)
+      await expect(f.host.history(1)).rejects.toBe(failure)
+      await expect(f.host.open('new')).rejects.toBe(failure)
+      f.host.present(f.owner, presentation)
+      f.change({ connected: true, connectionKey: 'tenant-a' })
+    }
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(1)
+    expect(f.host.snapshot()).toMatchObject({ phase: 'error', epoch })
+    f.enterprise.webSession.mockResolvedValue({ base: 'https://enterprise.example', cookie: 'test-cookie', cookieName: 'bs_credits_3007', connectionKey: 'tenant-a', expiresAt: Date.now() + 300_000 })
+    f.host.retry()
+    await flush()
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(2)
+    expect(f.host.snapshot().phase).toBe('ready')
+  } finally { f.host.dispose() }
+})
+
+it('leaves a retained-document error on explicit usage retry and completes its scheduled backoff', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  try {
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views.at(-1)
+    // Model a host presentation error while its existing workspace is still alive.
+    Object.assign(f.host, { state: { phase: 'error' } })
+    f.enterprise.webSession.mockRejectedValueOnce(networkError())
+    await expect(f.host.history(1)).rejects.toThrow('Enterprise Chat connection failed')
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(1)
+    await f.host.usage()
+    expect(f.host.snapshot().phase).toBe('loading')
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(2)
+    await f.host.projectsState()
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(2)
+    // A presentation error after scheduling must not consume the queued retry.
+    Object.assign(f.host, { state: { phase: 'error' } })
+    await elapse(2_400)
+    expect(f.enterprise.webSession).toHaveBeenCalledTimes(3)
+    expect(f.host.snapshot().phase).toBe('ready')
+    expect(view.webContents.close).not.toHaveBeenCalled()
+  } finally { f.host.dispose(); vi.useRealTimers() }
+})

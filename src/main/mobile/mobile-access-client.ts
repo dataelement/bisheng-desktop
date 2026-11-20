@@ -45,6 +45,13 @@ interface Connection {
 
 const OPEN = 1
 const OPERATION_TIMEOUT_MS = 10_000
+// The site gateway drops one WebSocket frame at 1 MiB
+// (max-frame-payload-length 1048576). 768 KiB leaves room for the JSON
+// envelope and for escape expansion of the body.
+export const MAX_MOBILE_FRAME_BYTES = 768 * 1024
+// A follow chunk is one WebSocket frame. 256 KiB of serialized UTF-8 stays
+// well under the 1 MiB gateway limit even after JSON escaping.
+export const MAX_CHUNK_FRAME_BYTES = 256 * 1024
 
 export function startMobileAccessClient(options: {
   account(): MobileAccessAccount
@@ -69,6 +76,7 @@ export function startMobileAccessClient(options: {
   const cleanups = new Map<string, Promise<void>>()
   // Retired connections still own cleanup credentials until their mutations settle.
   const pendingCleanupConnections = new Set<Connection>()
+  const forwarded = new Map<string, AbortController>()
 
   const owns = (connection: Connection) => !stopped && current === connection &&
     !connection.controller.signal.aborted && mobileAccessAccountKey(options.account()) === connection.key
@@ -157,9 +165,16 @@ export function startMobileAccessClient(options: {
     const port = options.bridge.port()
     const id = typeof frame.id === 'string' ? frame.id : ''
     if (!port || !id || !owns(connection)) return
+    const requestAbort = new AbortController()
+    forwarded.set(id, requestAbort)
+    const abortWithConnection = () => requestAbort.abort()
+    connection.controller.signal.addEventListener('abort', abortWithConnection, { once: true })
     const method = typeof frame.method === 'string' ? frame.method : 'GET'
     const path = typeof frame.path === 'string' ? frame.path : '/'
-    const body = typeof frame.body === 'string' ? frame.body : undefined
+    // fetch rejects a GET/HEAD that carries a body, including an empty string,
+    // and that TypeError would reach the phone as a 502 on every stream open.
+    const bodyless = method.toUpperCase() === 'GET' || method.toUpperCase() === 'HEAD'
+    const body = !bodyless && typeof frame.body === 'string' ? frame.body : undefined
     const incomingHeaders = isPlainObject(frame.headers) ? frame.headers : {}
     const headers: Record<string, string> = {
       [REMOTE_CHANNEL_HEADER]: 'remote',
@@ -175,13 +190,14 @@ export function startMobileAccessClient(options: {
       // Cancellation is best effort: a custom stream may itself never settle.
       void reader?.cancel().catch(() => options.note?.('[mobile-access] reader_cancel_failed'))
     }
-    connection.controller.signal.addEventListener('abort', cancelReader, { once: true })
+    requestAbort.signal.addEventListener('abort', cancelReader, { once: true })
+    const stop = linkAbort(connection.controller.signal, requestAbort.signal)
     try {
       const fetching = fetchImpl(`http://127.0.0.1:${port}${path}`, {
         method,
         headers,
         redirect: 'error',
-        signal: connection.controller.signal,
+        signal: requestAbort.signal,
         ...(body !== undefined ? { body } : {})
       }).then((response) => {
         // A transport may ignore abort and resolve after its owner was retired.
@@ -190,30 +206,51 @@ export function startMobileAccessClient(options: {
         }
         return response
       })
-      const response = await untilAborted(connection.controller.signal, fetching)
+      const response = await untilAborted(stop, fetching)
       if (!owns(connection)) return
       const contentType = response.headers.get('content-type') ?? ''
       if (contentType.includes('text/event-stream') && response.body) {
         reader = response.body.getReader()
         send(connection, { type: 'response-start', id, status: response.status, headers: { 'content-type': contentType } })
         const decoder = new TextDecoder()
-        while (owns(connection)) {
-          const chunk = await untilAborted(connection.controller.signal, reader.read())
+        while (owns(connection) && !requestAbort.signal.aborted) {
+          const chunk = await untilAborted(stop, reader.read())
           if (chunk.done) break
-          send(connection, { type: 'response-chunk', id, data: decoder.decode(chunk.value, { stream: true }) })
+          for (const piece of chunkFramePieces(id, decoder.decode(chunk.value, { stream: true }))) {
+            send(connection, piece)
+          }
         }
-        send(connection, { type: 'response-end', id })
+        const tail = decoder.decode()
+        if (tail && !requestAbort.signal.aborted) {
+          for (const piece of chunkFramePieces(id, tail)) send(connection, piece)
+        }
+        if (!requestAbort.signal.aborted) send(connection, { type: 'response-end', id })
       } else {
-        const text = await untilAborted(connection.controller.signal, response.text())
-        send(connection, { type: 'response', id, status: response.status, headers: { 'content-type': contentType }, body: text })
+        const text = await untilAborted(stop, response.text())
+        const frame = {
+          type: 'response',
+          id,
+          status: response.status,
+          headers: { 'content-type': contentType },
+          body: text
+        }
+        const bounded = boundedMobileResponse(frame)
+        if (bounded.tooLarge) {
+          options.note?.(`[mobile-access] response_too_large path=${path} bytes=${bounded.bytes}`)
+        }
+        send(connection, bounded.frame)
       }
     } catch {
-      if (owns(connection)) {
+      // A cancel or a retired connection already stopped this forward. A 502
+      // here would look like the desktop failed the request.
+      if (owns(connection) && !requestAbort.signal.aborted) {
         options.note?.('[mobile-access] forward_failed')
         send(connection, { type: 'response', id, status: 502, headers: {}, body: '' })
       }
     } finally {
-      connection.controller.signal.removeEventListener('abort', cancelReader)
+      requestAbort.signal.removeEventListener('abort', cancelReader)
+      connection.controller.signal.removeEventListener('abort', abortWithConnection)
+      if (forwarded.get(id) === requestAbort) forwarded.delete(id)
       cancelReader()
     }
   }
@@ -398,6 +435,8 @@ export function startMobileAccessClient(options: {
         if (frame.type === 'rejected') {
           options.note?.('[mobile-access] attach_rejected')
           fail(connection, 20_000)
+        } else if (frame.type === 'cancel') {
+          if (typeof frame.id === 'string') forwarded.get(frame.id)?.abort()
         } else if (frame.type === 'request') {
           void forward(connection, frame)
         }
@@ -412,6 +451,17 @@ export function startMobileAccessClient(options: {
 
 // Race even injected transports that ignore AbortSignal, so shutdown and ownership
 // changes have a bounded exit independent of a remote server's cooperation.
+function linkAbort(left: AbortSignal, right: AbortSignal): AbortSignal {
+  const linked = new AbortController()
+  const abort = () => linked.abort()
+  if (left.aborted || right.aborted) linked.abort()
+  else {
+    left.addEventListener('abort', abort, { once: true })
+    right.addEventListener('abort', abort, { once: true })
+  }
+  return linked.signal
+}
+
 function untilAborted<T>(signal: AbortSignal, operation: Promise<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     const abort = () => {
@@ -442,4 +492,74 @@ function headerValue(headers: Record<string, unknown>, name: string): string | u
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Measured in serialized UTF-8 bytes. A long run of CJK is three bytes per
+ * character, so a length check would let a frame through the gateway limit. */
+/** Split one decoded chunk so each serialized frame stays within the byte cap
+ * and a UTF-16 surrogate pair is never cut in half. */
+export function chunkFramePieces(id: string, data: string): Record<string, unknown>[] {
+  const pieces: Record<string, unknown>[] = []
+  let offset = 0
+  while (offset < data.length) {
+    let low = offset + 1
+    let high = data.length
+    let best = low
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2)
+      const safe = surrogateSafeEnd(data, offset, mid)
+      if (safe <= offset) {
+        low = mid + 1
+        continue
+      }
+      const bytes = Buffer.byteLength(JSON.stringify(chunkFrame(id, data.slice(offset, safe))), 'utf8')
+      if (bytes <= MAX_CHUNK_FRAME_BYTES) {
+        best = safe
+        low = mid + 1
+      } else {
+        high = mid - 1
+      }
+    }
+    const pieceEnd = best > offset ? best : Math.min(data.length, offset + pairWidth(data, offset))
+    pieces.push(chunkFrame(id, data.slice(offset, pieceEnd)))
+    offset = pieceEnd
+  }
+  return pieces
+}
+
+function pairWidth(text: string, index: number): number {
+  const code = text.charCodeAt(index)
+  if (code >= 0xd800 && code <= 0xdbff && index + 1 < text.length) return 2
+  return 1
+}
+
+function chunkFrame(id: string, data: string): Record<string, unknown> {
+  return { type: 'response-chunk', id, data }
+}
+
+function surrogateSafeEnd(text: string, start: number, end: number): number {
+  if (end <= start) return start
+  const code = text.charCodeAt(end - 1)
+  if (code >= 0xd800 && code <= 0xdbff && end < text.length) return Math.max(start, end - 1)
+  return end
+}
+
+export function boundedMobileResponse(frame: Record<string, unknown>): {
+  frame: Record<string, unknown>
+  tooLarge: boolean
+  bytes: number
+} {
+  const bytes = Buffer.byteLength(JSON.stringify(frame), 'utf8')
+  if (bytes < MAX_MOBILE_FRAME_BYTES) return { frame, tooLarge: false, bytes }
+  return {
+    frame: {
+      type: 'response',
+      id: frame.id,
+      status: 502,
+      headers: { 'content-type': 'application/json' },
+      body: '{"error":"response_too_large"}'
+    },
+    tooLarge: true,
+    bytes
+  }
 }

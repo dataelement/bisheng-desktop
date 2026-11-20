@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { registerCloudTools } from '../packages/dsh-desktop-workbenches/cloud-tools.mjs'
@@ -8,7 +8,7 @@ function fixture(mode = 'workspace-write', projectId) {
   let tool, preStep
   const request = vi.fn(async input => ({ operation: input.operation, items: [] }))
   const scoped = { desktopCloud: { request }, tools: { register: value => { tool = value } },
-    sandboxPolicy: { resolve: () => ({ mode }) }, on: (_name, callback) => { preStep = callback } }
+    sandboxPolicy: { resolve: () => ({ mode, workspaceRoot: process.cwd() }) }, on: (_name, callback) => { preStep = callback } }
   const state = { cloudDevelopmentSessions: projectId ? { conversation: projectId } : {}, sessionBindings: { conversation: 'cloud-entry' }, cloudWorkbenches: {
     'cloud-entry': { appId: 'a'.repeat(32), title: 'Shared board', versionId: 'b'.repeat(32) }
   } }
@@ -24,7 +24,7 @@ it('discovery does not implicitly fetch source or ask for publishing credentials
 
 it('a read-only Agent session cannot create or publish a cloud project', async () => {
   const { tool, request } = fixture('read-only')
-  for (const operation of ['create', 'checkout', 'publish']) await expect(tool.execute({ operation }, { agent: { session: {} } })).rejects.toThrow('writable')
+  for (const operation of ['create', 'checkout', 'resume', 'publish']) await expect(tool.execute({ operation }, { agent: { session: {} } })).rejects.toThrow('writable')
   expect(request).not.toHaveBeenCalled()
 })
 
@@ -45,7 +45,7 @@ it('cannot package a development project outside the Agent workspace', async () 
   const scoped = { desktopCloud: { request }, tools: { register: value => { scoped.tool = value } },
     sandboxPolicy: { resolve: () => ({ mode: 'workspace-write', workspaceRoot: import.meta.dirname }) }, on() {} }
   registerCloudTools({ inject: (_names, callback) => callback(scoped) }, {})
-  await expect(scoped.tool.execute({ operation: 'publish', projectId: 'project' }, { agent: { session: {} } })).rejects.toThrow('workspace')
+  await expect(scoped.tool.execute({ operation: 'publish', projectId: 'project' }, { agent: { session: {} } })).rejects.toThrow('resume')
   expect(request).toHaveBeenCalledExactlyOnceWith({ operation: 'project', projectId: 'project' })
 })
 
@@ -69,11 +69,19 @@ it('submits and tracks a release from the Agent without a manual publishing page
   expect(request).toHaveBeenCalledWith(release)
 })
 
-it('resolves the protocol URL through the current enterprise instead of reading a local file', async () => {
+it('delivers the fetched enterprise Markdown to the Agent without a public web-fetch step', async () => {
   const { tool, request } = fixture('read-only')
-  request.mockResolvedValueOnce({ guideUrl: 'https://enterprise.test/prefix/api/v1/dev-toolkit/workbench-guide.md' })
+  const protocol = {
+    guideUrl: 'http://192.168.50.10/private/api/v1/dev-toolkit/workbench-guide.md',
+    guideMarkdown: '# 企业工作台协议\n\n需要持续运行和多人协作时采用云端托管。\n',
+    guideSha256: 'a'.repeat(64)
+  }
+  request.mockResolvedValueOnce(protocol)
   const result = await tool.execute({ operation: 'guide' }, { agent: { session: {} } })
-  expect(result).toEqual({ guideUrl: 'https://enterprise.test/prefix/api/v1/dev-toolkit/workbench-guide.md' })
+  expect(result).toEqual(protocol)
+  const rendered = tool.output.render({ operation: 'guide' }, result)
+  expect(JSON.parse(rendered[0].text).guideMarkdown).toBe(protocol.guideMarkdown)
+  expect(tool.description).toContain('read the complete returned guideMarkdown')
   expect(request).toHaveBeenCalledExactlyOnceWith({ operation: 'guide' })
 })
 
@@ -94,8 +102,9 @@ it('reports the actual writable workspace boundary when preparing source', async
     const created = await tool.execute({ operation: 'create' }, { agent: { session: {} } })
     expect(created.developmentWorkspace.ready).toBe(false)
     expect(created.developmentWorkspace.path).toBe(outside)
-    expect(created.developmentWorkspace.instruction).toContain('Stop before writing')
-    expect(created.developmentWorkspace.instruction).toContain('Changing working_directory does not change')
+    expect(request).toHaveBeenLastCalledWith({ operation: 'create', workspaceRoot: await realpath(workspace) })
+    expect(created.developmentWorkspace.instruction).toContain('resolve the directory authorization')
+    expect(created.developmentWorkspace.instruction).toContain('does not require switching conversations')
     request.mockResolvedValueOnce({ projectId: 'editable-project', path: inside })
     const checkedOut = await tool.execute({ operation: 'checkout' }, { agent: { session: {} } })
     expect(checkedOut.developmentWorkspace.ready).toBe(true)
@@ -119,4 +128,131 @@ it('exposes schema-change confirmation and forwards only the explicitly supplied
   request.mockClear()
   await expect(tool.execute({ ...release, confirmSchemaChange: 'true' }, { agent: { session: {} } })).rejects.toThrow()
   expect(request).not.toHaveBeenCalled()
+})
+
+it.each(['workspace-write', 'danger-full-access'])('uses the effective %s session workspace rather than model-provided paths', async mode => {
+  const { realpath } = await import('node:fs/promises')
+  const directory = await mkdtemp(join(tmpdir(), 'cloud-current-session-'))
+  try {
+    let tool
+    const request = vi.fn(async input => ({ projectId: 'prepared', path: input.workspaceRoot }))
+    registerCloudTools({ inject: (_names, callback) => callback({
+      desktopCloud: { request }, tools: { register: value => { tool = value } },
+      sandboxPolicy: { resolve: () => ({ mode, workspaceRoot: directory }) }, on() {}
+    }) }, {})
+    for (const operation of ['create', 'checkout', 'resume']) {
+      const result = await tool.execute({ operation, projectId: 'prepared', workspaceRoot: '/model-supplied-directory' }, { agent: { session: {} } })
+      expect(request).toHaveBeenLastCalledWith({ operation, projectId: 'prepared', workspaceRoot: await realpath(directory) })
+      expect(result.developmentWorkspace.ready).toBe(true)
+      expect(result.developmentWorkspace.instruction).toContain('Continue in this conversation')
+    }
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+it('creates, writes and publishes through the real Desktop broker in the same restricted session', async () => {
+  const { writeFile, readFile, realpath } = await import('node:fs/promises')
+  const { CloudWorkbenchService } = await import('../src/main/enterprise/cloud-workbench.ts')
+  const { startEnterpriseCredentialBroker } = await import('../src/main/enterprise/credential-broker.ts')
+  const directory = await mkdtemp(join(tmpdir(), 'cloud-workspace-broker-'))
+  let broker
+  try {
+    const workspace = join(directory, 'workspace')
+    await mkdir(workspace)
+    const uploads = []
+    const fetchEnterprise = async (path, init) => {
+      if (path.endsWith('/deploy')) uploads.push(init.body)
+      return { base: 'https://enterprise.test', connectionKey: 'c'.repeat(16), response: Response.json({ status_code: 200,
+        data: { app_id: 'a'.repeat(32), deployment_id: 'b'.repeat(32) } }) }
+    }
+    const registry = join(directory, 'registry')
+    let cloud = new CloudWorkbenchService(fetchEnterprise, registry, async () => true)
+    broker = await startEnterpriseCredentialBroker({ cloudRequest: input => cloud.request(input) })
+    const request = async input => {
+      const response = await fetch(new URL('/v1/cloud', broker.url), { method: 'POST',
+        headers: { authorization: `Bearer ${broker.capability}`, 'content-type': 'application/json' }, body: JSON.stringify(input) })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error)
+      return result
+    }
+    const session = { header: { cwd: workspace } }
+    let tool
+    registerCloudTools({ inject: (_names, callback) => callback({ desktopCloud: { request },
+      tools: { register: value => { tool = value } },
+      sandboxPolicy: { resolve: ({ session: current }) => {
+        expect(current).toBe(session)
+        return { mode: 'workspace-write', workspaceRoot: current.header.cwd }
+      } }, on() {}
+    }) }, {})
+    const project = await tool.execute({ operation: 'create' }, { agent: { session } })
+    expect(project.developmentWorkspace.ready).toBe(true)
+    expect(project.path.startsWith(await realpath(workspace))).toBe(true)
+    await writeFile(join(project.path, 'main.py'), 'print("same conversation")')
+    // Restarting the privileged service must resolve the registered source path.
+    cloud = new CloudWorkbenchService(fetchEnterprise, registry, async () => true)
+    const result = await tool.execute({ operation: 'publish', projectId: project.projectId }, { agent: { session } })
+    expect(result.app_id).toBe('a'.repeat(32))
+    expect(uploads).toHaveLength(1)
+    expect(uploads[0].get('package')).toBeInstanceOf(Blob)
+    expect(await readFile(join(project.path, 'main.py'), 'utf8')).toContain('same conversation')
+    expect(session.header.cwd).toBe(workspace)
+  } finally {
+    await broker?.stop()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+it('keeps source and publishing requests out of the browser-facing cloud route', async () => {
+  const { apply } = await import('../packages/dsh-desktop-workbenches/index.js')
+  const directory = await mkdtemp(join(tmpdir(), 'cloud-browser-route-'))
+  try {
+    const routes = []
+    const request = vi.fn(async () => ({ items: [] }))
+    const connection = { fetch: { register: route => routes.push(route) } }
+    apply({ effect: fn => fn(), reflect: { provide() {} }, connection,
+      inject: (dependencies, callback) => { if (dependencies.length === 1 && dependencies[0] === 'desktopCloud') callback({ connection, desktopCloud: { request } }) }
+    }, { root: directory })
+    const route = routes.find(route => route.path === '/api/desktop-workbenches/cloud')
+    for (const operation of ['create', 'checkout', 'resume', 'publish', 'project']) {
+      const result = await route.fetch(new Request('http://127.0.0.1/api/desktop-workbenches/cloud', {
+        method: 'POST', body: JSON.stringify({ operation, workspaceRoot: '/caller-path' })
+      }))
+      expect(result.status).toBe(400)
+      expect(request).not.toHaveBeenCalled()
+    }
+    const result = await route.fetch(new Request('http://127.0.0.1/api/desktop-workbenches/cloud', {
+      method: 'POST', body: JSON.stringify({ operation: 'list' })
+    }))
+    expect(result.status).toBe(200)
+    expect(request).toHaveBeenCalledExactlyOnceWith({ operation: 'list' })
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
+it('updates a resumed project binding while preserving concurrent workbench state', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'cloud-resume-binding-'))
+  try {
+    let tool
+    let stored = { revision: 1, state: { favorites: [], cloudDevelopmentSessions: { conversation: 'old-project' } } }
+    let conflicted = false
+    const store = {
+      read: async () => structuredClone(stored),
+      write: vi.fn(async saved => {
+        if (!conflicted) {
+          conflicted = true
+          stored = { revision: 2, state: { favorites: ['new-favorite'], cloudDevelopmentSessions: { conversation: 'old-project' } } }
+          throw Object.assign(new Error('state changed'), { status: 409 })
+        }
+        stored = saved
+      })
+    }
+    registerCloudTools({ inject: (_names, callback) => callback({
+      desktopCloud: { request: async () => ({ projectId: 'new-project', path: directory }) },
+      tools: { register: value => { tool = value } },
+      sandboxPolicy: { resolve: () => ({ mode: 'workspace-write', workspaceRoot: directory }) }, on() {}
+    }) }, store)
+    const result = await tool.execute({ operation: 'resume', projectId: 'old-project' }, { agent: { id: 'conversation', session: {} } })
+    expect(result.developmentWorkspace.ready).toBe(true)
+    expect(stored.state.favorites).toEqual(['new-favorite'])
+    expect(stored.state.cloudDevelopmentSessions.conversation).toBe('new-project')
+    expect(store.write).toHaveBeenCalledTimes(2)
+  } finally { await rm(directory, { recursive: true, force: true }) }
 })

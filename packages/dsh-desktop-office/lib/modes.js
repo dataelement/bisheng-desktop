@@ -7,8 +7,16 @@ const PLUGIN = 'dsh-desktop-office-composer'
 let casesPromise
 const workCases = () => casesPromise ??= readFile(new URL('../welcome-cases.json', import.meta.url), 'utf8')
   .then(raw => {
-    const { work, batches } = JSON.parse(raw)
-    return { cases: work, batches: batches.work }
+    const parsed = JSON.parse(raw)
+    const { work, batches } = parsed
+    // Chat batches stay beside the work catalogue. The work page only reads
+    // cases and batches, and the phone reads the chat fields for its landing.
+    return {
+      cases: work,
+      batches: batches.work,
+      chat: Array.isArray(parsed.chat) ? parsed.chat : [],
+      chatBatches: Array.isArray(batches.chat) ? batches.chat : [],
+    }
   })
   .catch(error => { casesPromise = undefined; throw error })
 
@@ -91,7 +99,11 @@ export function registerOfficeRoutes(ctx, library, modes) {
           if (payload.revision !== library.entry(payload.templateId).revision) throw new Error('The example was updated; reload the catalogue')
           return ok(await library.preview(payload.templateId, payload.page))
         }
-        if (endpoint === 'catalog' || (endpoint === 'state' && !sessionId)) return ok({ templates: await library.list(), mode: null })
+        if (endpoint === 'catalog' || (endpoint === 'state' && !sessionId)) {
+          // The phone bridge asks for summary so the catalogue skips thumbnail files.
+          const templates = await library.list(endpoint === 'catalog' && payload.summary === true ? { thumbnails: false } : {})
+          return ok({ templates, mode: null })
+        }
         if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.length > 512) throw new Error('Choose an active session')
         if (!modes) throw new Error('The document composer service is unavailable')
         let templates

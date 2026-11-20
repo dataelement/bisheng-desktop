@@ -97,7 +97,7 @@ it('does not clear a newer generation when an old refresh fails', async () => {
   await expect(api.sync()).resolves.toBeUndefined()
 })
 
-it.each(['bisheng_tool_7', 'Customer Query', 'a'.repeat(51), 'duplicate'])('rejects invalid or duplicate catalog names: %s', async name => {
+it.each(['', '   ', 'a'.repeat(129), 'duplicate'])('rejects invalid or duplicate catalog names: %s', async name => {
   const f = fixture(), register = vi.fn(() => () => {})
   f.catalog.tools[0].name = name
   if (name === 'duplicate') f.catalog.tools.push({ ...f.catalog.tools[0] })
@@ -106,6 +106,17 @@ it.each(['bisheng_tool_7', 'Customer Query', 'a'.repeat(51), 'duplicate'])('reje
   const api = applyWorkCapabilities(ctx, { request: f.request, state: () => ({ connected: true, connectionKey: 'account-a' }), refreshState: async () => {} })
   await expect(api.sync()).rejects.toThrow('Invalid enterprise tool name')
   expect(register).not.toHaveBeenCalled()
+})
+
+it('accepts provider-defined MCP names using the MCP naming charset', async () => {
+  const f = fixture(), tools = new Map()
+  f.catalog.tools[0].name = 'weather.lookup-v2'
+  const ctx = { connection: { fetch: { register: vi.fn() } }, logger: { warn: vi.fn() }, sessions: { get: () => undefined },
+    tools: { register: tool => { tools.set(tool.name, tool); return () => tools.delete(tool.name) }, guard: vi.fn() },
+    on: vi.fn(), effect: fn => cleanups.push(fn()) }
+  const api = applyWorkCapabilities(ctx, { request: f.request, state: () => ({ connected: true, connectionKey: 'account-a' }), refreshState: async () => {} })
+  await api.sync()
+  expect(tools.has('mcp__bisheng__weather.lookup-v2')).toBe(true)
 })
 
 it('negotiates the real SDK protocol and follows all catalog pages', async () => {
@@ -175,4 +186,41 @@ it('serves fresh picker entries and rejects disabled tools and old-account draft
   expect((await send({ ...selection, names: 'all' })).status).toBe(400)
   account = { connected: false }
   expect((await send({ operation: 'catalog' })).status).toBe(400)
+})
+
+it('bounds failed background catalog attempts while allowing explicit refresh and account reset', async () => {
+  vi.useFakeTimers()
+  try {
+    const f = fixture()
+    let failing = true
+    const failure = Object.assign(new Error('Missing endpoint'), { status: 404 })
+    const routes = [], events = new Map()
+    const session = { id: 'main', header: { delegationDepth: 0 } }
+    const request = vi.fn((...args) => failing ? Promise.reject(failure) : f.request(...args))
+    const ctx = { connection: { fetch: { register: route => routes.push(route) } }, logger: { warn: vi.fn() },
+      sessions: { get: () => session }, tools: { register: () => () => {}, guard: vi.fn() },
+      on: (name, fn) => events.set(name, fn), effect: fn => cleanups.push(fn()) }
+    const api = applyWorkCapabilities(ctx, { request, state: () => ({ connected: true, connectionKey: 'account-a' }), refreshState: async () => {} })
+    await expect(api.sync()).rejects.toThrow('Missing endpoint')
+    const count = request.mock.calls.length
+    const outcomes = await Promise.allSettled(Array.from({ length: 20 }, () => api.sync()))
+    expect(outcomes.every(result => result.status === 'rejected' && result.reason === failure)).toBe(true)
+    const response = await routes[0].fetch(new Request('http://localhost/api/enterprise.work-tools', { method: 'POST', body: JSON.stringify({ operation: 'catalog' }) }))
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: 'Missing endpoint' })
+    expect(request).toHaveBeenCalledTimes(count)
+    await events.get('system-prompt/prepare')({ agent: { session } })
+    expect(request.mock.calls.length).toBeGreaterThan(count)
+    expect(ctx.logger.warn).toHaveBeenCalledWith('Enterprise Work capabilities: %s', 'Missing endpoint')
+    await vi.advanceTimersByTimeAsync(30_001)
+    await expect(api.sync()).rejects.toThrow('Missing endpoint')
+    expect(request.mock.calls.length).toBeGreaterThan(count)
+    failing = false
+    await api.refresh()
+    expect(f.messages.some(message => message.method === 'tools/list')).toBe(true)
+    api.clear()
+    const before = f.messages.length
+    await api.sync()
+    expect(f.messages.length).toBeGreaterThan(before)
+  } finally { vi.useRealTimers() }
 })

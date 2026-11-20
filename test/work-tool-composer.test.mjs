@@ -22,6 +22,13 @@ it('serializes the actual selected tool identity after checking availability for
   await expect(source.codec.serialize(ref)).rejects.toThrow('Tool disabled')
 })
 
+it('serializes provider-defined MCP tool names', async () => {
+  const { source, fetch } = setup()
+  const ref = JSON.stringify({ name: 'mcp__bisheng__weather.lookup-v2', label: '天气', connectionKey: 'account-a' })
+  await expect(source.codec.serialize(ref)).resolves.toBe(' [Selected tool: mcp__bisheng__weather.lookup-v2; label: "天气"] ')
+  expect(JSON.parse(fetch.mock.calls[0][1].body).names).toEqual(['mcp__bisheng__weather.lookup-v2'])
+})
+
 it('rejects forged references and propagates cancellation instead of submitting', async () => {
   const { source, fetch } = setup()
   await expect(source.codec.serialize(JSON.stringify({ name: 'bash', label: 'Bash', connectionKey: 'a' }))).rejects.toThrow('Invalid tool')

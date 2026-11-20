@@ -9,6 +9,7 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
   let signature = '', disposeTools = [], pickerTools = []
   const toolNames = new Map()
   let lifetime = new AbortController()
+  let failedSync
   const assertAccount = key => {
     const account = state()
     if (stopped || !account.connected || account.connectionKey !== key) throw new Error('Enterprise account changed.')
@@ -18,6 +19,7 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
     return session && (session.header?.delegationDepth ?? 0) === 0 && ctx.sessions.get(session.id) === session
   }
   const clear = () => {
+    failedSync = undefined
     generation++
     lifetime.abort()
     lifetime = new AbortController()
@@ -46,7 +48,7 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
     if (signature === nextSignature) { ready = true; return }
     const names = new Set()
     const definitions = catalog.tools.map(tool => {
-      if ((typeof tool.name !== 'string' || tool.name.length > 50 || !/^(?!bisheng_tool_)[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(tool.name)) || names.has(tool.name)) throw new Error('Invalid enterprise tool name.')
+      if (typeof tool.name !== 'string' || !tool.name.trim() || tool.name.length > 128 || names.has(tool.name)) throw new Error('Invalid enterprise tool name.')
       names.add(tool.name)
       return createMcpToolDefinition(ctx, {
         name: PREFIX + tool.name, rawName: tool.name, description: [tool.title, tool.description].filter(value => typeof value === 'string' && value.trim()).filter((value, index, values) => values.indexOf(value) === index).join(' — ') || tool.name,
@@ -76,10 +78,17 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
     // downloads the catalog again after the current account is ready.
     if (!force && ready && connectionKey === state().connectionKey) return Promise.resolve()
     if (syncing) return syncing
+    // Ordinary account reads can be frequent. Retain a failed attempt briefly
+    // so unsupported servers cannot trigger a request loop; explicit refresh retries.
+    const key = state().connectionKey
+    if (!force && failedSync && failedSync.key === key && Date.now() < failedSync.until) return Promise.reject(failedSync.error)
     const attempt = { generation }
     syncing = synchronize(attempt).catch(error => {
       // An expired attempt must not clear a later account's state.
-      if (generation === attempt.generation) clear()
+      if (generation === attempt.generation) {
+        clear()
+        failedSync = { key, error, until: Date.now() + 30_000 }
+      }
       throw error
     }).finally(() => { syncing = undefined })
     return syncing
@@ -87,7 +96,7 @@ export function applyWorkCapabilities(ctx, { request, state, refreshState }) {
   // A request already in flight may have read the catalog before a saved toggle.
   // Join it, then start a fresh read shared by callers at this boundary.
   const refresh = async () => {
-    if (syncing) await syncing
+    if (syncing) await syncing.catch(() => undefined)
     await sync({ force: true })
   }
   ctx.on('system-prompt/prepare', async ({ agent, signal }) => {

@@ -117,6 +117,8 @@ window.__ModuleLoader__.load({
     const MIGRATE_API = '/api/desktop-workbenches/state/migrate'
     const CATALOG_API = '/api/desktop-workbenches/catalog'
     const MARKET_INSTALLS_API = '/api/desktop-workbenches/market-installs'
+    const ENTERPRISE_ACCESS_API = '/api/desktop-workbenches/enterprise-access-check'
+    const ENTERPRISE_ADOPT_API = '/api/desktop-workbenches/enterprise-installs/adopt'
     const NATIVE_STATUS = { idle: 'idle', ready: 'ready', unavailable: 'unavailable' }
     const parseVersion = (value) => {
       if (typeof value !== 'string') return null
@@ -208,6 +210,7 @@ window.__ModuleLoader__.load({
         emptyHint: '请联系管理员上传。', detail: '查看详情', detailLoading: '正在读取企业工作台详情…',
         verify: '核对原包', verifying: '正在核对…', verified: '原包完整性核对通过。',
         install: '安装', installing: '正在安装…', installed: '已安装', restart: '重启后生效',
+        revoked: '管理员已收回使用权限',
         scope: '企业上传的工作台可以安装到本机。安装完成后需要重启才能使用。',
         settingsOpen: '列表来自网络工作台市场，也可以安装本机开发的工作台。企业上传的工作台在「来自企业」中安装。',
         settingsClosed: '当前企业未开放网络工作台市场。工作台市场展示本企业上传的工作台，可以直接安装；已安装里保留本机已安装和本地开发的工作台。'
@@ -218,6 +221,7 @@ window.__ModuleLoader__.load({
         emptyHint: 'Ask your administrator to upload one.', detail: 'View details', detailLoading: 'Loading enterprise workbench details…',
         verify: 'Verify package', verifying: 'Verifying…', verified: 'The package integrity check passed.',
         install: 'Install', installing: 'Installing…', installed: 'Installed', restart: 'Restart to use',
+        revoked: 'Your administrator revoked access',
         scope: 'Enterprise workbenches can be installed on this computer. Restart after installation to use them.',
         settingsOpen: 'The list comes from the network workbench market. Locally developed workbenches can also be installed. Enterprise uploads can be installed from From enterprise.',
         settingsClosed: 'This enterprise has not opened the network workbench market. The workbench market shows workbenches uploaded by your enterprise, and they can be installed directly. Installed keeps local and previously installed workbenches.'
@@ -307,6 +311,8 @@ window.__ModuleLoader__.load({
         this.native = { status: NATIVE_STATUS.idle, bundles: {} }
         this.nativeTicket = 0
         this.togglingPlugin = null
+        // Enterprise workbench packages whose grant was revoked (F022).
+        this.revokedPlugins = new Set()
         this.removingPlugin = null
         this.removedWorkbenchIds = new Set()
         this.installing = null
@@ -429,8 +435,52 @@ window.__ModuleLoader__.load({
         const active = this.state.active && (this.catalog.get(this.state.active) || { id: this.state.active })
         if (this.ready && active && this.activationFor(active) === 'off') this.run(this.leave())
       }
+      // Workbenches installed before the host kept enterprise records are bound to
+      // their catalog id while the catalog still lists them (F022).
+      async adoptEnterpriseInstalls() {
+        const items = this.enterpriseCatalog
+          .filter(item => typeof item?.id === 'string' && typeof item.packageName === 'string')
+          .slice(0, 500)
+          .map(item => ({ id: item.id, pluginName: item.packageName, version: item.currentVersion?.version || '' }))
+        if (!items.length) return
+        try {
+          const response = await this.request(ENTERPRISE_ADOPT_API, {
+            method: 'POST', credentials: 'same-origin', cache: 'no-store',
+            headers: { 'content-type': 'application/json' }, body: JSON.stringify({ items })
+          })
+          if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        } catch (error) {
+          // Best effort: the next catalog refresh retries; installs made by this version are recorded anyway.
+          console.warn('[workbenches] Enterprise install records could not be updated', error)
+        }
+      }
+      // Disable installed enterprise workbenches whose grant was revoked. The host
+      // keeps every workbench as it was when access cannot be confirmed (F022).
+      async checkEnterpriseAccess() {
+        let data
+        try {
+          const response = await this.request(ENTERPRISE_ACCESS_API, { method: 'POST', credentials: 'same-origin', cache: 'no-store' })
+          data = await response.json()
+          if (!response.ok) throw new Error(data?.error || `HTTP ${response.status}`)
+        } catch (error) {
+          // A background check must not interrupt the workbench page; the next sync retries.
+          console.warn('[workbenches] Enterprise access check failed', error)
+          return
+        }
+        if (this.disposed || !Array.isArray(data?.revoked)) return
+        const revoked = new Set(data.revoked.filter(name => typeof name === 'string'))
+        const changed = revoked.size !== this.revokedPlugins.size || [...revoked].some(name => !this.revokedPlugins.has(name))
+        this.revokedPlugins = revoked
+        if (changed) await this.refreshNative()
+        this.publish()
+      }
       async setPluginEnabled(name, enabled) {
         if (!name || this.native.status !== NATIVE_STATUS.ready || this.togglingPlugin) throw new Error('无法确定此工作台的原生插件状态。')
+        if (enabled && this.revokedPlugins.has(name)) {
+          // Ask again: the administrator may have restored access since the last sync.
+          await this.checkEnterpriseAccess()
+          if (this.revokedPlugins.has(name)) throw new Error(enterpriseText(this.ctx, 'revoked'))
+        }
         this.togglingPlugin = name
         this.publish()
         try {
@@ -659,6 +709,10 @@ window.__ModuleLoader__.load({
       }
       closePublicMarket() {
         this.networkMarketAllowed = false
+        // Invalidate reads started before this tenant disabled the public market.
+        this.catalogRevision++
+        this.catalogRefresh = null
+        this.catalogRefreshing = false
         if (!this.remoteCatalog.length && !this.catalogError) return
         this.remoteCatalog = []
         this.catalogError = ''
@@ -744,7 +798,7 @@ window.__ModuleLoader__.load({
         const refresh = (async () => {
           try {
             const catalog = await this.readCatalog(true)
-            if (this.disposed) return
+            if (this.disposed || !this.networkMarketAllowed || this.catalogRefresh !== refresh) return
             if (!catalog) throw new Error('在线市场暂时无法读取，仍可使用已安装的工作台。 ')
             this.catalogRevision++
             this.catalogLoaded = true
@@ -758,12 +812,12 @@ window.__ModuleLoader__.load({
             this.reconcileMarketInstalls()
             this.reconcileLocalProviders()
           } catch (error) {
-            if (!this.disposed) {
+            if (!this.disposed && this.networkMarketAllowed && this.catalogRefresh === refresh) {
               this.catalogError = error instanceof Error ? error.message : String(error)
               this.catalogStale = this.catalogLoaded || this.remoteCatalog.length > 0
             }
           } finally {
-            if (!this.disposed) {
+            if (!this.disposed && this.catalogRefresh === refresh) {
               this.catalogRefreshing = false
               this.catalogRefresh = null
               this.publish()
@@ -917,6 +971,10 @@ window.__ModuleLoader__.load({
       async removeWorkbench(id) {
         // Market installs use their recorded package identity. Other workbenches
         // must resolve to a removable native bundle before their record is cleared.
+        // The plugin manager cannot remove a bundle while its workbench is the
+        // active panel. Leave it first so the manager can complete its stop and
+        // reload transaction instead of keeping the confirmation modal busy.
+        if (this.state.active === id) await this.leave()
         const catalogId = this.marketInstallFor(id)
         if (catalogId) {
           await this.uninstallFromMarket(catalogId)
@@ -1230,6 +1288,7 @@ window.__ModuleLoader__.load({
             this.enterpriseCatalog = Array.isArray(data.data) ? data.data : []
             this.enterpriseCatalogStatus = this.enterpriseCatalog.length ? 'ready' : 'empty'
             this.enterpriseCatalogError = ''
+            this.run(this.adoptEnterpriseInstalls())
           }
         } catch (error) {
           if (!this.disposed) {
@@ -2439,7 +2498,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
       const cloudText = service.ctx.locale.bind(CLOUD_CARD_NS)
       const workbenchEnabled = React.useSyncExternalStore(workbenchPreference.subscribe.bind(workbenchPreference), workbenchPreference.getSnapshot.bind(workbenchPreference))
       const enterprise = React.useSyncExternalStore(enterpriseCapability.subscribe.bind(enterpriseCapability), enterpriseCapability.getSnapshot.bind(enterpriseCapability))
-      const publicMarket = !enterprise.known || enterprise.allowThirdPartyWorkbenches === true
+      const publicMarket = !enterprise.connected || enterprise.allowThirdPartyWorkbenches === true
       const enterpriseVisible = enterprise.connected === true
       const [tab, setTab] = React.useState('market')
       const [search, setSearch] = React.useState('')
@@ -2476,13 +2535,13 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
       const favorites = state.favorites || []
       const unavailableEntry = (id) => ({ id, title: id, category: tr('其他'), categoryId: 'other', unavailable: true, description: both('提供此工作台的插件当前未加载。', 'The plugin for this workbench is not loaded.'), loadFailure: both('工作台插件当前未加载。', 'The workbench plugin is not loaded.') })
       const enterpriseAsMarket = enterpriseVisible && !publicMarket
-      const collectionValues = [...(publicMarket ? ['market', 'favorites'] : enterpriseAsMarket ? ['market'] : []), ...(enterpriseVisible && publicMarket ? ['enterprise'] : []), 'cloud', 'mine']
+      const collectionValues = [...(publicMarket ? ['market', 'favorites'] : enterpriseAsMarket ? ['market'] : []), ...(enterpriseVisible && publicMarket ? ['enterprise'] : []), 'mine', 'cloud']
       const visibleTab = collectionValues.includes(tab) ? tab : collectionValues[0]
       const showingEnterprise = visibleTab === 'enterprise' || (visibleTab === 'market' && enterpriseAsMarket)
       const showingCloud = visibleTab === 'cloud'
       const enterpriseLoading = showingEnterprise && enterpriseCatalogStatus === 'loading'
       const cloudLoading = showingCloud && cloudCatalogStatus === 'loading'
-      const requiresLogin = (enterprise.known || showingEnterprise || showingCloud) && !enterpriseVisible && ['market', 'favorites', 'enterprise', 'cloud'].includes(visibleTab)
+      const requiresLogin = !enterpriseVisible && (showingEnterprise || showingCloud)
       const collectionBlocked = requiresLogin
       const signIn = () => window.dispatchEvent(new window.CustomEvent('dsh-desktop:open-settings-section', { detail: { id: 'enterprise-account' } }))
       const localizedCatalog = catalog.map((entry) => displayEntry(visibleTab === 'mine' ? service.installedEntry(entry) : entry))
@@ -2539,7 +2598,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
         h('header', { className: 'dshWbMarketHeader', 'data-window-drag': true },
           h('div', { className: 'dshWbMarketHeaderText' },
             h('h1', null, tab === 'submit' ? tr('制作属于你的工作台') : tr('工作台')),
-            h('p', { className: 'dshWbMuted' }, tab === 'submit' ? tr('与 Agent 确认需求，完成开发和部署，也可以准备材料提交到工作台市场。') : tr('有序组织专属界面、会话与资料')), tab !== 'submit' && !collectionBlocked && h('label', { className: 'dshWbSearch' }, h(MarketIcon, { name: 'search' }), h('input', { type: 'search', placeholder: tr('搜索名称、作者或分类'), 'aria-label': tr('搜索工作台'), value: search, onChange: (event) => { setSearch(event.target.value); setVisibleCount(PAGE_SIZE) } }))),
+            h('p', { className: 'dshWbMuted' }, tab === 'submit' ? (publicMarket ? tr('与 Agent 确认需求，完成开发和部署，也可以准备材料提交到工作台市场。') : both('与 Agent 确认需求，完成开发和部署。', 'Confirm requirements with your Agent, then develop and deploy.')) : tr('有序组织专属界面、会话与资料')), tab !== 'submit' && !collectionBlocked && h('label', { className: 'dshWbSearch' }, h(MarketIcon, { name: 'search' }), h('input', { type: 'search', placeholder: tr('搜索名称、作者或分类'), 'aria-label': tr('搜索工作台'), value: search, onChange: (event) => { setSearch(event.target.value); setVisibleCount(PAGE_SIZE) } }))),
           h('div', { className: 'dshWbMarketHeaderActions' },
             h(Button, { primary: tab !== 'submit', className: `dshWbBtn${tab !== 'submit' ? ' dshWbPrimary' : ''} dshWbCreate`, onClick: () => { setTab(tab === 'submit' ? (publicMarket ? 'market' : 'mine') : 'submit'); setDetail(null); setCopyStatus(null) } }, h(MarketIcon, { name: tab === 'submit' ? 'search' : 'plus' }), tab === 'submit' ? (publicMarket ? tr('返回工作台市场') : tr('返回已安装')) : tr('制作我的工作台')))),
         h(Notice, { service, showCatalogStatus: true }),
@@ -2548,8 +2607,8 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
             (publicMarket || enterpriseAsMarket) && h(Button, { id: 'dsh-workbench-market-tab', role: 'tab', tabIndex: visibleTab === 'market' ? 0 : -1, 'aria-selected': visibleTab === 'market', 'aria-controls': 'dsh-workbench-market-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('market') }, tr('工作台市场')),
             publicMarket && h(Button, { id: 'dsh-workbench-favorites-tab', role: 'tab', tabIndex: visibleTab === 'favorites' ? 0 : -1, 'aria-selected': visibleTab === 'favorites', 'aria-controls': 'dsh-workbench-favorites-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('favorites') }, `${tr('我的收藏')} (${favorites.length})`),
             (enterpriseVisible && publicMarket) && h(Button, { id: 'dsh-workbench-enterprise-tab', role: 'tab', tabIndex: visibleTab === 'enterprise' ? 0 : -1, 'aria-selected': visibleTab === 'enterprise', 'aria-controls': 'dsh-workbench-enterprise-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('enterprise') }, tr('来自企业')),
-            h(Button, { id: 'dsh-workbench-cloud-tab', role: 'tab', tabIndex: showingCloud ? 0 : -1, 'aria-selected': showingCloud, 'aria-controls': 'dsh-workbench-cloud-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('cloud') }, cloudText('title')),
-            h(Button, { id: 'dsh-workbench-mine-tab', role: 'tab', tabIndex: visibleTab === 'mine' ? 0 : -1, 'aria-selected': visibleTab === 'mine', 'aria-controls': 'dsh-workbench-mine-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('mine') }, `${tr('已安装')} (${installedEntries.length})`))),
+            h(Button, { id: 'dsh-workbench-mine-tab', role: 'tab', tabIndex: visibleTab === 'mine' ? 0 : -1, 'aria-selected': visibleTab === 'mine', 'aria-controls': 'dsh-workbench-mine-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('mine') }, `${tr('已安装')} (${installedEntries.length})`),
+            h(Button, { id: 'dsh-workbench-cloud-tab', role: 'tab', tabIndex: showingCloud ? 0 : -1, 'aria-selected': showingCloud, 'aria-controls': 'dsh-workbench-cloud-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('cloud') }, cloudText('title')))),
           !collectionBlocked && h('div', { className: 'dshWbBrowseTools' },
             h('span', { className: 'dshWbRefreshHint' }, h(Button, { className: 'dshWbBtn dshWbRefresh', 'aria-describedby': 'dsh-workbench-refresh-tooltip', 'aria-label': checkingUpdates ? tr('正在检查更新') : tab === 'mine' ? tr('检查更新') : tr('刷新目录'), 'aria-busy': catalogRefreshing || checkingUpdates || enterpriseLoading || cloudLoading, disabled: catalogRefreshing || checkingUpdates || enterpriseLoading || cloudLoading, onClick: () => service.run(visibleTab === 'mine' ? service.checkUpdates() : showingEnterprise ? service.refreshEnterpriseCatalog() : showingCloud ? service.refreshCloudCatalog() : service.refreshCatalog()) }, h(MarketIcon, { name: 'refresh', size: 17 })), h('span', { id: 'dsh-workbench-refresh-tooltip', className: 'dshWbControlTooltip', role: 'tooltip' }, checkingUpdates ? tr('正在检查更新') : tab === 'mine' ? tr('检查更新') : tr('刷新目录'))),
             h('label', { className: 'dshWbSort' }, h('select', { 'aria-label': tr('按分类筛选'), value: category, onChange: (event) => { setCategory(event.target.value); setVisibleCount(PAGE_SIZE) } }, categories.map((value) => h('option', { key: value.id, value: value.id }, value.id === 'all' ? tr('全部类型') : value.name)))),
@@ -2572,7 +2631,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
               h('span', { className: 'dshWbStepNum' }, '2'),
               h('strong', null, tr('由 Agent 部署，自测确认能用')),
               h('p', null, both('Agent 会先判断是否需要持续运行和多人协作。本地工作台安装到这台 Desktop；云端工作台在对话确认后提交审核和部署，无需另点发布按钮。完成后，Agent 会检查真实入口，并说明已验证和待验证的项目。', 'Your Agent first assesses continuous processing and collaboration. Local workbenches install on this Desktop; cloud workbenches enter approval and deployment after confirmation in the conversation, with no separate publish button. The Agent verifies the real entry and reports tested and unverified items.'))),
-            h('div', { className: 'dshWbStep' },
+            publicMarket && h('div', { className: 'dshWbStep' },
               h('span', { className: 'dshWbStepNum' }, '3'),
               h('strong', null, tr('想上架，再按验收规范提交')),
               h('p', null, both('按', 'Follow the '), h('a', { href: acceptancePageUrl(), target: '_blank', rel: 'noopener noreferrer' }, tr('工作台市场验收规范')), both('，把代码上传到你自己的 GitHub 仓库，准备简介和截图，再向', ', upload your code to your GitHub repository, prepare a description and screenshots, then open a listing PR in the '), h('a', { href: WORKBENCH_MARKET_REPO, target: '_blank', rel: 'noopener noreferrer' }, tr('工作台市场仓库')), both('提交收录 PR。把投稿指令复制给 Agent 即可。', '. Copy the submission instructions to your agent.')),
@@ -2588,7 +2647,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
                 h('button', { type: 'button', className: 'dshWbStepLink', onClick: () => setOpenPrompt(openPrompt === 'submission' ? null : 'submission') }, openPrompt === 'submission' ? tr('收起指令') : tr('查看指令'))),
               openPrompt === 'submission' && h('textarea', { className: 'dshWbPrompt', readOnly: true, value: submissionPrompt, 'aria-label': tr('投稿工作台给 Agent 的指令'), onFocus: (event) => event.currentTarget.select() }),
               h(SubmissionStatus, { service }))),
-          h('p', { className: 'dshWbMuted dshWbSubmitOutcome' }, tr('提交 PR 就是进入审核，进度以 GitHub 上的 PR 为准，本机不保存投稿状态。PR 合并、市场目录更新后，工作台就会出现在工作台市场中。')),
+          publicMarket && h('p', { className: 'dshWbMuted dshWbSubmitOutcome' }, tr('提交 PR 就是进入审核，进度以 GitHub 上的 PR 为准，本机不保存投稿状态。PR 合并、市场目录更新后，工作台就会出现在工作台市场中。')),
           copyStatus && h(Toast, { key: copyStatus.id, text: copyStatus.text, tone: copyStatus.tone, holdMs: 2000, onDone: () => setCopyStatus((current) => current?.id === copyStatus.id ? null : current) })),
         tab !== 'submit' && collectionBlocked && h('section', { id: `dsh-workbench-${visibleTab}-panel`, role: 'tabpanel', 'aria-labelledby': `dsh-workbench-${visibleTab}-tab`, tabIndex: 0 },
           h('div', { className: 'dshWbEmpty', role: 'status' }, h('div', null,
@@ -2641,6 +2700,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
               h('div', { className: 'dshWbCardBody' },
                 h('div', { className: 'dshWbCardTitle' }, h('h2', null, h(EntryTitle, { entry })), tab === 'mine' && service.isLocalEntry(entry) && h('span', { className: 'dshWbCategory' }, tr('本地')), tab === 'mine' && h('span', { className: 'dshWbControlHint dshWbSwitchHint' }, h('button', { type: 'button', className: 'dshWbRunSwitch', role: 'switch', 'aria-checked': activation === 'on', 'aria-label': both(`${entry.title}运行状态`, `${entry.title} running state`), 'aria-describedby': `dsh-wb-switch-tooltip-${catalogId}`, disabled: disabled || !!togglingPlugin || !hasNativeControl || activation === 'unknown', onClick: () => service.run(service.setPluginEnabled(pluginName, activation !== 'on')) }), h('span', { id: `dsh-wb-switch-tooltip-${catalogId}`, className: 'dshWbControlTooltip', role: 'tooltip' }, activation === 'unknown' ? tr('原生插件状态暂不可用') : activation === 'on' ? tr('停用') : tr('启用')))),
                 h('div', { className: 'dshWbAuthorRow' }, h(AuthorItem, { entry, showVersion: false }), versionText && h('span', { className: 'dshWbCardVersion' }, versionText)),
+                tab === 'mine' && pluginName && service.revokedPlugins.has(pluginName) && h('p', { className: 'dshWbMuted', role: 'status' }, enterpriseText(service.ctx, 'revoked')),
                 h('div', { className: 'dshWbDescriptionHint' }, h('p', { className: 'dshWbMuted dshWbCardDescription' }, entry.description || tr('这个工作台暂时还没有填写介绍。'))),
                 h('div', { className: 'dshWbActions' },
                   h('div', { className: 'dshWbCardVersionActions' },
@@ -2682,7 +2742,13 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
             h('p', { className: 'dshWbMoreCount' }, isEnglish() ? `Showing ${displayedEntries.length} of ${entries.length}` : `已显示 ${displayedEntries.length} / 共 ${entries.length} 个工作台`))),
         replacing && h(ConfirmMarketUpdate, { entry: replacing.entry, risk: replacing.risk, disabled: !!installing, onCancel: () => setReplacing(null), onConfirm: () => { service.run(service.installFromMarket(replacing.entry.catalogId || replacing.entry.id, { confirmedReplacement: true })); setReplacing(null) } }),
         !collectionBlocked && detail != null && h(DetailModal, { entry: selected, service, onClose: () => setDetail(null) }),
-        removing != null && h(ConfirmRemoveModal, { entry: removingEntry, disabled: disabled || !!installing || !!removingPlugin, onCancel: () => setRemoving(null), uninstall: !removingStale && !removingEntry?.unavailable && !!service.marketInstallFor(removing), nativeUninstall: !removingStale && !removingEntry?.unavailable && !service.marketInstallFor(removing), recordOnly: !!removingStale || !!removingEntry?.unavailable, onConfirm: () => service.run((removingEntry?.unavailable ? service.clearUnavailableRecord(removing) : removingStale ? service.removeStaleWorkbenchRecord(removing) : service.removeWorkbench(removing)).then(() => setRemoving(null))) }))
+        removing != null && h(ConfirmRemoveModal, { entry: removingEntry, disabled: disabled || !!installing || !!removingPlugin, onCancel: () => setRemoving(null), uninstall: !removingStale && !removingEntry?.unavailable && !!service.marketInstallFor(removing), nativeUninstall: !removingStale && !removingEntry?.unavailable && !service.marketInstallFor(removing), recordOnly: !!removingStale || !!removingEntry?.unavailable, onConfirm: () => {
+          // Close the confirmation before waiting for the uninstall transaction.
+          // A plugin stop or Harness restart can take longer than the modal
+          // lifetime and must not leave a disabled dialog covering the market.
+          setRemoving(null)
+          service.run(removingEntry?.unavailable ? service.clearUnavailableRecord(removing) : removingStale ? service.removeStaleWorkbenchRecord(removing) : service.removeWorkbench(removing))
+        } }))
     }
     function Notebook({ service, entry }) {
       const { state, drafts, pending, error } = useWorkbench(service)
@@ -2912,7 +2978,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           })),
         h('p', { className: 'dshWbMuted' }, !enabled
           ? t('enableHint')
-          : enterprise.allowThirdPartyWorkbenches
+          : !enterprise.connected || enterprise.allowThirdPartyWorkbenches === true
             ? enterpriseText(undefined, 'settingsOpen')
             : enterpriseText(undefined, 'settingsClosed')))
     }
@@ -2924,6 +2990,8 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
       ctx.effect(() => ctx.locale.register(CREATE_NS, createCopy), 'workbenches: creation dictionaries')
       ctx.effect(() => ctx.locale.register(CLOUD_CARD_NS, cloudCardCopy), 'workbenches: cloud card dictionaries')
       const service = new Workbenches(ctx)
+      // Resolve the account policy before making any public catalog request.
+      service.networkMarketAllowed = false
       ctx.effect(() => ctx.reflect.provide('desktopWorkbenches', service), 'workbenches: service')
       ctx.inject?.(['inputTriggers'], scoped => {
         let disposed = false
@@ -2988,13 +3056,18 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           })
           if (previousConnected && !connected && (service.state.active || service.marketOpen)) service.run(service.returnToNativeSession())
           service.syncCloudIdentity(connected ? account.connectionKey : null)
-          const marketAllowed = connected && account.allowThirdPartyWorkbenches === true
+          // Signed-out browsing retains the public directory; a connected tenant controls access.
+          const marketAllowed = !connected || account.allowThirdPartyWorkbenches === true
+          const previousMarketAllowed = service.networkMarketAllowed
           service.networkMarketAllowed = marketAllowed
           if (!marketAllowed) service.closePublicMarket()
           service.publish()
+          if (marketAllowed && !previousMarketAllowed && service.ready) service.run(service.refreshCatalog())
           // Account polling must not refetch the full marketplace during an
           // Agent conversation. Explicit open/refresh still reads fresh data.
           if (connected && (previousKey !== account.connectionKey || service.enterpriseCatalogStatus === 'idle')) service.run(service.refreshEnterpriseWorkbenches())
+          // Each sync (sign-in, account change, window focus) re-checks installed enterprise workbenches.
+          if (connected) service.run(service.checkEnterpriseAccess())
         }
         const syncTab = () => {
           disposeTab?.()

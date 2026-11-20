@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { cp, lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { c as createTar, t as listTar, x as extractTar } from 'tar'
 import ignore from 'ignore'
 
@@ -59,7 +59,7 @@ async function projectExclusions(path: string) {
 }
 
 export class CloudWorkbenchService {
-  private readonly projects = new Map<string, { path: string; appId?: string; versionId?: string; connectionKey: string }>()
+  private readonly projects = new Map<string, { path: string; appId?: string; versionId?: string; connectionKey: string; workspaceRoot?: string }>()
   constructor(private readonly fetch: CloudFetch, private readonly root: string, private readonly authorize?: CloudAuthorize) {}
 
   private async confirm(effect: CloudEffect): Promise<void> {
@@ -69,10 +69,27 @@ export class CloudWorkbenchService {
   async request(input: unknown): Promise<unknown> {
     const request = record(input)
     if (request.operation === 'guide') {
-      const result = await this.fetch('/api/v1/dev-toolkit/versions')
-      await json(result.response)
+      // Probe the protocol itself. Toolkit metadata can be deployed separately
+      // and cannot establish that the linked Markdown actually exists.
+      const result = await this.fetch('/api/v1/dev-toolkit/workbench-guide.md')
       const toolkit = developmentToolkit(result.base)
-      return { guideUrl: toolkit.workbenchGuideUrl, toolkit }
+      if (!result.response.ok) {
+        // Release the authenticated response stream while preserving the server
+        // status even if cancellation itself fails.
+        await result.response.body?.cancel().catch(() => undefined)
+        throw new Error(`Enterprise workbench guide request failed: HTTP ${result.response.status} at ${toolkit.workbenchGuideUrl}. Check this enterprise server's dev-toolkit deployment and routing.`)
+      }
+      const contentType = result.response.headers.get('content-type') || ''
+      const guide = await result.response.text()
+      if (!/^(?:text\/markdown|text\/plain)(?:;|$)/iu.test(contentType) || !guide.trim()) {
+        throw new Error(`Enterprise workbench guide is not a Markdown document at ${toolkit.workbenchGuideUrl}. Check this enterprise server's dev-toolkit deployment and routing.`)
+      }
+      return {
+        guideUrl: toolkit.workbenchGuideUrl,
+        guideMarkdown: guide,
+        guideSha256: createHash('sha256').update(guide).digest('hex'),
+        toolkit
+      }
     }
     if (request.operation === 'list') {
       const query = new URLSearchParams()
@@ -85,18 +102,17 @@ export class CloudWorkbenchService {
       return { ...await json(result.response), connectionKey: result.connectionKey }
     }
     if (request.operation === 'project') return this.project(request.projectId)
+    if (request.operation === 'resume') return this.resume(request.projectId, request.workspaceRoot)
     if (request.operation === 'create') {
       const checked = await this.fetch('/api/v1/dsh/apps/deploy-limits')
       await json(checked.response)
       const projectId = randomUUID()
-      const path = join(this.root, projectId, 'project')
-      await mkdir(path, { recursive: true, mode: 0o700 })
-      this.projects.set(projectId, { path, connectionKey: checked.connectionKey })
-      await writeFile(join(this.root, projectId, 'origin.json'), JSON.stringify({ connectionKey: checked.connectionKey }), { mode: 0o600, flag: 'wx' })
-      return { projectId, path, toolkit: developmentToolkit(checked.base) }
+      const project = await this.materializeProject(projectId, request.workspaceRoot, { connectionKey: checked.connectionKey })
+      this.projects.set(projectId, { ...project, connectionKey: checked.connectionKey })
+      return { projectId, path: project.path, toolkit: developmentToolkit(checked.base) }
     }
     if (request.operation === 'launch') return this.launch(id(request.appId))
-    if (request.operation === 'checkout') return this.checkout(id(request.appId), id(request.versionId))
+    if (request.operation === 'checkout') return this.checkout(id(request.appId), id(request.versionId), request.workspaceRoot)
     if (request.operation === 'publish') return this.publish(request)
     if (request.operation === 'progress') {
       const result = await this.fetch(`/api/v1/dsh/apps/${id(request.appId)}/deployments/${id(request.deploymentId)}`)
@@ -117,7 +133,7 @@ export class CloudWorkbenchService {
       entryUrl: `${base}${payload.entry_path}`, connectionKey: result.connectionKey }
   }
 
-  private async checkout(appId: string, versionId: string) {
+  private async checkout(appId: string, versionId: string, workspaceRoot?: unknown) {
     const checked = await this.fetch('/api/v1/dsh/apps/deploy-limits')
     await json(checked.response)
     await this.confirm({ operation: 'checkout', serverUrl: checked.base, appId, versionId })
@@ -138,11 +154,9 @@ export class CloudWorkbenchService {
     if (digest !== result.response.headers.get('x-source-sha256') || result.response.headers.get('x-app-id') !== appId ||
       result.response.headers.get('x-base-version-id') !== versionId) throw new Error('Source archive identity or integrity check failed.')
     const projectId = randomUUID()
-    const directory = join(this.root, projectId)
-    const staging = `${directory}.staging`
-    await mkdir(staging, { recursive: true, mode: 0o700 })
-    const archive = join(staging, 'source.tar.gz')
-    try {
+    const origin = { appId, baseVersionId: versionId, digest, connectionKey: result.connectionKey }
+    const project = await this.materializeProject(projectId, workspaceRoot, origin, async path => {
+      const archive = join(dirname(path), 'source.tar.gz')
       await writeFile(archive, bytes, { mode: 0o600, flag: 'wx' })
       let count = 0
       let expanded = 0
@@ -162,17 +176,72 @@ export class CloudWorkbenchService {
         parser.once('end', accept)
         parser.end(bytes)
       })
-      const project = join(staging, 'project')
-      await mkdir(project)
-      await extractTar({ file: archive, cwd: project, strict: true, preservePaths: false, noChmod: true })
+      await extractTar({ file: archive, cwd: path, strict: true, preservePaths: false, noChmod: true })
       await rm(archive)
-      await writeFile(join(staging, 'origin.json'), JSON.stringify({ appId, baseVersionId: versionId, digest, connectionKey: result.connectionKey }), { flag: 'wx', mode: 0o600 })
+    })
+    this.projects.set(projectId, { ...project, appId, versionId, connectionKey: result.connectionKey })
+    return { projectId, path: project.path, appId, baseVersionId: versionId, digest, toolkit: developmentToolkit(result.base) }
+  }
+
+  private async resume(projectId: unknown, workspaceRoot: unknown) {
+    const original = await this.project(projectId)
+    if (typeof workspaceRoot !== 'string' || !isAbsolute(workspaceRoot)) throw new Error('An existing absolute development workspace is required.')
+    const workspace = await realpath(workspaceRoot)
+    const relativePath = relative(workspace, original.path)
+    if (!isAbsolute(relativePath) && relativePath !== '..' && !relativePath.startsWith(`..${sep}`)) {
+      return { projectId, path: original.path, toolkit: developmentToolkit(original.serverUrl) }
+    }
+    // Older releases kept source outside the conversation workspace. Prepare a
+    // local development copy while retaining the published app/version identity.
+    const nextId = randomUUID()
+    const project = await this.materializeProject(nextId, workspace, {
+      connectionKey: original.connectionKey, appId: original.appId, baseVersionId: original.versionId
+    }, async path => {
+      for (const entry of await readdir(original.path)) {
+        await cp(join(original.path, entry), join(path, entry), { recursive: true, force: false, errorOnExist: true,
+          filter: async source => !(await lstat(source)).isSymbolicLink() })
+      }
+    })
+    this.projects.set(nextId, { ...project, connectionKey: original.connectionKey, appId: original.appId, versionId: original.versionId })
+    return { projectId: nextId, path: project.path, previousProjectId: projectId,
+      appId: original.appId, baseVersionId: original.versionId, toolkit: developmentToolkit(original.serverUrl) }
+  }
+
+  private async projectLocation(projectId: string, workspaceRoot?: unknown) {
+    if (workspaceRoot === undefined) return { directory: join(this.root, projectId), workspaceRoot: undefined }
+    if (typeof workspaceRoot !== 'string' || !isAbsolute(workspaceRoot)) throw new Error('An existing absolute development workspace is required.')
+    const workspace = await realpath(workspaceRoot)
+    if (!(await lstat(workspace)).isDirectory()) throw new Error('The development workspace must be a directory.')
+    return { directory: join(workspace, `cloud-workbench-${projectId}`), workspaceRoot: workspace }
+  }
+
+  private async materializeProject(projectId: string, workspace: unknown, origin: Record<string, unknown>, populate?: (path: string) => Promise<void>) {
+    const location = await this.projectLocation(projectId, workspace)
+    const directory = location.directory
+    const registry = join(this.root, projectId)
+    const staging = `${directory}.staging`
+    await mkdir(this.root, { recursive: true, mode: 0o700 })
+    // Both create and checkout publish a fresh directory atomically. Identity
+    // stays in Desktop storage, outside the Agent-editable source tree.
+    await mkdir(staging, { mode: 0o700 })
+    let committed = false
+    let registryCreated = false
+    try {
+      const path = join(staging, 'project')
+      await mkdir(path, { mode: 0o700 })
+      await populate?.(path)
+      if (location.workspaceRoot) {
+        await mkdir(registry, { mode: 0o700 })
+        registryCreated = true
+      }
       await rename(staging, directory)
-      const path = join(directory, 'project')
-      this.projects.set(projectId, { path, appId, versionId, connectionKey: result.connectionKey })
-      return { projectId, path, appId, baseVersionId: versionId, digest, toolkit: developmentToolkit(result.base) }
+      committed = true
+      await writeFile(join(registry, 'origin.json'), JSON.stringify({ ...origin, workspaceRoot: location.workspaceRoot }), { flag: 'wx', mode: 0o600 })
+      return { path: join(directory, 'project'), workspaceRoot: location.workspaceRoot }
     } catch (error) {
       await rm(staging, { force: true, recursive: true })
+      if (committed) await rm(directory, { force: true, recursive: true })
+      if (registryCreated) await rm(registry, { force: true, recursive: true })
       throw error
     }
   }
@@ -187,7 +256,8 @@ export class CloudWorkbenchService {
       if (directoryStat.isSymbolicLink() || metadataStat.isSymbolicLink() || metadataStat.size > 4096) throw new Error('Invalid development project metadata.')
       const origin = record(JSON.parse(await readFile(metadata, 'utf8')))
       if (typeof origin.connectionKey !== 'string' || !/^[a-f0-9]{16}$/u.test(origin.connectionKey)) throw new Error('Invalid development project identity.')
-      project = { path: join(directory, 'project'), connectionKey: origin.connectionKey,
+      const location = await this.projectLocation(projectId, origin.workspaceRoot)
+      project = { path: join(location.directory, 'project'), workspaceRoot: location.workspaceRoot, connectionKey: origin.connectionKey,
         ...(origin.appId ? { appId: id(origin.appId) } : {}), ...(origin.baseVersionId ? { versionId: id(origin.baseVersionId) } : {}) }
       this.projects.set(projectId, project)
     }
@@ -195,9 +265,10 @@ export class CloudWorkbenchService {
     const limits = await this.fetch('/api/v1/dsh/apps/deploy-limits')
     await json(limits.response)
     if (limits.connectionKey !== project.connectionKey) throw new Error('The enterprise account changed. Fetch the source again.')
-    const root = await realpath(this.root)
+    const root = await realpath(project.workspaceRoot || this.root)
+    const expected = join(root, project.workspaceRoot ? `cloud-workbench-${projectId}` : String(projectId), 'project')
     const path = await realpath(project.path)
-    if (relative(root, path).startsWith('..') || resolve(root) === resolve(path)) throw new Error('Invalid development project directory.')
+    if (path !== expected) throw new Error('Invalid development project directory.')
     return { ...project, path, serverUrl: limits.base }
   }
 
@@ -238,10 +309,10 @@ export class CloudWorkbenchService {
         // Admission creates the draft before the build runs. Retrying a failed
         // first build must update that draft, including after Desktop restarts.
         // The submitted version is not an approved base version yet.
-        const metadata = join(dirname(path), 'origin.json')
-        const temporary = join(dirname(path), `${randomUUID()}.origin.tmp`)
+        const metadata = join(this.root, String(request.projectId), 'origin.json')
+        const temporary = join(dirname(metadata), `${randomUUID()}.origin.tmp`)
         try {
-          await writeFile(temporary, JSON.stringify({ connectionKey: project.connectionKey, appId: acceptedAppId }), { mode: 0o600, flag: 'wx' })
+          await writeFile(temporary, JSON.stringify({ connectionKey: project.connectionKey, appId: acceptedAppId, workspaceRoot: project.workspaceRoot }), { mode: 0o600, flag: 'wx' })
           await rename(temporary, metadata)
         } finally { await rm(temporary, { force: true }) }
         this.projects.set(String(request.projectId), { ...project, appId: acceptedAppId })

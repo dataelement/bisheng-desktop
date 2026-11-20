@@ -46,9 +46,10 @@ export function createEnterpriseSkills({ state, request, resolveToolName, home =
       if (!Number.isSafeInteger(row.id) || row.id <= 0 || ids.has(row.id) || typeof row.name !== 'string' ||
           !/^[a-f0-9]{64}$/.test(row.content_hash) || typeof row.description !== 'string' || typeof row.display_name !== 'string') throw new Error('Invalid enterprise skill metadata.')
       ids.add(row.id)
+      // Platforms before the runtime catalog carried `source` list every skill as provided.
       return { name: enterpriseSkillName(key, row.id, row.name), displayName: row.display_name || row.name, description: row.description || row.display_name,
         invocation: { modelInvocable: true, userInvocable: true }, source: 'bisheng', provider: PROVIDER, rank: 500,
-        locator: { id: row.id, key, connectionKey: account.connectionKey, version: row.content_hash, originalName: row.name, displayName: row.display_name } }
+        locator: { id: row.id, key, connectionKey: account.connectionKey, version: row.content_hash, originalName: row.name, displayName: row.display_name, uploaded: row.source === 'personal' } }
     })
     if (started === revision && identity(state()) === key && state().connectionKey === account.connectionKey) snapshot = { key, revision: started, rows: mapped }
     return mapped
@@ -136,7 +137,7 @@ export function applyEnterpriseSkills(ctx, options) {
         if (body.operation === 'catalog') {
           const rows = await skills.catalog(request.signal)
           invalidate()
-          return Response.json({ skills: rows.map(row => ({ name: row.name, displayName: row.locator.displayName })) }, { headers: { 'cache-control': 'no-store' } })
+          return Response.json({ skills: rows.map(row => ({ name: row.name, displayName: row.locator.displayName, uploaded: row.locator.uploaded })) }, { headers: { 'cache-control': 'no-store' } })
         }
         if (body.operation !== 'validate' || !Array.isArray(body.names) || body.names.length > 50 || body.names.some(name => typeof name !== 'string')) throw new Error('Invalid skill selection.')
         for (const name of new Set(body.names)) await skills.load(name, request.signal)

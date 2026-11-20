@@ -246,6 +246,14 @@ let mobileWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let runtime: HarnessRuntime
 const cloudWorkbenchView = new CloudWorkbenchView()
+let cloudOpenEpoch = 0
+let pendingCloudOpen: { epoch: number; owner: string; appId: unknown; connectionKey: unknown } | undefined
+// Launch authorization is asynchronous and starts before the view controller owns a page.
+function cancelPendingCloudOpen(): void {
+  cloudOpenEpoch++
+  if (pendingCloudOpen) cloudWorkbenchView.closeFor(pendingCloudOpen.owner)
+  pendingCloudOpen = undefined
+}
 let enterpriseDesktop: EnterpriseDesktopRuntime | undefined
 let enterpriseChat: EnterpriseChatView | undefined
 let localWorkbenchCapability: string | undefined
@@ -542,7 +550,13 @@ function installMainWindowRendererRecovery(window: BrowserWindow): void {
     runtime.note('[desktop] main window webContents became responsive again')
   })
   webContents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => {
-    if (isMainFrame) clearProfileBootConfirmation()
+    if (isMainFrame) {
+      clearProfileBootConfirmation()
+      // In-place route changes also invalidate pending launches from the old selection.
+      cancelPendingCloudOpen()
+      // A native child must not outlive the host document that owns its overlays.
+      if (!_isInPlace) { cloudWorkbenchView.close(); cloudWorkbenchView.setHostOccluded(true) }
+    }
   })
 }
 
@@ -1700,7 +1714,7 @@ async function uninstallMarketAndRestart(): Promise<{ ok: boolean }> {
 function registerHarnessHandlers(): void {
   const disposeNotifications = registerDesktopNotificationBridge(() => mainWindow, desktopIconPath, harnessLocale)
   app.once('will-quit', disposeNotifications)
-  for (const channel of ['enterprise-cloud:request', 'enterprise-cloud:open', 'enterprise-cloud:bounds', 'enterprise-cloud:close', 'enterprise-cloud:release']) ipcMain.removeHandler(channel)
+  for (const channel of ['enterprise-cloud:request', 'enterprise-cloud:open', 'enterprise-cloud:bounds', 'enterprise-cloud:close', 'enterprise-cloud:release', 'enterprise-cloud:host-occluded', 'enterprise-cloud:capture']) ipcMain.removeHandler(channel)
   const checkCloudHost = (event: IpcMainInvokeEvent) => {
     assertTrustedMainWindowEvent(event)
     if (!sameHarnessOrigin(event.sender.getURL(), runtime.snapshot().url)) throw new Error('Trusted workbench host required.')
@@ -1715,20 +1729,50 @@ function registerHarnessHandlers(): void {
   ipcMain.handle('enterprise-cloud:open', async (event, appId: unknown, bounds: unknown, connectionKey: unknown, owner: unknown) => {
     const enterprise = checkCloudHost(event)
     if (typeof owner !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(owner) || connectionKey !== enterprise.snapshot().connectionKey) throw new Error('Enterprise account changed.')
-    const launch = await enterprise.cloudRequest({ operation: 'launch', appId }) as CloudLaunch
-    if (launch.connectionKey !== connectionKey) throw new Error('Enterprise account changed.')
-    if (!mainWindow) throw new Error('Workbench window closed.')
-    await cloudWorkbenchView.open(mainWindow, launch, bounds, owner, () => enterpriseDesktop?.snapshot().connected ? enterpriseDesktop.snapshot().connectionKey : undefined,
-      async appId => await enterprise.cloudRequest({ operation: 'launch', appId }) as CloudLaunch)
-    return { appId: launch.appId }
+    cancelPendingCloudOpen()
+    const request = { epoch: cloudOpenEpoch, owner, appId, connectionKey }
+    pendingCloudOpen = request
+    const parent = mainWindow
+    try {
+      const launch = await enterprise.cloudRequest({ operation: 'launch', appId }) as CloudLaunch
+      if (request.epoch !== cloudOpenEpoch || pendingCloudOpen !== request) throw new Error('Cloud workbench opening was cancelled.')
+      // Recheck the initiating document and window after authorization, not just the account.
+      assertTrustedMainWindowEvent(event)
+      if (!parent || parent !== mainWindow || parent.isDestroyed()) throw new Error('Workbench window closed.')
+      if (checkCloudHost(event) !== enterprise || launch.connectionKey !== connectionKey || enterprise.snapshot().connectionKey !== connectionKey) throw new Error('Enterprise account changed.')
+      await cloudWorkbenchView.open(parent, launch, bounds, owner, () => enterpriseDesktop?.snapshot().connected ? enterpriseDesktop.snapshot().connectionKey : undefined,
+        async appId => await enterprise.cloudRequest({ operation: 'launch', appId }) as CloudLaunch)
+      return { appId: launch.appId }
+    } finally {
+      // A superseded completion must never clear the newer request's cancellation handle.
+      if (pendingCloudOpen === request) pendingCloudOpen = undefined
+    }
   })
   ipcMain.handle('enterprise-cloud:release', async (event, appId: unknown, connectionKey: unknown) => {
     assertTrustedMainWindowEvent(event)
     if (!sameHarnessOrigin(event.sender.getURL(), runtime.snapshot().url) || typeof appId !== 'string' || !/^[a-f0-9]{32}$/.test(appId) || typeof connectionKey !== 'string' || !/^[a-f0-9]{16}$/.test(connectionKey)) throw new Error('Invalid cloud application identity.')
+    if (pendingCloudOpen?.appId === appId && pendingCloudOpen.connectionKey === connectionKey) cancelPendingCloudOpen()
     await cloudWorkbenchView.release(appId, connectionKey)
   })
+  // Fail closed until this host document reports its first overlay snapshot.
+  cloudWorkbenchView.setHostOccluded(true)
+  ipcMain.handle('enterprise-cloud:host-occluded', (event, occluded: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    if (!sameHarnessOrigin(event.sender.getURL(), runtime.snapshot().url)) throw new Error('Trusted workbench host required.')
+    if (typeof occluded !== 'boolean') throw new Error('Invalid cloud host visibility.')
+    cloudWorkbenchView.setHostOccluded(occluded)
+  })
+  ipcMain.handle('enterprise-cloud:capture', event => {
+    assertTrustedMainWindowEvent(event)
+    if (!sameHarnessOrigin(event.sender.getURL(), runtime.snapshot().url) || !mainWindow) throw new Error('Trusted workbench host required.')
+    return cloudWorkbenchView.capture(mainWindow)
+  })
   ipcMain.handle('enterprise-cloud:bounds', (event, bounds: unknown, owner: unknown) => { checkCloudHost(event); cloudWorkbenchView.resizeFor(owner, bounds) })
-  ipcMain.handle('enterprise-cloud:close', (event, owner: unknown) => { assertTrustedMainWindowEvent(event); cloudWorkbenchView.closeFor(owner) })
+  ipcMain.handle('enterprise-cloud:close', (event, owner: unknown) => {
+    assertTrustedMainWindowEvent(event)
+    if (pendingCloudOpen?.owner === owner) cancelPendingCloudOpen()
+    cloudWorkbenchView.closeFor(owner)
+  })
 
   ipcMain.removeAllListeners('dsh:storage-load-sync')
   ipcMain.on('dsh:storage-load-sync', (event) => {

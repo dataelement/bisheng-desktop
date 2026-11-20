@@ -35,6 +35,7 @@ afterEach(async () => {
   disposers.splice(0).reverse().forEach(dispose => dispose())
   delete window.dshEnterpriseChat
   delete window.__ModuleLoader__
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 async function mount(connected = false, collection = {}, inert = false, workbench, prepare, work = React.createElement('textarea', { 'aria-label': 'work draft', defaultValue: 'retained draft' })) {
@@ -191,6 +192,47 @@ async function mount(connected = false, collection = {}, inert = false, workbenc
     draft: () => container.querySelector('textarea')
   }
 }
+
+it.each(['projects', 'flat', 'search'])('scopes ordinary Chat rows and controls when switching workbenches in %s mode', async mode => {
+  const ui = await mount(true, { mode, query: mode === 'search' ? 'cloud' : '' }, false, undefined, () => {
+    window.dshEnterpriseChat.history.mockResolvedValue({ epoch: 1, items: [{ id: 'cloud-a', title: 'Cloud chat', updatedAt: '2026-10-16' }], hasMore: true })
+  })
+  const cloudRows = () => container.querySelectorAll('.dshCloudHistoryRow').length
+  const history = () => container.querySelector('.dshRecentHistory').textContent
+  expect(cloudRows()).toBe(1)
+  expect(history()).toContain('more')
+  await ui.workbench('writer')
+  expect(cloudRows()).toBe(0)
+  expect(history()).not.toContain('more')
+  expect(container.querySelector('[data-local-row]')).not.toBeNull()
+  await ui.workbench('research')
+  await ui.pushState({ historyPhase: 'error' })
+  expect(cloudRows()).toBe(0)
+  expect(history()).not.toContain('historyError')
+  await ui.pushState({ historyPhase: 'loading', page: 0 })
+  expect(history()).not.toContain('historyLoading')
+  await ui.pushState({ historyPhase: 'ready' })
+  await ui.workbench(null)
+  expect(cloudRows()).toBe(1)
+  expect(history()).toContain('more')
+  await ui.workbench('writer')
+  await ui.workbench('writer', false)
+  expect(cloudRows()).toBe(1)
+  await ui.workbench('writer')
+  await ui.unloadWorkbench()
+  expect(cloudRows()).toBe(1)
+})
+
+it('hides cloud project UI in a restored workbench and restores it on exit', async () => {
+  const ui = await mount(true, { items: [] }, false, { enabled: true, state: { active: 'writer' } })
+  await ui.projectState({ projects: [{ id: 'project-a', name: 'Cloud project' }] })
+  expect(container.textContent).not.toContain('Cloud project')
+  expect(container.querySelector('.dshCloudHistoryRow')).toBeNull()
+  await ui.workbench(null)
+  expect(container.textContent).toContain('Cloud project')
+  expect(container.querySelector('.dshCloudHistoryRow')).not.toBeNull()
+})
+
 it('shows mode selection on the native landing page and restores it after leaving a workbench', async () => {
   const ui = await mount()
   const draft = ui.draft()
@@ -689,6 +731,8 @@ async function mountLandingMorph({ footer = false, textMotion = false } = {}) {
 
 it('keeps the hidden Work landing laid out and paints frame zero before hiding Chat', async () => {
   const { ui, bridge, workPanel, chatPanel, motions } = await mountLandingMorph({ footer: true })
+  // Drive the paint frames explicitly without the 120 ms fallback racing act().
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
   const draft = ui.draft()
   expect(workPanel.parentElement).toBe(chatPanel.parentElement)
   expect(workPanel.hidden).toBe(true)
@@ -719,6 +763,7 @@ it('keeps the hidden Work landing laid out and paints frame zero before hiding C
 
 it('paints the Work landing before hiding Chat even when the composer cannot morph', async () => {
   const { ui, bridge, elements, workPanel, motions } = await mountLandingMorph()
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
   elements.card.getBoundingClientRect = () => new DOMRect(340, 0, 600, 172)
   const frames = []
   vi.stubGlobal('requestAnimationFrame', callback => frames.push(callback))

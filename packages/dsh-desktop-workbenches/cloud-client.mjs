@@ -29,12 +29,12 @@ export function createCloudComponents(React, ctx) {
       setError('')
       const unsubscribe = api.onCloudAccessRequired?.(value => { if (!disposed && value.owner === owner) setError(t('accessRequired')) })
       const bounds = () => { const r = node.current.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height } }
-      void api.openCloudWorkbench(entry.appId, bounds(), entry.connectionKey, owner).then(() => { if (disposed) void api.closeCloudWorkbench(owner) }).catch(error => { if (!disposed) setError(error.message) })
+      void api.openCloudWorkbench(entry.appId, bounds(), entry.connectionKey, owner).then(() => { if (disposed) void api.closeCloudWorkbench(owner); else window.dispatchEvent(new Event('dsh-cloud-surface-ready')) }).catch(error => { if (!disposed) setError(error.message) })
       const observer = new ResizeObserver(() => { void api.resizeCloudWorkbench(bounds(), owner).catch(() => undefined) })
       observer.observe(node.current)
       return () => { disposed = true; unsubscribe?.(); observer.disconnect(); void api.closeCloudWorkbench(owner).catch(() => undefined) }
     }, [active, entry.id, showConversation, attempt])
-    return h('section', { ref: node, style: { flex: 1, minHeight: 0, height: '100%', width: '100%' }, 'aria-label': entry.title },
+    return h('section', { ref: node, 'data-dsh-cloud-surface': active && !showConversation && !error ? entry.id : undefined, style: { position: 'relative', flex: 1, minHeight: 0, height: '100%', width: '100%' }, 'aria-label': entry.title },
       error && h('div', { role: 'alert' }, h('p', null, error), h('button', { type: 'button', className: 'dshWbBtn', onClick: () => setAttempt(value => value + 1) }, t('retry'))), showConversation && conversation,
       !active && h('span', null, t('title')))
   }

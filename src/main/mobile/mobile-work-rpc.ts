@@ -106,6 +106,7 @@ function parseOffice(payload: unknown): WorkDispatch | { error: string } {
   const endpoint = body.endpoint
   if (
     endpoint !== 'catalog' &&
+    endpoint !== 'welcome-cases' &&
     endpoint !== 'state' &&
     endpoint !== 'mode' &&
     endpoint !== 'select' &&
@@ -114,8 +115,10 @@ function parseOffice(payload: unknown): WorkDispatch | { error: string } {
     return { error: 'Unknown Office operation.' }
   }
   const request: Record<string, unknown> = { endpoint }
-  if (endpoint !== 'catalog' || body.sessionId !== undefined) {
-    if (endpoint !== 'catalog') {
+  // catalog and welcome-cases read shared catalogues and take no session.
+  const sessionless = endpoint === 'catalog' || endpoint === 'welcome-cases'
+  if (!sessionless || body.sessionId !== undefined) {
+    if (!sessionless) {
       const sessionId = sessionIdOf(body.sessionId)
       if (sessionId === undefined) return { error: 'Choose an active session.' }
       request.sessionId = sessionId

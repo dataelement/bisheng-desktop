@@ -39,6 +39,7 @@ async function createService(
     ...options,
     vault,
     fetchImpl,
+    cloudRoot: join(directory, 'cloud-projects'),
     allowInsecureLoopback: true,
     note: (entry) => { notes.push(entry.event); entries.push(entry) }
   })
@@ -67,13 +68,65 @@ async function completeBrowserLogin(origin: string, authorizationUrl: string) {
   expect(await fetch(callback).then((response) => response.status)).toBe(200)
 }
 
+it('reads the cloud protocol from the currently signed-in enterprise and stops after logout', async () => {
+  const first = createMockEnterpriseServer({ port: 0 })
+  const second = createMockEnterpriseServer({ port: 0 })
+  const firstOrigin = await first.listen()
+  const secondOrigin = await second.listen()
+  cleanups.push(() => first.close(), () => second.close())
+  const guideRequests: string[] = []
+  const { service } = await createService(createEnterpriseFetch(async (input, init) => {
+    if (new URL(input).pathname === '/api/v1/dev-toolkit/workbench-guide.md') {
+      expect(new Headers(init?.headers).get('authorization')).toMatch(/^Bearer .+/u)
+      guideRequests.push(input)
+      return new Response('# Enterprise protocol\n', { headers: { 'content-type': 'text/markdown' } })
+    }
+    return fetch(input, init)
+  }))
+  for (const origin of [firstOrigin, secondOrigin]) {
+    await completeBrowserLogin(origin, (await service.startLogin(origin)).authorizationUrl)
+    await waitFor(() => service.snapshot().connected)
+    const result = await service.cloudRequest({ operation: 'guide' })
+    expect(result).toMatchObject({ guideUrl: `${origin}/api/v1/dev-toolkit/workbench-guide.md` })
+  }
+  expect(guideRequests).toEqual([
+    `${firstOrigin}/api/v1/dev-toolkit/workbench-guide.md`,
+    `${secondOrigin}/api/v1/dev-toolkit/workbench-guide.md`
+  ])
+  await service.logout()
+  await expect(service.cloudRequest({ operation: 'guide' })).rejects.toThrow()
+  expect(guideRequests).toHaveLength(2)
+})
+
+it('discards an old enterprise protocol response when the account changes during the request', async () => {
+  const first = createMockEnterpriseServer({ port: 0 })
+  const second = createMockEnterpriseServer({ port: 0 })
+  const firstOrigin = await first.listen()
+  const secondOrigin = await second.listen()
+  cleanups.push(() => first.close(), () => second.close())
+  let finishGuide: ((response: Response) => void) | undefined
+  const { service } = await createService(createEnterpriseFetch(async (input, init) => {
+    if (input === `${firstOrigin}/api/v1/dev-toolkit/workbench-guide.md`) {
+      return new Promise<Response>(resolve => { finishGuide = resolve })
+    }
+    return fetch(input, init)
+  }))
+  await completeBrowserLogin(firstOrigin, (await service.startLogin(firstOrigin)).authorizationUrl)
+  await waitFor(() => service.snapshot().connected)
+  const pending = expect(service.cloudRequest({ operation: 'guide' })).rejects.toThrow('Enterprise account changed.')
+  await waitFor(() => finishGuide !== undefined)
+  await service.startLogin(secondOrigin)
+  finishGuide?.(new Response('# Old enterprise protocol', { headers: { 'content-type': 'text/markdown' } }))
+  await pending
+})
+
 async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
   const started = Date.now()
-  while (Date.now() - started < timeoutMs) {
-    if (predicate()) return
+  // Check readiness before the deadline so a delayed timer cannot discard it.
+  while (!predicate()) {
+    if (Date.now() - started >= timeoutMs) throw new Error('Timed out waiting for enterprise service.')
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
-  throw new Error('Timed out waiting for enterprise service.')
 }
 
 describe('enterprise service login loop', () => {
@@ -205,6 +258,36 @@ describe('enterprise service login loop', () => {
     expect(service.snapshot().models[0]).toMatchObject(metadata)
     await service.refreshModels()
     expect(service.snapshot().models[0]).toMatchObject(metadata)
+  })
+
+  it('F016: carries credit ratio hints through login, catalog refresh and detached public snapshots', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    let ratio = '3.00'
+    const fetchImpl: EnterpriseFetch = async (input, init) => {
+      const response = await globalThis.fetch(input, init)
+      if (!String(input).endsWith('/api/v1/dsh/models')) return response
+      const body = await response.json()
+      body.data = body.data.map((model: Record<string, unknown>, index: number) => index === 0
+        ? { ...model, pricing_hint: { ratio, base: false, free: false } }
+        : model)
+      return Response.json(body)
+    }
+    const { service } = await createService(createEnterpriseFetch(fetchImpl))
+    const started = await service.startLogin(origin)
+    await completeBrowserLogin(origin, started.authorizationUrl)
+    await waitFor(() => service.snapshot().modelsAvailable)
+    const snapshot = service.snapshot()
+    expect(snapshot.models[0]?.pricing_hint).toEqual({ ratio: '3.00', base: false, free: false })
+    expect(snapshot.models.slice(1).every(model => model.pricing_hint === undefined)).toBe(true)
+    snapshot.models[0]!.pricing_hint!.ratio = 'tampered'
+    expect(service.snapshot().models[0]?.pricing_hint?.ratio).toBe('3.00')
+    const before = service.snapshot().revision
+    ratio = '1.50'
+    await service.refreshModels()
+    expect(service.snapshot().models[0]?.pricing_hint?.ratio).toBe('1.50')
+    expect(service.snapshot().revision).toBeGreaterThan(before)
   })
 
   it('AC-T05/AC-T07: title broker binds the current epoch, refreshes once, and never sends broker identity fields', async () => {

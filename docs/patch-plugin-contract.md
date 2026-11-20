@@ -397,3 +397,21 @@ Chat 和 Work 共用 `packages/dsh-desktop-office/welcome-cases.json`，保留�
 Work 欢迎页的案例和参考模板跟随输入框进入同一会话滚动区。嵌入 PPT 模板时不再额外设置内部滚动区；独立 PPT 选择器保留原滚动布局。草稿滚至边缘时继续使用上游编辑器向会话滚动区转发滚动的行为。
 
 点击案例将可编辑任务填入原生输入框，使用 detect 坐标与 `draftRev` CAS，不发送消息、不重置引用和附件。选择前尚无工作空间时，仅在本地暂存案例并提示选择工作空间；暂存选择认领到首次可编辑目标会话，只有空草稿才能自动填入，已有内容须再次点击案例才能填词。切模式清除暂存选择，切会话或输入变化使异步插入失效。模式事件显式传递 `mode: ppt | null`，避免退出 PPT 后仍显示 PPT 案例。
+
+### 积分倍率展示与未配置价格提示（毕昇 F016，Harness 0.2.1-rc.2，2026-11-12）
+
+毕昇 `/api/v1/dsh/models` 为每个模型增加可选的 `pricing_hint`（`ratio`、`base`、`free`），表示相对租户基准模型的积分倍率，按输入与输出 3:1 估算，只用于展示；扣费仍由服务端按每次调用的实际用量计算。`contract.js` 只接受两位小数或 `<0.01` 的倍率，格式不对时丢弃该提示，不丢弃模型；旧服务端不返回该字段，桌面照常工作。主进程 `EnterpriseService` 把提示随模型目录发布到公开状态；账号页模型列表在服务商名称后显示倍率（基准、免费另有文字）。
+
+Work 模型下拉框的模型名由 `dsh-client-ui-model-selection` 渲染，外层固定带 `data-provider-id` 和 `data-model-id`。名字本身走 `conversation.input.model.label`，这是 single 类型的插槽，随包的 `dsh-client-ui-deepseek-model-label-1017` 已在其中注册。企业插件不占这个插槽：它按包 README 给出的方式，只用这两个属性定位，注入一段样式（`#dsh-desktop-enterprise-model-ratio`），在毕昇企业服务商（`bisheng-enterprise`）下带倍率提示的模型名后面用 `::after` 显示倍率标签。标签配色照搬 Tag 原语，模型 ID 和文案都以 CSS 字符串转义后写入。所以 DeepSeek 的 1017 标签和倍率标签可以同时出现，不再互相遮挡（2026-11-13 Callum 定）。未登录、连接旧服务端或没有企业模型时样式为空；提示随现有前台目录刷新（启动、回到前台、账号变化）更新，语言切换时重新生成；插件卸载时删除样式。已知局限：倍率是生成内容，屏幕阅读器可能不朗读，触发按钮的无障碍名称也不包含倍率。上游以后若把插槽改为可组合（chain/list），或提供模型附加信息的正式接缝，再改用正式接缝。
+
+服务端对没有价格记录的模型返回 HTTP 503、`code: model_pricing_missing`（毕昇错误码 26176）。`openai.js` 将其列为平台错误码；`dsh-client-ui-chat` 与 `dsh-client-ui-trajectory` 的现有平台错误本地化补丁各增加一条对应的中英文提示。没有新增补丁文件。随上游提供平台错误码本地化接缝时一并移除。
+
+回归：`test/enterprise-contract.test.ts`、`test/enterprise-service.test.ts`、`test/enterprise-package.test.ts`、`test/enterprise-model-sync.test.mjs`、`test/enterprise-model-label.test.mjs`、`test/enterprise-openai-adapter.test.mjs`、`test/provider-error-patch.test.ts`。补丁由干净的原始包重新生成，`patch-package` 可完整撤销并重新应用。实际 Work 下拉框与账号页显示需连接已升级的毕昇服务端验收。
+
+### ASAR 路径的 stat 权限位（Harness 0.2.1-rc.2，Electron 43）
+
+`@deepseek-ai/dsh-fs-local@0.2.1-rc.2` 的 `probe()` 与 `probeNoFollow()` 在 `stat` / `lstat(..., { bigint: true })` 之后执行 `Number(info.mode & 511n)`。Electron 43 的 ASAR 视图对 `.asar` 路径忽略 `bigint`，返回普通 `Stats`，`mode` 仍是 Number，于是抛出 `Cannot mix BigInt and other types`。`read`、`lstat` 和目录列举都会先走到这两处。普通磁盘文件返回 `BigIntStats`，不受影响。已发布的 `0.2.2-rc.3` 仍是同一表达式，升级依赖不能消除。
+
+补丁只把两处改成 `Number(info.mode) & 0o777`，不改 `Stats` 对象本身。`Stats.prototype.isFile()` 仍用 Number 做位运算，把 `mode` 改成 BigInt 会在类型判断处抛同样的错。上游删除 `info.mode & 511n` 后移除 `patches/@deepseek-ai+dsh-fs-local+0.2.1-rc.2.patch`，并保留 `test/fs-local-asar-stat.test.ts`。
+
+这个补丁不改变 Electron 把 `app.asar` 本体显示成目录的行为。修复后读取归档文件本身会得到 `FS_NOT_REGULAR_FILE`，读取归档内文件可以继续。ASAR 路径的 `mtimeNs` / `ctimeNs` 仍可能缺失，版本令牌不能用于新鲜度判断。
