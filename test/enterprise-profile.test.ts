@@ -100,6 +100,14 @@ describe('enterprise display profile parser', () => {
     expect(state.user).not.toHaveProperty('avatar')
   })
 
+  it.each([undefined, null, '', ' ', 123])('does not use the nickname as a missing account (%j)', external_id => {
+    const state = new EnterpriseProfileState()
+    const current = profile()
+    state.apply({ ...current, user: { ...current.user, external_id } }, BASE, 'user-1', 'tenant-1', START)
+    expect(state.user?.username).toBe('alice')
+    expect(state.user).not.toHaveProperty('external_id')
+  })
+
   it.each([
     7, {}, [], 'x'.repeat(16_385), 'https://other.example/a.png', '//other.example/a.png',
     'https://user:password@enterprise.example/a.png', '/a.png#fragment',
@@ -127,18 +135,20 @@ describe('enterprise display profile parser', () => {
 
 describe('enterprise service display profile refresh', () => {
   it('warms after session restore, publishes detached metadata, and never writes signed URLs into the vault', async () => {
-    const r = await runtime()
+    const current = profile()
+    const r = await runtime(async () => Response.json({ ...current, user: { ...current.user, external_id: 'Alice.Login' } }))
     await r.service.refreshProfile()
     await r.service.refreshModels()
     expect(r.profileRequests()).toHaveLength(1)
     expect(r.service.snapshot()).toMatchObject({ connected: true, phase: 'connected', modelsAvailable: true,
-      user: { display_name: 'Alice Updated', avatar: 'https://enterprise.example/minio/avatar.png?X-Amz-Signature=display-secret' } })
+      user: { display_name: 'Alice Updated', external_id: 'Alice.Login', avatar: 'https://enterprise.example/minio/avatar.png?X-Amz-Signature=display-secret' } })
     const before = r.service.snapshot()
     if (before.user) before.user.display_name = 'Caller mutation'
     expect(r.service.snapshot().user?.display_name).toBe('Alice Updated')
     expect(r.replace).not.toHaveBeenCalled()
     expect(await readFile(r.filename)).toEqual(r.storedBytes)
     expect(JSON.stringify(await r.vault.read())).not.toContain('display-secret')
+    expect((await r.vault.read()).session?.user).not.toHaveProperty('external_id')
     expect((await r.vault.read()).session?.user?.display_name).toBe('Stored Alice')
   })
 
@@ -175,15 +185,41 @@ describe('enterprise service display profile refresh', () => {
     expect(r.replace).not.toHaveBeenCalled()
   })
 
-  it('uses a five-minute freshness window for foreground events', async () => {
-    const r = await runtime()
+  it('refreshes browser changes on native focus despite the renderer cooldown', async () => {
+    let nickname = 'Alice'
+    let avatar = '/object/bisheng/avatar/1/first.png?signature=first'
+    const r = await runtime(async () => {
+      const current = profile(avatar)
+      return Response.json({ ...current, user: { ...current.user, username: nickname, display_name: nickname } })
+    })
     await r.service.refreshProfile()
-    r.at(299_999)
+    r.at(100)
+    nickname = 'Bella'
+    avatar = '/object/bisheng/avatar/1/from-web.png?signature=new'
     await r.service.refreshProfile('foreground')
     expect(r.profileRequests()).toHaveLength(1)
-    r.at(300_000)
-    await r.service.refreshProfile('foreground')
+    await Promise.all([r.service.profileWindowFocused(), r.service.profileWindowFocused()])
     expect(r.profileRequests()).toHaveLength(2)
+    expect(r.service.snapshot().user).toMatchObject({ username: 'Bella', display_name: 'Bella', avatar: `${BASE}${avatar}` })
+  })
+
+  it('reads a desktop upload immediately and discards a profile read started before it', async () => {
+    const beforeUpload = deferred<Response>()
+    const [oldAvatar, uploadedAvatar] = ['/object/bisheng/avatar/1/old.png', '/object/bisheng/avatar/1/from-desktop.png']
+    const read = vi.fn<EnterpriseFetch>()
+      .mockImplementationOnce(() => beforeUpload.promise)
+      .mockResolvedValueOnce(Response.json(profile(uploadedAvatar)))
+    const r = await runtime(read)
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1))
+    const connectionKey = r.service.snapshot().connectionKey ?? ''
+    await r.service.profileUpdated('stale-connection')
+    const refreshed = [r.service.profileUpdated(connectionKey), r.service.profileWindowFocused()]
+    beforeUpload.resolve(Response.json(profile(oldAvatar)))
+    await Promise.all(refreshed)
+
+    expect(r.profileRequests()).toHaveLength(2)
+    expect(r.service.snapshot().user?.avatar).toBe(`${BASE}${uploadedAvatar}`)
+    expect(r.replace).not.toHaveBeenCalled()
   })
 
   it('coalesces simultaneous restore/account/image/foreground requests', async () => {
@@ -206,10 +242,12 @@ describe('enterprise service display profile refresh', () => {
     const r = await runtime(async (_input, init) => { signal = init?.signal; entered.resolve(); return gate.promise })
     await entered.promise
     const pending = r.service.refreshProfile()
+    const refocused = r.service.profileWindowFocused()
     await r.service.logout()
     expect(signal?.aborted).toBe(true)
     gate.resolve(Response.json(profile()))
-    await pending
+    await Promise.all([pending, refocused])
+    expect(r.profileRequests()).toHaveLength(1)
     expect(r.service.snapshot()).toMatchObject({ connected: false, models: [], modelsAvailable: false })
     expect(r.service.snapshot().user).toBeUndefined()
     expect(r.notes).not.toContain('profile_refresh_failed')
@@ -229,6 +267,7 @@ describe('enterprise service display profile refresh', () => {
       const count = r.profileRequests().length
       r.at(retryAt - 1)
       await r.service.refreshProfile('account')
+      await r.service.profileWindowFocused()
       expect(r.profileRequests()).toHaveLength(count)
       expect(r.service.snapshot()).toMatchObject({ phase: 'connected', connected: true, modelsAvailable: true,
         models: before.models, user: before.user })

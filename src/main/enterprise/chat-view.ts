@@ -10,7 +10,6 @@ import { chatLocaleScript } from './chat-locale'
 import { chatLayoutCss } from './chat-layout'
 import { chatLandingGeometryScript, parseChatLandingGeometry } from './chat-landing-geometry'
 import { chatLandingTextMotionScript } from './chat-landing-text-motion'
-import { CHAT_WELCOME_CSS, CHAT_WELCOME_WORLD, chatWelcomeCasesScript } from './chat-welcome-cases'
 import { parseUsageSummary, parseUsageStorage, type EnterpriseUsage, type UsageSection } from '../../shared/enterprise-usage'
 import { EnterprisePlatformError, isEnterprisePlatformError } from './enterprise-request'
 import { EnterpriseChatProjects } from './chat-projects'
@@ -19,11 +18,16 @@ import { raiseUpdateCardViewIfShown } from '../update/update-card-view'
 
 /** Remote Chat gets its own in-memory browser session and a presentation-only preload. */
 const DOCUMENT_LOAD_TIMEOUT_MS = 45_000
+const CHAT_PRESENTATION_WORLD = 1001
 const LANDING_GEOMETRY_TIMEOUT_MS = 120
 const LANDING_HANDOFF_TIMEOUT_MS = 120
 const LANDING_TEXT_MOTION_TIMEOUT_MS = 155
 const INITIAL_BACKOFF_MS = [2_000, 5_000, 10_000]
 const RENEWAL_BACKOFF_MS = [2_000, 5_000, 10_000, 30_000]
+const PROFILE_WRITE_METHODS = new Map([
+  ['/api/v1/user/avatar', 'POST'],
+  ['/api/v1/user/profile/nickname', 'PATCH']
+])
 const RETRYABLE_NETWORK_CODES = new Set([
   'ERR_CONNECTION_RESET',
   'ERR_CONNECTION_REFUSED',
@@ -81,6 +85,11 @@ export class EnterpriseChatView {
   private projectsRequested = false
   // Projects have no server push; re-read when any Desktop window regains focus.
   private readonly refreshProjectsOnFocus = (): void => { this.projects?.refreshIfStale() }
+  private readonly refreshProfileOnFocus = (_event: Electron.Event, window: BrowserWindow): void => {
+    const main = this.notificationWindow?.()
+    if (main !== window || window.isDestroyed()) return
+    void this.enterprise.profileWindowFocused().catch(() => this.note('[enterprise-chat] foreground_profile_refresh_failed'))
+  }
   private projectFocusBound = false
   private modalOpen = false
   private modalRequest = 0
@@ -123,13 +132,18 @@ export class EnterpriseChatView {
   private settingsFailure?: 'load' | 'unsupported'
   private settingsTimer?: NodeJS.Timeout
   private appearance?: string
-  private welcomeCases?: { active: boolean; locale: 'zh' | 'en'; revision: number }
-  private welcomeRevision = 0
   private landingTextMotionRevision = 0
 
   constructor(private enterprise: EnterpriseDesktopRuntime, private note: (line: string) => void, private notificationWindow?: () => BrowserWindow | undefined) {
+    app.on('browser-window-focus', this.refreshProfileOnFocus)
+    let profile = enterprise.snapshot().user
     this.unsubscribe = enterprise.subscribe((state) => {
+      const nextProfile = state.user
+      const profileChanged = profile?.username !== nextProfile?.username ||
+        profile?.display_name !== nextProfile?.display_name || profile?.avatar !== nextProfile?.avatar
+      profile = nextProfile
       if (!state.connected || (this.key !== undefined && state.connectionKey !== this.key)) this.clear()
+      else if (profileChanged && nextProfile) this.notifyWorkspaceProfileChanged()
       this.notify()
       if (state.connected && !this.view && this.state.phase !== 'error' && this.presentation?.visible && this.owner && !this.owner.isDestroyed()) {
         void this.connect()
@@ -167,6 +181,15 @@ export class EnterpriseChatView {
     if (window && !window.isDestroyed()) window.webContents.send('enterprise-chat:changed', this.snapshot())
   }
 
+  private notifyWorkspaceProfileChanged(): void {
+    const contents = this.view?.webContents
+    if (!contents || contents.isDestroyed()) return
+    const url = new URL(contents.getURL() || 'about:blank')
+    if (url.origin !== this.origin || !/^\/workspace(?:\/|$)/u.test(url.pathname)) return
+    // The embedded page refreshes its own profile with its existing web session.
+    contents.send('enterprise-chat:profile-changed')
+  }
+
   present(window: BrowserWindow, input: unknown): EnterpriseChatViewState {
     this.presentation = parseChatPresentation(input)
     if (this.owner !== window) {
@@ -202,7 +225,7 @@ export class EnterpriseChatView {
     })()`
     try {
       // The first callback runs before paint. A second one lets Chromium commit that frame.
-      await loadWithin(view.webContents.executeJavaScriptInIsolatedWorld(CHAT_WELCOME_WORLD, [{ code }]), LANDING_HANDOFF_TIMEOUT_MS)
+      await loadWithin(view.webContents.executeJavaScriptInIsolatedWorld(CHAT_PRESENTATION_WORLD, [{ code }]), LANDING_HANDOFF_TIMEOUT_MS)
     } catch {
       // A hidden or replaced renderer can stop scheduling frames. Never hold the outgoing Work frame indefinitely.
       if (ready() && frame === view.webContents.mainFrame && url === view.webContents.getURL()) {
@@ -257,7 +280,7 @@ export class EnterpriseChatView {
     const deadline = Date.now() + LANDING_GEOMETRY_TIMEOUT_MS
     const sample = async (): Promise<unknown> => {
       for (let attempt = 0; attempt < 4 && Date.now() < deadline && current(); attempt++) {
-        const value: unknown = await view.webContents.executeJavaScriptInIsolatedWorld(CHAT_WELCOME_WORLD, [{ code }])
+        const value: unknown = await view.webContents.executeJavaScriptInIsolatedWorld(CHAT_PRESENTATION_WORLD, [{ code }])
         if (value !== null) return value
         // Native resize lands asynchronously. Wait in main so a hidden Chromium timer cannot stall the retry.
         if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 16))
@@ -296,7 +319,7 @@ export class EnterpriseChatView {
     const revision = ++this.landingTextMotionRevision
     const code = chatLandingTextMotionScript(url, phase, revision, Date.now() + LANDING_TEXT_MOTION_TIMEOUT_MS)
     try {
-      await loadWithin(view.webContents.executeJavaScriptInIsolatedWorld(CHAT_WELCOME_WORLD, [{ code }]), LANDING_TEXT_MOTION_TIMEOUT_MS)
+      await loadWithin(view.webContents.executeJavaScriptInIsolatedWorld(CHAT_PRESENTATION_WORLD, [{ code }]), LANDING_TEXT_MOTION_TIMEOUT_MS)
     } catch {
       // The animation is optional. Navigation and late renderer responses must not block the switch.
       if (epoch === this.generation && view === this.view && !view.webContents.isDestroyed() &&
@@ -616,7 +639,6 @@ export class EnterpriseChatView {
     const shown = visible && this.state.phase === 'ready' && surfaceReady
     if (!shown || this.presentation.settings) this.discardDialogBacking()
     if (!shown && this.view.getVisible()) this.view.setVisible(false)
-    this.syncWelcomeCases(shown && !this.presentation.settings)
     // Settings hides the view while changing locale; its navigation labels still need updates.
     if (this.state.phase === 'ready') this.applyLocale()
     if (!visible && !measureHiddenLanding) return
@@ -686,24 +708,6 @@ export class EnterpriseChatView {
     void this.view.webContents.executeJavaScript(chatLocaleScript(locale)).catch(() => this.note('[enterprise-chat] locale_delivery_failed'))
   }
 
-  /** Only the visible, identity-owned blank Chat document receives the case surface. */
-  private syncWelcomeCases(visible: boolean): void {
-    const view = this.view, origin = this.origin
-    if (!view || !origin || this.state.phase !== 'ready') return
-    const url = new URL(view.webContents.getURL() || 'about:blank')
-    if (url.origin !== origin) return
-    const active = visible && !this.modalOpen && url.pathname === '/workspace/c/new' && this.landing === true
-    const locale = this.presentation?.locale ?? 'zh'
-    if (!active && !this.welcomeCases?.active) return
-    if (active === this.welcomeCases?.active && locale === this.welcomeCases.locale) return
-    const next = { active, locale, revision: ++this.welcomeRevision }
-    this.welcomeCases = next
-    void view.webContents.executeJavaScriptInIsolatedWorld(CHAT_WELCOME_WORLD, [{ code: chatWelcomeCasesScript({ ...next, origin }) }]).catch(() => {
-      if (this.welcomeCases === next) this.welcomeCases = undefined
-      this.note('[enterprise-chat] welcome_cases_delivery_failed')
-    })
-  }
-
   private connect(): Promise<void> {
     if (this.backoffScheduled) return this.pending ?? Promise.resolve()
     if (this.pending) return this.pending
@@ -735,14 +739,22 @@ export class EnterpriseChatView {
         })
         isolated.setPermissionCheckHandler((_contents, permission, requestingOrigin) => permission === 'clipboard-sanitized-write' && requestingOrigin === origin)
         const view = new WebContentsView({ webPreferences: { session: isolated, preload: join(import.meta.dirname, '../preload/enterprise-chat.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true } })
-        // Observe successful saves on this identity-owned browser session. The
-        // notification carries no remote data or authority; Harness rereads permissions.
-        isolated.webRequest.onCompleted({ urls: [origin + '/api/v1/dsh/capabilities/*/availability'] }, details => {
+        // Observe successful saves on this identity-owned browser session. Use the
+        // server's current profile and permissions rather than request data.
+        isolated.webRequest.onCompleted({ urls: [
+          origin + '/api/v1/dsh/capabilities/*/availability',
+          ...[...PROFILE_WRITE_METHODS.keys()].flatMap(path => [origin + path, origin + '/workspace' + path])
+        ] }, details => {
           if (generation !== this.generation || this.view !== view || this.key !== key) return
-          if (details.webContentsId !== view.webContents.id || details.method !== 'PUT' || details.statusCode !== 200) return
+          if (details.webContentsId !== view.webContents.id || details.statusCode !== 200) return
           const saved = new URL(details.url)
-          if (saved.origin !== origin || !/^\/api\/v1\/dsh\/capabilities\/[1-9][0-9]*\/availability$/u.test(saved.pathname)) return
-          if (this.owner && !this.owner.isDestroyed()) this.owner.webContents.send('enterprise-chat:tools-changed')
+          if (saved.origin !== origin) return
+          const apiPath = saved.pathname.replace(/^\/workspace\//u, '/')
+          if (PROFILE_WRITE_METHODS.get(apiPath) === details.method) {
+            void this.enterprise.profileUpdated(key).catch(() => this.note('[enterprise-chat] saved_profile_refresh_failed'))
+          } else if (details.method === 'PUT' && /^\/api\/v1\/dsh\/capabilities\/[1-9][0-9]*\/availability$/u.test(saved.pathname)) {
+            if (this.owner && !this.owner.isDestroyed()) this.owner.webContents.send('enterprise-chat:tools-changed')
+          }
         })
         view.setVisible(false)
         view.setBackgroundColor(this.presentation?.theme === 'dark' ? '#141416' : '#ffffff')
@@ -830,7 +842,6 @@ export class EnterpriseChatView {
           if (channel !== 'enterprise-chat:landing' || !/^\/workspace\/c\/[a-zA-Z0-9_-]+$/u.test(url.pathname) || typeof report.landing !== 'boolean') return
           this.landing = url.pathname === '/workspace/c/new' && report.landing
           this.landingPath = url.pathname
-          this.syncWelcomeCases(Boolean(this.presentation?.visible && !this.presentation.settings))
           this.notify()
         })
         view.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
@@ -839,7 +850,6 @@ export class EnterpriseChatView {
             this.dialogViewport = undefined
             this.landing = undefined
             this.landingPath = undefined
-            this.welcomeCases = undefined
             this.layout()
             // Streams belong to the outgoing document; the next one reports its own.
             if (this.running.length) { this.running = []; this.notify() }
@@ -887,7 +897,7 @@ export class EnterpriseChatView {
           if (generation !== this.generation) return
           if (new URL(view.webContents.getURL()).pathname.startsWith('/workspace')) {
             // Host-owned module styles live in this document until the next full load replaces it.
-            void view.webContents.insertCSS(`${MODULE_THEME_CSS}\n${chatLayoutCss(process.platform)}\n${CHAT_WELCOME_CSS}`).catch(() => this.note('[enterprise-chat] module_style_failed'))
+            void view.webContents.insertCSS(`${MODULE_THEME_CSS}\n${chatLayoutCss(process.platform)}`).catch(() => this.note('[enterprise-chat] module_style_failed'))
             this.dialogViewport = undefined
             this.state = { phase: 'ready' }; void this.syncSettings(); this.layout(); this.notify()
           } else {
@@ -1110,7 +1120,6 @@ export class EnterpriseChatView {
     this.settingsFailure = undefined
     this.landing = undefined
     this.landingPath = undefined
-    this.welcomeCases = undefined
     this.navigation = undefined
     this.navigationRequest++
     this.generation += 1
@@ -1143,5 +1152,9 @@ export class EnterpriseChatView {
     this.state = { phase: 'idle' }
   }
 
-  dispose(): void { this.unsubscribe(); this.clear() }
+  dispose(): void {
+    app.removeListener('browser-window-focus', this.refreshProfileOnFocus)
+    this.unsubscribe()
+    this.clear()
+  }
 }

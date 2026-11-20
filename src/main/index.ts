@@ -1024,7 +1024,7 @@ function createWindow(): BrowserWindow {
     ...(process.platform === 'darwin' ? {
       titleBarStyle: 'hiddenInset' as const,
       trafficLightPosition: { x: 16, y: 18 },
-      ...(nativeTheme.shouldUseDarkColors ? { vibrancy: 'sidebar' as const } : {}),
+      vibrancy: 'sidebar' as const,
       visualEffectState: 'active' as const
     } : {}),
     ...(isWindows
@@ -1035,7 +1035,7 @@ function createWindow(): BrowserWindow {
       }
       : {}),
     backgroundColor: process.platform === 'darwin'
-      ? nativeTheme.shouldUseDarkColors ? '#00000000' : '#f9fafb'
+      ? '#00000000'
       : nativeTheme.shouldUseDarkColors ? '#141416' : '#f8f8f6',
     webPreferences: {
       contextIsolation: true,
@@ -1882,11 +1882,17 @@ function registerHarnessHandlers(): void {
   })
 
   ipcMain.removeHandler('desktop-titlebar:set-theme')
-  ipcMain.handle('desktop-titlebar:set-theme', (event, isDark: unknown) => {
+  ipcMain.handle('desktop-titlebar:set-theme', (event, isDark: unknown, source: unknown) => {
     assertTrustedMainWindowEvent(event)
     if (typeof isDark !== 'boolean') {
       throw new Error('The BISHENG titlebar theme must be a boolean.')
     }
+    if (source !== undefined && source !== 'light' && source !== 'dark' && source !== 'system') {
+      throw new Error('The BISHENG native theme source must be light, dark or system.')
+    }
+    // The native material must follow fixed app themes while "system" keeps
+    // following macOS. Pinning only the resolved boolean would freeze that mode.
+    if (process.platform === 'darwin' && source !== undefined) nativeTheme.themeSource = source
     if (mainWindow) {
       applyWindowChromeTheme(mainWindow, isDark)
     }

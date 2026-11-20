@@ -7,7 +7,6 @@ it('marks the platform before mount and tracks fullscreen without retaining list
   const unsubscribe = vi.fn()
   let receive: (value: boolean) => void = () => {}
   const dispose = mountMacosWindowChrome(doc, listener => { receive = listener; return unsubscribe })
-  expect(doc.querySelector('[data-dsh-macos-sidebar-theme]')).not.toBeNull()
   expect(doc.documentElement.dataset.platform).toBe('darwin')
   expect(doc.documentElement.hasAttribute('data-fullscreen')).toBe(false)
   receive(true)
@@ -16,7 +15,6 @@ it('marks the platform before mount and tracks fullscreen without retaining list
   expect(doc.documentElement.hasAttribute('data-fullscreen')).toBe(false)
   dispose()
   expect(unsubscribe).toHaveBeenCalledOnce()
-  expect(doc.querySelector('[data-dsh-macos-sidebar-theme]')).toBeNull()
 })
 
 it('retains fullscreen until the document root exists', () => {
@@ -45,45 +43,4 @@ it('opts this host into Web shortcuts without changing official desktop detectio
   const dispose = mountMacosWindowChrome(doc, () => () => {})
   expect(detect(doc, { platform: 'MacIntel' })).toEqual({ runtime: 'web', platform: 'macos' })
   dispose()
-})
-
-it('shares sidebar theme ownership across repeated mounts', () => {
-  const doc = document.implementation.createHTMLDocument()
-  const first = mountMacosWindowChrome(doc, () => () => {})
-  const second = mountMacosWindowChrome(doc, () => () => {})
-  expect(doc.querySelectorAll('[data-dsh-macos-sidebar-theme]')).toHaveLength(1)
-  first()
-  expect(doc.querySelectorAll('[data-dsh-macos-sidebar-theme]')).toHaveLength(1)
-  second()
-  expect(doc.querySelectorAll('[data-dsh-macos-sidebar-theme]')).toHaveLength(0)
-})
-
-it('applies the solid sidebar fill only while Harness uses its light palette', () => {
-  const frame = document.createElement('iframe')
-  document.body.append(frame)
-  try {
-    const doc = frame.contentDocument
-    if (!doc) throw new Error('Missing window chrome fixture document')
-    const sidebar = doc.createElement('aside')
-    sidebar.dataset.dshSidebarRoot = ''
-    const content = doc.createElement('main')
-    doc.body.append(sidebar, content)
-    const dispose = mountMacosWindowChrome(doc, () => () => {})
-    try {
-      const style = doc.querySelector<HTMLStyleElement>('[data-dsh-macos-sidebar-theme]')
-      const fill = style?.sheet?.cssRules[0]
-      if (!fill || !('selectorText' in fill) || typeof fill.selectorText !== 'string') {
-        throw new Error('Missing macOS sidebar fill rule')
-      }
-      for (const dark of [true, false, true]) {
-        doc.body.toggleAttribute('data-ds-dark-theme', dark)
-        expect(sidebar.matches(fill.selectorText)).toBe(!dark)
-        expect(content.matches(fill.selectorText)).toBe(false)
-      }
-    } finally {
-      dispose()
-    }
-  } finally {
-    frame.remove()
-  }
 })
