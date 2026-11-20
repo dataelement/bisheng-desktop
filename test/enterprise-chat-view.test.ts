@@ -51,7 +51,7 @@ const elapse = async (ms: number) => { await vi.advanceTimersByTimeAsync(ms); aw
 const presentation = { visible: true, theme: 'dark', bounds: { x: 0, y: 56, width: 1100, height: 700 } }
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve() }
 function fixture(hasMainWindow = false) {
-  let state: { connected: boolean; connectionKey: string; revision?: number } = { connected: true, connectionKey: 'tenant-a' }
+  let state: { connected: boolean; connectionKey: string; revision?: number; user?: { id: string; display_name: string; avatar?: string } } = { connected: true, connectionKey: 'tenant-a' }
   let change: (state: any) => void = () => {}
   const enterprise = { snapshot: () => state, subscribe: (listener: typeof change) => { change = listener; return vi.fn() }, profileUpdated: vi.fn(async () => {}), profileWindowFocused: vi.fn(async () => {}), webSession: vi.fn(async () => ({ base: 'https://enterprise.example', cookie: 'test-cookie', cookieName: 'bs_credits_3007', connectionKey: 'tenant-a', expiresAt: Date.now() + 300_000 })) }
   const owner: any = Object.assign(new EventEmitter(), { isDestroyed: () => false, getContentSize: () => [1100, 800], contentView: { addChildView: vi.fn(), removeChildView: vi.fn() }, webContents: Object.assign(new EventEmitter(), { send: vi.fn(), focus: vi.fn(), getZoomFactor: () => 1, isDestroyed: () => false, executeJavaScript: vi.fn(async () => true) }) })
@@ -95,6 +95,38 @@ describe('enterprise Chat host boundary', () => {
       expect(f.host.snapshot()).toMatchObject({ connected: true, epoch: before.epoch, accountRevision: 4 })
       expect(f.enterprise.webSession).not.toHaveBeenCalled()
       expect(fake.views).toHaveLength(0)
+    } finally { f.host.dispose() }
+  })
+
+  it('refreshes the active embedded profile only when its display data changes', async () => {
+    const f = fixture()
+    const session = { connected: true, connectionKey: 'tenant-a' }
+    const previous = { id: '7', display_name: 'Kinyoo' }
+    const renamed = { ...previous, display_name: 'admin' }
+    const uploaded = { ...renamed, avatar: 'https://enterprise.example/avatar.png' }
+    const signal = 'enterprise-chat:profile-changed'
+    fake.loadLanding = 'https://enterprise.example/workspace/knowledge?embed=dsh'
+    try {
+      f.change({ ...session, user: previous })
+      f.host.present(f.owner, presentation)
+      await flush()
+      const epoch = f.host.snapshot().epoch
+      const contents = fake.views[0].webContents
+
+      f.change({ ...session, revision: 2, user: previous })
+      expect(contents.send).not.toHaveBeenCalledWith(signal)
+      f.change({ ...session, revision: 3, user: renamed })
+      f.change({ ...session, revision: 4, user: uploaded })
+      expect(contents.send.mock.calls.filter(([channel]: string[]) => channel === signal)).toEqual([[signal], [signal]])
+      expect(contents.loadURL).toHaveBeenCalledTimes(1)
+      expect(f.host.snapshot()).toMatchObject({ epoch, path: '/knowledge' })
+
+      contents.setURL('https://unrelated.example/workspace/knowledge')
+      f.change({ ...session, user: renamed })
+      expect(contents.send.mock.calls.filter(([channel]: string[]) => channel === signal)).toHaveLength(2)
+      contents.setURL(fake.loadLanding)
+      f.change({ ...session, connectionKey: 'tenant-b', user: previous })
+      expect(contents.send.mock.calls.filter(([channel]: string[]) => channel === signal)).toHaveLength(2)
     } finally { f.host.dispose() }
   })
 

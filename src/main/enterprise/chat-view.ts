@@ -136,8 +136,14 @@ export class EnterpriseChatView {
 
   constructor(private enterprise: EnterpriseDesktopRuntime, private note: (line: string) => void, private notificationWindow?: () => BrowserWindow | undefined) {
     app.on('browser-window-focus', this.refreshProfileOnFocus)
+    let profile = enterprise.snapshot().user
     this.unsubscribe = enterprise.subscribe((state) => {
+      const nextProfile = state.user
+      const profileChanged = profile?.username !== nextProfile?.username ||
+        profile?.display_name !== nextProfile?.display_name || profile?.avatar !== nextProfile?.avatar
+      profile = nextProfile
       if (!state.connected || (this.key !== undefined && state.connectionKey !== this.key)) this.clear()
+      else if (profileChanged && nextProfile) this.notifyWorkspaceProfileChanged()
       this.notify()
       if (state.connected && !this.view && this.state.phase !== 'error' && this.presentation?.visible && this.owner && !this.owner.isDestroyed()) {
         void this.connect()
@@ -173,6 +179,15 @@ export class EnterpriseChatView {
   private notify(): void {
     const window = this.notificationWindow?.() ?? this.owner
     if (window && !window.isDestroyed()) window.webContents.send('enterprise-chat:changed', this.snapshot())
+  }
+
+  private notifyWorkspaceProfileChanged(): void {
+    const contents = this.view?.webContents
+    if (!contents || contents.isDestroyed()) return
+    const url = new URL(contents.getURL() || 'about:blank')
+    if (url.origin !== this.origin || !/^\/workspace(?:\/|$)/u.test(url.pathname)) return
+    // The embedded page refreshes its own profile with its existing web session.
+    contents.send('enterprise-chat:profile-changed')
   }
 
   present(window: BrowserWindow, input: unknown): EnterpriseChatViewState {
