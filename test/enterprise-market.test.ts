@@ -179,6 +179,21 @@ describe('offline bundles', () => {
 })
 
 describe('enterprise policy', () => {
+  it('accepts long publication histories within the snapshot limit and validates every digest', () => {
+    const versions = Array.from({ length: 1001 }, (_, i) => ({
+      id: i.toString(16).padStart(32, '0'), digest: 'a'.repeat(64)
+    }))
+    const check = (rows: typeof versions) => acceptMarketSnapshot({
+      tenant_id: '2', user_id: '20', device_id: 'device', synced_at: Math.floor(Date.now() / 1000),
+      policies: [{ plugin_id: pluginId, name: 'company-demo', disabled: false, revision: 1,
+        current_version_id: rows[0]!.id, versions: rows }]
+    }, account, 'device')
+    expect(() => check(versions.slice(0, 101))).not.toThrow()
+    expect(() => check(versions.slice(0, 1000))).not.toThrow()
+    expect(() => check(versions)).toThrow(/1000 versions/)
+    expect(() => check([...versions.slice(0, 100), { ...versions[100]!, digest: 'invalid' }])).toThrow(/digest/)
+  })
+
   it('binds unsigned snapshots to tenant, user, device and freshness', () => {
     const now = Date.now()
     const snapshot = { tenant_id: '2', user_id: '20', device_id: 'device', synced_at: Math.floor(now / 1000), policies: [] }

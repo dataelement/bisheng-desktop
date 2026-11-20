@@ -1,5 +1,6 @@
 const PLUGIN_ID = /^[a-f0-9]{32}$/u
 const DIGEST = /^[a-f0-9]{64}$/u
+const MAX_VERSIONS_PER_PLUGIN = 1000
 const MAX_SKEW_MS = 60_000
 const MAX_AGE_MS = 5 * 60_000
 
@@ -25,7 +26,8 @@ export function acceptMarketSnapshot(snapshot, account, device, now = Date.now()
     pluginIds.add(policy.plugin_id)
     if (typeof policy.disabled !== 'boolean' || !Number.isSafeInteger(policy.revision) || policy.revision < 0) throw invalid('Invalid market policy.')
     if (policy.current_version_id != null && !PLUGIN_ID.test(policy.current_version_id)) throw invalid('Invalid market policy.')
-    if (!Array.isArray(policy.versions) || policy.versions.length > 100) throw invalid('Invalid market policy.')
+    if (!Array.isArray(policy.versions)) throw invalid('Invalid market policy.')
+    if (policy.versions.length > MAX_VERSIONS_PER_PLUGIN) throw invalid(`Market policy exceeds ${MAX_VERSIONS_PER_PLUGIN} versions per plugin.`)
     const versionIds = new Set()
     for (const version of policy.versions) {
       if (!version || typeof version !== 'object' || !PLUGIN_ID.test(version.id) || !DIGEST.test(version.digest)) throw invalid('Invalid market policy digest.')
