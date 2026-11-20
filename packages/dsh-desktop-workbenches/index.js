@@ -8,6 +8,7 @@ import { selectMarketFetch } from './market-fetch.mjs'
 import { awaitHandle, createMarketInstallStore, MarketInstallError, resolveInstallTarget } from './market-install.mjs'
 import { readSubmissionStatus, SubmissionStatusError } from './submission-status.mjs'
 import { createStateStore, MAX_STATE_BYTES, StateError } from './state.mjs'
+import { createFavoriteStore, MAX_FAVORITES_BYTES } from './favorites.mjs'
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { consumeLocalWorkbenchCapability, localCapabilityMatches, LOCAL_WORKBENCH_CAPABILITY_HEADER, readLocalWorkbenchPackage } from './local-install.mjs'
 import { dirname, isAbsolute, join } from 'node:path'
@@ -91,6 +92,7 @@ async function readLocalInstalls(root) {
 
 export function apply(ctx, config) {
   const store = createStateStore(config.root)
+  const favoriteStore = createFavoriteStore(config.root)
   registerCloudTools(ctx, store)
   const readCatalog = createCatalogReader({
     fetch: selectMarketFetch(),
@@ -229,6 +231,28 @@ export function apply(ctx, config) {
         const allowed = authorizedStateMigrations((await readCatalog()).catalog)
         if (!Object.entries(payload.migrations).length || !Object.entries(payload.migrations).every(([from, to]) => allowed.get(from) === to)) throw new StateError('This workbench ID migration is not authorized by the market.', 403)
         return Response.json(await store.migrate({ revision: payload.revision, state: payload.state }, payload.migrations), { headers: { 'cache-control': 'no-store' } })
+      } catch (error) { return stateFailure(error) }
+    }
+  })
+  // Favorites have their own file and revision; see favorites.mjs for why
+  // they are not part of state.json.
+  ctx.connection.fetch.register({
+    path: '/api/desktop-workbenches/favorites',
+    methods: ['GET'],
+    requestBody: 'buffered',
+    async fetch() {
+      try {
+        return Response.json(await favoriteStore.read(), { headers: { 'cache-control': 'no-store' } })
+      } catch (error) { return stateFailure(error) }
+    }
+  })
+  ctx.connection.fetch.register({
+    path: '/api/desktop-workbenches/favorites/write',
+    methods: ['POST'],
+    requestBody: 'buffered',
+    async fetch(request) {
+      try {
+        return Response.json(await favoriteStore.write(await readPayload(request, MAX_FAVORITES_BYTES, 'Workbench favorites are too large.')), { headers: { 'cache-control': 'no-store' } })
       } catch (error) { return stateFailure(error) }
     }
   })
