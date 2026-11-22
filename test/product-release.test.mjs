@@ -103,6 +103,9 @@ describe('generic release product API', () => {
       const result = run({})
       expect(result.status).toBe(0)
       expect(result.stdout).toContain('--name Sample Desktop --url https://example.org/desktop/')
+      const fallbackResult = run({ JSIGN_NAME: '', JSIGN_URL: '' })
+      expect(fallbackResult.status).toBe(0)
+      expect(fallbackResult.stdout).toContain('--name DSH Desktop --url https://www.dshdesktop.com')
       expect(run({ JSIGN_URL: 'https://user:secret@example.org/' }).status).not.toBe(0)
       expect(run({ JSIGN_NAME: 'Bad\nName' }).status).not.toBe(0)
     } finally { await rm(root, { recursive: true, force: true }) }
@@ -142,7 +145,7 @@ with tempfile.TemporaryDirectory() as work:
         assert events[0][1].endswith('/sample-desktop-windows-x64-setup.exe')
         assert 'Sample Desktop 1.2.3-test.1' in notify.call_args.args[2]
         assert 'https://github.com/example/desktop/actions/runs/42' in notify.call_args.args[2]
-        assert '# Sample Desktop' in (root / 'test-changes.md').read_text()
+        assert '# Sample Desktop' in (root / 'test-changes.md').read_text(encoding='utf-8')
         assert verify.call_args_list[0].args[1] == 7
         for stage in ['upload', 'download', 'evidence']:
             notify.reset_mock(); api.reset_mock(); verify.reset_mock()

@@ -1,7 +1,7 @@
+import { requireDesktopPlatform } from '../../shared/desktop-platform'
 import { attachDesktopProductWindow, disposeDesktopProduct, readDesktopProductEnvironment, startDesktopProduct } from './product-runtime'
 import { existsSync, readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, protocol, session, shell, Tray, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from 'electron'
@@ -9,7 +9,8 @@ import { DesktopStorageManager } from '../profile/desktop-storage'
 import { prepareGenerationsForLaunch } from '../profile/generation-launch'
 import { FATAL_REPORT_NAME, recordFatalFailure, redactFatalText } from '../recovery/fatal-entry'
 import { migrateWebProfile } from '../profile/profile-rename'
-import { initializeDesktopUpdateService } from '../desktop-service'
+import { desktopDiagnostics, initializeDesktopService } from '../desktop-service'
+import { emptyGpuExitContext, type GpuExitContext } from '../gpu-fallback'
 import { appBundlePathFromExecutable, quarantineAppBundleLaunchAgents } from '../desktop-service/launch-agent-audit'
 import { DESKTOP_SCHEME, installDesktopProtocol } from '../desktop-protocol'
 import { normalRelaunchArguments, relaunchArguments, shouldStartInSafeMode } from '../safe-mode'
@@ -26,8 +27,9 @@ import {
   type HarnessLocale
 } from '../application-locale'
 import { defaultWebHome, type WebHomePreview } from '../profile/web-home-import'
-import { developmentEnvironment, skipBlockingWindowsDevHmr } from '../development-environment'
+import { skipBlockingWindowsDevHmr } from '../development-environment'
 import { resolveDesktopIdentity } from './product-identity'
+import { loadDesktopProductEntry } from './product-entry'
 import { desktopBrandLogoPaths } from './brand-logo'
 import { workspaceDirectoryPrompt } from './directory-picker'
 import { clearNativeLocaleAttempt, confirmNativeLocaleRestart, NativeDirectoryPicker, nativeLocaleRelaunchArguments, shouldCalibrateNativeLocale } from './native-locale'
@@ -37,13 +39,15 @@ import { desktopLocale as matchDesktopLocale, desktopLanguageState, effectiveNat
 import { updateText } from '../../shared/desktop-update-messages'
 import { desktopDailyText } from '../../shared/desktop-daily-messages'
 import { desktopMenuMessages } from './menu-messages'
-import { type DesktopMenuCommand } from '../../shared/desktop-menu'
+import { usesDesktopCaption, type DesktopMenuCommand } from '../../shared/desktop-menu'
 import { parseWindowsMenuRequest, windowsMenuTemplate } from '../windows-menu'
 import { desktopWindowChrome, windowsChromeBackground, windowsTitleBarOverlay } from './window-chrome'
 import { buildWebImportViewModel } from '../web-import-view'
 import { DesktopBackendController } from './backend/backend-controller'
 import { DesktopBootSession, retainDesktopBoot } from './backend/boot-session'
 import { DesktopHostFatalError, DesktopHostProcess } from './backend/host-process'
+import { crashUploadProfile, createCrashUpload } from './crash-upload'
+import { HarnessLog } from './harness-log'
 import { continueAfterHostStartup, createHostFailureIntake } from './host-failure-intake'
 import { readDesktopLoginShellEnvironment, resolveDesktopLoginShellConfig } from './backend/login-shell-environment'
 import { attachDesktopStorage } from './desktop-storage-bridge'
@@ -88,7 +92,7 @@ import { applyRepairNavigation, safeModeRepairPrompt, sidebarRepairPrompt } from
 import { runSafeModeManager } from './safe-mode-manager'
 import { DESKTOP_IPC, PLATFORM_IPC, SCHEME, assertDesktopSender } from './window/ipc'
 import { DesktopPlatformView, platformBounds } from './window/platform-view'
-import { authenticateWebHost, dispatchAppDocument } from './window/web-document'
+import { authenticateWebHost, dispatchAppDocument, removeLegacyHostCookies } from './window/web-document'
 import { desktopFileUrl } from '../desktop-navigation'
 import {
   applyPersistedGpuFallback,
@@ -121,9 +125,14 @@ protocol.registerSchemesAsPrivileged([{
   }
 }])
 
+let cachedDesktopPackageMetadata: { value: unknown } | undefined
+
 function readDesktopPackageMetadata(): unknown {
+  if (cachedDesktopPackageMetadata !== undefined) return cachedDesktopPackageMetadata.value
   try {
-    return JSON.parse(readFileSync(join(app.getAppPath(), 'package.json'), 'utf8'))
+    const parsed: unknown = JSON.parse(readFileSync(join(app.getAppPath(), 'package.json'), 'utf8'))
+    cachedDesktopPackageMetadata = { value: parsed }
+    return parsed
   } catch (error) {
     // Identity must never silently fall back to a different data directory.
     throw new Error('Unable to read Desktop product identity metadata.', { cause: error })
@@ -135,15 +144,25 @@ function desktopDevelopmentBuild(metadata: unknown = readDesktopPackageMetadata(
   return typeof metadata === 'object' && metadata !== null && (metadata as Record<string, unknown>).dshDesktopChannel === 'development'
 }
 
+// False until userData points at the configured identity. Fatal handling must not
+// write recovery or crash records while paths still resolve to Electron defaults.
+let desktopIdentityConfigured = false
+
 function configureDesktopIdentity(): void {
   const identity = resolveDesktopIdentity(readDesktopPackageMetadata(), app.isPackaged, app.getPath('appData'))
   app.setName(identity.name)
   app.setPath('userData', identity.userData)
+  desktopIdentityConfigured = true
 }
 
-configureDesktopIdentity()
-app.setAppLogsPath()
-applyPersistedGpuFallback(app.getPath('userData'), app.commandLine, () => { app.disableHardwareAcceleration() })
+// The lock owner must answer later launches from the moment it holds the lock;
+// the real handler replaces this once the main window controller exists.
+let focusExistingInstance: () => void = () => {}
+
+// Attach before app.whenReady so a main-process exception during startup is queued.
+// Every packaged build reports, including dshDesktopChannel=development. Unpackaged dev does not.
+let readGpuExitContext: () => GpuExitContext = () => emptyGpuExitContext()
+let reportStartupFailure: (error: unknown) => void = () => {}
 
 let quitting = false
 let pageRecovery: PageRecovery | undefined
@@ -164,18 +183,22 @@ async function reportFatal(error: unknown, source: CrashReportSource = 'host'): 
   const message = redactFatalText(error instanceof Error && error.message.length > 0 ? error.message : 'Desktop host failed')
   console.error(error)
   let saved = false
-  try {
-    await recordFatalFailure(harnessHome(), error)
-    saved = true
-  } catch (failure) {
-    console.error(failure)
+  let crashPath: string | undefined
+  if (desktopIdentityConfigured) {
+    try {
+      await recordFatalFailure(harnessHome(), error)
+      saved = true
+    } catch (failure) {
+      console.error(failure)
+    }
+    crashPath = await persistCrashReport(error, source)
   }
-  const crashPath = await persistCrashReport(error, source)
   const parent = BrowserWindow.getFocusedWindow() ?? undefined
   const chinese = app.getLocale().toLowerCase().startsWith('zh')
   const crashNote = crashPath === undefined ? '' : `\n${chinese ? '崩溃记录：' : 'Crash log: '}${crashPath}`
   const detail = (saved ? 'The desktop host stopped. A recovery report was saved.' : 'The desktop host stopped.') + crashNote
-  const alreadySafe = process.env.DSH_DESKTOP_SAFE_MODE === '1' || shouldStartInSafeMode(process.argv)
+  // Safe Mode cannot repair an unresolved identity, so offer Close only.
+  const alreadySafe = !desktopIdentityConfigured || process.env.DSH_DESKTOP_SAFE_MODE === '1' || shouldStartInSafeMode(process.argv)
   const box = {
     type: 'error' as const,
     message,
@@ -303,11 +326,19 @@ function createWindow(
       additionalArguments: [...extraArguments]
     }
   })
+  if (process.platform === 'darwin') {
+    const notifyFullscreen = (): void => {
+      window.webContents.send(DESKTOP_IPC.windowFullscreen, window.isFullScreen())
+    }
+    window.on('enter-full-screen', notifyFullscreen)
+    window.on('leave-full-screen', notifyFullscreen)
+    window.webContents.on('did-finish-load', notifyFullscreen)
+  }
   window.on('page-title-updated', event => {
     event.preventDefault()
     window.setTitle(app.getName())
   })
-  if (process.platform === 'win32') window.setMenuBarVisibility(false)
+  if (usesDesktopCaption(process.platform)) window.setMenuBarVisibility(false)
   window.webContents.on('console-message', details => {
     if (details.level !== 'error') return
     rendererConsole.push(`${details.sourceId}:${String(details.lineNumber)} ${details.message}`)
@@ -452,25 +483,63 @@ async function savedDesktopMenuLocale(
 }
 
 async function main(): Promise<void> {
-  const platform = process.platform
-  if (platform !== 'darwin' && platform !== 'win32') {
-    throw new Error('DSH Desktop supports only macOS and Windows.')
+  const adapter = requireDesktopPlatform(process.platform)
+  const platform = adapter.platform
+  try {
+    configureDesktopIdentity()
+    app.setAppLogsPath()
+    applyPersistedGpuFallback(app.getPath('userData'), app.commandLine, () => { app.disableHardwareAcceleration() })
+    if (!app.requestSingleInstanceLock()) {
+      app.quit()
+      return
+    }
+    app.on('second-instance', () => { focusExistingInstance() })
+    if (app.isPackaged) {
+      initializeDesktopService({ getExitContext: () => readGpuExitContext() })
+    }
+  } catch (error: unknown) {
+    await app.whenReady()
+    await reportFatal(error, 'main')
+    app.exit(1)
+    return
   }
-  if (!app.requestSingleInstanceLock()) {
-    app.quit()
+  const safeMode = process.env.DSH_DESKTOP_SAFE_MODE === '1' || shouldStartInSafeMode(process.argv)
+  const harnessLog = new HarnessLog(join(app.getPath('logs'), 'harness.log'))
+  const crashUpload = createCrashUpload({
+    diagnostics: () => desktopDiagnostics,
+    flushLog: () => harnessLog.flush(),
+    pluginNames: async (message, diagnostic) => {
+      const installed = await listInstalledProfilePlugins(harnessHome(), crashUploadProfile(safeMode)).catch((error: unknown) => {
+        console.error(error)
+        return []
+      })
+      return startupRecoveryTargets(message, installed, diagnostic)
+    },
+    preserveFailureLog: diagnostic => {
+      harnessLog.finishProcessOutput()
+      if (diagnostic.length > 0) harnessLog.noteHostDiagnostic(diagnostic)
+    }
+  })
+  reportStartupFailure = error => { crashUpload.startupFailed(error) }
+  try {
+    await loadDesktopProductEntry(readDesktopPackageMetadata(), app.getAppPath(), safeMode)
+  } catch (error: unknown) {
+    reportStartupFailure(error)
+    await app.whenReady()
+    await reportFatal(error, 'main')
+    app.exit(1)
     return
   }
   await app.whenReady()
   // Cocoa has already consumed its argument domain. A saved choice therefore
   // needs one fresh process on a Dock/Finder launch, not a late --lang switch.
-  const startupSafeMode = process.env.DSH_DESKTOP_SAFE_MODE === '1' || shouldStartInSafeMode(process.argv)
   const nativeLocaleValue = app.getLocale()
   const nativeLocale = matchDesktopLocale(nativeLocaleValue)
   if (process.platform === 'darwin') {
     try {
       // Use Electron's resolved locale, not merely the Cocoa preference array.
       const preference = effectiveNativeLocale(
-        await savedDesktopLocaleValue(harnessHome(), startupSafeMode ? SAFE_MODE_PROFILE : 'desktop'),
+        await savedDesktopLocaleValue(harnessHome(), safeMode ? SAFE_MODE_PROFILE : 'desktop'),
         app.getPreferredSystemLanguages()
       )
       if (shouldCalibrateNativeLocale({ platform: process.platform, preference, actual: nativeLocaleValue, argv: process.argv }) && preference !== undefined) {
@@ -486,10 +555,6 @@ async function main(): Promise<void> {
       console.warn('[native-locale] unable to calibrate language; continuing', error)
     }
   }
-  // User data is already selected. A locale relaunch returns above, so this
-  // process does not create the service and then exit. Development packages
-  // stay without an update service; only the official package asks the policy.
-  if (app.isPackaged && !desktopDevelopmentBuild()) initializeDesktopUpdateService()
   // Only the final GUI process starts shell discovery and the Host.
   const loginShellAbort = new AbortController()
   const loginShell = readDesktopLoginShellEnvironment(
@@ -505,15 +570,14 @@ async function main(): Promise<void> {
   registerUpdateHandlers({ locale: () => menuLocale })
   let shortcuts: DesktopShortcutController | undefined
   const dshHome = harnessHome()
-  const safeMode = process.env.DSH_DESKTOP_SAFE_MODE === '1' || shouldStartInSafeMode(process.argv)
   menuLocale = await savedDesktopMenuLocale(dshHome, safeMode, reportedLocale)
   const refreshApplicationMenu = (): void => {
-    if (process.platform === 'win32') {
+    if (usesDesktopCaption(process.platform)) {
       const template = buildWindowsApplicationMenu({
         locale: menuLocale,
         connectPhone: () => { void openMobilePairing().catch((error: unknown) => { console.error(error) }) },
         restart: () => { void restartDesktop() },
-        ...(shouldStartInSafeMode(process.argv) || process.env.DSH_DESKTOP_SAFE_MODE === '1'
+        ...(safeMode
           ? {}
           : { restartSafeMode: () => { restartInSafeMode() } }),
         showHarnessLog: () => { shell.showItemInFolder(join(app.getPath('logs'), 'harness.log')) },
@@ -540,7 +604,7 @@ async function main(): Promise<void> {
         void checkForUpdates(true).catch((error: unknown) => { console.error(error) })
       },
       restart: () => { void restartDesktop() },
-      ...(shouldStartInSafeMode(process.argv) || process.env.DSH_DESKTOP_SAFE_MODE === '1'
+      ...(safeMode
         ? {}
         : { restartSafeMode: () => { restartInSafeMode() } }),
       showHarnessLog: () => { shell.showItemInFolder(join(app.getPath('logs'), 'harness.log')) },
@@ -568,12 +632,18 @@ async function main(): Promise<void> {
     userData: app.getPath('userData'),
     quitting: () => quitting,
     locale: () => legacyLocale(menuLocale),
-    note: line => { console.error(line) },
+    note: line => {
+      console.error(line)
+      harnessLog.note(line)
+    },
     stopHost: () => stopRecoveredHost(),
     releasePage: () => releaseRecoveredPage(),
     showMessageBox: options => window.isDestroyed() ? dialog.showMessageBox(options) : dialog.showMessageBox(window, options),
     flushDiagnostics: async () => { await activeOperationJournal?.drain(500) },
-    relaunch: () => { app.relaunch({ args: clearNativeLocaleAttempt(process.argv).slice(1) }) },
+    relaunch: () => {
+      crashUpload.markCleanExit()
+      app.relaunch({ args: clearNativeLocaleAttempt(process.argv).slice(1) })
+    },
     quit: () => { app.quit() },
     probePage: async () => {
       const contents = window.webContents
@@ -581,13 +651,18 @@ async function main(): Promise<void> {
       return await contents.executeJavaScript('document.readyState === "complete" && document.body !== null') === true
     }
   })
+  readGpuExitContext = () => stability.processRecovery.exitContext
   stability.attachProcessWatch(app)
+  window.on('session-end', () => { crashUpload.markCleanExit() })
   app.on('child-process-gone', (_event, details) => {
     stability.handleGpuProcess({ type: details.type, reason: details.reason, exitCode: details.exitCode })
   })
   pageRecovery = attachMainWindowRecovery(window, stability, {
     onError: error => { stability.processRecovery.start('window') },
-    note: line => { console.error(line) }
+    note: line => {
+      console.error(line)
+      harnessLog.note(line)
+    }
   })
   const showMainWindow = (): void => {
     if (window.isDestroyed()) return
@@ -623,7 +698,7 @@ async function main(): Promise<void> {
   shortcuts = installDesktopShortcuts(
     () => mainWindow,
     app.getPath('userData'),
-    process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux',
+    adapter.clientPlatform,
     refreshApplicationMenu
   )
   shortcuts.attach(window)
@@ -704,6 +779,7 @@ async function main(): Promise<void> {
     }
     const diagnostic = error instanceof DesktopHostFatalError ? error.diagnostic ?? '' : ''
     const plugins = startupRecoveryTargets(message, await listInstalledProfilePlugins(dshHome, DESKTOP_PROFILE), diagnostic)
+    harnessLog.note(`[desktop] plugin recovery detection: ${plugins.length > 0 ? plugins.join(', ') : 'unresolved'}`)
     if (plugins.length === 0 || owner.isDestroyed()) return false
     await persistCrashReport(error, 'host')
     const locale = legacyLocale(menuLocale)
@@ -858,29 +934,46 @@ async function main(): Promise<void> {
       profile: safeMode ? SAFE_MODE_PROFILE : 'desktop',
       environment: {
         ...hostEnvironment,
-        ...readDesktopProductEnvironment(),
+        ...(safeMode ? {} : readDesktopProductEnvironment()),
         DSH_CLIENT_VERSION: app.getVersion(),
         DSH_DESKTOP_PATCH_FILE: productPatch,
         ...(safeMode ? {} : officeEnvironment(primaryRuntime))
       },
       primaryRuntime,
       onFailure,
+      onOutput: (source, chunk) => { harnessLog.writeProcessOutput(source, chunk) },
+      onProcessExit: (code, signal) => {
+        harnessLog.finishProcessOutput()
+        harnessLog.note(`[node] Harness process exited (code ${String(code)}, signal ${String(signal)})`)
+      },
       onPluginOperation: record => { operationJournal.enqueue(JSON.stringify(record)) }
     })
     desktopHost = host
     return {
       start: async () => {
+        crashUpload.beginHostAttempt()
+        harnessLog.beginLaunch(safeMode ? 'safe-mode' : 'startup')
+        harnessLog.note(`[desktop] starting ${new Date().toISOString()}`)
+        harnessLog.note(`[desktop] profile ${safeMode ? SAFE_MODE_PROFILE : 'desktop'}`)
+        harnessLog.note(`[desktop] patch ${productPatch}`)
         const generation = bootSession.capture()
         const ready = await host.start()
         if (ready.injections === undefined) throw new Error('Desktop Host did not provide boot injections')
         const cookie = await authenticateWebHost(ready.url)
+        void removeLegacyHostCookies(session.defaultSession.cookies, ready.url)
+          .catch((error: unknown) => { console.error('desktop: legacy Host cookie cleanup failed', error) })
         bootSession.publish(generation, { url: ready.url, injections: ready.injections, cookie })
       },
       stop: () => host.stop()
     }
   }, state => {
     retainDesktopBoot(bootSession, state.phase)
+    if (state.phase === 'ready') {
+      crashUpload.hostReady()
+      harnessLog.note('[desktop] Harness is ready')
+    }
     if (state.phase !== 'error' || quitting) return
+    void crashUpload.reportHostFailure(state.failure).catch((error: unknown) => { console.error(error) })
     hostFailures.enqueue(state.failure)
   })
   const disposeFileDrag = installDesktopFileDrag(event => {
@@ -890,15 +983,22 @@ async function main(): Promise<void> {
     assertDesktopSender(event, ['app'])
     return window
   }, (address, signal) => desktopHost?.resolveDragResource(address, signal) ?? Promise.resolve(null))
+  crashUpload.startSending()
+  let productWindowAttached = false
   async function prepareDesktopHost(): Promise<void> {
     const result = await loginShell
     hostEnvironment = result.environment
-    await startDesktopProduct({ userDataPath: app.getPath('userData'), dshHome, safeMode, version: app.getVersion() })
-    attachDesktopProductWindow(window, {
-      checkForUpdates: async () => { await checkForUpdates(true) },
-      showLogs: async () => { shell.showItemInFolder(app.getPath('logs')) },
-      restartInSafeMode: () => { if (!safeMode) restartInSafeMode() }
-    })
+    if (!safeMode) {
+      await startDesktopProduct({ userDataPath: app.getPath('userData'), dshHome, safeMode, version: app.getVersion() })
+      if (!productWindowAttached) {
+        productWindowAttached = true
+        attachDesktopProductWindow(window, {
+          checkForUpdates: async () => { await checkForUpdates(true) },
+          showLogs: async () => { shell.showItemInFolder(join(app.getPath('logs'), 'harness.log')) },
+          restartInSafeMode: () => { restartInSafeMode() }
+        })
+      }
+    }
     if (result.failures.length > 0) {
       console.error(`[desktop] login shell: ${result.failures.map(item => `${item.shell} (${item.reason})`).join('; ')}`)
     }
@@ -1008,7 +1108,7 @@ async function main(): Promise<void> {
     tunnelLog: message => { console.warn(message) },
     port: desktopMobilePort(app.isPackaged && !desktopDevelopmentBuild()),
     onReconnectRequested: () => {
-      void openMobilePairing().catch((error: unknown) => { console.error(error) })
+      void openMobilePairing('reconnect').catch((error: unknown) => { console.error(error) })
     },
     onConnectedChange: connected => {
       if (window.isDestroyed()) return
@@ -1030,18 +1130,21 @@ async function main(): Promise<void> {
       new Promise<void>(resolve => { timer = setTimeout(resolve, 3000) })
     ]).finally(() => { if (timer !== undefined) clearTimeout(timer) })
   }
-  async function openMobilePairing(): Promise<void> {
+  async function openMobilePairing(reason: 'manual' | 'reconnect' = 'manual'): Promise<void> {
     if (mobileBridge === undefined) return
     const opened = await presentMobilePairing({
       bridge: mobileBridge,
+      reason,
       parent: window.isDestroyed() ? undefined : window,
       ...(mobileWindow === undefined ? {} : { current: mobileWindow }),
       locale: menuLocale,
       ...(iconPath === undefined ? {} : { iconPath }),
       hostReady: hostUrl() !== undefined
     })
+    if (opened !== undefined && opened !== mobileWindow) {
+      opened.on('closed', () => { if (mobileWindow === opened) mobileWindow = undefined })
+    }
     mobileWindow = opened
-    opened?.on('closed', () => { if (mobileWindow === opened) mobileWindow = undefined })
   }
   if (mobileBridge !== undefined) {
     ipcMain.handle(DESKTOP_IPC.mobileOpen, event => {
@@ -1144,6 +1247,22 @@ async function main(): Promise<void> {
       blocked: () => stability.blocksNavigation(),
       showWaiting: showHarnessRestartWaiting,
       stop: () => backend.stop(),
+      // Issue #912: the "restart Harness" entry point must apply the pending
+      // generation changes its banner announces. The projection runs while the
+      // host is stopped (generation removals are unsafe under a running host) and
+      // is skipped in safe mode, matching the launch-time projection.
+      prepareStart: () => {
+        if (safeMode) return Promise.resolve()
+        return prepareGenerationsForLaunch(dshHome, line => {
+          console.error(line)
+          harnessLog.note(line)
+        }, 'desktop')
+      },
+      reportPrepareStartFailure: error => {
+        console.error('[harness-restart] prepareStart failed', error)
+        const detail = error instanceof Error ? error.message : String(error)
+        harnessLog.note(`[desktop] harness restart continued after projection failure: ${detail}`)
+      },
       start: async () => {
         try {
           await backend.start(prepareDesktopHost)
@@ -1194,7 +1313,7 @@ async function main(): Promise<void> {
   ipcMain.removeHandler('desktop-titlebar:popup-menu')
   ipcMain.handle('desktop-titlebar:popup-menu', (event, name: unknown, x: unknown, y: unknown) => {
     const owner = assertMain(event)
-    if (process.platform !== 'win32') throw new Error('The caption menu is only available on Windows.')
+    if (!usesDesktopCaption(process.platform)) throw new Error('The caption menu is only available on Windows and Linux.')
     const request = parseWindowsMenuRequest(name, x, y)
     const zoomFactor = owner.webContents.getZoomFactor()
     const template = windowsMenuTemplate(request.name, menuLocale, zoomFactor, {
@@ -1214,7 +1333,7 @@ async function main(): Promise<void> {
   ipcMain.handle('desktop-titlebar:set-theme', (event, isDark: unknown) => {
     const owner = assertMain(event)
     if (typeof isDark !== 'boolean') throw new Error('The DSH Desktop titlebar theme must be a boolean.')
-    if (process.platform === 'win32') {
+    if (usesDesktopCaption(process.platform)) {
       owner.setTitleBarOverlay(windowsTitleBarOverlay(isDark))
       owner.setBackgroundColor(windowsChromeBackground(isDark))
     }
@@ -1285,6 +1404,7 @@ async function main(): Promise<void> {
     if (typeof message !== 'string' || message.length === 0 || message.length > 4_000) {
       throw new Error('dsh desktop: startup failure must be text')
     }
+    crashUpload.discardPendingPluginFailure()
     void reportFatal(new Error(message), 'web-boot')
   })
   ipcMain.handle(PLATFORM_IPC.open, (event, page: unknown, bounds: unknown) => {
@@ -1320,13 +1440,14 @@ async function main(): Promise<void> {
     }
     callback({ requestHeaders: { ...headers, origin: target.origin, cookie, 'sec-fetch-site': 'same-origin' } })
   })
-  app.on('second-instance', () => { showMainWindow() })
+  focusExistingInstance = showMainWindow
   app.on('activate', () => { showMainWindow() })
   let hostReady = false
   if (app.isPackaged) {
     startUpdateManager({
       canCheckAutomatically: () => hostReady && !quitting && !safeMode,
       prepareToInstall: async () => {
+        crashUpload.markCleanExit()
         quitting = true
         await backend.stop()
         const bundle = appBundlePathFromExecutable(process.execPath)
@@ -1547,5 +1668,6 @@ async function main(): Promise<void> {
 
 void main().catch((error: unknown) => {
   console.error(error)
-  void reportFatal(error, 'main').finally(() => { app.exit(1) })
+  reportStartupFailure(error)
+  void app.whenReady().catch(() => undefined).then(() => reportFatal(error, 'main')).finally(() => { app.exit(1) })
 })

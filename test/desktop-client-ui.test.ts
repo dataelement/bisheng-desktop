@@ -11,11 +11,12 @@ interface Registration {
 }
 
 describe('DSH Desktop client slot occupants', () => {
-  it.each([false, true])('keeps product seats and gates native content on the bridge: %s', async nativeBridge => {
+  it('registers one occupant per brand seat and keeps the official name mark-free', async () => {
     const source = await readFile(
       path.join(projectRoot, 'packages', 'dsh-desktop-client-ui', 'client.js'),
       'utf8'
     )
+    expect(source).not.toMatch(/Bisheng|enterprise\.work|dshEnterprise|desktop\.chatWork|remote\.skills|SharedCollection|WorkResource/)
     let definition: {
       factory: (require: (id: string) => unknown) => {
         apply: (ctx: unknown) => void
@@ -35,7 +36,6 @@ describe('DSH Desktop client slot occupants', () => {
       navigator: { language: 'en-US' },
       window: {
         dshDesktop: { getRepairDraft: vi.fn(), openRepairAgent: vi.fn() },
-        ...(nativeBridge ? { dshEnterpriseChat: { present: () => Promise.resolve() } } : {}),
         __ModuleLoader__: {
           load: (value: typeof definition) => {
             definition = value
@@ -60,8 +60,7 @@ describe('DSH Desktop client slot occupants', () => {
         return {
           createElement,
           useEffect: (effect: () => void | (() => void)) => effect(),
-          useState: (initial: unknown) => [initial, vi.fn()],
-          useSyncExternalStore: (_sub: unknown, snap: () => unknown) => snap()
+          useState: (initial: unknown) => [initial, vi.fn()]
         }
       }
       if (id === '@deepseek-ai/dsh-client-ui-primitives') {
@@ -71,7 +70,6 @@ describe('DSH Desktop client slot occupants', () => {
     })
 
     const registrations: Registration[] = []
-    const registerLocale = vi.fn((_namespace: string, _messages: Record<string, unknown>) => () => undefined)
     const slots = {
       inject: (_name: string, callback: () => unknown): unknown => {
         const result = callback()
@@ -88,56 +86,56 @@ describe('DSH Desktop client slot occupants', () => {
         return () => undefined
       }
     }
-    plugin.apply({
-      slots,
-      locale: { register: registerLocale, bind: () => (key: string) => key },
-      remote: { session: { openWorkspacePath: () => Promise.resolve({ ok: true, value: { opened: true } }) } },
-      sessions: { list: { getSnapshot: () => ({ byId: {} }) } },
-      uiWorkspace: {},
-      layout: {},
-      effect: (setup: () => (() => void) | undefined) => { disposeStyle = setup() }
-    })
+    plugin.apply({ slots, locale: { register: () => () => undefined, bind: () => (key: string) => key }, effect: (setup: () => (() => void) | undefined) => { disposeStyle = setup() } })
 
-    expect(plugin.inject).toEqual(['slots', 'locale', 'remote', 'remote.session', 'sessions', 'uiWorkspace', 'layout'])
+    expect(plugin.inject).toEqual(['locale', 'slots', 'sessions', 'uiWorkspace', 'configForms', 'sidebarRight', 'sidebarRightTabs'])
     expect(registrations.map(({ config }) => config.name)).toEqual([
-      'shell.overlay',
-      'shell.overlay',
-      'sidebar.primaryNavigation',
-      'sidebar.workspaces.title',
-      'desktop.mode.content',
-      'sidebar.workspaces.collection',
       'conversation.input.dock',
       'sidebar.settings.action',
+      'settings.sidebar.footer',
       'sidebar.brand.mark',
       'sidebar.brand.name',
       'conversation.hero.brand.mark',
-      'conversation.hero.brand.title',
-      'sidebar.right.tab.document.unpreviewable',
       'sidebar.workspaces.session.menu.item',
       'sidebar.workspaces.session.menu.item',
       'sidebar.workspaces.session.menu.item'
-    ].filter(name => nativeBridge || name !== 'desktop.mode.content'))
-
-    // Local BISHENG seats and incoming utilities coexist without duplicate owners.
-    const ids = registrations.map(({ config }) => config.id).filter(Boolean)
-    expect(new Set(ids).size).toBe(ids.length)
-    expect(ids.filter(id => id === 'desktop-repair-draft')).toHaveLength(1)
-    expect(ids.filter(id => id === 'desktop-utilities')).toHaveLength(1)
-    expect(registrations.some(({ config }) => config.name === 'settings.sidebar.footer')).toBe(false)
-    for (const namespace of ['dsh-desktop-repair', 'dsh-desktop-actions']) {
-      const messages = registerLocale.mock.calls.filter(([name]) => name === namespace)
-      expect(messages).toHaveLength(1)
-      expect(Object.keys(messages[0]?.[1] ?? {}).sort()).toEqual(['de', 'en', 'es', 'fr', 'ja', 'pt', 'ru', 'zh'])
-    }
-
-    // Style injections include both layout navigation styles and gear icon hiding
-    expect(appended.length).toBeGreaterThanOrEqual(1)
-    const combinedStyles = appended.map((node) => node.textContent || '').join('\n')
-    expect(combinedStyles).toContain('[data-dsh-market-nav-icon] span[class*="navIcon"]')
-    expect(combinedStyles).toContain('.dshPrimaryNavigation')
-    expect(combinedStyles).toContain('.dshSectionAddButton')
-
+    ])
+    const enterprise = registrations.find(({ config }) => config.name === 'settings.sidebar.footer')
+    expect(enterprise?.config.id).toBe('desktop-enterprise-entry')
+    const entry = enterprise!.component({ t: () => '了解企业版' }) as { type: unknown; props: Record<string, unknown> }
+    expect(entry.type).toBe('a')
+    expect(entry.props.href).toBe('https://dshdesktop.com/zh/enterprise/')
+    expect(entry.props.target).toBe('_blank')
+    expect(entry.props.rel).toBe('noopener noreferrer')
+    expect(entry.props.children).toContain('了解企业版')
+    // Desktop toolbar styles have an owned lifetime; branding stays in currentColor.
+    expect(appended).toHaveLength(1)
+    expect(appended[0]?.textContent).toContain("[data-dsh-preset-search]")
+    expect(appended[0]?.textContent).toContain("[data-dsh-market-nav-icon] span[class*=\"navIcon\"]")
+    expect(appended[0]?.textContent).toContain("[data-dsh-better-sidebar-settings-nav] span[class*=\"navIcon\"]")
     disposeStyle?.()
-    expect(removeStyle).toHaveBeenCalled()
+    expect(removeStyle).toHaveBeenCalledOnce()
+
+    const sidebarName = registrations.find(
+      ({ config }) => config.name === 'sidebar.brand.name'
+    )!.component({}) as { type: unknown; props: Record<string, unknown> }
+    expect(sidebarName.type).toBe(BrandWordmark)
+    expect(sidebarName.props.includeMark).toBe(false)
+
+    const sidebarMark = registrations.find(
+      ({ config }) => config.name === 'sidebar.brand.mark'
+    )!.component({ size: 24 }) as { type: unknown; props: Record<string, unknown> }
+    expect(sidebarMark.type).toBe('svg')
+    expect(sidebarMark.props.height).toBe(17)
+    const [markPath] = sidebarMark.props.children as Array<{ type: unknown; props: Record<string, unknown> }>
+    if (!markPath) throw new Error('Expected the sidebar brand SVG path')
+    expect(markPath.type).toBe('path')
+    expect(markPath.props.fill).toBe('currentColor')
+
+    const heroMark = registrations.find(
+      ({ config }) => config.name === 'conversation.hero.brand.mark'
+    )!.component({ size: 48 }) as { type: unknown; props: Record<string, unknown> }
+    expect(heroMark.type).toBe(FishLogo)
+    expect(heroMark.props.size).toBe(48)
   })
 })
