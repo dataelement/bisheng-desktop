@@ -16,7 +16,6 @@ import {
   CHAT_HEADER_TIMEOUT_MS,
   CHAT_FIRST_CHUNK_TIMEOUT_MS,
   CHAT_IDLE_TIMEOUT_MS,
-  CHAT_MAX_CONCURRENT,
   CHAT_TOTAL_TIMEOUT_MS,
   desktopChatAbortError,
   enterpriseHeaderTimeoutAbortReason,
@@ -171,7 +170,6 @@ export class EnterpriseService {
   private modelsRefresh: { epoch: number; promise: Promise<void> } | undefined
   private loginExpiryTimer: NodeJS.Timeout | undefined
   private lastPublicSignature = ''
-  private chatInFlight = 0
   private readonly chatControllers = new Set<AbortController>()
   private readonly authenticatedControllers = new Set<AbortController>()
   private allowPrivateHttpForSession = false
@@ -290,7 +288,7 @@ export class EnterpriseService {
         allowInsecurePrivateHttp: true
       })
       if (isInsecurePrivateHttpOrigin(preview) && options.confirmInsecurePrivateHttp !== true) {
-        throw Object.assign(new Error('HTTP intranet addresses require explicit confirmation.'), {
+        throw Object.assign(new Error('HTTP addresses require explicit confirmation.'), {
           status: 400
         })
       }
@@ -476,18 +474,13 @@ export class EnterpriseService {
     if (!this.models.some((model) => model.id === parsed.model)) {
       throw Object.assign(new Error('Model is not assigned to this account.'), { status: 403 })
     }
-    if (this.chatInFlight >= CHAT_MAX_CONCURRENT) {
-      throw Object.assign(new Error('Too many enterprise chats.'), { status: 429 })
-    }
     const epoch = this.epoch
     const sessionController = new AbortController()
     this.chatControllers.add(sessionController)
-    this.chatInFlight += 1
     try {
       await this.runChat(parsed, response, signal, sessionController.signal, epoch, false)
     } finally {
       this.chatControllers.delete(sessionController)
-      this.chatInFlight -= 1
     }
   }
 

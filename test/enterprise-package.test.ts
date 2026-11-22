@@ -376,6 +376,9 @@ it('keeps sign-in focused and shows unified credits without model quotas', async
   it('replaces official account settings section by disabling ui-settings-account and setting order -10', async () => {
     const patchYaml = (await readFile(path.join(projectRoot, 'packages/dsh-desktop-enterprise/cordis.patch.yml'), 'utf8')).replaceAll('\r\n', '\n')
     expect(patchYaml).toContain('- id: ui-settings-account\n  disabled: true')
+    expect(patchYaml).toContain("- id: session-query-sqlite\n")
+    expect(patchYaml).toContain("path: !!js dshHomePath('session-query.sqlite')")
+    expect(patchYaml).toContain('openAt: first-search')
     expect(patchYaml).toContain('id: dsh-desktop-enterprise')
 
     const client = await readFile(path.join(projectRoot, 'packages/dsh-desktop-enterprise/client.js'), 'utf8')

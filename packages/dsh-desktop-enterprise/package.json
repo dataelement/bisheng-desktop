@@ -18,6 +18,7 @@
       "default": "./deep-link.js"
     },
     "./openai": "./openai.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "dsh": {

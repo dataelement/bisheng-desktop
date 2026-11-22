@@ -56,6 +56,8 @@
     "package:mac:x64": "node scripts/verify/verify-target.mjs darwin x64 && npm run build && electron-builder --mac --x64 --publish never",
     "package:linux:x64": "node scripts/verify/verify-target.mjs linux x64 && npm run build && electron-builder --linux deb --x64 --publish never --config electron-builder.linux.cjs",
     "package:dev:linux:x64": "node scripts/verify/verify-target.mjs linux x64 && npm run build && electron-builder --linux deb --x64 --publish never --config electron-builder.linux-dev.cjs",
+    "package:linux:arm64": "node scripts/verify/verify-target.mjs linux arm64 && npm run build && electron-builder --linux deb --arm64 --publish never --config electron-builder.linux-arm64.cjs",
+    "package:dev:linux:arm64": "node scripts/verify/verify-target.mjs linux arm64 && npm run build && electron-builder --linux deb --arm64 --publish never --config electron-builder.linux-dev-arm64.cjs",
     "package:win": "node scripts/verify/verify-target.mjs win32 x64 && npm run build && node scripts/release/electron-builder-windows.mjs --win --x64 --publish never",
     "ppt:build": "node scripts/ppt/prepare-ppt-runtime.mjs",
     "pretest": "npm run office:prepare && npm run ppt:build",
@@ -560,19 +562,16 @@
       ]
     },
     "linux": {
-      "target": [
-        {
-          "target": "deb",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "executableName": "dsh-desktop",
+      "target": [{ "target": "deb", "arch": ["x64", "arm64"] }],
+      "executableName": "bisheng",
       "maintainer": "DataElement",
       "icon": "build/app-icon.png",
       "category": "Utility",
-      "artifactName": "dsh-desktop-linux-${arch}-${version}.${ext}"
+      "artifactName": "bisheng-${os}-${arch}.${ext}"
+    },
+    "deb": {
+      "packageName": "dsh-desktop",
+      "afterInstall": "build/bisheng-linux-after-install.tpl"
     },
     "win": {
       "icon": "build/icon.ico",

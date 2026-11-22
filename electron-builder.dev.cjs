@@ -25,6 +25,7 @@ module.exports = {
     executableName: 'bisheng-dev',
     artifactName: 'bisheng-dev-linux-${arch}-${version}.${ext}'
   },
+  deb: { ...packageJson.build.deb, packageName: 'bisheng-dev' },
   nsis: {
     ...packageJson.build.nsis,
     artifactName: 'bisheng-dev-windows-${arch}-setup.${ext}'

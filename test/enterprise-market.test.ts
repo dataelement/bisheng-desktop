@@ -170,6 +170,23 @@ describe('enterprise policy', () => {
     expect(() => acceptMarketSnapshot({ ...snapshot, policies: [{ plugin_id: pluginId, name: 'company-demo', disabled: false, revision: 1, current_version_id: versionId, versions: [{ id: versionId, digest: 'not-a-digest' }] }] }, account, 'device', now)).toThrow(/digest/)
   })
 
+  it('keeps other market policies when one plugin has too many versions', () => {
+    const now = Date.now()
+    const validId = 'c'.repeat(32)
+    const oversized = {
+      plugin_id: pluginId, name: 'company-demo', disabled: false, revision: 1, current_version_id: versionId,
+      versions: Array.from({ length: 101 }, (_, index) => ({
+        id: index.toString(16).padStart(32, '0'), digest: 'd'.repeat(64)
+      }))
+    }
+    const valid = {
+      plugin_id: validId, name: 'company-other', disabled: false, revision: 1, current_version_id: versionId,
+      versions: [{ id: versionId, digest: 'e'.repeat(64) }]
+    }
+    const accepted = acceptMarketSnapshot({ tenant_id: '2', user_id: '20', device_id: 'device', synced_at: Math.floor(now / 1000), policies: [oversized, valid] }, account, 'device', now)
+    expect(accepted.policies).toEqual([valid])
+  })
+
 })
 
 async function fixture(options: { authorizationAvailable?: boolean } = {}) {

@@ -5,7 +5,9 @@ export interface EnterpriseLoginDeepLink {
   serverUrl: string
 }
 export interface EnterpriseUrlOptions {
+  /** Retained for compatibility; literal loopback HTTP is always allowed. */
   allowInsecureLoopback?: boolean
+  /** Legacy name: permits all non-loopback HTTP origins after risk confirmation. */
   allowInsecurePrivateHttp?: boolean
 }
 export declare function isInsecurePrivateHttpOrigin(value: string): boolean

@@ -1,5 +1,13 @@
 - id: ui-settings-account
   disabled: true
+- id: session-query-sqlite
+  # Upstream keeps the derived FTS index disabled by default. The enterprise
+  # sidebar search needs content matches, so enable it lazily and persist the
+  # derived index under this DSH home. This stays in the downstream overlay;
+  # the upstream bundle and workspace patch remain unchanged.
+  config:
+    path: !!js dshHomePath('session-query.sqlite')
+    openAt: first-search
 - insert:
     - id: dsh-desktop-enterprise
       name: dsh-desktop-enterprise

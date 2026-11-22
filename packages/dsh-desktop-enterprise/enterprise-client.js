@@ -253,7 +253,7 @@ export class EnterpriseClient {
   async handleWorkCapabilities(body, signal) {
     const broker = this._getBroker()
     if (broker) {
-      const res = await fetch(new URL('/v1/work-tools', broker.origin), {
+      const res = await fetch(new URL('/v1/work-mcp', broker.origin), {
         method: 'POST',
         headers: { authorization: `Bearer ${broker.capability}`, 'content-type': 'application/json' },
         body: JSON.stringify(body),

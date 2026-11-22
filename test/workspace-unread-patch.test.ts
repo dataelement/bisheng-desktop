@@ -48,6 +48,11 @@ describe('workspace session unread markers', () => {
     expect(desktop).toContain("'标为未读'")
     expect(desktop).toContain("'标为已读'")
     expect(patch).toContain('markSessionUnread')
+    // Search must keep the upstream result renderer isolated from the
+    // downstream collection slot. The latter owns the normal workspace view,
+    // but its search branch can retire the whole browser on malformed state.
+    expect(workspace).toContain('children: [...results.items.map')
+    expect(workspace).not.toContain('children: renderSlot("sidebar.workspaces.collection", {\n\t\t\t\t\t\t\t\t\tmode: "search"')
   })
 
   it('renders an unread indicator and clears the marker when opening a session', async () => {
