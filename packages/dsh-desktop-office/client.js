@@ -11,6 +11,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     quickWorkspace: '先选择工作空间，再开始任务',
     quickTemplates: '参考模板',
     quickNext: '切换一批',
+    quickUse: '使用案例',
     quickLoadError: '案例加载失败。',
     emptyTemplates: '暂无模板',
     templatePrompt: '使用「{name}」模板，根据我提供的资料制作可编辑的 {format}。保留模板的结构和样式，使用当前资料替换示例内容；如果缺少必要信息，请先向我确认。',
@@ -44,6 +45,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     quickWorkspace: 'Select a workspace to start',
     quickTemplates: 'Reference templates',
     quickNext: 'Try another set',
+    quickUse: 'Use example',
     quickLoadError: 'Could not load cases.',
     emptyTemplates: 'No templates available',
     templatePrompt: 'Use the “{name}” template to create an editable {format} from my materials. Keep the template’s structure and styling, and replace the example content with my materials. Ask me for any required information that is missing.',
@@ -71,6 +73,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
   const keyOf = id => id || staged
   const announce = (sessionId, mode, selectedPptTemplateId, caseSelection = false) => window.dispatchEvent(new CustomEvent(EVENT, { detail: { sessionId, mode, selectedPptTemplateId, caseSelection, origin: 'office' } }))
   const emptyCases = Object.freeze({ cases: [], batches: [], loading: false, error: false })
+  const CASE_BATCH_SIZE = 3
   const CASE_MOTION = { duration: 180, easing: 'cubic-bezier(.2,.7,.25,1)' }
   const canAnimate = element => typeof element?.animate === 'function' && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 
@@ -349,6 +352,27 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
   function QuickIcon({ kind }) {
     return h('svg', { width: 17, height: 17, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true }, h('path', { d: iconPaths[kind] ?? iconPaths.normal }))
   }
+
+  function QuickCaseCard({ item, index, language, t, selected, disabled, onSelect }) {
+    const id = React.useId()
+    const title = item.title[language]
+    const description = item.description?.[language]
+    const iconKind = categoryIcons[item.category] ?? item.officeMode
+    return h('button', {
+      type: 'button', className: 'dso-quick-card', style: { '--dso-row-delay': `${index * 100}ms` },
+      'data-welcome-case': item.id, 'data-case-mode': item.officeMode,
+      'aria-labelledby': `${id}-title`, 'aria-describedby': description ? `${id}-description` : undefined,
+      'aria-pressed': selected, disabled, onClick: onSelect
+    },
+      h('span', { className: 'dso-quick-watermark', 'aria-hidden': true }, h(QuickIcon, { kind: iconKind })),
+      h('span', { className: 'dso-quick-card-bar', 'aria-hidden': true },
+        h('span', { className: 'dso-quick-icon' }, h(QuickIcon, { kind: iconKind })),
+        !selected && h('span', { className: 'dso-quick-action' }, t('quickUse'), h(QuickIcon, { kind: 'normal' }))),
+      h('span', { className: 'dso-quick-copy' },
+        h('span', { className: 'dso-quick-title', id: `${id}-title`, title: item.preset === 'cordis' ? `${t('quickCreator')} · ${title}` : undefined }, title),
+        description && h('span', { className: 'dso-quick-description', id: `${id}-description` }, description)))
+  }
+
   const draftEnd = input => input.draft.length - (input.occurrences ?? []).reduce((total, item) => total + item.length - 1, 0)
 
   function caseForTemplate(template, templates, cases) {
@@ -432,6 +456,51 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     return { choose, notice }
   }
 
+  function shuffle(items) {
+    const shuffled = [...items]
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      const item = shuffled[i]
+      shuffled[i] = shuffled[j]
+      shuffled[j] = item
+    }
+    return shuffled
+  }
+
+  function firstCaseBatch(catalog) {
+    const configured = (catalog.batches[0] ?? []).map(id => catalog.cases.find(item => item.id === id)).filter(Boolean)
+    const first = configured.slice(0, CASE_BATCH_SIZE)
+    const nonOffice = configured.find(item => item.officeMode === 'normal')
+    // Keep a non-Office example when the configured opening has more cards than fit.
+    return nonOffice && !first.includes(nonOffice) ? [...first.slice(0, -1), nonOffice] : first
+  }
+
+  function nextCaseBatch(cases, current, cards) {
+    const modeRoll = Math.random()
+    const previousIds = new Set(cards.map(item => item.id))
+    const seen = current?.seen ?? previousIds
+    const seenThisRound = seen.size < cases.length ? seen : new Set()
+    const alternatives = cases.filter(item => !previousIds.has(item.id))
+    const alternativeModes = new Set(alternatives.map(item => item.officeMode))
+    const pool = shuffle(alternatives.length >= CASE_BATCH_SIZE && alternativeModes.size >= 2 ? alternatives : cases)
+    const modes = shuffle([...new Set(pool.map(item => item.officeMode))])
+    const maxModes = Math.min(modes.length, CASE_BATCH_SIZE)
+    const modeCount = maxModes < 2 ? maxModes : 2 + Math.floor(modeRoll * (maxModes - 1))
+
+    // Reserve a spot for an unseen case so every case comes up over time.
+    const unseen = pool.filter(item => !seenThisRound.has(item.id))
+    const preferred = [...unseen, ...pool.filter(item => seenThisRound.has(item.id))]
+    const firstMode = modes.find(mode => unseen.some(item => item.officeMode === mode)) ?? modes[0]
+    const selectedModes = new Set([firstMode, ...modes.filter(mode => mode !== firstMode).slice(0, modeCount - 1)])
+    const selected = [...selectedModes].map(mode => preferred.find(item => item.officeMode === mode))
+    const remaining = preferred.filter(item => !selected.includes(item))
+    const sameModes = remaining.filter(item => selectedModes.has(item.officeMode))
+    const otherModes = remaining.filter(item => !selectedModes.has(item.officeMode))
+    // A smaller catalogue may need to fill the last slots from another mode.
+    const nextCards = shuffle([...selected, ...sameModes, ...otherModes].slice(0, CASE_BATCH_SIZE))
+    return { index: (current?.index ?? 0) + 1, cards: nextCards, seen: new Set([...seenThisRound, ...nextCards.map(item => item.id)]) }
+  }
+
   // Mirror the Chat welcome list's stagger and overlapping batch fade. React
   // keeps the previous grid mounted (and inert) until its fade finishes.
   function CaseStage({ batch, cards, renderCard }) {
@@ -469,7 +538,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     const showCases = mode === 'normal' || officeState.caseMode === mode
     const pendingState = React.useSyncExternalStore(listener => store.subscribe(undefined, listener), () => store.snapshot(undefined), () => store.snapshot(undefined))
     const catalog = React.useSyncExternalStore(store.subscribeCases, store.snapshotCases, store.snapshotCases)
-    const [batch, setBatch] = React.useState(0), [message, setMessage] = React.useState(''), [error, setError] = React.useState('')
+    const [batch, setBatch] = React.useState(null), [message, setMessage] = React.useState(''), [error, setError] = React.useState('')
     const generation = React.useRef(0), running = React.useRef(false), current = React.useRef(sessionId)
     const section = React.useRef(null), cancelEditorMotion = React.useRef(null)
     current.current = sessionId
@@ -477,11 +546,11 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     React.useEffect(() => {
       generation.current++
       running.current = false
-      setBatch(0); setMessage(''); setError('')
+      setBatch(null); setMessage(''); setError('')
       return () => { generation.current++; cancelEditorMotion.current?.() }
     }, [sessionId])
     // Case-driven mode changes leave the mixed recommendations on the current page.
-    React.useEffect(() => { if (!showCases) setBatch(0) }, [showCases])
+    React.useEffect(() => { if (!showCases) setBatch(null) }, [showCases])
     const choose = async (item, { fromTemplate = false, clear = false } = {}) => {
       if (running.current || officeState.busy || (liveInput && liveInput.phase !== 'plain')) return
       if (!sessionId || !inputActions || !liveInput) {
@@ -559,9 +628,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     if (!showCases) return error ? h('div', { role: 'alert' }, error) : null
 
     const disabled = officeState.busy || officeState.loading || (liveInput && liveInput.phase !== 'plain')
-    const batchCount = catalog.batches.length
-    const ids = catalog.batches[batch % (batchCount || 1)] ?? []
-    const cards = ids.map(id => catalog.cases.find(item => item.id === id)).filter(Boolean)
+    const cards = batch?.cards ?? firstCaseBatch(catalog)
     const pending = pendingState.pendingCase
     // With a composer, the draft is the source of the selection highlight.
     const selectedId = liveInput ? cards.find(item => promptSpan(liveInput, casePrompt(item, language)))?.id
@@ -570,13 +637,17 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     return h('section', { ref: section, className: 'dso-quick', 'data-welcome-cases': mode, 'aria-label': t('quickTitle'), 'aria-busy': officeState.busy || catalog.loading },
       h('header', { className: 'dso-dock-heading dso-quick-heading' },
         h('h3', null, t('quickTitle')),
-        batchCount > 1 ? h('button', {
+        catalog.cases.length > CASE_BATCH_SIZE ? h('button', {
           type: 'button', className: 'dso-quick-batch',
-          onClick: () => setBatch(value => (value + 1) % batchCount)
+          onClick: () => setBatch(nextCaseBatch(catalog.cases, batch, cards))
         }, t('quickNext')) : null),
-      cards.length > 0 && h(CaseStage, { key: `${sessionId ?? staged}:${language}`, batch, cards, renderCard: (item, index) => h('button', { key: item.id, type: 'button', className: 'dso-quick-card', style: { '--dso-row-delay': `${index * 100}ms` }, 'data-welcome-case': item.id, 'aria-pressed': selectedId === item.id, disabled, onClick: () => choose(item, { clear: selectedId === item.id }) },
-        h('span', { className: 'dso-quick-icon', 'aria-hidden': true }, h(QuickIcon, { kind: categoryIcons[item.category] ?? item.officeMode })),
-        h('span', { className: 'dso-quick-title', title: item.preset === 'cordis' ? `${t('quickCreator')} · ${item.title[language]}` : item.title[language] }, item.title[language])) }),
+      cards.length > 0 && h(CaseStage, {
+        key: `${sessionId ?? staged}:${language}`, batch: batch?.index ?? 0, cards,
+        renderCard: (item, index) => h(QuickCaseCard, {
+          key: item.id, item, index, language, t, selected: selectedId === item.id, disabled,
+          onSelect: () => choose(item, { clear: selectedId === item.id })
+        })
+      }),
       !catalog.loading && !catalog.error && !cards.length ? h('p', { role: 'status' }, t('empty')) : null,
       catalog.error ? h('div', { role: 'alert' }, t('quickLoadError'), ' ', h('button', { type: 'button', className: 'dso-reference-toggle', onClick: () => store.loadCases() }, t('retry'))) : null,
       error ? h('div', { role: 'alert' }, error) : null,
@@ -650,15 +721,54 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
 .dso-quick-batch:hover{background:var(--dsw-alias-interactive-bg-hover)}
 .dso-quick-batch:focus-visible{outline:2px solid currentColor;outline-offset:2px}
 .dso-quick-stage{position:relative}
-.dso-quick-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 10px}
+.dso-quick-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
 .dso-quick-grid[data-leaving]{position:absolute;inset:0 0 auto;pointer-events:none}
 @keyframes dso-case-enter{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:translateX(0)}}
 @media(prefers-reduced-motion:no-preference){.dso-quick-card{animation:dso-case-enter 280ms cubic-bezier(.25,.55,.35,1) calc(var(--dso-entry-delay) + var(--dso-row-delay)) backwards}.dso-quick-grid[data-leaving] .dso-quick-card{animation-play-state:paused}}
-.dso-quick-card{display:flex;min-width:0;align-items:center;gap:10px;min-height:40px;padding:8px 12px;text-align:start;font:inherit;font-size:13px;line-height:18px;border:0;border-radius:12px;background:transparent;color:var(--dsw-alias-label-primary);cursor:pointer}
-.dso-quick-icon{display:grid;place-items:center;flex:none;width:18px;color:var(--dsw-alias-label-secondary)}
-.dso-quick-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.dso-quick-card:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}.dso-quick-card[aria-pressed=true]{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-state-business-primary)}.dso-quick-card:disabled{opacity:.55;cursor:default}.dso-quick-card:focus-visible,.dso-reference-toggle:focus-visible{outline:2px solid currentColor;outline-offset:2px}
-.dso-quick-status{min-height:18px;padding-top:9px;font-size:11px;color:var(--dsw-alias-label-secondary)}.dso-reference{margin-top:6px;padding-top:12px}.dso-reference-toggle{border:0;background:transparent;padding:0;font:inherit;line-height:18px;font-size:11px;white-space:nowrap;color:var(--dsw-alias-label-secondary);cursor:pointer}.dso-reference-toggle:hover{text-decoration:underline}@media(prefers-reduced-motion:reduce){.dso-quick-card{transition:none}}
+.dso-quick-card{
+  --dso-case-accent:var(--dsw-alias-label-secondary);
+  --dso-case-padding:14px;
+  --dso-case-border-width:1px;
+  box-sizing:border-box;display:grid;grid-template-rows:auto 1fr;min-width:0;min-height:120px;row-gap:16px;padding:var(--dso-case-padding);
+  position:relative;isolation:isolate;overflow:hidden;
+  border:var(--dso-case-border-width) solid var(--dsw-alias-border-l2-darkmode-thin);border-radius:var(--dsw-radius-panel);
+  background:color-mix(in srgb,var(--dso-case-accent) 4%,var(--dsw-alias-bg-layer-1));
+  color:var(--dsw-alias-label-primary);font:inherit;text-align:start;cursor:pointer;
+}
+.dso-quick-card[data-case-mode=ppt]{--dso-case-accent:var(--dsw-alias-state-warn-primary)}
+.dso-quick-card[data-case-mode=word]{--dso-case-accent:var(--dsw-alias-state-business-primary)}
+.dso-quick-card[data-case-mode=excel]{--dso-case-accent:var(--dsw-alias-state-success-primary)}
+/* Keep the enlarged icon above the card surface and behind its content. */
+.dso-quick-watermark{
+  position:absolute;z-index:-1;inset-inline-end:-18px;inset-block-end:-36px;width:100px;height:100px;
+  pointer-events:none;color:var(--dso-case-accent);opacity:0;transform:translateY(10px);
+}
+.dso-quick-watermark svg{display:block;width:100%;height:100%;stroke-width:1.25}
+@media(hover:hover){
+  .dso-quick-card:hover:not(:disabled) .dso-quick-watermark{opacity:.16;transform:none}
+  @media(prefers-reduced-motion:no-preference){
+    .dso-quick-watermark{transition:opacity 160ms ease-out,transform 200ms cubic-bezier(.2,.7,.25,1)}
+  }
+}
+.dso-quick-card-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
+.dso-quick-icon{
+  display:grid;place-items:center;flex:none;width:30px;height:30px;
+  /* Match the center of the icon's top-start corner to the card's. */
+  border-radius:max(0px,calc(var(--dsw-radius-panel) - var(--dso-case-padding) - var(--dso-case-border-width)));
+  background:color-mix(in srgb,var(--dso-case-accent) 15%,transparent);
+  color:color-mix(in srgb,var(--dso-case-accent) 76%,var(--dsw-alias-label-primary));
+}
+.dso-quick-action{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:550;line-height:16px;color:var(--dsw-alias-label-secondary)}
+.dso-quick-action svg{width:13px;height:13px;flex:none}
+.dso-quick-copy{display:grid;align-content:start;gap:3px;min-width:0;overflow-wrap:anywhere}
+.dso-quick-title{font-size:14px;font-weight:600;line-height:20px}
+.dso-quick-description{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.dso-quick-card:hover:not(:disabled),.dso-quick-card[aria-pressed=true]{background:color-mix(in srgb,var(--dso-case-accent) 9%,var(--dsw-alias-bg-layer-1))}
+.dso-quick-card[aria-pressed=true]{border-color:color-mix(in srgb,var(--dso-case-accent) 58%,var(--dsw-alias-border-l2))}
+.dso-quick-card:hover:not(:disabled) .dso-quick-action{color:var(--dsw-alias-label-primary)}
+.dso-quick-card:disabled{opacity:.55;cursor:default}
+.dso-quick-card:focus-visible,.dso-reference-toggle:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
+.dso-quick-status{min-height:18px;padding-top:9px;font-size:11px;color:var(--dsw-alias-label-secondary)}.dso-reference{margin-top:6px;padding-top:12px}.dso-reference-toggle{border:0;background:transparent;padding:0;font:inherit;line-height:18px;font-size:11px;white-space:nowrap;color:var(--dsw-alias-label-secondary);cursor:pointer}.dso-reference-toggle:hover{text-decoration:underline}
 
 .dso-opening-row{display:flex;align-items:center;gap:6px;min-width:0}.dso-opening-row:not(:first-child){margin-top:8px;padding-top:8px;border-top:.5px solid var(--dsw-alias-border-l2)}.dso-opening-file{flex:none;color:var(--dsw-alias-state-business-primary)}.dso-opening-row[data-mode=excel] .dso-opening-file{color:var(--dsw-alias-state-success-primary)}.dso-opening-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:0;background:transparent;padding:0;color:var(--dsw-alias-state-business-primary);font:inherit;font-size:13px;line-height:20px;text-align:left;cursor:pointer}.dso-opening-title:hover{text-decoration:underline}.dso-opening-title:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
 .dso-preview-actions{display:flex;gap:12px;align-items:center}
@@ -696,7 +806,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
 .dso-viewport{padding:4px 4px 12px}
 .dso-reference-panel{display:flow-root}
 .dso-reference-panel[data-closing]{overflow:clip}
-@container (max-width:480px){.dso-quick-grid{grid-template-columns:1fr}.dso-quick-heading{gap:8px}.dso-quick-card{padding:7px 12px}}
+@container (max-width:540px){.dso-quick-grid{grid-template-columns:1fr}.dso-quick-heading{gap:8px}}
 .dso-dock [data-office-ppt-template-viewport]{overflow:visible;overscroll-behavior:auto}.dso-sheets{display:flex;align-items:center;flex:none;overflow:auto;gap:4px;scrollbar-width:none}.dso-sheets::-webkit-scrollbar{display:none}.dso-sheets button{font:inherit;font-size:11px;line-height:16px;border:0;border-radius:999px;padding:5px 10px;flex:none;color:var(--dsw-alias-label-caption);background:transparent;cursor:pointer}.dso-sheets button:hover{color:var(--dsw-alias-label-primary)}.dso-sheets button[aria-pressed=true]{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .dso-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 14px}.dso-card{min-width:0;position:relative}.dso-card-select{font:inherit;display:flex;flex-direction:column;width:100%;padding:0;min-width:0;border:0;text-align:center;background:transparent;color:var(--dsw-alias-label-tertiary);cursor:pointer}.dso-card-select:disabled{cursor:default;opacity:.65}.dso-cover{box-sizing:border-box;display:block;position:relative;width:100%;aspect-ratio:16/9;border:2px solid transparent;border-radius:9px;overflow:hidden;background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 5%,var(--dsw-alias-bg-layer-1))}.dso-cover[data-mode=excel]{background:color-mix(in srgb,var(--dsw-alias-state-success-primary) 6%,var(--dsw-alias-bg-layer-1))}.dso-thumbnail{display:block;width:100%;border-radius:8px;overflow:hidden}.dso-thumbnail img{display:block;width:100%;height:auto}.dso-cover>.dso-thumbnail{position:absolute;left:13%;top:14%;width:74%;box-shadow:0 2px 10px color-mix(in srgb,var(--dsw-alias-label-primary) 15%,transparent);transform-origin:center top;transition:transform 180ms cubic-bezier(.23,1,.32,1)}.dso-cover[data-mode=excel]>.dso-thumbnail{left:8%;width:84%;height:100%}.dso-card[data-selected=true] .dso-cover{border-color:var(--dsw-alias-state-business-primary)}.dso-card-name{display:block;box-sizing:border-box;width:100%;padding-top:5px;text-align:center;font-size:12px;line-height:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dso-card[data-selected=true] .dso-card-name{color:var(--dsw-alias-label-primary)}.dso-card-preview{position:absolute;left:10px;top:10px;z-index:1;display:grid;place-items:center;width:28px;height:28px;padding:0;border:1px solid var(--dsw-alias-border-l2-darkmode-thin);border-radius:7px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);cursor:pointer;opacity:0;transition:opacity 120ms ease}.dso-card:hover .dso-card-preview,.dso-card:focus-within .dso-card-preview{opacity:1}.dso-card-preview:disabled{cursor:default}.dso-card-select:active:not(:focus-visible) .dso-thumbnail{transform:scale(.98)}
 @media(hover:hover) and (pointer:fine){.dso-card:has(.dso-card-select:enabled):hover .dso-thumbnail{transform:translateY(-3px) scale(1.045)}}@media(hover:none){.dso-card-preview{opacity:1}}@media(prefers-reduced-motion:reduce){.dso-cover>.dso-thumbnail,.dso-card-preview{transition:none}.dso-card:has(.dso-card-select:enabled):hover .dso-thumbnail,.dso-card-select:active:not(:focus-visible) .dso-thumbnail{transform:none}}

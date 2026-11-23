@@ -1469,7 +1469,7 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
       let warmReady, warmPending, warmImage, warmTimer, warmGeneration = 0
       const releases = new Set()
       const releaseOverlays = () => { for (const release of releases) release(); releases.clear() }
-      const frameKey = value => JSON.stringify([value.bounds, value.settings, value.theme, value.locale])
+      const frameKey = value => JSON.stringify([value.bounds, value.settings, value.theme, value.locale, value.landingComposerWidth])
       const clearWarm = retained => {
         warmGeneration++; warmReady = undefined; warmPending = undefined; clearTimeout(warmTimer)
         if (warmImage && warmImage !== retained) { cancelPaint?.(); warmImage.remove() }
@@ -1644,6 +1644,14 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
     const hasSharedLanding = state => state.connected && state.phase === 'ready' && state.landing === true &&
       state.conversationId === 'new' && !state.pageId && hasWorkLanding(state) &&
       !state.settingsOpen && !state.approvalsOpen && !state.accountDialogOpen
+    const workLandingComposer = panel => panel?.querySelector('[data-content-phase="hero"] [data-composer-card]')
+    const workLandingWidth = card => {
+      // During the morph the original slot is represented by a stable placeholder.
+      const placeholder = card?.previousElementSibling
+      const width = placeholder?.hasAttribute('data-dsh-landing-morph-placeholder')
+        ? parseFloat(placeholder.style.width) : card?.getBoundingClientRect().width
+      return Number.isFinite(width) && width > 0 && width <= 20000 ? width : undefined
+    }
 
     function afterWorkFirstFrame(callback) {
       let first, second, timeout, pending = true
@@ -1716,7 +1724,9 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
         rect.x + rect.width <= panel.right + 1 && rect.y + rect.height <= panel.bottom + 1
       const native = { composer: card.getBoundingClientRect(), title: title.getBoundingClientRect(), controls: controls.getBoundingClientRect() }
       if (![native.composer, native.title, native.controls, chat.composer, chat.title, chat.seat].every(fits)) return
-      const box = rect => ({ left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.width}px`, height: `${rect.height}px` })
+      // Rounded native bounds can differ by a fraction of a pixel. Keep one width throughout.
+      if (Math.abs(native.composer.width - chat.composer.width) > 1) return
+      const box = rect => ({ left: `${rect.x}px`, top: `${rect.y}px`, width: `${native.composer.width}px`, height: `${rect.height}px` })
       const translate = (x, y) => `${x}px ${y}px`
       const fromChat = to === 'work'
       const placeholder = document.createElement('div')
@@ -1762,8 +1772,11 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
           ]
           animations.push(writing.animate(frames, { duration: LANDING_MORPH_DURATION, fill: 'both' }))
         }
-        const cases = hero.querySelector('.dso-dock-root')
-        if (cases) animate(cases, { opacity: 0 }, { opacity: 1 })
+        // The shared case heading stays visible while only the recommendations change.
+        // Work cards play their own stagger on entry after the native Chat view yields.
+        for (const content of hero.querySelectorAll(fromChat ? '.dso-reference-panel' : '.dso-quick-stage, .dso-reference-panel')) {
+          animate(content, { opacity: 0 }, { opacity: 1 })
+        }
         if (fromChat) {
           // Lay out frame zero beneath the native Chat view before that view is hidden.
           for (const animation of animations) { animation.pause(); animation.currentTime = 0 }
@@ -1788,6 +1801,7 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
       const renameRequest = React.useSyncExternalStore(navigation.renaming.subscribe, navigation.renaming.getSnapshot)
       const cloudRenameOpen = renameRequest !== null
       const { mode, settingsOpen, settingsSurface } = state
+      const workLanding = hasWorkLanding(state)
       const candidate = state.landingMorph
       const morph = candidate?.to === mode && candidate.epoch === state.epoch && hasSharedLanding(state) &&
         !projectDialogOpen && !cloudDeleteOpen ? candidate : undefined
@@ -1803,8 +1817,10 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
       const workPanel = React.useRef(null)
       const surfacePresenter = React.useRef(null)
       const presentSurface = React.useRef(null)
+      const presentedComposerWidth = React.useRef(undefined)
       const revealMorph = React.useRef(null)
       const yieldedWorkMorph = React.useRef(null)
+      const enterChatCases = React.useRef(false)
       const modeIntent = React.useRef(0)
       const [animateWork, setAnimateWork] = React.useState(false)
       const tabs = React.useRef({})
@@ -1817,7 +1833,9 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
           if (state.landingMorph) navigation.finishLandingMorph(state.landingMorph)
           return
         }
-        const animation = animateWorkLanding(workPanel.current, morph)
+        const workSeat = workPanel.current
+        const animation = animateWorkLanding(workSeat, morph)
+        if (morph.to === 'work') workSeat?.setAttribute('data-dsh-case-entry-held', '')
         const bridge = window.dshEnterpriseChat
         let stopped = false, finishing = false, handoffTimeout, prepareTimer, incomingText, animationTimeout, cancelPaint
         const release = () => { if (!stopped) navigation.finishLandingMorph(morph) }
@@ -1858,6 +1876,7 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
               if (stopped || finishing || playing) return
               playing = true
               clearTimeout(handoffTimeout)
+              workSeat?.removeAttribute('data-dsh-case-entry-held')
               // Out-of-view geometry skips the morph, but still needs a painted Work surface.
               if (!animation) return finish()
               animation.play()
@@ -1877,6 +1896,7 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
           window.removeEventListener('resize', finish)
           if (revealMorph.current === morph) revealMorph.current = null
           if (yieldedWorkMorph.current === morph) yieldedWorkMorph.current = null
+          workSeat?.removeAttribute('data-dsh-case-entry-held')
           animation?.dispose()
         }
       }, [morph, state.landingMorph, navigation])
@@ -1888,12 +1908,20 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
         if (!bridge) return
         const appRoot = document.getElementById('root')
         const macModuleFrame = usesModuleFrame && document.documentElement.dataset.platform === 'darwin'
-        let observedLeading
+        let observedLeading, observedComposer
         const presenter = surfacePresenter.current || (surfacePresenter.current = createNativeSurfacePresenter(bridge, value => value.settings
           ? document.querySelector(`[data-dsh-native-surface="${value.settings}"]`) : panel.current))
         const present = (landingHandoff) => {
           const rect = (panel.current?.hidden ? workPanel.current : panel.current)?.getBoundingClientRect()
           if (!rect) return
+          const composer = workLanding ? workLandingComposer(workPanel.current) : undefined
+          if (composer !== observedComposer) {
+            if (observedComposer) resize.unobserve(observedComposer)
+            if (composer) resize.observe(composer)
+            observedComposer = composer
+          }
+          const landingComposerWidth = workLandingWidth(composer)
+          presentedComposerWidth.current = landingComposerWidth
           // Native WebContentsView paints above DOM chrome regardless of z-index.
           // macOS moves the sidebar opener into this seat when the rail disappears.
           const leading = document.querySelector('[data-shell-leading]')
@@ -1931,7 +1959,11 @@ const chatHandoff = mode === 'chat' && morph && revealMorph.current === morph
 const keepChatUntilWorkPaints = morph?.to === 'work' && yieldedWorkMorph.current !== morph
 const chatVisible = ((mode === 'chat' && (!morph || chatHandoff)) || keepChatUntilWorkPaints) && !surfaceOpen && !safeModePageOpen
 const visible = !hostModalOpen && (remote ? state.connected && remote.bounds.width > 0 && remote.bounds.height > 0 : chatVisible)
-return presenter.present({ visible, ...(visible && chatHandoff && landingHandoff === true ? { landingHandoff: true } : {}), ...(remote ? { settings: remote.section } : {}), ...(palette ? { palette } : {}), bounds, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light', locale: locale.getSnapshot().active === 'zh' ? 'zh' : 'en' }, overlays.intersects(bounds, surface), () => overlays.defer(bounds, surface))
+const occluded = overlays.intersects(bounds, surface)
+const revealChat = visible && !remote && !occluded && mode === 'chat' &&
+  (chatHandoff && landingHandoff === true || !morph && enterChatCases.current)
+if (revealChat) enterChatCases.current = false
+return presenter.present({ visible, ...(revealChat ? { landingHandoff: true } : {}), ...(remote ? { settings: remote.section } : {}), ...(palette ? { palette } : {}), ...(landingComposerWidth === undefined ? {} : { landingComposerWidth }), bounds, theme: document.body.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light', locale: locale.getSnapshot().active === 'zh' ? 'zh' : 'en' }, occluded, () => overlays.defer(bounds, surface))
         }
         // The native view follows the host's modal interaction boundary.
         // Onboarding makes #root inert while its dialog lives in a body portal.
@@ -1939,9 +1971,16 @@ return presenter.present({ visible, ...(visible && chatHandoff && landingHandoff
         if (appRoot) interaction.observe(appRoot, { attributes: true, attributeFilter: ['inert'] })
 // About covers Chat and remote settings. The recovery page covers Chat only.
 interaction.observe(document.documentElement, { attributes: true, attributeFilter: ['data-dsh-about-open', 'data-dsh-safe-mode-page'] })
-        const resize = new ResizeObserver(present)
+        const resize = new ResizeObserver(entries => {
+          if (entries.some(({ target }) => target !== observedComposer) || workLandingWidth(observedComposer) !== presentedComposerWidth.current) present()
+        })
         if (panel.current) resize.observe(panel.current)
         if (workPanel.current) resize.observe(workPanel.current)
+        // The blank editor can mount after the panel or be replaced by a new draft.
+        const composerMount = workLanding && workPanel.current ? new MutationObserver(() => {
+          if (!observedComposer?.isConnected && workLandingComposer(workPanel.current) !== observedComposer) present()
+        }) : null
+        composerMount?.observe(workPanel.current, { childList: true, subtree: true })
         const sidebar = document.querySelector('[data-dsh-sidebar-root]')
         if (sidebar) resize.observe(sidebar)
         // The leading seat mounts/unmounts as a direct frame child on collapse.
@@ -1960,9 +1999,9 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         present()
         return () => {
           if (presentSurface.current === present) presentSurface.current = null
-          stopWarmup(); overlays.dispose(); interaction.disconnect(); resize.disconnect(); chromeLayout.disconnect(); theme.disconnect(); unsubscribeLocale(); window.removeEventListener('resize', present)
+          stopWarmup(); overlays.dispose(); interaction.disconnect(); resize.disconnect(); composerMount?.disconnect(); chromeLayout.disconnect(); theme.disconnect(); unsubscribeLocale(); window.removeEventListener('resize', present)
         }
-      }, [mode, morph, usesModuleFrame, squarePage, settingsOpen, state.approvalsOpen, state.accountDialogOpen, settingsSurface, state.connected, state.epoch, state.settingsProtocolVersion, projectDialogOpen, cloudDeleteOpen, cloudRenameOpen, locale])
+      }, [mode, morph, workLanding, usesModuleFrame, squarePage, settingsOpen, state.approvalsOpen, state.accountDialogOpen, settingsSurface, state.connected, state.epoch, state.settingsProtocolVersion, projectDialogOpen, cloudDeleteOpen, cloudRenameOpen, locale])
       React.useEffect(() => { surfacePresenter.current?.invalidate() }, [state.path, state.pageId, state.phase])
       React.useEffect(() => () => {
         void window.dshEnterpriseChat?.present({ visible: false, bounds: { x: 0, y: 48, width: 0, height: 0 }, theme: 'light' }).catch(() => {})
@@ -1974,7 +2013,11 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         const before = navigation.snapshot()
         const request = ++modeIntent.current
         const commit = chat => {
-          if (!navigation.choose(next, chat ? { to: next, chat, epoch: before.epoch } : undefined)) return false
+          enterChatCases.current = next === 'chat' && landingMotionAllowed()
+          if (!navigation.choose(next, chat ? { to: next, chat, epoch: before.epoch } : undefined)) {
+            enterChatCases.current = false
+            return false
+          }
           setAnimateWork(!chat && next !== before.mode && next === 'work' && landingMotionAllowed())
           return true
         }
@@ -1995,7 +2038,12 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           }
           if (stillCurrent()) commit(canMorph() ? chat : undefined)
         }
-        void bridge.landingGeometry().then(measured, () => measured())
+        const measure = async () => {
+          const width = workLandingWidth(workLandingComposer(workPanel.current))
+          if (width !== presentedComposerWidth.current) await presentSurface.current?.()
+          if (stillCurrent()) return bridge.landingGeometry()
+        }
+        void measure().then(measured, () => measured())
         return true
       }
       const keyDown = (event) => {
@@ -2118,6 +2166,9 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
           .dshWorkContent{display:grid;grid-template-rows:minmax(0,1fr);isolation:isolate}.dshWorkContent[hidden]{display:none}
           /* Keep Harness's column ResizeObserver at the real width while its landing is behind Chat. */
           .dshWorkContent[hidden][data-keep-landing-layout]{display:grid;visibility:hidden;opacity:0;pointer-events:none}
+          /* Replay the Work cards when its retained landing becomes visible. */
+          .dshWorkContent[hidden] .dso-quick-card{animation-name:none}
+          .dshWorkContent[data-dsh-case-entry-held] .dso-quick-card{animation-play-state:paused}
           .dshWorkContent [data-dsh-landing-morph-placeholder]{flex:none;anchor-name:--dso-hero-composer}
           .dshWorkContent [data-composer-card][data-dsh-landing-morph-card]{position:fixed;max-width:none;min-height:0;margin:0;padding-block-end:var(--dsh-morph-footer-clearance,0px);overflow:clip;z-index:2;anchor-name:none!important}
           .dshWorkContent [data-dsh-landing-morph-card]:has(>[data-dsh-landing-morph-footer]) > :not([data-dsh-landing-morph-footer]){flex-shrink:1;min-block-size:0;overflow:clip}

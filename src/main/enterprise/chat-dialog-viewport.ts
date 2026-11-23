@@ -7,6 +7,7 @@ interface ContentBounds {
   windowHeight: number
   background: string
   followNativeView?: boolean
+  landingComposerWidth?: number
 }
 
 /** The app keeps its chat-region geometry while body portals use the full native window. */
@@ -26,6 +27,15 @@ export function chatDialogViewportScript(bounds: ContentBounds | undefined): str
       top: clamp(0px, calc(100dvh - ${bounds.height}px), ${bounds.y}px);
       width: ${bounds.width}px; height: ${bounds.height}px; overflow: hidden; background: ${bounds.background};
     }
+    ${bounds.landingComposerWidth === undefined ? '' : `
+    /* The Chat hero includes two 16px insets outside the Work card's measured width. */
+    html[data-bisheng-surface="desktop"][data-dsh-chat-viewport] .dsh-chat-surface .dsh-chat-landing {
+      --dsh-welcome-max-width: ${bounds.landingComposerWidth + 32}px;
+    }
+    html[data-bisheng-surface="desktop"][data-dsh-chat-viewport] .dsh-chat-surface .dsh-chat-landing :is(.dsh-chat-hero, .dsh-chat-welcome-hero, .chat-welcome-examples) {
+      max-width: min(100%, var(--dsh-welcome-max-width));
+    }
+    `}
     /* A portal must not paint once in the content region before native expansion. */
     @media (max-width: ${bounds.windowWidth - 0.5}px), (max-height: ${bounds.windowHeight - 0.5}px) {
       ${bounds.followNativeView ? `

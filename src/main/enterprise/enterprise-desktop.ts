@@ -22,6 +22,8 @@ export interface EnterpriseDesktopRuntime {
   readMobileAccessAccount(): MobileAccessAccount
   subscribeMobileAccessAccount(listener: (account: MobileAccessAccount) => void): () => void
   webSession(connectionKey: string): Promise<EnterpriseWebSession>
+  profileUpdated(connectionKey: string): Promise<void>
+  profileWindowFocused(): Promise<void>
   subscribe(listener: (state: EnterprisePublicState) => void): () => void
   readThirdPartyPolicy(): Promise<{ allowThirdPartyPlugins: boolean, allowThirdPartyWorkbenches: boolean }>
   harnessEnvironment(): NodeJS.ProcessEnv
@@ -88,6 +90,8 @@ export async function startEnterpriseDesktop(options: {
     readMobileAccessAccount: () => service.readMobileAccessAccount(),
     subscribeMobileAccessAccount: listener => service.subscribeMobileAccessAccount(listener),
     webSession: (key) => service.webSession(key),
+    profileUpdated: key => service.profileUpdated(key),
+    profileWindowFocused: () => service.profileWindowFocused(),
     subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener) } },
     async readThirdPartyPolicy() {
       const closed = { allowThirdPartyPlugins: false, allowThirdPartyWorkbenches: false }

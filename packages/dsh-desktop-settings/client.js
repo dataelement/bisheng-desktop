@@ -423,12 +423,14 @@ window.__ModuleLoader__.load({
         open && h(ApprovalsPanel, { onClose, t }))
     }
 
-    function AccountAvatar({ name, src, attempt, onImageError }) {
+    function AccountAvatar({ signedIn, nickname, src, attempt, onImageError }) {
       const [failed, setFailed] = useState(null)
       useEffect(() => setFailed(null), [src, attempt])
-      return h('span', { className: 'dshAccountAvatar', 'aria-hidden': 'true' }, src && failed !== src
+      const showImage = src && failed !== src
+      const initial = (Array.from(nickname?.trim() ?? '')[0] ?? '?').toUpperCase()
+      return h('span', { className: 'dshAccountAvatar', 'data-avatar-variant': showImage ? 'image' : signedIn ? 'initial' : 'signed-out', 'aria-hidden': 'true' }, showImage
         ? h('img', { key: `${src}:${attempt}`, src, alt: '', referrerPolicy: 'no-referrer', style: { width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }, onError: () => { setFailed(src); onImageError(src) } })
-        : name ? Array.from(name).slice(0, 2).join('').toLocaleUpperCase() : h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5 }, h('circle', { cx: 12, cy: 8, r: 4 }), h('path', { d: 'M4 22v-2a8 8 0 0 1 16 0v2' })))
+        : signedIn ? initial : h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5 }, h('circle', { cx: 12, cy: 8, r: 4 }), h('path', { d: 'M4 22v-2a8 8 0 0 1 16 0v2' })))
     }
 
     function AccountMenuIcon({ kind }) {
@@ -550,13 +552,20 @@ window.__ModuleLoader__.load({
       // F016: the balance sits under the name, so it is visible without opening the menu.
       const creditsLine = !connected ? null : unlimitedCredits ? t('creditsUnlimited') : credits !== null ? t('creditsLine', { value: credits }) : null
       const triggerLabel = `${t('accountMenu')}: ${label}${creditsLine ? ` · ${creditsLine}` : ''}${pending > 0 ? ` · ${t('approvalsPending')} ${pending}` : ''}`
+      const avatarProps = {
+        signedIn: connected,
+        nickname: identity.account?.user?.username,
+        src: connected ? identity.account?.user?.avatar : null,
+        attempt: identity.imageAttempt,
+        onImageError: identity.imageFailed
+      }
       // The shared native-surface coordinator handles any overlap with embedded content.
       return h('div', { className: 'dshAccountLauncher', 'data-dsh-account-launcher': '' },
         h(Menu, { open: menuOpen, onClose: () => { if (!busy) setMenuOpen(false) }, side: 'top', align: 'start', portal: true, autoFocus: true, className: 'dshAccountMenuAnchor', listClassName: `dshAccountMenu${wide ? ' dshAccountMenuWide' : ''}`,
           anchor: h('button', { ref: trigger, type: 'button', className: `dshAccountTrigger${wide ? '' : ' dshAccountTriggerRail'}`, 'aria-label': triggerLabel, title: wide ? undefined : label, 'aria-haspopup': 'menu', 'aria-expanded': menuOpen, disabled: settingsOpen || busy, onClick: () => { setMenuOpen(previous => !previous); setActionError(false); if (!menuOpen) void identity.refresh('account') } },
-            h('span', { className: 'dshAccountAvatarWrap' }, h(AccountAvatar, { name, src: connected ? identity.account?.user?.avatar : null, attempt: identity.imageAttempt, onImageError: identity.imageFailed }), badge),
+            h('span', { className: 'dshAccountAvatarWrap' }, h(AccountAvatar, avatarProps), badge),
             wide && h('span', { className: 'dshAccountTriggerCopy' }, h('span', null, label), creditsLine && h('small', { 'data-dsh-account-credits': '' }, creditsLine)), wide && h(IconChevronDownOutlineRegular)) },
-          h('div', { className: 'dshAccountMenuIdentity' }, h(AccountAvatar, { name, src: connected ? identity.account?.user?.avatar : null, attempt: identity.imageAttempt, onImageError: identity.imageFailed }), h('div', null, h('strong', null, label), h('small', null, t(connected ? 'enterpriseAccount' : 'signInHint'))),
+          h('div', { className: 'dshAccountMenuIdentity' }, h(AccountAvatar, avatarProps), h('div', null, h('strong', null, label), h('small', null, t(connected ? 'enterpriseAccount' : 'signInHint'))),
             connected && h('div', { className: 'dshAccountMenuCredits', role: 'status' }, h('strong', null, unlimitedCredits ? t('unlimited') : credits ?? '—'), h('small', null, t(credits === null && !unlimitedCredits ? 'creditsUnavailable' : 'creditsRemaining')))),
           h(MenuItemButton, { icon: h(IconSettingsOutlineRegular), shortcut: settingsShortcut, disabled: busy, onSelect: () => { setMenuOpen(false); openSettings() } }, t('settings')),
           connected && h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'account' }), disabled: busy, onSelect: openAccountSettings }, t('accountSettings')),
@@ -597,7 +606,18 @@ window.__ModuleLoader__.load({
           .dshSettingsSection button:not([role=tab]):hover,.dshSettingsStatus button:hover{background:var(--dsw-alias-interactive-bg-hover)}.dshSettingsSection button:not([role=tab])[aria-selected=true]{background:var(--dsw-alias-interactive-bg-hover);font-weight:600}.dshSettingsSection button:not([role=tab]):disabled{opacity:.5;cursor:default}
           .dshSettingsVersions{display:grid;grid-template-columns:1fr auto;gap:20px;padding:20px 0;border-bottom:1px solid var(--dsw-alias-border-l2);font-size:14px}.dshSettingsVersions dd{margin:0;color:var(--dsw-alias-label-secondary)}.dshSettingsButtons{display:flex;gap:12px;padding:20px 0;flex-wrap:wrap}
           .dshAccountLauncher,.dshAccountMenuAnchor{display:block;width:100%;min-width:0}.dshAccountTrigger{anchor-name:--dsh-desktop-account-trigger;display:flex;align-items:center;gap:10px;width:100%;min-width:0;height:48px;box-sizing:border-box;padding:6px 10px;border:0;border-radius:var(--dsw-radius-md);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;text-align:left;cursor:pointer}.dshAccountTrigger:hover,.dshAccountTrigger[aria-expanded=true]{background:var(--dsw-alias-interactive-bg-hover)}.dshAccountTrigger:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}.dshAccountTrigger:disabled{cursor:default}.dshAccountTriggerRail{width:36px;height:36px;padding:4px;margin:auto;justify-content:center}.dshAccountTrigger>svg{flex:none;color:var(--dsw-alias-label-tertiary)}
-          .dshAccountAvatar{display:flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;border-radius:50%;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-size:11px;font-weight:600}.dshAccountAvatarWrap{position:relative;display:flex;flex:none}.dshAccountBadge{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--dsw-alias-state-error-primary);color:#fff;font-size:10px;font-weight:600;line-height:1}.dshAccountAvatarWrap>.dshAccountBadge{position:absolute;top:-4px;right:-6px}.dshAccountMenuRow{display:flex;align-items:center;gap:8px;min-width:0}.dshAccountTriggerCopy{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;font-size:13px}.dshAccountTriggerCopy>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dshAccountTriggerCopy small,.dshAccountMenuIdentity small{color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:400}
+          .dshAccountAvatar{display:flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;border-radius:50%;font-size:11px;font-weight:500}.dshAccountAvatarWrap{position:relative;display:flex;flex:none}.dshAccountBadge{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--dsw-alias-state-error-primary);color:#fff;font-size:10px;font-weight:600;line-height:1}.dshAccountAvatarWrap>.dshAccountBadge{position:absolute;top:-4px;right:-6px}.dshAccountMenuRow{display:flex;align-items:center;gap:8px;min-width:0}.dshAccountTriggerCopy{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;font-size:13px}.dshAccountTriggerCopy>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dshAccountTriggerCopy small,.dshAccountMenuIdentity small{color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:400}
+          .dshAccountAvatar[data-avatar-variant='signed-out'] {
+            background: var(--dsw-alias-interactive-bg-hover);
+            color: var(--dsw-alias-label-primary);
+          }
+          /* Harness sets color-scheme; use the BiSheng Web fill-4 palette for initials. */
+          .dshAccountAvatar[data-avatar-variant='initial'] {
+            --dsw-alias-user-avatar-fill: light-dark(rgb(202 205 212), rgb(95 95 96));
+            --dsw-alias-user-avatar-ink: white;
+            background: var(--dsw-alias-user-avatar-fill);
+            color: var(--dsw-alias-user-avatar-ink);
+          }
           /* The portal follows the real trigger width; override Menu's inline 12px viewport clamp to keep both edges aligned. */
           .dshAccountMenu{min-width:248px;max-width:min(320px,calc(100vw - 24px))}.dshAccountMenuWide{position-anchor:--dsh-desktop-account-trigger;box-sizing:border-box;width:anchor-size(width);min-width:0;max-width:none;left:anchor(left)!important}.dshAccountMenuIdentity{display:flex;align-items:center;gap:12px;padding:10px 10px 14px;margin-bottom:4px;border-bottom:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary)}.dshAccountMenuIdentity>div{display:flex;flex-direction:column;gap:4px;min-width:0}.dshAccountMenuIdentity strong{font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dshAccountMenuError{font-size:12px;line-height:1.5;padding:4px 10px;color:var(--dsw-alias-label-secondary)}
           .dshAccountMenuIdentity>.dshAccountMenuCredits{flex:none;margin-left:auto;text-align:right;max-width:48%}.dshAccountMenuCredits strong{font-variant-numeric:tabular-nums}.dshAccountMenuIdentity>div:not(.dshAccountMenuCredits){flex:1;min-width:0}

@@ -13,13 +13,14 @@ HTMLDialogElement.prototype.close ??= function () { this.removeAttribute('open')
 const catalogue = JSON.parse(await readFile(resolve('packages/dsh-desktop-office/welcome-cases.json'), 'utf8'))
 const workCase = id => catalogue.work.find(item => item.id === id)
 const creatorCaseId = catalogue.batches.work[0].find(id => workCase(id).preset === 'cordis')
+const initialWorkBatch = ['customer-success-review', 'event-minutes', creatorCaseId]
 const referenceTemplates = ['word', 'excel'].map(mode => ({
   id: `${mode}-reference`, mode, title: `${mode} reference`, pages: 1, pageAspectRatios: [1], revision: 'a'.repeat(24),
   thumbnail: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"/>'
 }))
 const linkedTemplates = [
   ['annual-business', 'subscription-analysis'], ['port-cargo', 'port-review'], ['bio-assay', 'enzyme-quality'],
-  ['meeting-minutes', 'event-minutes'], ['coffee-market', 'tea-market']
+  ['meeting-minutes', 'event-minutes'], ['coffee-market', 'tea-market'], ['government-notice', 'security-notice']
 ].map(([id, caseId]) => {
   const item = workCase(caseId)
   return { ...referenceTemplates.find(template => template.mode === item.officeMode), id, title: item.template }
@@ -150,7 +151,7 @@ async function fixture({ mode = null, presentationMode = null, selectedTemplateI
   await act(async () => render())
   return {
     calls, states, core, input: () => getEditor(sessionId),
-    ids: () => [...container.querySelectorAll('[data-welcome-case]')].map(node => node.dataset.welcomeCase),
+    ids: () => [...container.querySelectorAll('.dso-quick-grid:not([data-leaving]) [data-welcome-case]')].map(node => node.dataset.welcomeCase),
     async click(label) { const button = [...container.querySelectorAll('button')].find(node => node.textContent === label || node.getAttribute('aria-label') === label); expect(button, label).toBeDefined(); await act(async () => button.click()) },
     async choose(item = 0) { await act(async () => {
       const cards = [...container.querySelectorAll('[data-welcome-case]')]
@@ -168,6 +169,12 @@ async function fixture({ mode = null, presentationMode = null, selectedTemplateI
   }
 }
 
+async function changeBatch(f, roll, label = '切换一批') {
+  const random = vi.spyOn(Math, 'random').mockReturnValue(roll)
+  try { await f.click(label) }
+  finally { random.mockRestore() }
+}
+
 it.each([true, false])('shows PPT templates when the case catalogue fails and lets the normal dock retry (bound=%s)', async bound => {
   const f = await fixture({ withComposer: true, bound, failFirstCatalogue: true })
   const host = container.querySelector('[data-conversation-scroll]')
@@ -180,7 +187,7 @@ it.each([true, false])('shows PPT templates when the case catalogue fails and le
   expect(host.querySelector('[data-native-wheel-owner]')).toBeNull()
   await f.click('PPT')
   await f.click('重新加载')
-  expect(f.ids()).toHaveLength(4)
+  expect(f.ids()).toHaveLength(3)
   expect(host.querySelector('[role=alert]')).toBeNull()
   if (bound) expect(f.input().read().draft).toBe('')
 })
@@ -195,20 +202,29 @@ it.each([false, true])('overlaps Work batches with the Chat stagger unless motio
     const f = await fixture()
     const grid = () => container.querySelector('.dso-quick-grid:not([data-leaving])')
     const first = grid()
-    expect([...first.children].map(row => row.style.getPropertyValue('--dso-row-delay'))).toEqual(['0ms', '100ms', '200ms', '300ms'])
-    await f.click('切换一批')
+    const firstIds = f.ids()
+    expect([...first.children].map(row => row.style.getPropertyValue('--dso-row-delay'))).toEqual(['0ms', '100ms', '200ms'])
+    await changeBatch(f, 0.1)
+    let finalIds = f.ids()
+    expect(finalIds).toHaveLength(3)
+    expect(finalIds.some(id => firstIds.includes(id))).toBe(false)
     if (!reduced) {
       expect(first.getAttribute('aria-hidden')).toBe('true')
       expect(grid().style.getPropertyValue('--dso-entry-delay')).toBe('40ms')
       expect(animate).toHaveBeenCalledWith([{ opacity: 1 }, { opacity: 0 }], { duration: 140, easing: 'ease-in-out', fill: 'forwards' })
-      await f.click('切换一批')
+      await changeBatch(f, 0.5)
       expect(container.querySelectorAll('.dso-quick-grid')).toHaveLength(2)
+      expect(f.ids()).toEqual(finalIds)
       await act(async () => fade.onfinish())
+      const queuedIds = f.ids()
+      expect(queuedIds).toHaveLength(3)
+      expect(queuedIds.some(id => finalIds.includes(id))).toBe(false)
+      finalIds = queuedIds
       await act(async () => fade.onfinish())
     } else expect(animate).not.toHaveBeenCalled()
     expect(first.isConnected).toBe(false)
     expect(grid().hasAttribute('inert')).toBe(false)
-    expect(f.ids()).toEqual(catalogue.batches.work[reduced ? 1 : 2])
+    expect(f.ids()).toEqual(finalIds)
   } finally {
     if (original) Object.defineProperty(Element.prototype, 'animate', original)
     else delete Element.prototype.animate
@@ -216,20 +232,48 @@ it.each([false, true])('overlaps Work batches with the Chat stagger unless motio
   }
 })
 
-it('rotates diverse four-case batches in Work, covers all cases, and never changes the draft', async () => {
-  const f = await fixture({ initial: 'Keep my working notes' }), batches = []
-  for (let i = 0; i < catalogue.batches.work.length; i++) {
+it.each([
+  { roll: 0.1, modeCount: 2 }, { roll: 0.9, modeCount: 3 }
+])('draws three Work cases across $modeCount modes after the first batch', async ({ roll, modeCount }) => {
+  const f = await fixture()
+  const first = f.ids()
+  expect(first).toEqual(initialWorkBatch)
+  expect(new Set(first.map(id => workCase(id).officeMode))).toEqual(new Set(['ppt', 'word', 'normal']))
+
+  await changeBatch(f, roll)
+  const ids = f.ids()
+  expect(ids).toHaveLength(3)
+  expect(new Set(ids).size).toBe(3)
+  expect(new Set(ids.map(id => workCase(id).officeMode)).size).toBe(modeCount)
+  expect(ids.some(id => first.includes(id))).toBe(false)
+})
+
+it('surfaces the full Work catalogue across successive batches without changing the draft or requesting cases again', async () => {
+  const f = await fixture({ initial: 'Keep my working notes' })
+  const seen = new Set(f.ids())
+  const alwaysPresent = new Set(catalogue.work.map(item => item.officeMode))
+  const callsBefore = f.calls.length
+  const rolls = [0.1, 0.5, 0.9, 0.26, 0.4, 0.74, 0.01, 0.3, 0.63, 0.99]
+  for (let i = 0; i < catalogue.work.length; i++) {
+    const previous = f.ids()
+    await changeBatch(f, rolls[i % rolls.length])
     const ids = f.ids()
-    batches.push(ids)
-    expect(ids).toHaveLength(4)
-    expect(ids.map(id => workCase(id).officeMode)).toContain('ppt')
-    expect(new Set(ids.map(id => workCase(id).category)).size).toBe(4)
-    await f.click('切换一批')
+    const modes = new Set(ids.map(id => workCase(id).officeMode))
+    expect(ids).toHaveLength(3)
+    expect(new Set(ids).size).toBe(3)
+    expect(modes.size).toBeGreaterThanOrEqual(2)
+    expect(ids.some(id => previous.includes(id))).toBe(false)
+    for (const mode of alwaysPresent) {
+      if (!modes.has(mode)) alwaysPresent.delete(mode)
+    }
+    for (const id of ids) seen.add(id)
   }
-  expect(new Set(batches.flat())).toEqual(new Set(catalogue.work.map(item => item.id)))
-  expect(f.ids()).toEqual(batches[0])
+  expect(seen).toEqual(new Set(catalogue.work.map(item => item.id)))
+  expect([...alwaysPresent]).toEqual([])
   expect(f.input().read().draft).toBe('Keep my working notes')
+  expect(f.calls).toHaveLength(callsBefore)
   expect(f.calls.filter(call => call.operation === 'welcome-cases')).toHaveLength(1)
+  expect(f.input().insertText).not.toHaveBeenCalled()
   expect(f.input().submit).not.toHaveBeenCalled()
 })
 
@@ -239,21 +283,44 @@ it.each([false, true])('shows the template empty state when Excel has no templat
   expect(container.querySelector('[data-welcome-cases]')).toBeNull()
   expect(container.querySelector('.dso-reference [role=status]').textContent).toBe(english ? 'No templates available' : '暂无模板')
   await f.click('Excel')
-  expect(f.ids()).toEqual(catalogue.batches.work[0])
+  expect(f.ids()).toEqual(initialWorkBatch)
 })
 
-it.each([false, true])('directly fills the exact sourced prompt without success feedback or an undo button (English=%s)', async english => {
+it.each([false, true])('shows localized case cards and directly fills the exact sourced prompt (English=%s)', async english => {
   const f = await fixture({ english, initial: 'Existing notes' })
   expect(container.querySelector('.dso-quick-heading h3').textContent).toBe(english ? 'Start with an example' : '从一个案例开始')
   expect(container.querySelector('.dso-quick-batch').textContent).toBe(english ? 'Try another set' : '切换一批')
   expect(container.querySelector('.dso-quick-heading').textContent).toBe(english ? 'Start with an exampleTry another set' : '从一个案例开始切换一批')
-  const button = container.querySelector('[data-welcome-case]')
+  const language = english ? 'en' : 'zh'
+  const cards = [...container.querySelectorAll('button[data-welcome-case]')]
+  expect(cards).toHaveLength(3)
+  for (const card of cards) {
+    const item = workCase(card.dataset.welcomeCase)
+    const title = card.querySelector('.dso-quick-title')
+    const description = card.querySelector('.dso-quick-description')
+    expect(card.type).toBe('button')
+    expect(card.querySelector('button')).toBeNull()
+    expect(title.textContent).toBe(item.title[language])
+    expect(description.textContent).toBe(item.description[language])
+    expect(document.getElementById(card.getAttribute('aria-labelledby'))).toBe(title)
+    expect(document.getElementById(card.getAttribute('aria-describedby'))).toBe(description)
+    expect(card.querySelector('.dso-quick-action').textContent).toBe(english ? 'Use example' : '使用案例')
+    const watermark = card.querySelector('.dso-quick-watermark')
+    expect(watermark.getAttribute('aria-hidden')).toBe('true')
+    expect(watermark.querySelector('path').getAttribute('d')).toBe(card.querySelector('.dso-quick-icon path').getAttribute('d'))
+  }
+  const [button] = cards
   const item = workCase(button.dataset.welcomeCase)
-  expect(button.textContent).toContain(item.title[english ? 'en' : 'zh'])
   button.focus(); expect(document.activeElement).toBe(button)
   // jsdom does not supply the keyboard activation default of native buttons.
   await act(async () => { button.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); button.click() })
   expect(f.input().read().draft).toBe(english ? item.promptEn : item.prompt)
+  const selected = container.querySelector('[data-welcome-case][aria-pressed=true]')
+  expect(selected.dataset.welcomeCase).toBe(item.id)
+  expect(selected.querySelector('.dso-quick-action')).toBeNull()
+  await f.choose(item.id)
+  expect(button.getAttribute('aria-pressed')).toBe('false')
+  expect(button.querySelector('.dso-quick-action').textContent).toBe(english ? 'Use example' : '使用案例')
   expect(f.input().submit).not.toHaveBeenCalled()
   expect(f.input().setDraft).not.toHaveBeenCalled()
   expect(container.querySelector('.dso-quick-status')).toBeNull()
@@ -292,10 +359,10 @@ it('switches back to Standard on the first ordinary case after a Creator case', 
   await f.choose('event-minutes')
   await f.choose(creatorCaseId)
   const release = f.hold('preset-select')
-  await f.choose('subscription-analysis')
+  await f.choose('customer-success-review')
   expect(f.input().read().draft).toBe(workCase(creatorCaseId).prompt)
   await release()
-  expect(f.input().read().draft).toBe(workCase('subscription-analysis').prompt)
+  expect(f.input().read().draft).toBe(workCase('customer-success-review').prompt)
   await f.choose('event-minutes')
   expect(f.calls.filter(c => c.operation === 'preset-select').map(c => c.payload.agentPreset)).toEqual(['cordis', 'standard'])
   expect(f.input().submit).not.toHaveBeenCalled()
@@ -347,7 +414,7 @@ it('keeps the draft and office mode when Harness refuses Creator mode', async ()
 it('keeps the mixed case batch beside templates when a case activates an Office mode', async () => {
   const f = await fixture({ withComposer: true, officeTemplates: linkedTemplates })
   const initialBatch = f.ids()
-  for (const [index, mode, label] of [[0, 'ppt', 'PPT'], [1, 'word', 'Word'], [2, 'excel', 'Excel'], [3, 'normal', null]]) {
+  for (const [index, mode, label] of [[0, 'ppt', 'PPT'], [1, 'word', 'Word'], [2, 'normal', null]]) {
     await f.choose(initialBatch[index])
     expect(container.querySelector('[data-office-dock]').dataset.officeDock).toBe(mode)
     const item = workCase(initialBatch[index])
@@ -376,26 +443,29 @@ it('keeps the mixed case batch beside templates when a case activates an Office 
     }
   }
   await f.click('Word')
-  expect(f.input().read().draft).toBe(workCase(initialBatch[3]).prompt)
+  expect(f.input().read().draft).toBe(workCase(creatorCaseId).prompt)
   expect(f.input().submit).not.toHaveBeenCalled()
 })
 
 it('keeps a later mixed batch when a case brings up templates and rotates only on request', async () => {
   const f = await fixture({ officeTemplates: linkedTemplates })
-  await f.click('切换一批')
+  await changeBatch(f, 0.9)
   const batch = f.ids()
-  await f.choose('port-review')
+  const excel = batch.find(id => workCase(id).officeMode === 'excel')
+  const word = workCase(batch.find(id => workCase(id).officeMode === 'word'))
+  await f.choose(excel)
   expect(f.ids()).toEqual(batch)
   expect(container.querySelector('.dso-reference')).not.toBeNull()
-  await f.choose('tea-market')
+  await f.choose(word.id)
   expect(f.ids()).toEqual(batch)
-  expect(container.querySelector('[data-office-template][data-selected=true]').dataset.officeTemplate).toBe('coffee-market')
-  expect(f.input().read().draft).toBe(workCase('tea-market').prompt)
-  await f.choose('tea-market')
+  expect(container.querySelector('[data-office-template][data-selected=true]').textContent).toContain(word.template)
+  expect(f.input().read().draft).toBe(word.prompt)
+  await f.choose(word.id)
   expect(f.ids()).toEqual(batch)
   expect(f.input().read().draft).toBe('')
-  await f.click('切换一批')
-  expect(f.ids()).toEqual(catalogue.batches.work[2])
+  await changeBatch(f, 0.5)
+  expect(f.ids()).toHaveLength(3)
+  expect(f.ids().some(id => batch.includes(id))).toBe(false)
 })
 
 it('resizes the composer when switching cases and continues from the visible height if interrupted', async () => {
@@ -405,7 +475,7 @@ it('resizes the composer when switching cases and continues from the visible hei
   let visibleHeight
   editor.getBoundingClientRect = () => {
     const mode = container.querySelector('[data-office-dock]').dataset.officeDock
-    const height = f.input().read().draft ? (mode === 'excel' ? 184 : 112) : 76
+    const height = f.input().read().draft ? (mode === 'word' ? 184 : 112) : 76
     return { height: visibleHeight ?? height }
   }
   const cancel = vi.fn(() => { visibleHeight = undefined })
@@ -416,7 +486,7 @@ it('resizes the composer when switching cases and continues from the visible hei
   }
 
   await chooseAndPaint('customer-success-review')
-  await chooseAndPaint('subscription-analysis')
+  await chooseAndPaint('event-minutes')
   expect(editor.animate).toHaveBeenLastCalledWith({ blockSize: ['112px', '184px'] }, expect.anything())
 
   visibleHeight = 156
@@ -437,11 +507,13 @@ it.each(['customer-success-review', creatorCaseId])('clears the case highlight w
   }
   await f.edit('')
   expect(pressed()).toBeUndefined()
-  expect(f.ids()).toEqual(catalogue.batches.work[0])
+  expect(f.ids()).toEqual(initialWorkBatch)
 })
 
 it.each(['customer-success-review', 'event-minutes', 'subscription-analysis', creatorCaseId])('toggles %s off and clears the input without changing the case batch', async id => {
   const f = await fixture({ officeTemplates: linkedTemplates, attachmentIds: ['uploaded-a'], withComposer: true })
+  if (workCase(id).officeMode === 'excel') await changeBatch(f, 0.9)
+  const batch = f.ids()
   await f.choose(id)
   if (id === 'customer-success-review') await f.click('PPT example')
   expect(f.input().read().draft).toBe(workCase(id).prompt)
@@ -451,7 +523,7 @@ it.each(['customer-success-review', 'event-minutes', 'subscription-analysis', cr
   expect(f.input().read()).toMatchObject({ draft: '', attachmentIds: ['uploaded-a'] })
   expect(f.input().persistDraft).toHaveBeenCalledTimes(2)
   expect(f.input().submit).not.toHaveBeenCalled()
-  expect(f.ids()).toEqual(catalogue.batches.work[0])
+  expect(f.ids()).toEqual(batch)
   expect(container.querySelector('[data-welcome-case][aria-pressed=true]')).toBeNull()
   expect(container.querySelector('[data-office-dock]').dataset.officeDock).toBe('normal')
   expect(container.querySelector('.dso-reference')).toBeNull()
@@ -484,22 +556,25 @@ it('keeps the selected case and its prompt if clearing its mode fails', async ()
 
 it('keeps the case entry scoped to its session and clears it on a direct mode change', async () => {
   const f = await fixture({ withComposer: true, officeTemplates: linkedTemplates })
-  await f.choose('subscription-analysis')
+  await f.choose('event-minutes')
+  await changeBatch(f, 0.5)
+  expect(f.ids()).not.toEqual(initialWorkBatch)
   await f.switchSession('session-b')
+  expect(f.ids()).toEqual(initialWorkBatch)
   await f.click('Excel')
   expect(container.querySelector('[data-welcome-cases]')).toBeNull()
   expect(container.querySelector('.dso-reference')).not.toBeNull()
   await f.switchSession('session-a')
-  expect(f.ids()).toEqual(catalogue.batches.work[0])
-  await f.click(`选用案例 ${workCase('enzyme-quality').template}`)
-  expect(f.ids()).toEqual(catalogue.batches.work[0])
-  expect(f.input().read().draft).toBe(workCase('enzyme-quality').prompt)
-  await f.click('Word')
-  expect(container.querySelector('[data-welcome-cases]')).toBeNull()
-  expect(container.querySelector('[data-office-template="meeting-minutes"]')).not.toBeNull()
+  expect(f.ids()).toEqual(initialWorkBatch)
+  await f.click(`选用案例 ${workCase('security-notice').template}`)
+  expect(f.ids()).toEqual(initialWorkBatch)
+  expect(f.input().read().draft).toBe(workCase('security-notice').prompt)
   await f.click('Excel')
   expect(container.querySelector('[data-welcome-cases]')).toBeNull()
   expect(container.querySelector('[data-office-template="annual-business"]')).not.toBeNull()
+  await f.click('Word')
+  expect(container.querySelector('[data-welcome-cases]')).toBeNull()
+  expect(container.querySelector('[data-office-template="meeting-minutes"]')).not.toBeNull()
 })
 
 it('appends a case prompt to an occupied draft and removes only that prompt on cancellation', async () => {
@@ -650,15 +725,16 @@ it.each([
     if (mode === 'ppt') expect(templates.querySelector('[data-office-ppt-template-panel]')).not.toBeNull()
   }
   expect(container.querySelector('.dso-reference')).toBeNull()
-  await f.click(english ? 'Try another set' : '切换一批')
-  expect(f.ids()).toEqual(catalogue.batches.work[1])
+  await changeBatch(f, 0.5, english ? 'Try another set' : '切换一批')
+  expect(f.ids()).toHaveLength(3)
+  expect(f.ids()).not.toEqual(initialWorkBatch)
   await f.click('Word'); expectReferences('word')
   await f.click(`${english ? 'Select example' : '选用案例'} word reference`)
   expect(container.querySelector('[data-office-template="word-reference"]').dataset.selected).toBe('true')
   await f.click('Excel'); expectReferences('excel')
   await f.click('Excel')
   expect(container.querySelector('.dso-reference')).toBeNull()
-  expect(f.ids()).toEqual(catalogue.batches.work[0])
+  expect(f.ids()).toEqual(initialWorkBatch)
   await f.click('PPT'); expectReferences('ppt')
   await f.click('Word'); expectReferences('word')
   if (bound) expect(f.input().read().draft).toBe('Keep my working notes')

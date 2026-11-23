@@ -2,6 +2,8 @@
 import { afterEach, expect, it } from 'vitest'
 import { CHAT_LAYOUT_CSS } from '../src/main/enterprise/chat-layout'
 import { chatLandingGeometryScript, parseChatLandingGeometry } from '../src/main/enterprise/chat-landing-geometry'
+import { moduleThemePaletteCss } from '../src/main/enterprise/chat-module-theme'
+import type { EnterprisePalette } from '../src/shared/enterprise-chat-view'
 
 afterEach(() => { document.documentElement.removeAttribute('data-bisheng-surface'); document.head.replaceChildren(); document.body.replaceChildren() })
 
@@ -63,4 +65,28 @@ it('samples the closed model caption and send opacity without reading search or 
   expect(parseChatLandingGeometry({ ...painted, model: { label: 'Forged', width: 700 }, sendOpacity: NaN }, 600, 480)).toEqual({
     title: painted.title, composer: painted.composer
   })
+})
+
+it.each(['light', 'dark'] as const)('uses Work’s batch action ink only in desktop Chat for the %s theme', theme => {
+  const palette: EnterprisePalette = {
+    surface: [20, 20, 22], raised: [27, 27, 28], strong: [44, 44, 46],
+    labelPrimary: [249, 250, 251], labelSecondary: theme === 'dark' ? [207, 211, 214] : [88, 94, 102],
+    labelTertiary: [129, 133, 140], borderBase: [51, 51, 54], borderDeep: [83, 85, 91]
+  }
+  const style = document.createElement('style')
+  // The page supplies its own local ink. The host changes only the shared batch action.
+  style.textContent = `.chat-welcome-examples .chat-welcome-examples-next { color:rgb(182, 184, 190) }
+    .chat-welcome-example { color:rgb(182, 184, 190) }
+    ${moduleThemePaletteCss(palette)}`
+  document.head.append(style)
+  document.body.innerHTML = `<main class="dsh-chat-surface"><section class="chat-welcome-examples">
+    <button class="chat-welcome-examples-next">Try another set</button>
+    <button class="chat-welcome-example">Example</button>
+  </section></main>`
+  const batch = document.querySelector('.chat-welcome-examples-next')!
+  const example = document.querySelector('.chat-welcome-example')!
+  expect(getComputedStyle(batch).color).toBe('rgb(182, 184, 190)')
+  document.documentElement.dataset.bishengSurface = 'desktop'
+  expect(getComputedStyle(batch).color).toBe(`rgb(${palette.labelSecondary.join(', ')})`)
+  expect(getComputedStyle(example).color).toBe('rgb(182, 184, 190)')
 })

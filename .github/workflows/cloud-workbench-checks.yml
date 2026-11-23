@@ -2,7 +2,7 @@ name: Cloud workbench checks
 
 on:
   pull_request:
-    branches: [V1.3.0]
+    branches: [V1.3.0, V1.3.1]
     paths:
       - '.github/workflows/cloud-workbench-checks.yml'
       - 'src/main/enterprise/**'

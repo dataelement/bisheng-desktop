@@ -6,6 +6,8 @@ export interface EnterpriseChatPresentation {
   settings?: EnterpriseSettingsSection
   /** Keep the outgoing Work frame while the native landing gets a chance to paint. */
   landingHandoff?: true
+  /** Measured Work landing input card width in host CSS pixels. */
+  landingComposerWidth?: number
   /** Host surfaces and ink resolved from the active Harness theme; absent when they cannot be sampled. */
   palette?: EnterprisePalette
 }
@@ -113,6 +115,11 @@ export function parseChatPresentation(value: unknown): EnterpriseChatPresentatio
   if (input.landingHandoff !== undefined && input.landingHandoff !== true) {
     throw new Error('Invalid Chat landing handoff.')
   }
+  const landingComposerWidth = input.landingComposerWidth
+  if (landingComposerWidth !== undefined && (typeof landingComposerWidth !== 'number' ||
+      !Number.isFinite(landingComposerWidth) || landingComposerWidth <= 0 || landingComposerWidth > 20000)) {
+    throw new Error('Invalid Chat landing composer width.')
+  }
   const settings = input.settings === undefined ? undefined : parseEnterpriseSettingsSection(input.settings)
   const palette = parseEnterprisePalette(input.palette)
   const bounds = input.bounds as Record<string, unknown> | undefined
@@ -125,6 +132,7 @@ export function parseChatPresentation(value: unknown): EnterpriseChatPresentatio
     locale: input.locale,
     settings,
     ...(input.landingHandoff ? { landingHandoff: true } : {}),
+    ...(landingComposerWidth === undefined ? {} : { landingComposerWidth }),
     ...(palette ? { palette } : {}),
     bounds: { x: Number(bounds.x), y: Number(bounds.y), width: Number(bounds.width), height: Number(bounds.height) }
   }

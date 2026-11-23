@@ -622,7 +622,9 @@ it.each(['/api/enterprise.login.start', '/api/enterprise.deep-link.confirm'])('r
   await expect(f.enterpriseApi(path, { base: 'https://example.test' })).resolves.toEqual(authorization)
   expect(f.request.mock.calls.map(([requested]) => requested)).toEqual([path])
 })
-const signedInProfile = (name, avatar) => ({ connected: true, phase: 'connected', user: { display_name: name, avatar } })
+const signedInProfile = (name, avatar, nickname = name) => ({
+  connected: true, phase: 'connected', user: { display_name: name, username: nickname, avatar }
+})
 
 it('publishes profile results without self-aborting, synchronizes both owners and aborts obsolete reads', async () => {
   const f = await fixture()
@@ -680,6 +682,27 @@ it('falls back to local account state when opening profile refresh fails and pol
   expect(f.request.mock.calls.map(([path]) => path)).toEqual(['/api/enterprise.state'])
 })
 
+it.each([
+  [' 𠮷田 ', '𠮷'],
+  ['  alice', 'A'],
+  ['  ', '?']
+])('shows the Web avatar initial for nickname %j in all native account views', async (nickname, initial) => {
+  const f = await fixture()
+  f.setAccount(signedInProfile('账号显示名称', null, nickname))
+  const Section = await enterpriseSection(f)
+  const launcher = f.registrations.find(row => row.options.name === 'settings.launcher')
+  await f.mount(() => React.createElement(React.Fragment, null,
+    React.createElement(launcher.Component, { ...launcher.options.inject?.(), wide: true }),
+    React.createElement(Section, { t: key => key })))
+  await click(document.querySelector('.dshAccountTrigger'))
+  const avatars = [...document.querySelectorAll('.dshAccountAvatar, .dshEnterpriseAvatar')]
+  expect(avatars.map(avatar => avatar.textContent)).toEqual([initial, initial, initial])
+  expect(avatars.every(avatar => avatar.dataset.avatarVariant === 'initial')).toBe(true)
+  expect(document.querySelector('.dshAccountTriggerCopy').textContent).toBe('账号显示名称')
+  expect(document.querySelector('.dshEnterpriseAccount strong').textContent).toBe('账号显示名称')
+  expect(document.querySelector('.dshEnterpriseAccountLabel').textContent).toBe('—')
+})
+
 it('renders image fallbacks, deduplicates broken src refreshes and tries changed avatar URLs in both owners', async () => {
   const f = await fixture()
   f.setAccount(signedInProfile('头像用户', 'https://example.test/one.png'))
@@ -691,14 +714,17 @@ it('renders image fallbacks, deduplicates broken src refreshes and tries changed
   await click(document.querySelector('.dshAccountTrigger'))
   const images = [...document.querySelectorAll('.dshAccountAvatar img, .dshEnterpriseAvatar img')]
   expect(images).toHaveLength(3)
-  images.forEach(image => expect(image.getAttribute('referrerpolicy')).toBe('no-referrer'))
+  images.forEach(image => {
+    expect(image.getAttribute('referrerpolicy')).toBe('no-referrer')
+    expect(image.parentElement.dataset.avatarVariant).toBe('image')
+  })
   f.request.mockRejectedValue(new Error('offline'))
   f.request.mockClear()
   await act(async () => images.forEach(image => image.dispatchEvent(new window.Event('error'))))
   expect(document.querySelectorAll('.dshAccountAvatar img, .dshEnterpriseAvatar img')).toHaveLength(0)
   expect(f.request.mock.calls.filter(([, options]) => JSON.parse(options.body).reason === 'image')).toHaveLength(2)
-  expect(document.querySelector('.dshEnterpriseAvatar').textContent).toBe('头像')
-  expect(document.querySelector('.dshAccountAvatar').textContent).toBe('头像')
+  expect(document.querySelector('.dshEnterpriseAvatar').textContent).toBe('头')
+  expect(document.querySelector('.dshAccountAvatar').textContent).toBe('头')
   expect(document.querySelector('[role=alert]')).toBeNull()
   // A remounted menu avatar may retry the same URL, but must not request the platform again.
   await click(document.querySelector('.dshAccountTrigger'))
@@ -773,6 +799,33 @@ it('reads a completed startup profile on accountRevision without changing identi
   f.setAccount(signedInProfile('预热完成', 'https://example.test/warm.png'))
   await act(async () => f.update({ epoch: 1, connected: true, accountRevision: 2 }))
   expect(document.querySelector('.dshAccountTrigger img').src).toBe('https://example.test/warm.png')
+})
+
+it('updates the nickname and avatar in the open account pane while retaining the login account', async () => {
+  const f = await fixture()
+  const Section = await enterpriseSection(f)
+  const baselineSubscribers = f.subscribers.size
+  const profileRevision = (nickname, revision) => {
+    const profile = signedInProfile(nickname, null)
+    return { ...profile, revision, user: { ...profile.user, external_id: 'admin' } }
+  }
+  f.setAccount(profileRevision('旧昵称', 1))
+  await f.mount(Section, { t: key => key })
+  expect(document.querySelector('.dshEnterpriseAvatar').textContent).toBe('旧')
+  expect(document.querySelector('.dshEnterpriseAccountLabel').textContent).toBe('admin')
+  expect(f.subscribers.size).toBe(baselineSubscribers + 1)
+
+  f.setAccount(profileRevision('新昵称', 2))
+  f.request.mockClear()
+  const change = { epoch: 1, connected: true, accountRevision: 2 }
+  await act(async () => { f.update(change); f.update(change) })
+  expect(f.request.mock.calls.map(([path]) => path)).toEqual(['/api/enterprise.state'])
+  expect(document.querySelector('.dshEnterpriseAvatar').textContent).toBe('新')
+  expect(document.querySelector('.dshEnterpriseAccount strong').textContent).toBe('新昵称')
+  expect(document.querySelector('.dshEnterpriseAccountLabel').textContent).toBe('admin')
+
+  await f.mount(() => null)
+  expect(f.subscribers.size).toBe(baselineSubscribers)
 })
 
 it('retries the same image URL after explicit success but never loops after image refresh', async () => {

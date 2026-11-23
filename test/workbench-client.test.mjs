@@ -2772,7 +2772,8 @@ describe('workbench market screenshot and metadata display', () => {
     expect(fullSource).toContain('.dshWbWorkbenchHome{display:flex;align-items:center;justify-content:flex-start;gap:8px;flex:0 0 auto;min-width:88px;')
     expect(fullSource).toContain('.dshWbSidebarSwitcher:is([data-selected=true],:hover,:focus-within){border-radius:var(--dsw-radius-md);background:var(--dsw-alias-interactive-bg-hover)}')
     expect(fullSource).not.toContain('.dshWbModeSwitch:hover:not(:disabled),.dshWbModeSwitch[aria-expanded=true]{background:')
-    expect(fullSource).toContain('min-height:36px;margin:0 2px 8px;padding:0;')
+    const switcherRule = fullSource.match(/\.dshWbSidebarSwitcher\{([^}]+)\}/)?.[1]
+    expect(switcherRule).toContain('min-height:36px;margin:0 2px 4px;padding:0;')
     expect(fullSource).toContain('.dshWbModeSwitch svg{flex:0 0 auto;color:var(--dsw-alias-label-tertiary)}')
     expect(fullSource).toContain('.dshWbCurrentModeLabel{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}')
     expect(fullSource).toContain('.dshWbModeMenu{position:absolute;z-index:32;left:2px;right:2px;')

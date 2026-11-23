@@ -61,6 +61,7 @@ export type EnterprisePhase =
 
 export interface EnterprisePublicIdentity {
   avatar?: string | null
+  external_id?: string
   id?: string
   username?: string
   display_name?: string
@@ -173,6 +174,7 @@ export class EnterpriseService {
   private mutation: Promise<unknown> = Promise.resolve()
   private readonly profile = new EnterpriseProfileState()
   private profileInFlight: Promise<EnterprisePublicState> | undefined
+  private profileReadRevision = 0
   private refreshInFlight: Promise<EnterprisePublicState> | undefined
   private epoch = 0
   private revision = 0
@@ -221,6 +223,7 @@ export class EnterpriseService {
     if (!this.profile.due(reason, this.now())) return this.snapshot()
     const epoch = this.epoch
     const sessionVersion = this.authEpoch
+    const readRevision = this.profileReadRevision
     const base = this.session?.base
     const userId = this.session?.user?.id
     const tenantId = this.session?.tenant?.id
@@ -236,12 +239,12 @@ export class EnterpriseService {
         const result = await requestEnterpriseJson(this.options.fetchImpl, base, '/api/v1/dsh/profile', {
           ...this.platformRequestOptions(), accessToken, signal: controller.signal, timeoutMs: 10_000
         })
-        if (current()) {
+        if (current() && readRevision === this.profileReadRevision) {
           this.profile.apply(result.body, base, userId, tenantId, this.now())
           this.publish()
         }
       } catch (error) {
-        if (current()) {
+        if (current() && readRevision === this.profileReadRevision) {
           const status = error instanceof EnterprisePlatformError ? error.status : undefined
           this.profile.fail(status === 404 || status === 405)
           // A profile fetch/parse failure does not change account phase or model availability.
@@ -255,6 +258,26 @@ export class EnterpriseService {
     })()
     this.profileInFlight = task
     try { return await task } finally { if (this.profileInFlight === task) this.profileInFlight = undefined }
+  }
+
+  async profileUpdated(connectionKey: string): Promise<void> {
+    await this.rereadProfile('profile-update', connectionKey)
+  }
+
+  async profileWindowFocused(): Promise<void> {
+    await this.rereadProfile('window-focus')
+  }
+
+  private async rereadProfile(reason: 'profile-update' | 'window-focus', connectionKey = this.connectionKey()): Promise<void> {
+    if (!this.authState().connected || this.connectionKey() !== connectionKey) return
+    const authEpoch = this.authEpoch
+    // The read in flight may predate a save in this window or in the browser.
+    // Use a fresh read under the same authenticated identity.
+    this.profileReadRevision += 1
+    await this.profileInFlight
+    if (this.authEpoch === authEpoch && this.connectionKey() === connectionKey) {
+      await this.refreshProfile(reason)
+    }
   }
 
   subscribeMobileAccessAccount(listener: (account: MobileAccessAccount) => void): () => void {
@@ -1845,6 +1868,7 @@ function publicIdentity(value?: EnterprisePublicIdentity): EnterprisePublicIdent
   if (!value) return undefined
   const identity: EnterprisePublicIdentity = {
     ...(value.avatar === undefined ? {} : { avatar: value.avatar }),
+    ...(value.external_id ? { external_id: value.external_id } : {}),
     ...(value.id ? { id: value.id } : {}),
     ...(value.username ? { username: value.username } : {}),
     ...(value.display_name ? { display_name: value.display_name } : {}),
