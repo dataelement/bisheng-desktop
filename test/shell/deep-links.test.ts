@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { DesktopDeepLinks, desktopDeepLinkRoutes } from '../../packages/dsh-desktop-enterprise/desktop/deep-links'
+import { DesktopDeepLinks, desktopDeepLinkRoutes } from '../../src/main/shell/deep-links'
 
 const routes = [
   { scheme: 'sample-dev', hostname: 'callback', pathname: '/receive', target: 'native-a' },
