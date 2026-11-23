@@ -9,6 +9,8 @@ export interface EnterpriseUrlOptions {
   allowInsecureLoopback?: boolean
   /** Legacy name: permits all non-loopback HTTP origins after risk confirmation. */
   allowInsecurePrivateHttp?: boolean
+  /** Product protocol schemes accepted for third-party login callbacks. */
+  protocols?: readonly string[]
 }
 export declare function isInsecurePrivateHttpOrigin(value: string): boolean
 export declare function normalizeEnterpriseServerUrl(

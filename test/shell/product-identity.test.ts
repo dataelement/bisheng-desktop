@@ -1,11 +1,11 @@
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { resolveDesktopIdentity } from '../../src/main/shell/product-identity'
+import { resolveDesktopIdentity, resolveDesktopProtocolScheme } from '../../src/main/shell/product-identity'
 
 const appData = join('/temporary', 'app-data')
 const downstream = {
   dshDesktopIdentity: {
-    productName: 'BISHENG', userDataDirectory: 'bisheng', developmentUserDataDirectory: 'bisheng-dev'
+    productName: 'BISHENG', userDataDirectory: 'bisheng', developmentUserDataDirectory: 'bisheng-dev', protocolScheme: 'bisheng'
   }
 }
 const resolve = (metadata: unknown, packaged = true, env: NodeJS.ProcessEnv = {}) => resolveDesktopIdentity(metadata, packaged, appData, env)
@@ -15,6 +15,14 @@ describe('explicit Desktop product identity', () => {
     expect(resolve({})).toEqual({ name: 'DSH Desktop', userData: join(appData, 'dsh-desktop') })
     expect(resolve({}, false)).toEqual({ name: 'DSH Desktop Dev', userData: join(appData, 'dsh-desktop-dev') })
     expect(resolve({ dshDesktopChannel: 'development' })).toEqual(resolve({}, false))
+  })
+
+  it('uses the default DSH scheme and a downstream configured scheme', () => {
+    expect(resolveDesktopProtocolScheme({}, true)).toBe('dsh-desktop')
+    expect(resolveDesktopProtocolScheme({}, false)).toBe('dsh-desktop-dev')
+    expect(resolveDesktopProtocolScheme({ dshDesktopChannel: 'development' }, true)).toBe('dsh-desktop-dev')
+    expect(resolveDesktopProtocolScheme(downstream, true)).toBe('bisheng')
+    expect(resolveDesktopProtocolScheme(downstream, false)).toBe('bisheng-dev')
   })
 
   it('does not infer identity from enterprise packages, names or build branding', () => {
@@ -54,6 +62,10 @@ describe('explicit Desktop product identity', () => {
       expect(() => resolve({ dshDesktopIdentity: { ...downstream.dshDesktopIdentity, [field]: value } })).toThrow(field)
     }
     expect(() => resolve(downstream, false, { DSH_DEV_PROFILE: value || '../invalid' })).toThrow('DSH_DEV_PROFILE')
+  })
+
+  it.each(['', 'BISHENG', 'bisheng-dev', 'bisheng/callback', 'dsh desktop'])('rejects invalid protocol scheme %j', protocolScheme => {
+    expect(() => resolveDesktopProtocolScheme({ dshDesktopIdentity: { ...downstream.dshDesktopIdentity, protocolScheme } }, true)).toThrow('protocolScheme')
   })
 
   it('rejects production/development data collisions including case-only differences', () => {

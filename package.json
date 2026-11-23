@@ -25,7 +25,8 @@
   "dshDesktopIdentity": {
     "productName": "BISHENG",
     "userDataDirectory": "bisheng",
-    "developmentUserDataDirectory": "bisheng-dev"
+    "developmentUserDataDirectory": "bisheng-dev",
+    "protocolScheme": "bisheng"
   },
   "dshDesktopHostPlugins": [
     "dsh-desktop-enterprise",
@@ -348,7 +349,8 @@
       "dshDesktopIdentity": {
         "productName": "BISHENG",
         "userDataDirectory": "bisheng",
-        "developmentUserDataDirectory": "bisheng-dev"
+        "developmentUserDataDirectory": "bisheng-dev",
+        "protocolScheme": "bisheng"
       },
       "dshDesktopHostPlugins": [
         "dsh-desktop-enterprise",

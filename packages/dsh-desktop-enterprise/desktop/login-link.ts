@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { app } from 'electron'
 import { sameHarnessOrigin } from './harness-origin'
+import { resolveDesktopProtocolScheme } from '../../../src/main/shell/product-identity'
 
 export { sameHarnessOrigin }
 
@@ -21,11 +22,18 @@ function packagedDevelopmentChannel(): boolean {
 }
 
 export function enterpriseLoginProtocol(): string {
-  // A packaged development build must not claim the production scheme, or it
-  // would take enterprise login links away from the installed BISHENG app.
-  return app.isPackaged && !packagedDevelopmentChannel()
-    ? ENTERPRISE_LOGIN_PROTOCOL
-    : ENTERPRISE_LOGIN_DEV_PROTOCOL
+  // The shell owns the product protocol identity. Enterprise only consumes it
+  // for login callbacks, so DSH and downstream products can choose different
+  // schemes without copying this parser.
+  return resolveDesktopProtocolScheme(readDesktopMetadata(), app.isPackaged)
+}
+
+function readDesktopMetadata(): unknown {
+  try {
+    return JSON.parse(readFileSync(join(app.getAppPath(), 'package.json'), 'utf8'))
+  } catch {
+    return { dshDesktopChannel: packagedDevelopmentChannel() ? 'development' : undefined }
+  }
 }
 
 export function allowInsecureEnterpriseLoopback(): boolean {
@@ -45,6 +53,7 @@ export function registerEnterpriseLoginProtocol(): void {
 export async function parseEnterpriseLoginLink(value: string) {
   const { parseEnterpriseLoginDeepLink } = await import('dsh-desktop-enterprise/deep-link')
   return parseEnterpriseLoginDeepLink(value, {
+    protocols: [enterpriseLoginProtocol()],
     allowInsecureLoopback: allowInsecureEnterpriseLoopback(),
     allowInsecurePrivateHttp: true
   })
@@ -53,6 +62,7 @@ export async function parseEnterpriseLoginLink(value: string) {
 export async function enterpriseLoginFromArgv(argv: readonly string[]) {
   const { enterpriseLoginDeepLinkFromArgv } = await import('dsh-desktop-enterprise/deep-link')
   return enterpriseLoginDeepLinkFromArgv(argv, {
+    protocols: [enterpriseLoginProtocol()],
     allowInsecureLoopback: allowInsecureEnterpriseLoopback(),
     allowInsecurePrivateHttp: true
   })

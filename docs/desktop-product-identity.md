@@ -11,14 +11,15 @@
   "dshDesktopIdentity": {
     "productName": "BISHENG",
     "userDataDirectory": "bisheng",
-    "developmentUserDataDirectory": "bisheng-dev"
+    "developmentUserDataDirectory": "bisheng-dev",
+    "protocolScheme": "bisheng"
   }
 }
 ```
 
 对象缺省时保持原有 DSH 默认值：正式版应用名 DSH Desktop、userData 为 appData/dsh-desktop；未打包启动与顶层 dshDesktopChannel=development 的开发包使用 DSH Desktop Dev、appData/dsh-desktop-dev。显示名变更不会推导或改写数据目录。
 
-对象存在时三个字段全部必填。目录必须是便于跨平台使用的单级目录名（英文字母或数字开头，其后可有字母、数字、点、下划线或短横线，最长 128 字符），不接受绝对路径、路径分隔符、末尾点及 Windows 保留设备名。显示名拒绝控制字符和路径分隔符。开发和正式目录不得相同（含大小写等价）；非法显式配置直接报错，不静默回退到另一份用户数据。读取元数据失败同样不回退。
+对象存在时三个数据字段必填；`protocolScheme` 可选，缺省为 `dsh-desktop`。正式协议使用配置值，开发协议自动使用配置值加 `-dev` 后缀。目录必须是便于跨平台使用的单级目录名（英文字母或数字开头，其后可有字母、数字、点、下划线或短横线，最长 128 字符），不接受绝对路径、路径分隔符、末尾点及 Windows 保留设备名。协议名必须是小写、以字母开头的 URL scheme，不能自行带 `-dev` 后缀。显示名拒绝控制字符和路径分隔符。开发和正式目录不得相同（含大小写等价）；非法显式配置直接报错，不静默回退到另一份用户数据。读取元数据失败同样不回退。
 
 开发时 DSH_DEV_PROFILE 可覆盖开发目录名，用于并行 worktree；不得与本产品正式目录相同。正式包忽略此覆盖。端口仍遵循原有 DSH_DEV_HARNESS_PORT / DSH_DEV_MOBILE_PORT 规则。
 
@@ -30,7 +31,7 @@
 - BISHENG_DEV_USER_DATA 不再读取。开发启动脚本应迁移为 DSH_DEV_PROFILE=<独立单级目录名>；原来指定绝对目录的脚本需要自行调整，不能直接照搬绝对路径。
 - 下游当前仅声明 build.productName=BISHENG 与 build.extraMetadata.productName=BISHENG，尚未提供新对象。必须先完成上述配置再分发基于此变更的版本。本次未修改下游。
 
-配置身份不会自动更改 electron-builder appId、协议、图标、签名、发布地址或菜单业务文案，这些仍由各自配置负责。也不改变插件安装作用域或 Safe Mode 的 Profile 语义。
+配置身份不会自动更改 electron-builder appId、图标、签名、发布地址或菜单业务文案；协议注册由产品构建配置与上游解析出的 `protocolScheme` 共同负责。也不改变插件安装作用域或 Safe Mode 的 Profile 语义。
 
 ## 验证范围
 
