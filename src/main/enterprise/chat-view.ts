@@ -14,6 +14,7 @@ import { CHAT_WELCOME_CSS, CHAT_WELCOME_WORLD, chatWelcomeCasesScript } from './
 import { parseUsageSummary, parseUsageStorage, type EnterpriseUsage, type UsageSection } from '../../shared/enterprise-usage'
 import { EnterprisePlatformError, isEnterprisePlatformError } from './enterprise-request'
 import { EnterpriseChatProjects } from './chat-projects'
+import { hostedAppTarget } from './hosted-app-url'
 import { projectUuid, type ChatProjectsState, type ProjectConversationPage } from '../../shared/chat-projects'
 import { raiseUpdateCardViewIfShown } from '../update/update-card-view'
 
@@ -128,7 +129,13 @@ export class EnterpriseChatView {
   private welcomeRevision = 0
   private landingTextMotionRevision = 0
 
-  constructor(private enterprise: EnterpriseDesktopRuntime, private note: (line: string) => void, private notificationWindow?: () => BrowserWindow | undefined) {
+  /**
+   * `openHostedApp` receives hosted app pages the workspace opens in a new tab
+   * (Apps and the app square use `window.open('/apps/{slug}')`). Without it they
+   * go to the system browser, where the user would have to sign in again.
+   */
+  constructor(private enterprise: EnterpriseDesktopRuntime, private note: (line: string) => void, private notificationWindow?: () => BrowserWindow | undefined,
+    private openHostedApp?: (url: string, origin: string) => void) {
     this.unsubscribe = enterprise.subscribe((state) => {
       if (!state.connected || (this.key !== undefined && state.connectionKey !== this.key)) this.clear()
       this.notify()
@@ -754,7 +761,10 @@ export class EnterpriseChatView {
         view.setVisible(false)
         view.setBackgroundColor(this.presentation?.theme === 'dark' ? '#141416' : '#ffffff')
         view.webContents.setWindowOpenHandler(({ url }) => {
-          if (/^https?:\/\//u.test(url)) void shell.openExternal(url).catch(() => this.note('[enterprise-chat] external_link_failed'))
+          // Navigating this view itself to the app would leave /workspace, which is
+          // handled as a lost session, so the app opens beside Chat instead.
+          if (this.openHostedApp && hostedAppTarget(url, origin)) this.openHostedApp(url, origin)
+          else if (/^https?:\/\//u.test(url)) void shell.openExternal(url).catch(() => this.note('[enterprise-chat] external_link_failed'))
           return { action: 'deny' }
         })
         const allowNavigation = (event: Electron.Event, url: string): void => {

@@ -476,7 +476,8 @@ describe('desktop workbench client navigation', () => {
     await service.open(id)
     expect(saved().state.active).toBe(id)
     expect(saved().state.added).toContain(id)
-    const sessionId = await service.ensureCloudDevelopmentSession(id, { folder: '/cloud/development' })
+    // A conversation beside a cloud page belongs to that workbench like any other.
+    const sessionId = await service.ensureOwnedSession(id, { folder: '/cloud/development' })
     expect(service.cloudConversationId).toBe(id)
     expect(saved().state.sessionBindings[sessionId]).toBe(id)
     await service.open(id)
@@ -1502,7 +1503,7 @@ describe('desktop workbench client navigation', () => {
     expect(development).toContain('scripts/check-workbench-package.mjs')
     expect(development).toContain('已安装的工作台')
     expect(development).toContain('左侧入口')
-    expect(development).toContain('本地、云端或混合部署')
+    expect(development).toContain('不需要上传或投稿')
     expect(development).toContain('这条通用指令没有提供业务需求')
     expect(development).toContain('每次只问一个必要问题')
     expect(development).toContain('不重复已提供的信息')
@@ -1515,7 +1516,7 @@ describe('desktop workbench client navigation', () => {
     expect(development).toContain('业务意图或范围仍不清楚时')
     expect(development).toContain('此前不要创建或修改业务代码、界面或包文件，也不要构建、打包、安装或投稿')
     expect(development).toContain('空目录且没有业务目标时，到提问为止')
-    expect(development.indexOf('等待我回答')).toBeLessThan(development.indexOf('本地方案按规范第 3 节'))
+    expect(development.indexOf('等待我回答')).toBeLessThan(development.indexOf('再按规范第 3 节'))
     expect(development).toContain('第 8 节“本地自测清单”')
     expect(development).toContain('不要要求普通用户确认')
     expect(development).toContain('整页展示业务内容，需要时再打开 AI 对话')
@@ -1529,8 +1530,9 @@ describe('desktop workbench client navigation', () => {
     expect(development).toContain('不要声称已加载')
     // Prompts give the website as the one link; the bundled copies are for offline reading.
     expect(development).toContain('https://dshdesktop.com/workbench/docs/development.md')
-    expect(development).toContain('cloud_workbench guide')
-    expect(development).toContain('判断采用本地、云端或混合部署')
+    // Cloud workbenches are hosted apps built from the enterprise tutorial; this prompt is local-only.
+    expect(development).not.toContain('cloud_workbench')
+    expect(development).toContain('我想在本机制作和使用一个 DSH Desktop 工作台')
     expect(development).not.toContain('dataelement/awesome-dsh-workbench')
     expect(development).not.toContain('CONTRIBUTING.md')
     // The preset-package document describes Agent presets, not workbench packages.
@@ -1575,7 +1577,8 @@ describe('desktop workbench client navigation', () => {
     expect(development).toContain('wait for my answer')
     expect(development).not.toContain('工作台开发规范')
     expect(development).not.toContain('local development and installation only')
-    expect(development).toContain('cloud_workbench publish')
+    expect(development).not.toContain('cloud_workbench')
+    expect(development).toContain('locally, without uploading or submitting it')
     const submission = submissionWorkbenchAgentPrompt({ english: true, category: { id: 'other', name: '其他', names: { en: 'Other' } }, suggestion: 'Legal' })
     expect(submission).toContain('https://dshdesktop.com/workbench/docs/market-acceptance-en.md')
     expect(submission).toContain('category to other (Other)')
@@ -1633,7 +1636,7 @@ describe('desktop workbench client navigation', () => {
     expect(writeText.mock.calls[0][0]).toContain(promptFragment)
     if (label === '复制指令给其他 AI 助手') {
       expect(writeText.mock.calls[0][0]).toContain('【工作台名称或用途】')
-      expect(writeText.mock.calls[0][0]).toContain('云端或混合部署')
+      expect(writeText.mock.calls[0][0]).toContain('不需要上传或投稿')
       expect(writeText.mock.calls[0][0]).toBe(service.creationPrompt())
       expect(writeText.mock.calls[0][0]).toContain('scripts/check-workbench-package.mjs')
       expect(writeText.mock.calls[0][0]).toContain('不要把常驻会话区当作默认产品设计')
@@ -4593,19 +4596,20 @@ it('keeps the published guide URL in the editable draft instead of a local attac
 })
 
 
-it.each([false, true])('preserves the full development instructions with an enterprise guide URL (English=%s)', async english => {
+// The enterprise server no longer serves a workbench guide (BiSheng 3.1 F001), so the
+// creation conversation always points the Agent at the published Desktop standard.
+it.each([false, true])('builds the creation instructions from the published standard (English=%s)', async english => {
   const { service, ctx } = await fixture()
-  const guideUrl = 'https://enterprise.example/proxy/api/v1/dev-toolkit/workbench-guide' + (english ? '-en' : '') + '.md'
-  service.developmentGuideUrl = () => guideUrl
-  const text = developmentWorkbenchAgentPrompt(english, guideUrl)
-  expect(text).toContain(guideUrl)
-  expect(text).not.toContain('https://dshdesktop.com/workbench/docs/development')
+  const text = developmentWorkbenchAgentPrompt(english)
+  expect(text).toContain(english ? 'https://dshdesktop.com/workbench/docs/development-en.md' : 'https://dshdesktop.com/workbench/docs/development.md')
+  expect(text).not.toContain('/api/v1/dev-toolkit/')
   expect(text).not.toContain('This task is for local development and installation only')
   expect(text).toContain('customFrame')
   expect(text).toContain('scripts/check-workbench-package.mjs')
-  expect(text).toContain('cloud_workbench publish')
+  expect(text).not.toContain('cloud_workbench')
   if (!english) {
     ctx.locale.bind = () => key => ({ starter: 'My 【idea】' })[key] || key
+    expect(service.developmentGuideUrl()).toBe('https://dshdesktop.com/workbench/docs/development.md')
     expect(service.creationInstructions()).toBe(text)
     expect(service.creationPrompt()).toBe(text + '\n\nMy 【idea】')
   }

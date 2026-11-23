@@ -1,4 +1,4 @@
-import type { CloudAuthorize } from './cloud-workbench'
+import type { CloudEntry } from './cloud-workbench'
 import type { MobileAccessAccount } from '../mobile/mobile-access-protocol'
 import type { EnterpriseWebSession } from './web-session'
 import { join } from 'node:path'
@@ -18,6 +18,7 @@ import {
 
 export interface EnterpriseDesktopRuntime {
   cloudRequest(input: unknown): Promise<unknown>
+  cloudEntry(appId: unknown): Promise<CloudEntry>
   snapshot(): EnterprisePublicState
   readMobileAccessAccount(): MobileAccessAccount
   subscribeMobileAccessAccount(listener: (account: MobileAccessAccount) => void): () => void
@@ -30,7 +31,6 @@ export interface EnterpriseDesktopRuntime {
 }
 
 export async function startEnterpriseDesktop(options: {
-  confirmCloudEffect?: CloudAuthorize
   desktopVersion?: string
   activateDesktop?: () => Promise<void> | void
   userDataPath: string
@@ -52,8 +52,6 @@ export async function startEnterpriseDesktop(options: {
         catch { options.note?.('[enterprise] state_listener_failed') }
       }
     },
-    confirmCloudEffect: options.confirmCloudEffect,
-    cloudRoot: join(options.userDataPath, 'cloud-development'),
     desktopVersion: options.desktopVersion,
     activateDesktop: options.activateDesktop,
     vault,
@@ -84,6 +82,7 @@ export async function startEnterpriseDesktop(options: {
 
   return {
     cloudRequest: input => service.cloudRequest(input),
+    cloudEntry: appId => service.cloudEntry(appId),
     snapshot: () => service.snapshot(),
     readMobileAccessAccount: () => service.readMobileAccessAccount(),
     subscribeMobileAccessAccount: listener => service.subscribeMobileAccessAccount(listener),

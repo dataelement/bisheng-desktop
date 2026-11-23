@@ -90,7 +90,7 @@ body{margin:0;font:14px sans-serif;background:var(--dsw-alias-bg-base)}#root{dis
     import assert from 'node:assert/strict'
     import {createServer} from 'node:http'
     import {writeFile} from 'node:fs/promises'
-    import {app,BrowserWindow,ipcMain} from 'electron'
+    import {app,BrowserWindow,ipcMain,session} from 'electron'
     import {CloudWorkbenchView} from './src/main/enterprise/cloud-workbench-view'
     app.setPath('userData',${JSON.stringify(join(temporary, 'profile'))})
     app.commandLine.appendSwitch('force-color-profile','srgb')
@@ -99,7 +99,6 @@ body{margin:0;font:14px sans-serif;background:var(--dsw-alias-bg-base)}#root{dis
       let captures=0,view,requests=0
       const check=(name,passed,detail)=>{checks.push({name,passed:!!passed,detail});console.log((passed?'PASS ':'FAIL ')+name)}
       const server=createServer((req,res)=>{
-        if(req.url==='/launch'){res.writeHead(204,{'set-cookie':'fixture=synthetic; HttpOnly; SameSite=Lax; Path=/'});res.end();return}
         requests++;res.setHeader('content-type','text/html');res.end('<!doctype html><style>body{margin:0;background:rgb(22,183,173);height:100vh}input{margin:40px;width:300px}</style><input id="draft"><script>window.identity=Math.random();window.clicks=0;document.addEventListener("click",()=>window.clicks++)</script>')
       })
       await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))
@@ -128,7 +127,8 @@ body{margin:0;font:14px sans-serif;background:var(--dsw-alias-bg-base)}#root{dis
         await owner.loadFile(${JSON.stringify(join(temporary, 'index.html'))})
         await wait(()=>run('!!document.querySelector("[data-dsh-cloud-surface]")'),'cloud seat mount')
         const bounds=await run('(()=>{const r=document.querySelector("section").getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}})()')
-        await host.open(owner,{appId:'fixture',slug:'fixture',launchUrl:origin+'/launch',entryUrl:origin+'/app/',ticket:'synthetic',connectionKey:'offline'},bounds,'fixture',()=> 'offline')
+        // Production pages share the account's hosted-app session; a plain partition stands in for it here.
+        await host.open(owner,{appId:'fixture',slug:'fixture',entryUrl:origin+'/app/',connectionKey:'offline'},bounds,'fixture',()=> 'offline',session.fromPartition('cloud-overlay-fixture'))
         view=owner.contentView.children.find(child=>child.webContents?.getURL().startsWith(origin))
         assert.ok(view,'Real CloudWorkbenchView attached')
         app.focus({steal:true});owner.focus()

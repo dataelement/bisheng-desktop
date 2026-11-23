@@ -1,6 +1,5 @@
 import { adoptEnterpriseInstalls, checkEnterpriseWorkbenchAccess, createEnterpriseInstallStore } from './enterprise-access.mjs'
 import { installEnterpriseWorkbench } from './enterprise-install.mjs'
-import { registerCloudTools } from './cloud-tools.mjs'
 import { readInstallEvidence } from './install-evidence.mjs'
 import Schema from '@deepseek-ai/schemastery'
 import { CatalogError, createCatalogReader } from './catalog.mjs'
@@ -91,7 +90,6 @@ async function readLocalInstalls(root) {
 
 export function apply(ctx, config) {
   const store = createStateStore(config.root)
-  registerCloudTools(ctx, store)
   const readCatalog = createCatalogReader({
     fetch: selectMarketFetch(),
     cachePath: join(config.root, 'workbench-catalog-cache.json'),
@@ -136,21 +134,6 @@ export function apply(ctx, config) {
       }
     }
   })
-  ctx.inject(['desktopCloud'], scoped => {
-    scoped.connection.fetch.register({
-      path: '/api/desktop-workbenches/cloud', methods: ['POST'], requestBody: 'buffered',
-      async fetch(request) {
-        try {
-          const input = await readPayload(request)
-          if (!['guide', 'list', 'limits', 'progress'].includes(input.operation)) throw new Error('Use the development tool for cloud source and publishing operations.')
-          return Response.json(await scoped.desktopCloud.request(input))
-        }
-        catch (error) { return Response.json({ error: error.message }, { status: 400 }) }
-      }
-    })
-  })
-  ctx.connection.fetch.register(documentRoute('/api/desktop-workbenches/cloud-guide', 'cloud-guide.zh.md'))
-  ctx.connection.fetch.register(documentRoute('/api/desktop-workbenches/cloud-guide-en', 'cloud-guide.en.md'))
   ctx.connection.fetch.register({
     path: '/api/desktop-workbenches/cloud-client.mjs', methods: ['GET'], requestBody: 'buffered',
     async fetch() {

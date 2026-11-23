@@ -12,8 +12,11 @@ function fixture() {
   const webContents = Object.assign(new EventEmitter(), { mainFrame: {}, getURL: () => 'http://host.test' })
   const window = { webContents, isDestroyed: () => false }
   const enterpriseDesktop = { snapshot: () => ({ connectionKey: '1234567890abcdef', connected: true }),
-    cloudRequest: vi.fn(() => new Promise((resolve, reject) => launches.push({ resolve, reject }))) }
-  const context = vm.createContext({ cloudWorkbenchView, enterpriseDesktop, mainWindow: window,
+    cloudEntry: vi.fn(() => new Promise((resolve, reject) => launches.push({ resolve, reject }))) }
+  const pageSession = { id: 'hosted-app-session' }
+  const identity = { session: pageSession, origin: 'https://enterprise.test', connectionKey: '1234567890abcdef' }
+  const hostedAppSession = { acquire: vi.fn(async () => identity) }
+  const context = vm.createContext({ cloudWorkbenchView, enterpriseDesktop, hostedAppSession, mainWindow: window, URL,
     ipcMain: { handle: (name: string, handler: (event: unknown, ...args: unknown[]) => unknown) => handlers.set(name, handler) },
     clearProfileBootConfirmation: vi.fn(), runtime: { snapshot: () => ({ url: 'http://host.test' }) },
     sameHarnessOrigin: (a: string, b: string) => a === b,
@@ -33,11 +36,12 @@ function fixture() {
     return handler(event, ...args)
   }
   const open = (owner: string, appId = 'a'.repeat(32)) => Promise.resolve(invoke('open', appId, {}, '1234567890abcdef', owner))
-  const finish = (index: number, appId = 'a'.repeat(32)) => launches[index]?.resolve({ appId, connectionKey: '1234567890abcdef' })
-  return { open, invoke, finish, launches, cloudWorkbenchView, webContents }
+  const finish = (index: number, appId = 'a'.repeat(32), entryUrl = 'https://enterprise.test/apps/board/') =>
+    launches[index]?.resolve({ appId, slug: 'board', entryUrl, connectionKey: '1234567890abcdef' })
+  return { open, invoke, finish, launches, cloudWorkbenchView, webContents, enterpriseDesktop, hostedAppSession, identity, pageSession, context }
 }
 
-it('cancels an owner before launch authorization completes', async () => {
+it('cancels an owner before the catalog confirms the app', async () => {
   const f = fixture()
   const opening = f.open('first')
   f.invoke('close', 'first')
@@ -46,7 +50,7 @@ it('cancels an owner before launch authorization completes', async () => {
   expect(f.cloudWorkbenchView.open).not.toHaveBeenCalled()
 })
 
-it('keeps only the newest selection even when launch responses arrive out of order', async () => {
+it('keeps only the newest selection even when catalog responses arrive out of order', async () => {
   const f = fixture()
   const first = f.open('first')
   const second = f.open('second')
@@ -71,7 +75,7 @@ it('stale completion cannot clear the newer pending owner', async () => {
   expect(f.cloudWorkbenchView.open).not.toHaveBeenCalled()
 })
 
-it.each([true, false])('cancels pending authorization for main-frame navigation (in-place=%s)', async inPlace => {
+it.each([true, false])('cancels a pending open for main-frame navigation (in-place=%s)', async inPlace => {
   const f = fixture()
   const opening = f.open('first')
   f.webContents.emit('did-start-navigation', {}, 'http://host.test/next', inPlace, true)
@@ -91,7 +95,7 @@ it('does not cancel the selected owner for an unrelated close or subframe naviga
   expect(f.cloudWorkbenchView.open).toHaveBeenCalledOnce()
 })
 
-it('rejects authorization completed for a replaced main frame', async () => {
+it('rejects an open completed for a replaced main frame', async () => {
   const f = fixture()
   const opening = f.open('first')
   f.webContents.mainFrame = {}
@@ -100,22 +104,48 @@ it('rejects authorization completed for a replaced main frame', async () => {
   expect(f.cloudWorkbenchView.open).not.toHaveBeenCalled()
 })
 
-it('a failed authorization does not prevent a fresh owner from opening', async () => {
+it('a failed catalog lookup does not prevent a fresh owner from opening', async () => {
   const f = fixture()
   const first = f.open('first')
-  f.launches[0]?.reject(new Error('launch failed'))
-  await expect(first).rejects.toThrow('launch failed')
+  f.launches[0]?.reject(new Error('This cloud workbench is no longer available to you.'))
+  await expect(first).rejects.toThrow('no longer available')
   const second = f.open('second')
   f.finish(1)
   await second
   expect(f.cloudWorkbenchView.open).toHaveBeenCalledOnce()
 })
 
-it('cancels a release that races launch authorization', async () => {
+it('cancels a release that races the catalog lookup', async () => {
   const f = fixture()
   const opening = f.open('first')
   await f.invoke('release', 'a'.repeat(32), '1234567890abcdef')
   f.finish(0)
   await expect(opening).rejects.toThrow('cancelled')
   expect(f.cloudWorkbenchView.open).not.toHaveBeenCalled()
+})
+
+it('opens the catalog entry in the account\'s hosted-app session without a launch ticket', async () => {
+  const f = fixture()
+  const opening = f.open('first')
+  f.finish(0)
+  await expect(opening).resolves.toEqual({ appId: 'a'.repeat(32) })
+  expect(f.enterpriseDesktop.cloudEntry).toHaveBeenCalledExactlyOnceWith('a'.repeat(32))
+  const call = f.cloudWorkbenchView.open.mock.calls[0]
+  expect(call?.[1]).toMatchObject({ entryUrl: 'https://enterprise.test/apps/board/' })
+  expect(call?.[5]).toBe(f.pageSession)
+})
+
+it('refuses an entry served from a different origin than the signed web session', async () => {
+  const f = fixture()
+  const opening = f.open('first')
+  f.finish(0, 'a'.repeat(32), 'https://elsewhere.test/apps/board/')
+  await expect(opening).rejects.toThrow('Enterprise account changed')
+  expect(f.cloudWorkbenchView.open).not.toHaveBeenCalled()
+})
+
+it('fails closed when hosted app pages are unavailable', async () => {
+  const f = fixture()
+  f.context.hostedAppSession = undefined
+  await expect(f.open('first')).rejects.toThrow('Enterprise connection unavailable')
+  expect(f.enterpriseDesktop.cloudEntry).not.toHaveBeenCalled()
 })

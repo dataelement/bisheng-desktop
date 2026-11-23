@@ -1,7 +1,7 @@
-import { confirmCloudEffect, assertCloudRendererRequest } from './enterprise/cloud-confirmation'
 import { EnterpriseChatView } from './enterprise/chat-view'
 import { CloudWorkbenchView } from './enterprise/cloud-workbench-view'
-import type { CloudLaunch } from './enterprise/cloud-workbench'
+import { HostedAppSession } from './enterprise/hosted-app-session'
+import { HostedAppWindows } from './enterprise/hosted-app-window'
 import { desktopFileUrl, navigateDesktopWindow } from './desktop-navigation'
 import { recoverStartupConfiguration } from './startup-config-recovery'
 import { initializeDesktopService, desktopDiagnostics } from './desktop-service'
@@ -248,7 +248,7 @@ let runtime: HarnessRuntime
 const cloudWorkbenchView = new CloudWorkbenchView()
 let cloudOpenEpoch = 0
 let pendingCloudOpen: { epoch: number; owner: string; appId: unknown; connectionKey: unknown } | undefined
-// Launch authorization is asynchronous and starts before the view controller owns a page.
+// Entry resolution is asynchronous and starts before the view controller owns a page.
 function cancelPendingCloudOpen(): void {
   cloudOpenEpoch++
   if (pendingCloudOpen) cloudWorkbenchView.closeFor(pendingCloudOpen.owner)
@@ -256,6 +256,9 @@ function cancelPendingCloudOpen(): void {
 }
 let enterpriseDesktop: EnterpriseDesktopRuntime | undefined
 let enterpriseChat: EnterpriseChatView | undefined
+// Hosted app pages (cloud workbenches) share one web-login session per account.
+let hostedAppSession: HostedAppSession | undefined
+let hostedAppWindows: HostedAppWindows | undefined
 let localWorkbenchCapability: string | undefined
 
 async function liveThirdPartyPluginsAllowed(): Promise<boolean> {
@@ -1721,11 +1724,8 @@ function registerHarnessHandlers(): void {
     if (!enterpriseDesktop) throw new Error('Enterprise connection unavailable.')
     return enterpriseDesktop
   }
-  ipcMain.handle('enterprise-cloud:request', async (event, input: unknown) => {
-    const enterprise = checkCloudHost(event)
-    assertCloudRendererRequest(input)
-    return enterprise.cloudRequest(input)
-  })
+  // The host page may only read the catalog; the service rejects every other operation.
+  ipcMain.handle('enterprise-cloud:request', async (event, input: unknown) => checkCloudHost(event).cloudRequest(input))
   ipcMain.handle('enterprise-cloud:open', async (event, appId: unknown, bounds: unknown, connectionKey: unknown, owner: unknown) => {
     const enterprise = checkCloudHost(event)
     if (typeof owner !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(owner) || connectionKey !== enterprise.snapshot().connectionKey) throw new Error('Enterprise account changed.')
@@ -1734,15 +1734,19 @@ function registerHarnessHandlers(): void {
     pendingCloudOpen = request
     const parent = mainWindow
     try {
-      const launch = await enterprise.cloudRequest({ operation: 'launch', appId }) as CloudLaunch
+      if (!hostedAppSession) throw new Error('Enterprise connection unavailable.')
+      // The catalog, not the renderer, decides which app may open and where it is served;
+      // the page itself is admitted by the platform with the user's web login.
+      const [entry, identity] = await Promise.all([enterprise.cloudEntry(appId), hostedAppSession.acquire()])
       if (request.epoch !== cloudOpenEpoch || pendingCloudOpen !== request) throw new Error('Cloud workbench opening was cancelled.')
       // Recheck the initiating document and window after authorization, not just the account.
       assertTrustedMainWindowEvent(event)
       if (!parent || parent !== mainWindow || parent.isDestroyed()) throw new Error('Workbench window closed.')
-      if (checkCloudHost(event) !== enterprise || launch.connectionKey !== connectionKey || enterprise.snapshot().connectionKey !== connectionKey) throw new Error('Enterprise account changed.')
-      await cloudWorkbenchView.open(parent, launch, bounds, owner, () => enterpriseDesktop?.snapshot().connected ? enterpriseDesktop.snapshot().connectionKey : undefined,
-        async appId => await enterprise.cloudRequest({ operation: 'launch', appId }) as CloudLaunch)
-      return { appId: launch.appId }
+      if (checkCloudHost(event) !== enterprise || entry.connectionKey !== connectionKey || identity.connectionKey !== connectionKey ||
+        enterprise.snapshot().connectionKey !== connectionKey || new URL(entry.entryUrl).origin !== identity.origin) throw new Error('Enterprise account changed.')
+      await cloudWorkbenchView.open(parent, entry, bounds, owner, () => enterpriseDesktop?.snapshot().connected ? enterpriseDesktop.snapshot().connectionKey : undefined,
+        identity.session)
+      return { appId: entry.appId }
     } finally {
       // A superseded completion must never clear the newer request's cancellation handle.
       if (pendingCloudOpen === request) pendingCloudOpen = undefined
@@ -3586,7 +3590,6 @@ async function bootstrap(): Promise<void> {
   })
   try {
     enterpriseDesktop = await startEnterpriseDesktop({
-      confirmCloudEffect: effect => confirmCloudEffect(effect, mainWindow, harnessLocale() === 'zh'),
       desktopVersion: app.getVersion(),
       activateDesktop: async () => {
         const snapshot = runtime.snapshot()
@@ -3604,8 +3607,18 @@ async function bootstrap(): Promise<void> {
     runtime.note('[enterprise] start_failed')
     enterpriseDesktop = undefined
   }
-  if (enterpriseDesktop) enterpriseChat = new EnterpriseChatView(enterpriseDesktop, (line) => runtime.note(line), () => mainWindow)
-  app.once('before-quit', () => enterpriseChat?.dispose())
+  if (enterpriseDesktop) {
+    const note = (line: string) => runtime.note(line)
+    const hosted = new HostedAppSession(enterpriseDesktop, note)
+    const windows = new HostedAppWindows({ acquire: () => hosted.acquire(), prepare: window => installContextMenu(window, harnessLocale), note })
+    // Pages opened with the previous account must not stay open after logout or a switch.
+    hosted.onReset(() => { windows.closeAll(); cloudWorkbenchView.close() })
+    hostedAppSession = hosted
+    hostedAppWindows = windows
+    enterpriseChat = new EnterpriseChatView(enterpriseDesktop, note, () => mainWindow,
+      (url, origin) => { void windows.open(url, origin).catch(error => windows.fail(url, error)) })
+  }
+  app.once('before-quit', () => { enterpriseChat?.dispose(); hostedAppWindows?.closeAll(); hostedAppSession?.dispose() })
   registerHarnessHandlers()
   mobileBridge = new LanMobileBridge({
     harnessUrl: () => runtime.snapshot().url,

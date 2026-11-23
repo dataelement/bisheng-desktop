@@ -1913,3 +1913,42 @@ it('leaves a retained-document error on explicit usage retry and completes its s
     expect(view.webContents.close).not.toHaveBeenCalled()
   } finally { f.host.dispose(); vi.useRealTimers() }
 })
+
+describe('hosted app pages opened from the workspace', () => {
+  it('opens them in Desktop and keeps other new-tab links in the browser', async () => {
+    const f = fixture()
+    const { shell } = await import('electron')
+    const openHostedApp = vi.fn()
+    f.host.dispose()
+    const host = new EnterpriseChatView(f.enterprise as any, vi.fn(), undefined, openHostedApp)
+    try {
+      host.present(f.owner, presentation)
+      await flush()
+      const handler = fake.views[0].webContents.setWindowOpenHandler.mock.calls[0][0]
+      vi.mocked(shell.openExternal).mockClear()
+      // Apps and the app square call window.open('/apps/{slug}') with noopener.
+      expect(handler({ url: 'https://enterprise.example/apps/board' })).toEqual({ action: 'deny' })
+      expect(openHostedApp).toHaveBeenCalledExactlyOnceWith('https://enterprise.example/apps/board', 'https://enterprise.example')
+      for (const url of ['https://enterprise.example/apps-admin/', 'https://elsewhere.example/apps/board', 'https://enterprise.example/workspace/c/new']) {
+        expect(handler({ url })).toEqual({ action: 'deny' })
+      }
+      expect(openHostedApp).toHaveBeenCalledOnce()
+      expect(shell.openExternal).toHaveBeenCalledTimes(3)
+      // The Chat document itself never navigates to the app.
+      expect(fake.views[0].webContents.loadURL).not.toHaveBeenCalledWith('https://enterprise.example/apps/board')
+    } finally { host.dispose() }
+  })
+
+  it('still uses the browser when no Desktop handler is installed', async () => {
+    const f = fixture()
+    const { shell } = await import('electron')
+    try {
+      f.host.present(f.owner, presentation)
+      await flush()
+      const handler = fake.views[0].webContents.setWindowOpenHandler.mock.calls[0][0]
+      vi.mocked(shell.openExternal).mockClear()
+      expect(handler({ url: 'https://enterprise.example/apps/board' })).toEqual({ action: 'deny' })
+      expect(shell.openExternal).toHaveBeenCalledExactlyOnceWith('https://enterprise.example/apps/board')
+    } finally { f.host.dispose() }
+  })
+})

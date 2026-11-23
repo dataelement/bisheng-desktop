@@ -75,7 +75,10 @@ describe('bundled workbench development guide', () => {
     // The guide is self-contained: readers see it outside the checkout.
     expect(guide).not.toContain('../../docs/')
     expect(guide).not.toContain('../packages/dsh-desktop-workbenches/')
-    expect(guide).toContain('`cloud_workbench` 的 `guide`')
+    // Cloud workbenches follow the enterprise server's hosted app tutorial; Desktop no longer
+    // carries an Agent publishing protocol or tool for them.
+    expect(guide).toContain('/tutorial/hosted-app.html')
+    expect(guide).not.toContain('cloud_workbench')
   })
 
   it('ships the market acceptance spec as its own document', () => {
