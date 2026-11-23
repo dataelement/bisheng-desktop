@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { checkBoundary, checkPaths, collectChanges } from '../scripts/verify-upstream-boundary.mjs'
 
 const script = fileURLToPath(new URL('../scripts/verify-upstream-boundary.mjs', import.meta.url))
+const overrides = fileURLToPath(new URL('../scripts/downstream-public-overrides.mjs', import.meta.url))
 function fixture(t, { baseline = true } = {}) {
   const cwd = mkdtempSync(path.join(os.tmpdir(), 'boundary-gate-'))
   onTestFinished(() => rmSync(cwd, { recursive: true, force: true }))
@@ -44,6 +45,7 @@ test('real CRLF Git checkout remains valid for Node CLI and Vite module imports'
   const relative = 'scripts/verify-upstream-boundary.mjs'
   const checkout = path.join(f.cwd, relative)
   f.put(relative, readFileSync(script, 'utf8').replace(/\r\n/g, '\n'))
+  f.put('scripts/downstream-public-overrides.mjs', readFileSync(overrides, 'utf8'))
   f.git('add', '--', relative)
   f.git('commit', '-m', 'boundary module checkout fixture')
   rmSync(checkout)

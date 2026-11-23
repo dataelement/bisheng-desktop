@@ -35,7 +35,7 @@ describe('generated Web workbench distribution', () => {
     const manifest = JSON.parse(await readFile(path.join(result.packageDirectory, 'package.json'), 'utf8'))
     expect(manifest.main).toBe('./web-index.js')
     expect(manifest.exports).toEqual({ '.': './web-index.js', './client': './client.js' })
-    expect(manifest.peerDependencies).toEqual({ 'sample-peer': '1.0.0', '@deepseek-ai/dsh-app-boot': '0.2.2-rc.1', '@deepseek-ai/dsh-plugin-manager': '0.2.2-rc.1' })
+    expect(manifest.peerDependencies).toEqual({ 'sample-peer': '1.0.0', '@deepseek-ai/dsh-app-boot': '0.2.2-rc.5', '@deepseek-ai/dsh-plugin-manager': '0.2.2-rc.5' })
     expect(manifest.dependencies['js-yaml']).toBe('4.3.2')
     expect(manifest.dsh?.bundle).toBeUndefined()
     expect(await readFile(path.join(source, 'package.json'), 'utf8')).toBe(original)

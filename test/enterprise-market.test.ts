@@ -170,21 +170,25 @@ describe('enterprise policy', () => {
     expect(() => acceptMarketSnapshot({ ...snapshot, policies: [{ plugin_id: pluginId, name: 'company-demo', disabled: false, revision: 1, current_version_id: versionId, versions: [{ id: versionId, digest: 'not-a-digest' }] }] }, account, 'device', now)).toThrow(/digest/)
   })
 
-  it('keeps other market policies when one plugin has too many versions', () => {
+  it.each([100, 101, 1001])('accepts all %i versions and still validates every entry', count => {
     const now = Date.now()
-    const validId = 'c'.repeat(32)
-    const oversized = {
-      plugin_id: pluginId, name: 'company-demo', disabled: false, revision: 1, current_version_id: versionId,
-      versions: Array.from({ length: 101 }, (_, index) => ({
-        id: index.toString(16).padStart(32, '0'), digest: 'd'.repeat(64)
-      }))
+    const versions = Array.from({ length: count }, (_, index) => ({
+      id: index.toString(16).padStart(32, '0'), digest: 'd'.repeat(64)
+    }))
+    const policy = {
+      plugin_id: pluginId, name: 'company-demo', disabled: false, revision: 1,
+      current_version_id: versions[0]?.id, versions
     }
-    const valid = {
-      plugin_id: validId, name: 'company-other', disabled: false, revision: 1, current_version_id: versionId,
-      versions: [{ id: versionId, digest: 'e'.repeat(64) }]
-    }
-    const accepted = acceptMarketSnapshot({ tenant_id: '2', user_id: '20', device_id: 'device', synced_at: Math.floor(now / 1000), policies: [oversized, valid] }, account, 'device', now)
-    expect(accepted.policies).toEqual([valid])
+    const snapshot = { tenant_id: '2', user_id: '20', device_id: 'device', synced_at: Math.floor(now / 1000), policies: [policy] }
+    expect(acceptMarketSnapshot(snapshot, account, 'device', now)).toBe(snapshot)
+    expect(policy.versions).toHaveLength(count)
+    const last = versions[count - 1]
+    if (!last) throw new Error('Missing test version.')
+    last.digest = 'not-a-digest'
+    expect(() => acceptMarketSnapshot(snapshot, account, 'device', now)).toThrow(/digest/)
+    last.digest = 'd'.repeat(64)
+    last.id = versions[0]?.id ?? ''
+    expect(() => acceptMarketSnapshot(snapshot, account, 'device', now)).toThrow(/Duplicate market version/)
   })
 
 })

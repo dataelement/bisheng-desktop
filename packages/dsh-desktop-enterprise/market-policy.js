@@ -18,7 +18,6 @@ export function acceptMarketSnapshot(snapshot, account, device, now = Date.now()
   if (age < -MAX_SKEW_MS || age > MAX_AGE_MS) throw invalid('Enterprise market snapshot is stale.')
   if (!Array.isArray(snapshot.policies) || snapshot.policies.length > 500) throw invalid('Invalid market snapshot.')
   const pluginIds = new Set()
-  const acceptedPolicies = []
   for (const policy of snapshot.policies) {
     if (!policy || typeof policy !== 'object' || Array.isArray(policy)) throw invalid('Invalid market policy.')
     if (!PLUGIN_ID.test(policy.plugin_id) || typeof policy.name !== 'string' || policy.name.length > 214) throw invalid('Invalid market policy.')
@@ -27,19 +26,12 @@ export function acceptMarketSnapshot(snapshot, account, device, now = Date.now()
     if (typeof policy.disabled !== 'boolean' || !Number.isSafeInteger(policy.revision) || policy.revision < 0) throw invalid('Invalid market policy.')
     if (policy.current_version_id != null && !PLUGIN_ID.test(policy.current_version_id)) throw invalid('Invalid market policy.')
     if (!Array.isArray(policy.versions)) throw invalid('Invalid market policy.')
-    // A single plugin with an unexpectedly large catalogue must not take the
-    // rest of the enterprise market offline. Its authorization is unavailable
-    // until the server returns a bounded policy.
-    if (policy.versions.length > 100) continue
     const versionIds = new Set()
     for (const version of policy.versions) {
       if (!version || typeof version !== 'object' || !PLUGIN_ID.test(version.id) || !DIGEST.test(version.digest)) throw invalid('Invalid market policy digest.')
       if (versionIds.has(version.id)) throw invalid('Duplicate market version.')
       versionIds.add(version.id)
     }
-    acceptedPolicies.push(policy)
   }
-  return acceptedPolicies.length === snapshot.policies.length
-    ? snapshot
-    : { ...snapshot, policies: acceptedPolicies }
+  return snapshot
 }

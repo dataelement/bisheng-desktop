@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
 import { parse } from 'yaml'
 
-function releaseAssetManifest(artifactPrefix = 'dsh-desktop') {
+function releaseAssetManifest(artifactPrefix = 'bisheng') {
   if (typeof artifactPrefix !== 'string' || artifactPrefix.length > 64 ||
       artifactPrefix.trim() !== artifactPrefix || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(artifactPrefix) ||
       /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(artifactPrefix)) {
@@ -28,7 +28,7 @@ function releaseAssetManifest(artifactPrefix = 'dsh-desktop') {
   }
 }
 
-export function releaseAssetNames(artifactPrefix = 'dsh-desktop') {
+export function releaseAssetNames(artifactPrefix = 'bisheng') {
   return releaseAssetManifest(artifactPrefix).all
 }
 
@@ -133,7 +133,7 @@ async function main() {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: { 'artifact-prefix': { type: 'string' } } })
   const [releaseDir, version] = positionals
   if (positionals.length !== 2 || !releaseDir || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version ?? '')) {
-    throw new Error('Usage: node scripts/verify/verify-release-assets.mjs <release-dir> <semver> [--artifact-prefix dsh-desktop]')
+    throw new Error('Usage: node scripts/verify/verify-release-assets.mjs <release-dir> <semver> [--artifact-prefix bisheng]')
   }
   await verifyReleaseAssets(releaseDir, version, { artifactPrefix: values['artifact-prefix'] })
   console.log(`Verified release assets for ${version}.`)

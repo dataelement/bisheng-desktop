@@ -31,17 +31,17 @@ def product_name(value: str) -> str:
 
 INSTALLERS = {
     "macos": [
-        ("macOS Apple Silicon", "dsh-desktop-mac-arm64.dmg"),
-        ("macOS Intel", "dsh-desktop-mac-x64.dmg"),
+        ("macOS Apple Silicon", "bisheng-mac-arm64.dmg"),
+        ("macOS Intel", "bisheng-mac-x64.dmg"),
     ],
-    "windows": [("Windows x64", "dsh-desktop-windows-x64-setup.exe")],
+    "windows": [("Windows x64", "bisheng-windows-x64-setup.exe")],
 }
 
 
-def installer_paths(directory: Path, target: str, prefix: str = "dsh-desktop") -> list[tuple[str, Path]]:
+def installer_paths(directory: Path, target: str, prefix: str = "bisheng") -> list[tuple[str, Path]]:
     prefix = artifact_prefix(prefix)
     platforms = ["macos", "windows"] if target == "all" else [target]
-    installers = [(label, directory / (prefix + name[len("dsh-desktop"):])) for platform in platforms for label, name in INSTALLERS[platform]]
+    installers = [(label, directory / (prefix + name[len("bisheng"):])) for platform in platforms for label, name in INSTALLERS[platform]]
     for _, file in installers:
         if not file.is_file() or file.stat().st_size == 0:
             raise ValueError(f"Missing or empty signed installer: {file.name}")
@@ -149,7 +149,7 @@ TEST_SUGGESTIONS = """\
 """
 
 
-def build_notification(version: str, installers: list[tuple[str, Path]], repo_id: str, prefix: str, run_url: str, changes: str = "", product: str = "DSH Desktop") -> str:
+def build_notification(version: str, installers: list[tuple[str, Path]], repo_id: str, prefix: str, run_url: str, changes: str = "", product: str = "BISHENG") -> str:
     product = product_name(product)
     links = "\n".join(f"- [{label}]({download_url(repo_id, prefix, file.name)})" for label, file in installers)
     if len(changes) > 9000:
@@ -172,8 +172,8 @@ def main() -> None:
     parser.add_argument("--target", choices=["all", "macos", "windows"], required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--run-id", required=True)
-    parser.add_argument("--artifact-prefix", type=artifact_prefix, default="dsh-desktop")
-    parser.add_argument("--product-name", type=product_name, default="DSH Desktop")
+    parser.add_argument("--artifact-prefix", type=artifact_prefix, default="bisheng")
+    parser.add_argument("--product-name", type=product_name, default="BISHENG")
     args = parser.parse_args()
     prefix = test_prefix(args.version, args.run_id)
     repo_id = os.environ["MODELSCOPE_REPO_ID"]

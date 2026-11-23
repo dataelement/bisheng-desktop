@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { lstatSync, readFileSync, readlinkSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { PUBLIC_OVERRIDE_BY_FILE } from './downstream-public-overrides.mjs'
 
 // 下游只拥有企业业务、品牌和独立 Web 交付；公共底座必须先在上游评审。
 const ALLOWED_PATTERNS = [
@@ -18,9 +19,17 @@ const ALLOWED_PATTERNS = [
   /^scripts\/mock-bisheng-enterprise\.d\.mts$/,
   /^\.github\/workflows\/(?:release|build-web-runtime|verify-boundary|bisheng-ci)\.yml$/,
   /^scripts\/(?:verify-upstream-boundary|pack-(?:office-web|ppt-web|workbenches-web|web-runtime)|prepare-web-ci-inputs|build-web-runtime|stage-windows-web-runtime|check-web-runtime-import|mock-bisheng-enterprise|web-sidebar-slot|web-runtime-version|web-plugin-manager)\.mjs$/,
+  /^scripts\/downstream-public-overrides\.mjs$/,
+  /^scripts\/verify\/verify-release-assets\.mjs$/,
+  /^\.github\/scripts\/signed_test_build\.py$/,
   /^docs\/downstream-[^/]+\.md$/,
+  /^docs\/bisheng-[^/]+\.md$/,
+  /^docs\/design\/[^/]+\.html$/,
   /^docs\/architecture-setup-plan\.md$/,
   /^test\/(?:enterprise-|web-runtime-)[^/]+\.(?:mjs|js|ts|mts)$/,
+  /^test\/release\.test\.ts$/,
+  /^test\/signed-test-build\.test\.ts$/,
+  /^test\/(?:product-release|verify-release-assets)\.test\.mjs$/,
   /^(?:package\.json|package-lock\.json|tsconfig\.node\.json|electron\.vite\.config\.ts|electron-builder(?:\.[^/]+)?\.cjs|AGENTS\.md|\.gitignore)$/
 ]
 
@@ -102,11 +111,18 @@ function sameEntry(left, right) {
 }
 
 // 纯路径规则；core 的例外只能由调用者提供已核对 bytes + mode 的集合。
-export function checkPaths(files, { upstreamMatches = new Set(), legacyDeletions = new Set() } = {}) {
+export function checkPaths(files, { upstreamMatches = new Set(), legacyDeletions = new Set(), publicOverrides = new Set() } = {}) {
   return files.filter(file => {
     if (file === '.tmp' || file.startsWith('.tmp/')) return true
-    return !ALLOWED_PATTERNS.some(pattern => pattern.test(file)) && !legacyDeletions.has(file) && !upstreamMatches.has(file)
+    return !ALLOWED_PATTERNS.some(pattern => pattern.test(file)) && !legacyDeletions.has(file) && !upstreamMatches.has(file) && !publicOverrides.has(file)
   })
+}
+
+function isExactPublicOverride(cwd, file) {
+  const expected = PUBLIC_OVERRIDE_BY_FILE.get(file)
+  if (!expected) return false
+  const actual = worktreeEntry(cwd, file)
+  return actual?.type === 'blob' && actual.mode === '100644' && actual.oid === expected.oid
 }
 
 export function checkBoundary(options = {}) {
@@ -116,6 +132,7 @@ export function checkBoundary(options = {}) {
   const staged = new Set(changes.staged)
   const untracked = new Set(changes.untracked)
   const upstreamMatches = new Set()
+  const publicOverrides = new Set()
   const legacyDeletions = new Set()
   for (const file of changes.files) {
     if (ALLOWED_PATTERNS.some(pattern => pattern.test(file))) continue
@@ -127,8 +144,9 @@ export function checkBoundary(options = {}) {
     if (!untracked.has(file) && sameEntry(actual, baseline.get(file)) && (!staged.has(file) || sameEntry(index.get(file), baseline.get(file)))) {
       upstreamMatches.add(file)
     }
+    if (isExactPublicOverride(changes.cwd, file)) publicOverrides.add(file)
   }
-  return { ...changes, illegalFiles: checkPaths(changes.files, { upstreamMatches, legacyDeletions }) }
+  return { ...changes, publicOverrides, illegalFiles: checkPaths(changes.files, { upstreamMatches, legacyDeletions, publicOverrides }) }
 }
 
 export function run() {

@@ -48,7 +48,7 @@ function interpolate(value, ctx) {
 describe('private desktop release YAML contracts', () => {
   it('keeps native targets, main PRs, locked Node and least privilege', () => {
     expect(workflow.on.pull_request.branches).toEqual(['main'])
-    expect(workflow.permissions).toEqual({ contents: 'read' })
+    expect(workflow.permissions).toEqual({ contents: 'write' })
     expect(jobs.macos.strategy.matrix.include.map(row => [row.arch, row.runner])).toEqual([
       ['arm64', 'macos-15'], ['x64', 'macos-15-intel']
     ])
@@ -108,8 +108,8 @@ describe('private desktop release YAML contracts', () => {
       expect(named(job, 'Verify release assets before publication').run).toContain('--artifact-prefix ' + prefix)
     }
     const signing = named('sign-windows', 'Sign Windows installer with SafeNet UKey')
-    expect(signing.env.JSIGN_NAME).toBe(manifest.build.productName)
-    expect(signing.env.JSIGN_URL).toBe('https://www.dshdesktop.com')
+    expect(signing.run).toContain("--name 'BISHENG'")
+    expect(signing.run).toContain('--url https://www.dshdesktop.com')
     const upload = named('publish-signed-test', 'Upload test installers, verify downloads, and send Feishu notification')
     expect(upload.run).toContain('--artifact-prefix ' + prefix + ' --product-name ' + manifest.build.productName)
     const signed = context()

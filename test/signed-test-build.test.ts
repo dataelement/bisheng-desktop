@@ -37,7 +37,7 @@ with tempfile.TemporaryDirectory() as work:
             pass
         else:
             raise AssertionError('invalid path accepted')
-    (directory / 'dsh-desktop-mac-arm64.dmg').unlink()
+    (directory / 'bisheng-mac-arm64.dmg').unlink()
     try:
         build.installer_paths(directory, 'all')
     except ValueError:
@@ -57,7 +57,7 @@ with tempfile.TemporaryDirectory() as work:
     with patch.dict(sys.modules, {'modelscope': types.ModuleType('modelscope'), 'modelscope.hub': types.ModuleType('modelscope.hub'), 'modelscope.hub.api': sdk}), patch.dict(os.environ, env), patch.object(sys, 'argv', argv), patch.object(build, 'summarize_test_changes', return_value='**功能**\n- 改善办公文档的预览体验。\n**问题修复**\n- 改善应用启动后的显示异常。'), patch.object(build, 'build_test_changes', return_value='feat: New Office preview\nDescription of preview') as changes, patch.object(build, 'verify_download', side_effect=lambda *args: events.append(('verify', args[0]))) as verify, patch.object(build, 'send_feishu_notification', side_effect=lambda *args, **kw: events.append(('notify', kw))) as notify:
         build.main()
         assert [e[0] for e in events] == ['upload', 'verify', 'upload', 'verify', 'notify']
-        assert events[0][1] == 'test/1.0.0-test.1/42/dsh-desktop-windows-x64-setup.exe'
+        assert events[0][1] == 'test/1.0.0-test.1/42/bisheng-windows-x64-setup.exe'
         assert events[2][1] == 'test/1.0.0-test.1/42/test-changes.md'
         assert events[4][1] == {'test_build': True}
         assert '改善办公文档' in notify.call_args.args[2]

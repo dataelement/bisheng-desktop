@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BISHENG 商业版 · Gateway 整体架构</title>
+<style>
+:root{color-scheme:light;--ink:#20282b;--muted:#59656b;--line:#dce2e4;--green:#166357;--blue:#286699}
+*{box-sizing:border-box}body{margin:0;background:#fff;color:var(--ink);font:15px/1.8 system-ui,-apple-system,"PingFang SC",sans-serif;letter-spacing:0}header,main,footer{max-width:1080px;margin:auto;padding:28px}header{padding-top:48px;padding-bottom:24px}h1{font-size:30px;line-height:1.4;margin:8px 0 14px}h2{font-size:21px;margin:0 0 18px}h3{font-size:16px;margin:0 0 8px}p{margin:8px 0}a{color:var(--blue)}.meta,.muted,footer{color:var(--muted);font-size:13px}nav{display:flex;gap:24px;flex-wrap:wrap;border-block:1px solid var(--line);padding:14px 0;margin-top:24px}nav a{text-decoration:none;font-size:14px}section{padding:8px 0 32px;margin-bottom:28px;border-bottom:1px solid var(--line);scroll-margin-top:20px}.flow{display:grid;grid-template-columns:1fr 30px 1fr 30px 1fr;align-items:center;margin:20px 0}.node{padding:18px 14px;background:#f4f7f7;border-top:3px solid var(--green);min-height:118px}.node p{font-size:13px;color:var(--muted)}.arrow{text-align:center;color:var(--green)}.license{padding:12px 16px;border-left:3px solid var(--blue);background:#f1f6fa}.columns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}.columns article{border-top:2px solid var(--line);padding-top:14px}.label{display:block;color:var(--green);font-size:12px;margin-bottom:8px}.proposal{color:var(--blue)}code{font:13px/1.6 ui-monospace,SFMono-Regular,monospace;overflow-wrap:anywhere;background:#f0f3f4;padding:2px 5px;border-radius:3px}.rule{border-left:3px solid var(--green);background:#f2f7f5;padding:14px 18px;margin:18px 0}.sequence{list-style:none;padding:0;counter-reset:step}.sequence li{counter-increment:step;display:grid;grid-template-columns:30px 175px 1fr;gap:14px;padding:14px 0;border-bottom:1px solid var(--line)}.sequence li:before{content:counter(step);font-weight:600;color:var(--green)}.sequence p{margin:0}.sequence strong{font-size:14px}.states{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px}.states p{font-size:14px}details{margin-top:18px;font-size:13px;color:var(--muted)}summary{cursor:pointer;color:var(--blue)}footer{padding-top:0}a:focus-visible,summary:focus-visible{outline:2px solid var(--blue);outline-offset:4px}
+@media(max-width:700px){header,main,footer{padding:20px}header{padding-top:28px}h1{font-size:25px}.columns,.states{grid-template-columns:1fr}.flow{grid-template-columns:1fr}.arrow{padding:6px;transform:rotate(90deg)}.node{min-height:0}.sequence li{grid-template-columns:24px 1fr;gap:8px}.sequence li p{grid-column:2}nav{gap:16px}.columns{gap:20px}}
+@media print{header{padding-top:0}nav{display:none}section{break-inside:avoid}body{font-size:12px}main{padding-top:0}}
+</style>
+</head>
+<body>
+<header>
+<div class="meta">BISHENG Work / bisheng-gateway v1.6.0</div>
+<h1>BISHENG 商业版 · Gateway 整体架构</h1>
+<p>同一 Gateway，三类策略：普通 API 透传、DSH 统一准入、Gateway 原有商业能力。商业授权与席位收敛到网关，资源权限保留在 Bisheng。</p>
+<p class="meta">设计修订：2026-10-19 · 目标架构，统一准入待实现 · 参考 v1.6.0 与当前源码 a258b2cf</p>
+<nav aria-label="设计章节"><a href="#architecture">接入架构</a><a href="#crypto">加密与签名</a><a href="#auth">认证时序</a><a href="#access">授权与展示</a></nav>
+</header>
+<main>
+<section id="architecture">
+<h2>01 / 整体架构：三条策略通道</h2>
+<div class="rule"><strong>所有请求 → HTTPS → 路由策略注册表 → 对应认证与授权 → 业务处理</strong><br>按路径与 HTTP 方法确定通道，不能根据客户端自报类型选择较宽松策略。DSH 路由优先于普通版本路由匹配。</div>
+<div class="columns">
+<article><span class="label">A / 普通请求</span><h3>Web 与第三方集成</h3><p><code>/api/v1/**</code>、<code>/api/v2/**</code> 及其他已登记普通版本路由，排除 DSH 路径。</p><p>Gateway 公共流量策略 → 透传 Bisheng。</p><p><strong>Bisheng 校验：</strong>Web 登录或 OpenAPI Bearer、scope、企业与资源 ACL。</p><p>不增加 DSH 席位要求。普通不等于匿名；DSH token 不能作为 v2 凭据使用。</p></article>
+<article><span class="label">B / DSH 请求</span><h3>Work 与企业插件</h3><p>目标 <code>/api/dsh/**</code>，历史 <code>/api/v1/dsh/**</code> 显式进入同一策略。</p><p><strong>Gateway 统一基础切面：</strong>认证 → session → DSH 授权 → 有效席位 → 操作功能 bit。</p><p>通过后才进入受控适配：模型调用 DSH 服务，知识库复用 v2 OpenAPI。</p><p>所有桌面业务必须经过该切面；未登记业务路由默认拒绝。</p></article>
+<article><span class="label">C / 原有商业能力</span><h3>Gateway 企业扩展</h3><p>现有 SSO、组织同步、敏感词等，如 <code>/api/oauth2/*</code>、<code>/api/group/*</code>、<code>/api/sensitive/*</code>，逐端点登记。</p><p>对应 License / 功能授权 + 原有管理或服务认证 → Gateway Controller。</p><p>默认不要求 Work 席位。挂载在普通透传链上的商业过滤器按能力启用，授权到期不阻断免费核心。</p></article>
+</div>
+<p class="muted">License 状态、健康检查、登录回调、内部服务调用单独声明策略。不能用“非 v1/v2 路径”代替商业功能清单。</p>
+<div class="license"><strong>厂商签名授权 → Gateway 公钥验签</strong><br>拟在签名授权中增加企业知识库 API 权限位；企业管理员在有效授权范围内分配 Work 席位。</div>
+<div class="flow" aria-label="Work 经 HTTPS 访问 Gateway，Gateway 经 HTTPS 和服务签名访问 Bisheng">
+<div class="node"><h3>BISHENG Work</h3><p>企业插件 / Connect<br>主进程 Broker 保管凭据</p></div>
+<div class="arrow" aria-label="经 HTTPS">→</div>
+<div class="node"><h3>Gateway</h3><p>用户认证 / 企业 API 权限 / 席位<br>可信身份传递</p></div>
+<div class="arrow" aria-label="经 HTTPS 和可信服务认证">→</div>
+<div class="node"><h3>Bisheng 知识库</h3><p>服务认证 / 真实用户 ACL<br>检索、引用与上传</p></div>
+</div>
+<p class="muted">上图展开 DSH 通道。Gateway 管商业准入，Bisheng 管员工有效性、企业归属与资源 ACL。模型内部接口须验证可信 Gateway 调用；知识库适配使用服务端专用 v2 凭据与受控员工委托。</p>
+</section>
+<section id="crypto">
+<h2>02 / 加密与签名：保护三件事</h2>
+<div class="columns">
+<article><span class="label">传输与本地凭据</span><h3>数据不明文传输</h3><p>HTTPS 保护登录票据、token、查询和文档传输；部署时验证服务端证书。</p><p>Work 已使用系统 <code>safeStorage</code> 加密保存凭据，由主进程负责读取与刷新，不向界面和模型返回 token。</p></article>
+<article><span class="label">厂商授权 · 已有 RS256</span><h3>企业授权不可自行篡改</h3><p>厂商持签名私钥，Gateway 持验签公钥。校验签名、签发方、用途、有效期及既有授权绑定。</p><p class="proposal">新增 API bit 须升级签名 schema；旧授权未包含该权限时，知识库 API 默认关闭。不能只改数据库开通。</p></article>
+<article><span class="label">内部请求 · 已有 HMAC-SHA256</span><h3>区分两种服务调用</h3><p>已有 DSH 内部认证使用 HMAC：方法、路径、正文摘要、keyId、时间戳与 nonce；±60 秒窗口及 Redis 去重防重放。</p><p>知识库复用 v2 Bearer + delegate / X-On-Behalf-Of，不额外叠 HMAC。密钥仅留服务端，委托员工从已认证会话确定。</p></article>
+</div>
+<p class="muted">HTTPS 负责保密，签名负责验真与防篡改。JWT 编码不等于加密。旧 License 外层 RSA 解密也不能替代内部 RS256 授权验签。</p>
+<details><summary>实现边界与代码依据</summary><p>Gateway 基准 <code>v1.6.0@8f9390b0</code>：<code>DshEntitlementService</code>、<code>DshServiceAuth</code>、<code>DshJwtService</code>。桌面凭据：<code>src/main/enterprise/secure-credential-vault.ts</code>。</p><p>当前 HMAC 正文上限 64 KiB，不能直接用于整份大文件。知识上传使用 v2 认证与流式转发，另行限制大小、校验内容，不聚合整份文件做 HMAC。</p><p>HMAC 是服务间共享密钥认证，不能作为厂商授权签名的替代品。未假定已有 mTLS 或额外应用层 AES 正文加密。</p></details>
+</section>
+<section id="auth">
+<h2>03 / DSH 统一准入时序</h2>
+<ol class="sequence">
+<li><strong>Work → 企业 SSO</strong><p>系统浏览器完成登录，使用一次性身份票据 + PKCE；Work 主进程核对登录 state。</p></li>
+<li><strong>Work → Gateway</strong><p>提交票据与 PKCE verifier。Gateway 校验并通过内部签名调用向 Bisheng 兑换真实员工身份，确认已分配席位。</p></li>
+<li><strong>Gateway → Work</strong><p>签发短期 access token 与轮换 refresh token。主进程保管凭据，插件仅获得连接状态。</p></li>
+<li><strong>Work → Gateway</strong><p>所有 DSH 业务先经过统一过滤器：token 签名 / 用途 / 有效期 → 当前 session 与 grant_version → DSH 授权与有效席位 → 路由声明的功能 bit。授权依赖不可用则拒绝。</p></li>
+<li><strong>Gateway → Bisheng</strong><p>剥离客户端身份头与桌面 Authorization；知识库改用专用服务账号 Bearer，并从已认证会话生成 X-On-Behalf-Of。Bisheng 检查 delegate 范围、员工有效性和 ACL；模型内部入口采用可信服务调用合同。</p></li>
+<li><strong>Bisheng → Work</strong><p>经 Gateway 返回可见片段与引用，由当前 Agent 生成回答；打开引用再次鉴权，上传额外校验写权限。</p></li>
+</ol>
+<p class="muted">登录 / 票据兑换采用 PKCE 策略；刷新采用 refresh 策略；注销验证凭据归属；内部接口采用服务认证，不能统一要求已有 access + 席位。普通业务使用完整准入链，控制接口逐项声明适用检查。</p>
+<div class="rule"><strong>现状 → 目标</strong><br>现状：模型请求透传到 Bisheng 后，再回调 Gateway introspect 检查席位。<br>目标：Gateway 在业务转发前完成统一准入；Bisheng 保留可信调用验证与资源权限，不再要求每个业务接口重复回调席位检查。</div>
+<details><summary>Token 兼容性</summary><p>现有桌面 access token 使用 HS256，audience 为 <code>bisheng-dsh-model</code>。不能直接当知识 API token 使用；实施时须版本化扩展用途与校验合同，知识路由拒绝旧模型 token。refresh 轮换沿用现有重用检测。</p></details>
+</section>
+<section id="access">
+<h2>04 / 授权规则与迁移边界</h2>
+<div class="columns"><article><h3>共享授权读取，分开判断</h3><p>License 投影分别提供原有商业能力、DSH enabled / seat_limit、知识 API bit。RS256 是现有 DSH entitlement 机制，不代表原有商业 License 已全部使用该格式。</p></article><article><h3>每条业务路由声明操作</h3><p>模型要求模型能力；知识检索、上传与引用要求知识 API bit，读写区别由 v2 scope 和 ACL 判断。购买 bit 不代表开放所有 DSH 能力。</p></article><article><h3>兼容但不留旁路</h3><p>历史 DSH 地址与新增地址执行同一门禁。Bisheng DSH 源站限可信网关访问；普通 v2 仅接受自身凭据。Work 不持有可绕过门禁的 PAT 或服务密钥。</p></article></div>
+<div class="rule"><strong>开通 Connect = 登录会话有效 ∧ 企业已购知识 API 权限 ∧ 当前用户有有效 Work 席位</strong><br>实际访问 = 已开通 Connect ∧ Bisheng 当前资源权限。</div>
+<p>拟新增权限 <code>WORK_KNOWLEDGE_API</code>，具体 bit 编号实施时确认。每次 API 调用由 Gateway 检查当前授权与席位；前端显示状态不能作为放行依据。</p>
+<div class="states"><article><h3>企业未购买</h3><p>保留 Connect 入口，显示“企业未开通知识库 API”，联系管理员。</p></article><article><h3>已购买、无席位</h3><p>显示“尚未分配企业席位”，由管理员分配现有 Work 席位。</p></article><article><h3>已购买、有席位</h3><p>允许连接并选择可见空间。没有数据权限时显示“暂无可访问知识库”。</p></article></div>
+<p class="muted">v1.6.0 既有基础席位同样可满足席位条件，但不自动获得 API 购买权限。此授权针对 Work 企业接入；Bisheng 开源知识库能力保留。首期做检索与引用，上传随后接入同一认证链。</p>
+<details><summary>实施顺序与验收</summary><p>① 盘点全部 DSH / 普通 / 旧商业路由并建立策略表；② 接入公共准入模块，覆盖历史入口；③ 增加知识 bit 和 v2 委托适配；④ 完成旁路封堵后迁移 Bisheng 重复 introspect。</p><p>验证普通 v2 不受 DSH 撤席影响、DSH 缺席位与缺 bit 被拒、旧地址不能绕过、商业 License 到期不阻断免费核心、内部接口拒绝伪造身份、未登记 DSH 路由拒绝。新请求检查当前撤权状态；流式请求建立后撤权须另定取消策略。</p><p>现有 DshRoutes 清单不能当作完整权限注册表。WebFilter 覆盖 Gateway Controller，代理业务在转发前使用同一准入服务；仅增加路由 GlobalFilter 无法覆盖所有本地 Controller。上传不得沿用普通路由的正文聚合配置。</p></details>
+</section>
+</main>
+<footer>设计提案，尚未实现或部署。完整方案见 <a href="../gateway-commercial-architecture.zh.md">DSH 与毕昇商业版整体架构</a>；知识接入背景见 <a href="../bisheng-knowledge-enterprise-design.zh.md">设计说明</a>。</footer>
+</body>
+</html>

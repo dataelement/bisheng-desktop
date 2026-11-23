@@ -25,9 +25,9 @@ async function fixture(directory, prefix) {
 describe('generic release product API', () => {
   it('retains exact default names and accepts a separate portable product prefix', () => {
     expect(releaseAssetNames()).toEqual([
-      'dsh-desktop-mac-arm64.dmg', 'dsh-desktop-mac-arm64.zip', 'dsh-desktop-mac-arm64.zip.blockmap',
-      'dsh-desktop-mac-x64.dmg', 'dsh-desktop-mac-x64.zip', 'dsh-desktop-mac-x64.zip.blockmap',
-      'dsh-desktop-windows-x64-setup.exe', 'dsh-desktop-windows-x64-setup.exe.blockmap', 'latest-mac.yml', 'latest.yml'
+      'bisheng-mac-arm64.dmg', 'bisheng-mac-arm64.zip', 'bisheng-mac-arm64.zip.blockmap',
+      'bisheng-mac-x64.dmg', 'bisheng-mac-x64.zip', 'bisheng-mac-x64.zip.blockmap',
+      'bisheng-windows-x64-setup.exe', 'bisheng-windows-x64-setup.exe.blockmap', 'latest-mac.yml', 'latest.yml'
     ])
     expect(releaseAssetNames('example-desktop-2')[0]).toBe('example-desktop-2-mac-arm64.dmg')
     for (const prefix of invalidPrefixes) expect(() => releaseAssetNames(prefix), JSON.stringify(prefix)).toThrow('prefix')
@@ -40,7 +40,7 @@ describe('generic release product API', () => {
       const options = { minimumBytes, artifactPrefix: 'sample-desktop' }
       await fixture(root, options.artifactPrefix)
       await expect(verifyReleaseAssets(root, '1.2.3', options)).resolves.toBeUndefined()
-      await expect(verifyReleaseAssets(root, '1.2.3', { minimumBytes })).rejects.toThrow('dsh-desktop-mac-arm64.dmg')
+      await expect(verifyReleaseAssets(root, '1.2.3', { minimumBytes })).rejects.toThrow('bisheng-mac-arm64.dmg')
       await expect(verifyReleaseAssets(root, '1.2.4', options)).rejects.toThrow('does not describe release')
       await expect(verifyReleaseAssets(root, '1.2.3', { artifactPrefix: options.artifactPrefix })).rejects.toThrow('unexpectedly small')
       const feed = path.join(root, 'latest-mac.yml')
@@ -68,7 +68,7 @@ describe('generic release product API', () => {
     const script = 'scripts/verify/verify-release-assets.mjs'
     const run = args => spawnSync('node', [script, 'missing-release-directory', '1.2.3', ...args], { encoding: 'utf8' })
     expect(run(['--artifact-prefix', 'sample']).stderr).toContain('sample-mac-arm64.dmg')
-    expect(run([]).stderr).toContain('dsh-desktop-mac-arm64.dmg')
+    expect(run([]).stderr).toContain('bisheng-mac-arm64.dmg')
     for (const prefix of invalidPrefixes) {
       const result = run(['--artifact-prefix', prefix])
       expect(result.status).not.toBe(0)
@@ -129,7 +129,7 @@ for value in ['', '../Product', 'Sample ', 'Bad\nName', '[link](https://host)', 
 with tempfile.TemporaryDirectory() as work:
     root = Path(work)
     for names in build.INSTALLERS.values():
-        for _, name in names: (root / name.replace('dsh-desktop', 'sample-desktop')).write_bytes(b'fixture')
+        for _, name in names: (root / name.replace('bisheng', 'sample-desktop')).write_bytes(b'fixture')
     for target, count in [('all', 3), ('macos', 2), ('windows', 1)]:
         assert len(build.installer_paths(root, target, 'sample-desktop')) == count
     events = []

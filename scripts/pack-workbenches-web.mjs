@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { replaceInstalledPackages } from './ppt/ppt-package-projection.mjs'
 
 const PACKAGE_NAME = 'dsh-desktop-workbenches'
-const HARNESS_VERSION = '0.2.2-rc.1'
+const HARNESS_VERSION = '0.2.2-rc.5'
 const project = fileURLToPath(new URL('../', import.meta.url))
 const EXCLUDED = new Set(['node_modules', '.git', '.cache', '.npm-cache', '.pnpm-store', '.vite', '.vitest', '__pycache__', '.pytest_cache', 'coverage', '.DS_Store', 'package-lock.json'])
 

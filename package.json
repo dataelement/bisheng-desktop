@@ -570,7 +570,7 @@
       "artifactName": "bisheng-${os}-${arch}.${ext}"
     },
     "deb": {
-      "packageName": "dsh-desktop",
+      "packageName": "bisheng",
       "afterInstall": "build/bisheng-linux-after-install.tpl"
     },
     "win": {
