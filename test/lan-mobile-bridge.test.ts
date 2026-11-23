@@ -1977,6 +1977,26 @@ describe('workspace follow snapshot', () => {
     expect(removed.items.map((item) => item.workspaceId)).toEqual(['w1'])
     expect(removed.archivedSessionIds).toEqual(['s9'])
     expect(baseline.items[0]?.sessionIds).toEqual(['s1'])
+
+    const pinned = applyWorkspaceFollowFrame(removed, {
+      type: 'pinned',
+      pinnedSessionIds: ['s1']
+    }) as typeof baseline & { pinnedSessionIds?: string[] }
+    expect(pinned.pinnedSessionIds).toEqual(['s1'])
+    expect(pinned.items.map((item) => item.workspaceId)).toEqual(['w1'])
+
+    const replaced = applyWorkspaceFollowFrame(pinned, {
+      type: 'replace',
+      value: {
+        items: [{ workspaceId: 'w3', title: 'Three', path: '/three', sessionIds: [] }],
+        archivedSessionIds: [],
+        pinnedSessionIds: ['s3']
+      }
+    }) as { items: Array<{ workspaceId: string }>; pinnedSessionIds?: string[] }
+    expect(replaced.items.map((item) => item.workspaceId)).toEqual(['w3'])
+    expect(replaced.pinnedSessionIds).toEqual(['s3'])
+    expect(applyWorkspaceFollowFrame(undefined, { type: 'pinned', pinnedSessionIds: ['s1'] })).toBeUndefined()
+    expect(applyWorkspaceFollowFrame(baseline, { type: 'replace', value: { archivedSessionIds: [] } })).toBe(baseline)
   })
 
   it('serves a created session from workspace.list after the follow upsert', async () => {
@@ -2468,7 +2488,7 @@ describe('session list pages', () => {
     expect(first.items.map((item) => item.sessionId)).toEqual(['a'])
     expect(first.items[0]?.projections).toEqual({ values: { title: 'A' } })
     expect(first.hasMore).toBe(true)
-    expect(first.nextCursor).toBe('2:a')
+    expect(first.nextCursor).toBe('plain:2:a')
 
     const second = pageMobileSessions({
       items: rows,
@@ -2487,6 +2507,52 @@ describe('session list pages', () => {
     const ignored = pageMobileSessions({ items: rows, cursor: 'not-a-cursor', limit: 1 })
     expect(ignored.items[0]?.sessionId).toBe('other')
     expect(pageMobileSessions({ items: rows }).items).toHaveLength(SESSION_PAGE_LIMIT > rows.length ? rows.length : SESSION_PAGE_LIMIT)
+  })
+
+  it('pages the desktop sidebar order and leaves hidden rows off the page', () => {
+    const items = [
+      { sessionId: 'old', updatedAt: 1, blank: false, projections: { values: { title: '旧的' } } },
+      { sessionId: 'child', updatedAt: 9, origin: 'subagent', projections: { values: { title: '子会话' } } },
+      { sessionId: 'blank-other', updatedAt: 8, blank: true },
+      { sessionId: 'blank-open', updatedAt: 2, blank: true },
+      { sessionId: 'pinned-old', updatedAt: 3, blank: false, projections: { values: { title: '置顶旧' } } },
+      { sessionId: 'pinned-new', updatedAt: 4, blank: false, projections: { values: { title: '置顶新' } } },
+      { sessionId: 'fresh', updatedAt: 7, blank: false, origin: 'main', projections: { values: { title: '新的' } } },
+      { sessionId: 'stray', updatedAt: 6, blank: false, projections: { values: { title: '未分组' } } }
+    ]
+    const membership = new Set(['old', 'child', 'blank-other', 'blank-open', 'pinned-old', 'pinned-new', 'fresh'])
+    const first = pageMobileSessions({
+      items,
+      sessionIds: membership,
+      archivedSessionIds: new Set(['old']),
+      pinnedSessionIds: new Set(['pinned-old', 'pinned-new']),
+      openSessionId: 'blank-open',
+      limit: 2
+    })
+    expect(first.items.map((item) => item.sessionId)).toEqual(['blank-open', 'pinned-new'])
+    expect(first.items[0]).toMatchObject({ blank: true, sessionId: 'blank-open' })
+    expect(first.hasMore).toBe(true)
+
+    const second = pageMobileSessions({
+      items,
+      sessionIds: membership,
+      archivedSessionIds: new Set(['old']),
+      pinnedSessionIds: new Set(['pinned-old', 'pinned-new']),
+      openSessionId: 'blank-open',
+      cursor: first.nextCursor,
+      limit: 2
+    })
+    expect(second.items.map((item) => item.sessionId)).toEqual(['pinned-old', 'fresh'])
+    expect(second.items[1]?.origin).toBe('main')
+    expect(second.hasMore).toBe(false)
+    expect(second.nextCursor).toBeUndefined()
+
+    const stray = pageMobileSessions({
+      items,
+      excludeSessionIds: membership,
+      openSessionId: 'blank-open'
+    })
+    expect(stray.items.map((item) => item.sessionId)).toEqual(['stray'])
   })
 })
 
