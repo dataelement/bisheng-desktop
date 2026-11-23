@@ -2776,7 +2776,9 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           (!id.startsWith('cloud:') || localizedCatalog.some((entry) => entry.id === id)) &&
           (localizedCatalog.some((entry) => entry.id === id) || !service.hasUsablePackageAlias(id, catalog)))
           .map((id) => localizedCatalog.find((entry) => entry.id === id) || unavailableEntry(id)),
-        ...localizedCatalog.filter((entry) => entry.installed && !added.includes(entry.id))
+        // A cloud entrance keeps its saved record after removal so it can be
+        // added again; it is only installed while it is in the sidebar.
+        ...localizedCatalog.filter((entry) => entry.installed && !entry.cloud && !added.includes(entry.id))
       ]
       const enterpriseEntries = enterpriseCatalog.map(enterpriseCardEntry)
       const cloudEntries = cloudAccountKey && cloudAccountKey === enterprise.connectionKey ? cloudCatalog.map(item => cloudCardEntry(item, cloudAccountKey, cloudText)) : []

@@ -4758,7 +4758,7 @@ function favoritesRealm(account) {
     useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot()
   }
   vm.runInNewContext(code.replace('return { apply, inject:', 'return { enterpriseCapability, favoritesCopy, cloudCardCopy, apply, inject:'), {
-    window: { sessionStorage, localStorage: enabledStorage, __dshEnterpriseWorkbenchSnapshot: account, __ModuleLoader__: { load({ factory }) {
+    window: { sessionStorage, localStorage: enabledStorage, __dshEnterpriseWorkbenchSnapshot: account, dshDesktopEnterprise: { releaseCloudWorkbench: async () => {} }, __ModuleLoader__: { load({ factory }) {
       client = factory(name => name === 'react' ? testReact : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null, Toast: function Toast() {} })
     } } },
     document, setTimeout, clearTimeout, AbortController
@@ -4986,6 +4986,31 @@ describe('workbench favorites across market, enterprise and cloud', () => {
     expect(realm.find(tree, node => node.props?.className === 'dshWbFavorite')).toHaveLength(0)
     expect(realm.find(tree, node => node.type === 'select' && node.props['aria-label'] === '按来源筛选')[0].props.children.flat().map(option => option.props.value))
       .toEqual(['all', 'enterprise', 'cloud', 'market', 'local'])
+    service.dispose()
+  })
+
+  it('drops a cloud workbench from Installed once it is removed from the sidebar', async () => {
+    const realm = favoritesRealm(signedIn(ACCOUNT_A))
+    const { service, saved } = await realm.fixture()
+    withCatalogs(service, ACCOUNT_A)
+    service.syncCloudIdentity(ACCOUNT_A)
+    const id = `cloud:${ACCOUNT_A}:${CLOUD}`
+    await service.addCloud({ id: CLOUD, name: 'Team board' }, ACCOUNT_A)
+    const installedCount = tree => Number(realm.tabs(tree).find(label => label.startsWith('已安装')).match(/\((\d+)\)/)[1])
+    let tree = realm.render(service, 'mine')
+    const before = installedCount(tree)
+    expect(realm.items(tree).map(keyOf)).toContain(id)
+    await service.remove(id)
+    // The saved cloud record stays (so the same entrance can be added again),
+    // but it is no longer installed on this computer.
+    expect(saved().state.cloudWorkbenches[id]).toBeDefined()
+    expect(saved().state.added).not.toContain(id)
+    tree = realm.render(service, 'mine')
+    expect(installedCount(tree)).toBe(before - 1)
+    expect(realm.items(tree).map(keyOf)).not.toContain(id)
+    // The cloud collection still offers it.
+    tree = realm.render(service, 'cloud')
+    expect(realm.items(tree).map(keyOf)).toContain(id)
     service.dispose()
   })
 
