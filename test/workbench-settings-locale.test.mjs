@@ -90,7 +90,7 @@ describe('workbench settings locale', () => {
       expect(english).toContain('aria-label="Show workbenches in the sidebar"')
       expect(english).toContain(`aria-checked="${enabled}"`)
       expect(english).toContain(enabled
-        ? publicMarket ? 'The list comes from the network workbench market.' : 'The workbench market shows workbenches uploaded by your enterprise'
+        ? publicMarket ? 'The list comes from the network workbench market.' : 'Install workbenches uploaded by your enterprise from From enterprise'
         : 'Turn this on to access workbenches next to Sessions in the sidebar.')
       expect(english).not.toMatch(/[\u4e00-\u9fff]/)
 
@@ -101,7 +101,7 @@ describe('workbench settings locale', () => {
       expect(chinese).toContain('<h2>工作台</h2>')
       expect(chinese).toContain('aria-label="在左侧显示工作台"')
       expect(chinese).toContain(enabled
-        ? publicMarket ? '列表来自网络工作台市场' : '工作台市场展示本企业上传的工作台'
+        ? publicMarket ? '列表来自网络工作台市场' : '本企业上传的工作台在「来自企业」中安装'
         : '开启后，可以在左侧会话旁进入工作台。')
 
       ui.switchLanguage('en')

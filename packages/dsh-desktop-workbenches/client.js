@@ -25,6 +25,24 @@ window.__ModuleLoader__.load({
       zh: { title: '云端工作台', emptyCatalog: '暂无可使用的云端工作台，可通过「制作我的工作台」开始制作。', cloud: '云端', open: '打开工作台', add: '加载到工作台', remove: '卸载', removeHelp: '仅卸载这台客户端中的工作台入口，云端应用和数据会保留。', hosted: '企业托管应用', online: '已上线', empty: '这个工作台暂时还没有填写介绍。', loading: '正在加载云端工作台…', failed: '云端工作台暂时无法加载，请刷新重试。', unavailable: '当前企业服务未提供云端工作台接口，请联系管理员确认服务端版本。' },
       en: { title: 'Cloud workbenches', emptyCatalog: 'No cloud workbenches available. Start with “Build my workbench”.', cloud: 'Cloud', open: 'Open workbench', add: 'Add to workbenches', remove: 'Uninstall', removeHelp: 'Uninstall this device’s workbench shortcut. The hosted app and its data are retained.', hosted: 'Enterprise hosted app', online: 'Online', empty: 'This workbench has no description yet.', loading: 'Loading cloud workbenches…', failed: 'Cloud workbenches could not be loaded. Refresh to try again.', unavailable: 'This enterprise server does not provide cloud workbench APIs. Contact your administrator to check the server version.' }
     }
+    // Favorites span the public market and the signed-in account's enterprise
+    // and cloud workbenches; the source labels also mark cards in Installed.
+    const FAVORITES_NS = 'dsh-desktop-workbenches.favorites'
+    const favoritesCopy = {
+      zh: {
+        enterprise: '企业', allSources: '全部来源', sourceFilter: '按来源筛选', sortFavorited: '收藏时间', sortAdded: '添加顺序',
+        unavailable: '已下架或你没有使用权限', checking: '正在确认是否还能使用…', checkFailed: '暂时无法确认是否还能使用，请稍后刷新。',
+        signIn: '登录后查看企业和云端的收藏。', marketHidden: '公司已关闭第三方工作台市场，市场里的 {count} 个收藏暂不显示，重新开放后会回来。',
+        emptyHint: '在「来自企业」「云端工作台」「工作台市场」的卡片上点书签即可收藏。', failed: '收藏记录暂时无法读取，企业和云端的收藏先不显示。'
+      },
+      en: {
+        enterprise: 'Enterprise', allSources: 'All sources', sourceFilter: 'Filter by source', sortFavorited: 'Recently favorited', sortAdded: 'Order added',
+        unavailable: 'Removed, or you no longer have access', checking: 'Checking whether it is still available…', checkFailed: 'Availability could not be checked. Refresh later.',
+        signIn: 'Sign in to see enterprise and cloud favorites.', marketHidden: 'Your enterprise turned off the third-party workbench market. {count} market favorites are hidden and will return when it reopens.',
+        emptyHint: 'Select the bookmark on a card in From enterprise, Cloud workbenches, or Workbench Market.', failed: 'Favorites could not be loaded. Enterprise and cloud favorites are hidden for now.'
+      }
+    }
+    const fillCopy = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => Object.hasOwn(values, key) ? String(values[key]) : match)
     const createCopy = {
       zh: {
         title: '从你的想法开始', description: '创建新会话，开发指令会收起为可查看的指令块。补充你的想法后手动发送，Agent 会访问企业在线规范。也可以复制指令，交给其他 AI 助手。',
@@ -84,7 +102,7 @@ window.__ModuleLoader__.load({
       '这会移除本地工作台和左侧固定入口。已有会话、项目文件和工作台笔记都会保留，之后重新安装仍可继续使用。': 'This removes the local workbench and sidebar shortcut. Sessions, project files, and notes are preserved for future reinstalls.',
       '这个工作台暂时还没有填写介绍。': 'This workbench has no description yet.', '安装': 'Install', '正在安装…': 'Installing…', '查看安装说明': 'View installation instructions', '已安装': 'Installed', '运行中': 'Running', '已关闭': 'Off', '原生插件状态暂不可用': 'Plugin status unavailable', '更新': 'Update', '更新中…': 'Updating…', '重启后生效': 'Restart to apply', '更新失败': 'Update failed', '安装失败': 'Installation failed', '加载失败': 'Loading failed', '清除失败提示': 'Dismiss error',
       '重试安装': 'Retry installation', '取消收藏': 'Remove favorite', '收藏工作台': 'Favorite workbench', '移除失联记录': 'Remove orphaned record', '移除残留记录': 'Remove stale record', '原生插件状态未知或不可卸载': 'Plugin status unknown or cannot be uninstalled',
-      '还没有收藏工作台': 'No favorites yet', '还没有安装工作台': 'No installed workbenches yet', '没有找到匹配的工作台': 'No matching workbenches', '把鼠标移到市场卡片上，点击书签即可收藏。': 'Hover over a market card and select the bookmark to add a favorite.', '到工作台市场选择一个工作台开始。': 'Choose a workbench in the market to get started.', '试试其他关键词或分类。': 'Try another keyword or category.',
+      '还没有收藏工作台': 'No favorites yet', '还没有安装工作台': 'No installed workbenches yet', '没有找到匹配的工作台': 'No matching workbenches', '到工作台市场选择一个工作台开始。': 'Choose a workbench in the market to get started.', '试试其他关键词或分类。': 'Try another keyword or category.',
       '已复制': 'Copied', '复制失败，请展开指令手动复制。': 'Copy failed. Open the instructions and copy them manually.',
       '把开发指令交给 Agent': 'Give the development instructions to your agent', '工作台开发规范': 'workbench development guide', '复制开发指令': 'Copy development instructions', '收起指令': 'Hide instructions', '查看指令': 'View instructions',
       '由 Agent 部署，自测确认能用': 'Deploy with your Agent and test', '想上架，再按验收规范提交': 'Submit for listing when ready', '工作台市场验收规范': 'market acceptance guide', '工作台市场仓库': 'market repository', '上架分类': 'Market category', '让 Agent 按规范选择': 'Let the agent choose', '想要的新分类（可选）': 'Suggested new category (optional)', '例如：法务合规': 'For example: Legal compliance', '想要的新分类': 'Suggested new category', '复制投稿指令': 'Copy submission instructions', '开发工作台给 Agent 的指令': 'Development instructions for agent', '投稿工作台给 Agent 的指令': 'Submission instructions for agent', '工作台制作步骤': 'Workbench creation steps',
@@ -94,7 +112,7 @@ window.__ModuleLoader__.load({
       '可以直接新建工作区并开始对话，也可以使用已有工作区。新会话会自动关联这个工作台。': 'Create a workspace and start a session, or use an existing workspace. New sessions are linked to this workbench.', '新建工作区并开始对话': 'Create workspace and start session', '选择工作区': 'Choose workspace', '选择已有工作区': 'Choose an existing workspace', '选择或新建一个项目文件夹，即可创建工作区并开始对话。': 'Choose or create a project folder to start a session.', '在此工作区新建会话': 'New session in this workspace',
       '不能改变已有会话的工作台归属。': 'This session is already linked to a different workbench.', '会话不属于当前工作台。': 'This session does not belong to the current workbench.', '创建会话需要业务项目文件夹。': 'A project folder is required to create a session.',
       '卸载原生插件失败。': 'Could not uninstall the plugin.', '卸载原生插件未生效。': 'Plugin uninstallation did not take effect.', '原生插件卸载服务不可用。': 'The plugin uninstaller is unavailable.', '原生插件卸载服务不可用，请重启后重试。': 'The plugin uninstaller is unavailable. Restart and retry.', '另一个工作台正在安装，请稍候。': 'Another workbench is installing. Please wait.',
-      '工作区当前不可用。': 'This workspace is unavailable.', '工作台功能已关闭。': 'Workbenches are turned off.', '工作台安装状态尚未确认，不能移除残留记录。': 'Installation status is not yet confirmed. The stale record cannot be removed.', '工作台已在其他窗口更新，请重新加载后再操作。': 'This workbench changed in another window. Reload and try again.', '工作台已移除或不可用。': 'This workbench was removed or is unavailable.', '工作台当前不可用。': 'This workbench is unavailable.', '工作台插件已关闭，请先开启。': 'The workbench plugin is off. Turn it on first.', '工作台插件已安装，但启动后未注册。请重新加载或重试安装。': 'The workbench plugin is installed but did not register on startup. Reload or retry installation.', '工作台插件当前不可用。': 'The workbench plugin is unavailable.', '工作台更改尚未保存，请先重新加载。': 'Workbench changes were not saved. Reload first.',
+      '工作区当前不可用。': 'This workspace is unavailable.', '工作台功能已关闭。': 'Workbenches are turned off.', '工作台安装状态尚未确认，不能移除残留记录。': 'Installation status is not yet confirmed. The stale record cannot be removed.', '工作台已在其他窗口更新，请重新加载后再操作。': 'This workbench changed in another window. Reload and try again.', '工作台已移除或不可用。': 'This workbench was removed or is unavailable.', '工作台当前不可用。': 'This workbench is unavailable.', '收藏记录暂时无法保存，请重新加载后再试。': 'Favorites could not be saved. Reload and try again.', '工作台插件已关闭，请先开启。': 'The workbench plugin is off. Turn it on first.', '工作台插件已安装，但启动后未注册。请重新加载或重试安装。': 'The workbench plugin is installed but did not register on startup. Reload or retry installation.', '工作台插件当前不可用。': 'The workbench plugin is unavailable.', '工作台更改尚未保存，请先重新加载。': 'Workbench changes were not saved. Reload first.',
       '市场安装记录无效。': 'The market installation record is invalid.', '当前安装方式不支持应用内卸载。请使用原安装方式移除，并重启 Harness。': 'This installation cannot be uninstalled in the app. Remove it using the original installation method, then restart Harness.', '插件状态切换失败。': 'Could not change plugin state.', '无法切换插件状态。': 'Could not change plugin state.', '无法定位此插件的安装来源。请使用原安装方式移除，并重启 Harness。': 'The plugin installation source cannot be located. Remove it using the original method, then restart Harness.', '无法确定此工作台的原生插件状态。': 'Could not determine this workbench plugin status.', '暂时无法读取插件状态，请重启后重试。': 'Could not read plugin status. Restart and retry.', '未找到可卸载的原生插件，请检查安装来源。': 'No uninstallable plugin was found. Check its installation source.', '本机工作台版本高于市场版本，已取消安装以避免降级。': 'The installed workbench is newer than the market version. Installation was cancelled to avoid a downgrade.', '此会话已属于另一个工作台，不能重新绑定。': 'This session already belongs to another workbench and cannot be relinked.', '此工作区已从当前工作台移除。请重新添加该文件夹。': 'This workspace was removed from the current workbench. Add its folder again.', '此工作台的原生插件当前不可卸载。': 'This workbench plugin cannot be uninstalled.', '此插件由宿主管理，不能在工作台市场内卸载。': 'This plugin is managed by the host and cannot be uninstalled from the Workbench Market.', '请先打开可用的工作台。': 'Open an available workbench first.', '请先打开工作台。': 'Open a workbench first.', '请先添加可用的工作台。': 'Add an available workbench first.', '这个工作台已不在工作台市场中。': 'This workbench is no longer in the market.'
     }
     const localeActive = () => hostLocale?.getSnapshot?.().active || 'zh'
@@ -115,6 +133,8 @@ window.__ModuleLoader__.load({
     const API = '/api/desktop-workbenches/state'
     const WRITE_API = '/api/desktop-workbenches/state/write'
     const MIGRATE_API = '/api/desktop-workbenches/state/migrate'
+    const FAVORITES_API = '/api/desktop-workbenches/favorites'
+    const FAVORITES_WRITE_API = '/api/desktop-workbenches/favorites/write'
     const CATALOG_API = '/api/desktop-workbenches/catalog'
     const MARKET_INSTALLS_API = '/api/desktop-workbenches/market-installs'
     const ENTERPRISE_ACCESS_API = '/api/desktop-workbenches/enterprise-access-check'
@@ -213,7 +233,7 @@ window.__ModuleLoader__.load({
         revoked: '管理员已收回使用权限',
         scope: '企业上传的工作台可以安装到本机。安装完成后需要重启才能使用。',
         settingsOpen: '列表来自网络工作台市场，也可以安装本机开发的工作台。企业上传的工作台在「来自企业」中安装。',
-        settingsClosed: '当前企业未开放网络工作台市场。工作台市场展示本企业上传的工作台，可以直接安装；已安装里保留本机已安装和本地开发的工作台。'
+        settingsClosed: '当前企业未开放网络工作台市场。本企业上传的工作台在「来自企业」中安装；已安装里保留本机已安装和本地开发的工作台。'
       },
       en: {
         loading: 'Loading enterprise workbenches…', empty: 'Your enterprise has not published a workbench yet.', unavailable: 'The enterprise workbench service is unavailable.',
@@ -224,7 +244,7 @@ window.__ModuleLoader__.load({
         revoked: 'Your administrator revoked access',
         scope: 'Enterprise workbenches can be installed on this computer. Restart after installation to use them.',
         settingsOpen: 'The list comes from the network workbench market. Locally developed workbenches can also be installed. Enterprise uploads can be installed from From enterprise.',
-        settingsClosed: 'This enterprise has not opened the network workbench market. The workbench market shows workbenches uploaded by your enterprise, and they can be installed directly. Installed keeps local and previously installed workbenches.'
+        settingsClosed: 'This enterprise has not opened the network workbench market. Install workbenches uploaded by your enterprise from From enterprise. Installed keeps local and previously installed workbenches.'
       }
     }
     let workbenchLocaleCtx = null
@@ -269,6 +289,13 @@ window.__ModuleLoader__.load({
     }
     function CloudFrameHost(props) { return h(CloudHost, { ...props, frame: true }) }
     const EMPTY = () => ({ version: 1, added: [], pinned: [], favorites: [], active: null, sessionBindings: {}, recentSessions: {}, notes: {}, hiddenWorkspaces: {} })
+    // Mirrors favorites.mjs. Public market membership stays in state.favorites;
+    // this record adds account favorites plus remembered titles and times.
+    const EMPTY_FAVORITES = () => ({ version: 1, market: {}, accounts: {} })
+    const isFavoriteRecords = value => value !== null && typeof value === 'object' && value.version === 1
+      && value.market !== null && typeof value.market === 'object' && !Array.isArray(value.market)
+      && value.accounts !== null && typeof value.accounts === 'object' && !Array.isArray(value.accounts)
+    const REPOSITORY_FAVORITE_ID = /^[a-z0-9][a-z0-9_.-]*\/[a-z0-9][a-z0-9_.-]*$/
     // This controller owns navigation and local state only. It never terminates
     // agents, changes a running session's preset, or registers global tools.
     const WORKBENCH_REPOSITORY = /^https:\/\/github\.com\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+?)(?:\.git)?\/?$/i
@@ -332,6 +359,11 @@ window.__ModuleLoader__.load({
         this.cloudAccountKey = ''
         this.cloudTicket = 0
         this.enterpriseVerify = { id: '', status: 'idle', error: '' }
+        // favorites.json has its own revision. A failed read or write only
+        // stops favorite edits; navigation and installation keep working.
+        this.favoriteRecords = EMPTY_FAVORITES()
+        this.favoriteRevision = 0
+        this.favoritesStatus = 'idle'
         this.draftNotes = new Map()
         this.noteTimers = new Map()
         this.queue = Promise.resolve()
@@ -763,7 +795,7 @@ window.__ModuleLoader__.load({
         this.snapshot = { state: this.state, enabled: workbenchPreference.getSnapshot(), drafts: Object.fromEntries(this.draftNotes), ready: this.ready, error: this.error,
           catalogLoaded: this.catalogLoaded, catalogError: this.catalogError, catalogStale: this.catalogStale, catalogRefreshing: this.catalogRefreshing, checkingUpdates: this.checkingUpdates, pending: this.pending, marketOpen: this.marketOpen,
           catalog: this.marketCatalog(), categories: this.marketCategories, installs: this.installs, installing: this.installing, native: this.native, togglingPlugin: this.togglingPlugin, removingPlugin: this.removingPlugin, removedWorkbenchIds: [...this.removedWorkbenchIds], restartNeeded: this.restartNeeded, switcherHint: this.switcherHint === true,
-          enterpriseCatalog: this.enterpriseCatalog, enterpriseCatalogStatus: this.enterpriseCatalogStatus, enterpriseCatalogError: this.enterpriseCatalogError, enterpriseDetail: this.enterpriseDetail, enterpriseVerify: this.enterpriseVerify, cloudCatalog: this.cloudCatalog, cloudCatalogStatus: this.cloudCatalogStatus, cloudCatalogError: this.cloudCatalogError, cloudAccountKey: this.cloudAccountKey, creatingWorkbench: !!this.workbenchCreation }
+          enterpriseCatalog: this.enterpriseCatalog, enterpriseAccountKey: this.enterpriseAccountKey, favoriteRecords: this.favoriteRecords, favoritesStatus: this.favoritesStatus, enterpriseCatalogStatus: this.enterpriseCatalogStatus, enterpriseCatalogError: this.enterpriseCatalogError, enterpriseDetail: this.enterpriseDetail, enterpriseVerify: this.enterpriseVerify, cloudCatalog: this.cloudCatalog, cloudCatalogStatus: this.cloudCatalogStatus, cloudCatalogError: this.cloudCatalogError, cloudAccountKey: this.cloudAccountKey, creatingWorkbench: !!this.workbenchCreation }
         for (const listener of this.listeners) listener()
       }
       report(error) { if (!this.disposed) { this.error = error instanceof Error ? error.message : String(error); this.publish() } }
@@ -773,6 +805,23 @@ window.__ModuleLoader__.load({
         const data = await response.json()
         if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`)
         return data
+      }
+      async readFavorites() {
+        const response = await this.request(FAVORITES_API, { credentials: 'same-origin', cache: 'no-store' })
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`)
+        if (!Number.isSafeInteger(data?.revision) || !isFavoriteRecords(data.favorites)) throw new Error('Invalid workbench favorites response.')
+        return data
+      }
+      applyFavorites(result) {
+        if (result?.error) {
+          this.favoritesStatus = 'error'
+          console.warn('[workbenches] Favorites could not be loaded', result.error)
+          return
+        }
+        this.favoriteRecords = result.favorites
+        this.favoriteRevision = result.revision
+        this.favoritesStatus = 'ready'
       }
       async readCatalog(force = false) {
         const response = await this.request(force ? `${CATALOG_API}?force=1` : `${CATALOG_API}?cache=1`, { credentials: 'same-origin', cache: 'no-store' })
@@ -1022,10 +1071,11 @@ window.__ModuleLoader__.load({
         this.error = ''
         this.publish()
         try {
-          const [data, catalog, installs] = await Promise.all([
+          const [data, catalog, installs, favorites] = await Promise.all([
             this.read(),
             this.networkMarketAllowed ? this.readCatalog().catch(error => ({ error })) : Promise.resolve({ skipped: true }),
             this.readInstalls().catch(() => ({})),
+            this.readFavorites().catch(error => ({ error })),
             this.refreshNative()
           ])
           await this.ctx.sessions.refresh()
@@ -1033,6 +1083,7 @@ window.__ModuleLoader__.load({
           this.state = data.state
           this.revision = data.revision
           this.installs = installs
+          this.applyFavorites(favorites)
           if (catalog?.skipped || !this.networkMarketAllowed) {
             this.remoteCatalog = []
             this.catalogError = ''
@@ -1093,6 +1144,33 @@ window.__ModuleLoader__.load({
           this.revision = data.revision
         }).catch((error) => { this.blocked = true; this.report(error); throw error })
           .finally(() => { this.pending--; this.publish() })
+        this.queue = task.catch(() => {})
+        return task
+      }
+      commitFavorites(change) {
+        if (!this.ready || this.disposed || this.favoritesStatus !== 'ready') return Promise.reject(new Error('收藏记录暂时无法保存，请重新加载后再试。'))
+        const next = JSON.parse(JSON.stringify(this.favoriteRecords))
+        try { change(next) } catch (error) { return Promise.reject(error) }
+        this.favoriteRecords = next
+        this.pending++
+        this.publish()
+        const task = this.queue.then(async () => {
+          const response = await this.request(FAVORITES_WRITE_API, {
+            method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ revision: this.favoriteRevision, favorites: next })
+          })
+          const data = await response.json()
+          if (!response.ok) throw new Error(response.status === 409 ? '工作台已在其他窗口更新，请重新加载后再操作。' : data.error || `HTTP ${response.status}`)
+          this.favoriteRevision = data.revision
+        }).catch(async (error) => {
+          // Show what is actually saved: re-read the file instead of guessing
+          // which queued change failed. Further edits stay blocked if that
+          // read fails too.
+          this.favoritesStatus = 'error'
+          try { this.applyFavorites(await this.readFavorites()) } catch (readError) { console.warn('[workbenches] Favorites could not be reloaded', readError) }
+          this.report(error)
+          throw error
+        }).finally(() => { this.pending--; this.publish() })
         this.queue = task.catch(() => {})
         return task
       }
@@ -1471,10 +1549,54 @@ window.__ModuleLoader__.load({
         })
       }
       toggleFavorite(id) {
-        if (!this.marketCatalog().some(entry => entry.catalogId === id) && !(this.state.favorites || []).includes(id)) return Promise.reject(new Error('工作台当前不可用。'))
+        const listing = this.marketCatalog().find(entry => entry.catalogId === id)
+        if (!listing && !(this.state.favorites || []).includes(id)) return Promise.reject(new Error('工作台当前不可用。'))
+        const adding = !(this.state.favorites || []).includes(id)
         return this.commit((state) => {
           const favorites = Array.isArray(state.favorites) ? state.favorites : []
           state.favorites = favorites.includes(id) ? favorites.filter((item) => item !== id) : [...favorites, id]
+        // The record only orders and labels; its failure is already reported by
+        // commitFavorites and must not turn a saved favorite into an error.
+        }).then(() => this.recordMarketFavorite(id, adding, listing?.title).catch(() => {}))
+      }
+      // state.favorites stays the source of truth for market favorites so older
+      // clients keep them. The record only orders and labels them; without it
+      // a favorite sorts by its position in state.favorites.
+      recordMarketFavorite(id, adding, title) {
+        if (this.favoritesStatus !== 'ready' || !REPOSITORY_FAVORITE_ID.test(id) || id.length > 255) return Promise.resolve()
+        if (!adding && !Object.hasOwn(this.favoriteRecords.market, id)) return Promise.resolve()
+        return this.commitFavorites(records => {
+          if (!adding) delete records.market[id]
+          else records.market[id] = { at: Date.now(), ...(typeof title === 'string' && title.trim() ? { title: title.trim().slice(0, 300) } : {}) }
+        })
+      }
+      favoriteAccountKey() {
+        const account = enterpriseCapability.getSnapshot()
+        return account.connected === true && /^[a-f0-9]{16}$/.test(account.connectionKey ?? '') ? account.connectionKey : ''
+      }
+      accountFavorites(key = this.favoriteAccountKey()) {
+        return key && Array.isArray(this.favoriteRecords.accounts[key]) ? this.favoriteRecords.accounts[key] : []
+      }
+      isAccountFavorite(kind, id) {
+        return this.accountFavorites().some(item => item.kind === kind && item.id === id)
+      }
+      // Enterprise and cloud favorites belong to the signed-in account: their
+      // IDs only mean something on that server, tenant and user. Removing is
+      // always allowed so a delisted or revoked favorite can be cleared.
+      toggleAccountFavorite(kind, id) {
+        const key = this.favoriteAccountKey()
+        if (!['enterprise', 'cloud'].includes(kind) || !/^[a-f0-9]{32}$/.test(id ?? '') || !key) return Promise.reject(new Error('工作台当前不可用。'))
+        const saved = this.isAccountFavorite(kind, id)
+        const source = kind === 'enterprise'
+          ? this.enterpriseAccountKey === key && this.enterpriseCatalog.find(item => item?.id === id)
+          : this.cloudAccountKey === key && this.cloudCatalog.find(item => item?.id === id)
+        const title = typeof (kind === 'enterprise' ? source?.displayName : source?.name) === 'string' ? (kind === 'enterprise' ? source.displayName : source.name).trim() : ''
+        if (!saved && !title) return Promise.reject(new Error('工作台当前不可用。'))
+        return this.commitFavorites(records => {
+          const items = Array.isArray(records.accounts[key]) ? records.accounts[key] : []
+          const next = saved ? items.filter(item => !(item.kind === kind && item.id === id)) : [...items, { kind, id, title: title.slice(0, 300), at: Date.now() }]
+          if (next.length) records.accounts[key] = next
+          else delete records.accounts[key]
         })
       }
       reorder(id, before) {
@@ -1788,6 +1910,8 @@ window.__ModuleLoader__.load({
       .dshWbTabs [aria-selected=true]{color:var(--dsw-alias-label-primary);font-weight:600;background:color-mix(in srgb,var(--dsw-alias-bg-module-platform),var(--dsw-alias-label-primary) 8%)}
 
       .dshWbTabs [role=tab][aria-selected=false]:hover:not(:disabled){color:var(--dsw-alias-label-primary)}
+      /* Separates the browse collections from the user's own (favorites, installed). */
+      .dshWbTabDivider{flex:0 0 1px;align-self:center;width:1px;height:16px;margin:0 10px 0 6px;background:var(--dsw-alias-border-l2)}
       .dshWbBrowseTools{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
       .dshWbSearch{position:relative;min-width:220px;max-width:480px;flex:1}.dshWbSearch svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--dsw-alias-label-secondary);pointer-events:none}
       .dshWbSearch input{display:block;width:100%;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:7px 11px 7px 34px;background:var(--dsw-alias-bg-layer-1)}
@@ -1895,6 +2019,11 @@ window.__ModuleLoader__.load({
       .dshWbInit{width:100%;max-width:440px;min-width:0;box-sizing:border-box;padding:24px;margin:auto;overflow-wrap:anywhere}.dshWbInit h2{font-size:20px;line-height:28px;font-weight:600;margin:0 0 8px}.dshWbInit p{margin:0}.dshWbInit .dshWbInitWorkspace{display:flex;flex-direction:column;gap:8px;margin-top:24px;min-width:0}.dshWbInit label{font-size:13px;line-height:20px;font-weight:500}.dshWbInitWorkspaceRow{display:flex;flex-wrap:wrap;gap:8px;min-width:0}.dshWbInit select{flex:1 1 180px;width:100%;min-width:0;max-width:100%;height:34px;padding:5px 8px;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:6px}.dshWbInit .dshWbBtn{min-height:34px;white-space:normal;overflow-wrap:anywhere;flex-shrink:0;max-width:100%}.dshWbInitNew{display:flex;flex-direction:column;align-items:flex-start;gap:8px;margin-top:20px;padding-top:20px;border-top:1px solid var(--dsw-alias-border-l2)}.dshWbInitNew:first-of-type{margin-top:24px}.dshWbInitHint{font-size:12px;line-height:18px}
       .dshWbCatalogProgress{display:flex;align-items:center;gap:6px;color:var(--dsw-alias-label-secondary)}.dshWbCatalogProgress svg{animation:dshWbSpin .8s linear infinite}@media(prefers-reduced-motion:reduce){.dshWbCatalogProgress svg{animation:none}}
       .dshWbNotice{padding:10px 14px;background:var(--dsw-alias-bg-layer-2);font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+      /* Collection notices sit above the card grid with the grid's own spacing. */
+      .dshWbMarket [role=tabpanel] > .dshWbNotice{margin:0 0 16px;border-radius:14px}
+      .dshWbFavoriteNotice{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+      /* A favorite its catalog no longer offers: dimmed, removable only. */
+      .dshWbFavoriteUnavailable .dshWbMedia{opacity:.45}.dshWbFavoriteUnavailable .dshWbTitleText{color:var(--dsw-alias-label-secondary)}
       .dshWb [hidden]{display:none!important}
       @media(hover:none){.dshWbFavorite{opacity:1;transform:none}}
       @media(hover:none){.dshWbUninstall{opacity:1;transform:none}}@media(prefers-reduced-motion:reduce){.dshWbCard,.dshWbFavorite,.dshWbUninstall,.dshWbModal,.dshWbModalBackdrop,.dshWbDockSwitch::after{animation:none;transition:none}}
@@ -2190,7 +2319,9 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dshWbPreviewPane', style: { order: entry.layout?.businessSide === 'left' ? 2 : 1 } }, h('em'), tr('会话'), h('i'), h('i')),
           h('div', { className: 'dshWbPreviewPane', style: { order: entry.layout?.businessSide === 'left' ? 1 : 2 } }, h('em'), entry.panelTitle || tr('业务区域'), h('i'), h('i'))))
     }
-    function CloudInstalledCard({ entry, service, disabled }) {
+    // collection: where the card is shown. Removing the sidebar entrance
+    // belongs to Installed; elsewhere the card offers the bookmark.
+    function CloudInstalledCard({ entry, service, disabled, collection = 'mine', favorite = null }) {
       const t = service.ctx.locale.bind(CLOUD_CARD_NS)
       const loaded = service.state.added.includes(entry.id)
       const enter = () => loaded ? service.open(entry.id) : service.addCloud(entry.cloudItem, entry.connectionKey).then(() => service.open(entry.id))
@@ -2206,7 +2337,8 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dshWbActions' },
             h('div', { className: 'dshWbCardVersionActions' }, entry.cloudItem?.state === 'online' && h('span', { className: 'dshWbCardVersion' }, t('online'))),
             h('div', { className: 'dshWbCardControls' },
-              loaded && h('button', { type: 'button', className: 'dshWbUninstall', disabled, title: t('removeHelp'), onClick: () => service.run(service.remove(entry.id)) }, t('remove')),
+              favorite && favoriteControl({ id: entry.id, title: entry.title, active: favorite.active, disabled: favorite.disabled, onToggle: favorite.onToggle }),
+              loaded && collection === 'mine' && h('button', { type: 'button', className: 'dshWbUninstall', disabled, title: t('removeHelp'), onClick: () => service.run(service.remove(entry.id)) }, t('remove')),
               h(Button, { primary: true, disabled, onClick: () => service.run(enter()) }, t(loaded ? 'open' : 'add'))))))
     }
     function ScreenshotGallery({ entry }) {
@@ -2491,19 +2623,109 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
         h('span', { className: 'dshWbFailureIcon', tabIndex: 0, 'aria-label': both(`${label}详情：${tr(detail)}`, `${label} details: ${tr(detail)}`), 'aria-describedby': tooltipId }, h(MarketIcon, { name: 'failure', size: 17 })),
         h('span', { id: tooltipId, className: 'dshWbFailureTooltip', role: 'tooltip', tabIndex: 0 }, `${label}：${tr(detail)}`))
     }
+    const enterpriseCardEntry = (item) => ({
+      id: item.id, catalogId: item.id, title: item.displayName, description: item.description || '', enterprise: true, listed: false, local: false,
+      packageName: item.packageName, identityKind: item.identityKind, workbenchKey: item.workbenchKey, legacyId: item.legacyId,
+      version: item.currentVersion?.version, updatedAt: item.updatedAt, category: item.identityKind === 'legacy' ? '旧格式' : '企业', author: item.packageName
+    })
+    const cloudCardEntry = (item, connectionKey, cloudText) => ({
+      id: `cloud:${connectionKey}:${item.id}`, appId: item.id, title: item.name, description: item.description || '',
+      cloud: true, cloudItem: item, connectionKey, categoryId: 'cloud', category: cloudText('cloud'), listed: false
+    })
+    // Where a card comes from. An installed enterprise package has no market
+    // record, so it is recognised by its package name in the enterprise catalog
+    // (or a revoked grant) before the local-workbench check claims it.
+    function entrySource(service, entry, enterpriseCatalog) {
+      if (entry.cloud) return 'cloud'
+      if (entry.enterprise) return 'enterprise'
+      const name = service.pluginFor(entry)
+      if (name && (service.revokedPlugins?.has(name) || enterpriseCatalog.some(item => item?.packageName === name))) return 'enterprise'
+      return service.isLocalEntry(entry) ? 'local' : 'market'
+    }
+    function sourceLabel(source, favoriteText, cloudText) {
+      return source === 'enterprise' ? favoriteText('enterprise') : source === 'cloud' ? cloudText('cloud') : source === 'local' ? tr('本地') : tr('市场')
+    }
+    // Each collection offers only the filters and sort keys its cards carry
+    // data for; stars and downloads exist only in the public market.
+    function collectionView(tab) {
+      if (tab === 'enterprise') return { filter: null, sorts: ['updated', 'name'] }
+      if (tab === 'cloud') return { filter: null, sorts: ['name'] }
+      if (tab === 'favorites') return { filter: 'source', sources: ['enterprise', 'cloud', 'market'], sorts: ['favorited', 'name'] }
+      if (tab === 'mine') return { filter: 'source', sources: ['enterprise', 'cloud', 'market', 'local'], sorts: ['added', 'name'] }
+      return { filter: 'category', sorts: ['stars', 'downloads', 'updated', 'name'] }
+    }
+    function sortLabel(key, favoriteText) {
+      return key === 'favorited' ? favoriteText('sortFavorited') : key === 'added' ? favoriteText('sortAdded')
+        : tr({ stars: 'Star 数量', downloads: '下载量', updated: '更新时间' }[key] || '名称')
+    }
+    // Market favorites (state.favorites, hidden while the tenant closes the
+    // public market) and the signed-in account's enterprise/cloud favorites,
+    // newest first. Market favorites saved before records existed sort as the
+    // oldest, keeping their saved order. A favorite whose catalog has not
+    // answered yet is "checking", never reported as removed.
+    function favoriteCollection({ favorites, records, status, publicMarket, accountKey, catalogEntries, catalogLoaded, catalogError, catalogRefreshing,
+      enterpriseEntries, enterpriseStatus, enterpriseKey, cloudEntries, cloudStatus, cloudKey }) {
+      const rows = []
+      let hiddenMarket = 0
+      const pendingState = (key, catalogStatus) => key === accountKey && ['ready', 'empty'].includes(catalogStatus)
+        ? 'unavailable' : key === accountKey && ['error', 'unavailable'].includes(catalogStatus) ? 'failed' : 'checking'
+      favorites.forEach((id, index) => {
+        if (!publicMarket) { hiddenMarket++; return }
+        const record = records.market?.[id]
+        const entry = catalogEntries.find(item => item.catalogId === id || item.id === id)
+        // The card says where it was favorited from, not how it was installed.
+        rows.push({ at: record?.at || 0, index, entry: entry ? { ...entry, favoriteSource: 'market' } : { id, catalogId: id, title: record?.title || id, favoriteSource: 'market',
+          favoriteUnavailable: catalogLoaded ? 'unavailable' : catalogRefreshing && !catalogError ? 'checking' : 'failed' } })
+      })
+      if (accountKey && status === 'ready') {
+        const saved = Array.isArray(records.accounts?.[accountKey]) ? records.accounts[accountKey] : []
+        saved.forEach((item, index) => {
+          const enterpriseKind = item.kind === 'enterprise'
+          const key = enterpriseKind ? enterpriseKey : cloudKey
+          const entry = key === accountKey && (enterpriseKind ? enterpriseEntries.find(row => row.id === item.id) : cloudEntries.find(row => row.appId === item.id))
+          rows.push({ at: item.at, index: favorites.length + index, entry: entry ? { ...entry, favoriteSource: item.kind } : { id: `${item.kind}:${accountKey}:${item.id}`, favoriteId: item.id,
+            favoriteSource: item.kind, title: item.title, favoriteUnavailable: pendingState(key, enterpriseKind ? enterpriseStatus : cloudStatus) } })
+        })
+      }
+      rows.sort((left, right) => (right.at - left.at) || (right.index - left.index))
+      return { entries: rows.map(row => row.entry), hiddenMarket }
+    }
+    // Plain function rather than a component so every card type renders the
+    // same bookmark markup in the same footer slot.
+    function favoriteControl({ id, title, active, available = true, disabled, onToggle }) {
+      return h('span', { className: 'dshWbControlHint' },
+        h('button', { type: 'button', className: 'dshWbFavorite', 'aria-describedby': `dsh-wb-favorite-tooltip-${id}`, 'aria-label': active ? both(`取消收藏${title}`, `Remove ${title} from favorites`) : both(`收藏${title}`, `Add ${title} to favorites`), 'aria-pressed': active, disabled, onClick: onToggle }, h(MarketIcon, { name: 'bookmark', size: 17 })),
+        h('span', { id: `dsh-wb-favorite-tooltip-${id}`, className: 'dshWbControlTooltip', role: 'tooltip' }, active ? tr(available ? '已收藏' : '取消收藏') : both('收藏', 'Favorite')))
+    }
+    // A favorite that its catalog no longer lists for this account. It keeps
+    // the remembered title and can only be removed.
+    function unavailableFavoriteCard({ entry, source, statusText, disabled, onRemove }) {
+      return h('article', { key: entry.id, className: 'dshWbCard dshWbFavoriteUnavailable', 'data-favorite-state': entry.favoriteUnavailable },
+        h('div', { className: 'dshWbMedia' }, h(Preview, { entry })),
+        h('div', { className: 'dshWbCardBody' },
+          // No link: the listing is gone or not confirmed for this account.
+          h('div', { className: 'dshWbCardTitle' }, h('h2', { title: entry.title }, h('span', { className: 'dshWbTitleLink' }, h('span', { className: 'dshWbTitleText' }, entry.title))), h('span', { className: 'dshWbCategory' }, source)),
+          h('div', { className: 'dshWbDescriptionHint' }, h('p', { className: 'dshWbMuted dshWbCardDescription', role: 'status' }, statusText)),
+          h('div', { className: 'dshWbActions' },
+            h('div', { className: 'dshWbCardVersionActions' }),
+            h('div', { className: 'dshWbCardControls' }, h(Button, { disabled, onClick: onRemove }, tr('取消收藏'))))))
+    }
     function Market({ service }) {
       useHostLocale(service)
-      const { state, catalog, categories: marketCategories = [], ready, pending, installing, catalogLoaded, catalogError, catalogRefreshing, checkingUpdates, native, togglingPlugin, removingPlugin, removedWorkbenchIds = [], enterpriseCatalog = [], enterpriseCatalogStatus = 'idle', enterpriseCatalogError = '', cloudCatalog = [], cloudCatalogStatus = 'idle', cloudCatalogError = '', cloudAccountKey = '', creatingWorkbench = false } = useWorkbench(service)
+      const { state, catalog, categories: marketCategories = [], ready, pending, installing, catalogLoaded, catalogError, catalogRefreshing, checkingUpdates, native, togglingPlugin, removingPlugin, removedWorkbenchIds = [], enterpriseCatalog = [], enterpriseCatalogStatus = 'idle', enterpriseCatalogError = '', cloudCatalog = [], cloudCatalogStatus = 'idle', cloudCatalogError = '', cloudAccountKey = '', creatingWorkbench = false, enterpriseAccountKey = '', favoriteRecords = EMPTY_FAVORITES(), favoritesStatus = 'idle' } = useWorkbench(service)
       const createText = service.ctx.locale.bind(CREATE_NS)
       const cloudText = service.ctx.locale.bind(CLOUD_CARD_NS)
+      const favoriteText = service.ctx.locale.bind(FAVORITES_NS)
       const workbenchEnabled = React.useSyncExternalStore(workbenchPreference.subscribe.bind(workbenchPreference), workbenchPreference.getSnapshot.bind(workbenchPreference))
       const enterprise = React.useSyncExternalStore(enterpriseCapability.subscribe.bind(enterpriseCapability), enterpriseCapability.getSnapshot.bind(enterpriseCapability))
       const publicMarket = !enterprise.connected || enterprise.allowThirdPartyWorkbenches === true
       const enterpriseVisible = enterprise.connected === true
-      const [tab, setTab] = React.useState('market')
+      // null follows the default collection for the current sign-in state.
+      const [tab, setTab] = React.useState(null)
       const [search, setSearch] = React.useState('')
       const [category, setCategory] = React.useState('all')
-      const [sortBy, setSortBy] = React.useState('stars')
+      // '' means the collection's default sort.
+      const [sortBy, setSortBy] = React.useState('')
       const [detail, setDetail] = React.useState(null)
       const [removing, setRemoving] = React.useState(null)
       const [openPrompt, setOpenPrompt] = React.useState(null)
@@ -2534,10 +2756,14 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
       const added = state.added
       const favorites = state.favorites || []
       const unavailableEntry = (id) => ({ id, title: id, category: tr('其他'), categoryId: 'other', unavailable: true, description: both('提供此工作台的插件当前未加载。', 'The plugin for this workbench is not loaded.'), loadFailure: both('工作台插件当前未加载。', 'The workbench plugin is not loaded.') })
-      const enterpriseAsMarket = enterpriseVisible && !publicMarket
-      const collectionValues = [...(publicMarket ? ['market', 'favorites'] : enterpriseAsMarket ? ['market'] : []), ...(enterpriseVisible && publicMarket ? ['enterprise'] : []), 'mine', 'cloud']
-      const visibleTab = collectionValues.includes(tab) ? tab : collectionValues[0]
-      const showingEnterprise = visibleTab === 'enterprise' || (visibleTab === 'market' && enterpriseAsMarket)
+      // Two groups: where to find workbenches (enterprise first), then the
+      // user's own. A tenant that closes the public market hides its tab; the
+      // enterprise catalog keeps its own tab instead of borrowing the market's.
+      const browseCollections = ['enterprise', 'cloud', ...(publicMarket ? ['market'] : [])]
+      const collectionValues = [...browseCollections, 'favorites', 'mine']
+      const defaultCollection = enterpriseVisible ? 'enterprise' : 'market'
+      const visibleTab = collectionValues.includes(tab) ? tab : defaultCollection
+      const showingEnterprise = visibleTab === 'enterprise'
       const showingCloud = visibleTab === 'cloud'
       const enterpriseLoading = showingEnterprise && enterpriseCatalogStatus === 'loading'
       const cloudLoading = showingCloud && cloudCatalogStatus === 'loading'
@@ -2551,32 +2777,40 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
           (!id.startsWith('cloud:') || localizedCatalog.some((entry) => entry.id === id)) &&
           (localizedCatalog.some((entry) => entry.id === id) || !service.hasUsablePackageAlias(id, catalog)))
           .map((id) => localizedCatalog.find((entry) => entry.id === id) || unavailableEntry(id)),
-        ...localizedCatalog.filter((entry) => entry.installed && !added.includes(entry.id))
+        // A cloud entrance keeps its saved record after removal so it can be
+        // added again; it is only installed while it is in the sidebar.
+        ...localizedCatalog.filter((entry) => entry.installed && !entry.cloud && !added.includes(entry.id))
       ]
-      const enterpriseEntries = [...enterpriseCatalog.map((item) => ({
-        id: item.id, catalogId: item.id, title: item.displayName, description: item.description || '', enterprise: true, listed: false, local: false,
-        packageName: item.packageName, identityKind: item.identityKind, workbenchKey: item.workbenchKey, legacyId: item.legacyId,
-        version: item.currentVersion?.version, category: item.identityKind === 'legacy' ? '旧格式' : '企业', author: item.packageName
-      }))]
-      const cloudEntries = cloudAccountKey && cloudAccountKey === enterprise.connectionKey ? cloudCatalog.map(item => ({
-        id: `cloud:${cloudAccountKey}:${item.id}`, appId: item.id, title: item.name, description: item.description || '',
-        cloud: true, cloudItem: item, connectionKey: cloudAccountKey, categoryId: 'cloud', category: cloudText('cloud'), listed: false
-      })) : []
+      const enterpriseEntries = enterpriseCatalog.map(enterpriseCardEntry)
+      const cloudEntries = cloudAccountKey && cloudAccountKey === enterprise.connectionKey ? cloudCatalog.map(item => cloudCardEntry(item, cloudAccountKey, cloudText)) : []
+      const favoriteAccountKey = enterpriseVisible && /^[a-f0-9]{16}$/.test(enterprise.connectionKey ?? '') ? enterprise.connectionKey : ''
+      const favoriteView = favoriteCollection({ favorites, records: favoriteRecords, status: favoritesStatus, publicMarket, accountKey: favoriteAccountKey,
+        catalogEntries: localizedCatalog, catalogLoaded, catalogError, catalogRefreshing, enterpriseEntries, enterpriseStatus: enterpriseCatalogStatus, enterpriseKey: enterpriseAccountKey,
+        cloudEntries, cloudStatus: cloudCatalogStatus, cloudKey: cloudAccountKey })
+      const accountFavoriteIds = new Set(favoriteAccountKey && favoritesStatus === 'ready' && Array.isArray(favoriteRecords.accounts?.[favoriteAccountKey])
+        ? favoriteRecords.accounts[favoriteAccountKey].map(item => `${item.kind}:${item.id}`) : [])
       const allEntries = visibleTab === 'mine'
         ? installedEntries
         : visibleTab === 'favorites'
-          ? favorites.map((id) => localizedCatalog.find((entry) => entry.catalogId === id || entry.id === id) || unavailableEntry(id))
+          ? favoriteView.entries
           : showingEnterprise ? enterpriseEntries : showingCloud ? cloudEntries : marketEntries
-      const categoryKey = (entry) => entry.categoryId || (entry.local ? 'local' : entry.categoryNames?.zh || entry.category || 'other')
-      const categories = [{ id: 'all', name: tr('全部') }, ...[...new Set(allEntries.map(categoryKey))].map((id) => ({ id, name: id === 'local' ? tr('本地') : allEntries.find((entry) => categoryKey(entry) === id)?.category || tr('其他') }))]
+      const view = collectionView(visibleTab)
+      const sourceOf = (entry) => entry.favoriteSource || entrySource(service, entry, enterpriseCatalog)
+      const categoryKey = (entry) => view.filter === 'source' ? sourceOf(entry) : entry.categoryId || (entry.local ? 'local' : entry.categoryNames?.zh || entry.category || 'other')
+      const categories = view.filter === 'source'
+        ? [{ id: 'all', name: favoriteText('allSources') }, ...view.sources.map(id => ({ id, name: sourceLabel(id, favoriteText, cloudText) }))]
+        : [{ id: 'all', name: tr('全部') }, ...[...new Set(allEntries.map(categoryKey))].map((id) => ({ id, name: id === 'local' ? tr('本地') : allEntries.find((entry) => categoryKey(entry) === id)?.category || tr('其他') }))]
+      const activeSort = view.sorts.includes(sortBy) ? sortBy : view.sorts[0]
       const query = search.toLowerCase().trim()
-      const entries = sortMarketEntries(allEntries.filter((entry) => (category === 'all' || categoryKey(entry) === category) && `${entry.title || ''} ${entry.titleEn || ''} ${entry.name || ''} ${entry.description || ''} ${entry.descriptionEn || ''} ${entry.author || ''} ${entry.category || ''} ${entry.categoryNames?.zh || ''}`.toLowerCase().includes(query)), sortBy)
+      const matching = allEntries.filter((entry) => (!view.filter || category === 'all' || categoryKey(entry) === category) && `${entry.title || ''} ${entry.titleEn || ''} ${entry.name || ''} ${entry.description || ''} ${entry.descriptionEn || ''} ${entry.author || ''} ${entry.category || ''} ${entry.categoryNames?.zh || ''}`.toLowerCase().includes(query))
+      // Favorites arrive newest first and Installed follows the sidebar order.
+      const entries = activeSort === 'favorited' || activeSort === 'added' ? matching : sortMarketEntries(matching, activeSort)
       const displayedEntries = entries.slice(0, visibleCount)
       const hasMore = visibleCount < entries.length
-      const selected = (tab === 'mine' ? catalog.map(displayEntry) : allEntries).find((entry) => (entry.catalogId || entry.id) === detail)
+      const selected = (visibleTab === 'mine' ? catalog.map(displayEntry) : allEntries).find((entry) => (entry.catalogId || entry.id) === detail)
       const removingEntry = allEntries.find((entry) => entry.id === removing) || localizedCatalog.find((entry) => entry.id === removing)
       const removingStale = removingEntry && service.staleRecordFor(removingEntry)
-      const selectCollection = (value) => { setTab(value); setCategory('all'); setDetail(null); setVisibleCount(PAGE_SIZE) }
+      const selectCollection = (value) => { setTab(value); setCategory('all'); setSortBy(''); setDetail(null); setVisibleCount(PAGE_SIZE) }
       const navigateCollections = (event) => {
         const values = collectionValues
         const current = values.indexOf(visibleTab)
@@ -2604,19 +2838,17 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
         h(Notice, { service, showCatalogStatus: true }),
         tab !== 'submit' && h('div', { className: 'dshWbToolbar' },
           h('div', { className: 'dshWbTabs' }, h('div', { role: 'tablist', 'aria-label': tr('工作台集合') },
-            (publicMarket || enterpriseAsMarket) && h(Button, { id: 'dsh-workbench-market-tab', role: 'tab', tabIndex: visibleTab === 'market' ? 0 : -1, 'aria-selected': visibleTab === 'market', 'aria-controls': 'dsh-workbench-market-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('market') }, tr('工作台市场')),
-            publicMarket && h(Button, { id: 'dsh-workbench-favorites-tab', role: 'tab', tabIndex: visibleTab === 'favorites' ? 0 : -1, 'aria-selected': visibleTab === 'favorites', 'aria-controls': 'dsh-workbench-favorites-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('favorites') }, `${tr('我的收藏')} (${favorites.length})`),
-            (enterpriseVisible && publicMarket) && h(Button, { id: 'dsh-workbench-enterprise-tab', role: 'tab', tabIndex: visibleTab === 'enterprise' ? 0 : -1, 'aria-selected': visibleTab === 'enterprise', 'aria-controls': 'dsh-workbench-enterprise-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('enterprise') }, tr('来自企业')),
-            h(Button, { id: 'dsh-workbench-mine-tab', role: 'tab', tabIndex: visibleTab === 'mine' ? 0 : -1, 'aria-selected': visibleTab === 'mine', 'aria-controls': 'dsh-workbench-mine-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('mine') }, `${tr('已安装')} (${installedEntries.length})`),
-            h(Button, { id: 'dsh-workbench-cloud-tab', role: 'tab', tabIndex: showingCloud ? 0 : -1, 'aria-selected': showingCloud, 'aria-controls': 'dsh-workbench-cloud-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('cloud') }, cloudText('title')))),
+            h(Button, { id: 'dsh-workbench-enterprise-tab', role: 'tab', tabIndex: visibleTab === 'enterprise' ? 0 : -1, 'aria-selected': visibleTab === 'enterprise', 'aria-controls': 'dsh-workbench-enterprise-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('enterprise') }, tr('来自企业')),
+            h(Button, { id: 'dsh-workbench-cloud-tab', role: 'tab', tabIndex: showingCloud ? 0 : -1, 'aria-selected': showingCloud, 'aria-controls': 'dsh-workbench-cloud-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('cloud') }, cloudText('title')),
+            publicMarket && h(Button, { id: 'dsh-workbench-market-tab', role: 'tab', tabIndex: visibleTab === 'market' ? 0 : -1, 'aria-selected': visibleTab === 'market', 'aria-controls': 'dsh-workbench-market-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('market') }, tr('工作台市场')),
+            h('span', { className: 'dshWbTabDivider', 'aria-hidden': true }),
+            h(Button, { id: 'dsh-workbench-favorites-tab', role: 'tab', tabIndex: visibleTab === 'favorites' ? 0 : -1, 'aria-selected': visibleTab === 'favorites', 'aria-controls': 'dsh-workbench-favorites-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('favorites') }, `${tr('我的收藏')} (${favoriteView.entries.length})`),
+            h(Button, { id: 'dsh-workbench-mine-tab', role: 'tab', tabIndex: visibleTab === 'mine' ? 0 : -1, 'aria-selected': visibleTab === 'mine', 'aria-controls': 'dsh-workbench-mine-panel', onKeyDown: navigateCollections, onClick: () => selectCollection('mine') }, `${tr('已安装')} (${installedEntries.length})`))),
           !collectionBlocked && h('div', { className: 'dshWbBrowseTools' },
-            h('span', { className: 'dshWbRefreshHint' }, h(Button, { className: 'dshWbBtn dshWbRefresh', 'aria-describedby': 'dsh-workbench-refresh-tooltip', 'aria-label': checkingUpdates ? tr('正在检查更新') : tab === 'mine' ? tr('检查更新') : tr('刷新目录'), 'aria-busy': catalogRefreshing || checkingUpdates || enterpriseLoading || cloudLoading, disabled: catalogRefreshing || checkingUpdates || enterpriseLoading || cloudLoading, onClick: () => service.run(visibleTab === 'mine' ? service.checkUpdates() : showingEnterprise ? service.refreshEnterpriseCatalog() : showingCloud ? service.refreshCloudCatalog() : service.refreshCatalog()) }, h(MarketIcon, { name: 'refresh', size: 17 })), h('span', { id: 'dsh-workbench-refresh-tooltip', className: 'dshWbControlTooltip', role: 'tooltip' }, checkingUpdates ? tr('正在检查更新') : tab === 'mine' ? tr('检查更新') : tr('刷新目录'))),
-            h('label', { className: 'dshWbSort' }, h('select', { 'aria-label': tr('按分类筛选'), value: category, onChange: (event) => { setCategory(event.target.value); setVisibleCount(PAGE_SIZE) } }, categories.map((value) => h('option', { key: value.id, value: value.id }, value.id === 'all' ? tr('全部类型') : value.name)))),
-            h('label', { className: 'dshWbSort' }, h('select', { 'aria-label': tr('工作台排序方式'), value: sortBy, onChange: (event) => { setSortBy(event.target.value); setVisibleCount(PAGE_SIZE) } },
-              h('option', { value: 'stars' }, tr('Star 数量')),
-              h('option', { value: 'downloads' }, tr('下载量')),
-              h('option', { value: 'updated' }, tr('更新时间')),
-              h('option', { value: 'name' }, tr('名称')))))),
+            h('span', { className: 'dshWbRefreshHint' }, h(Button, { className: 'dshWbBtn dshWbRefresh', 'aria-describedby': 'dsh-workbench-refresh-tooltip', 'aria-label': checkingUpdates ? tr('正在检查更新') : visibleTab === 'mine' ? tr('检查更新') : tr('刷新目录'), 'aria-busy': catalogRefreshing || checkingUpdates || enterpriseLoading || cloudLoading, disabled: catalogRefreshing || checkingUpdates || enterpriseLoading || cloudLoading, onClick: () => service.run(visibleTab === 'mine' ? service.checkUpdates() : showingEnterprise ? service.refreshEnterpriseCatalog() : showingCloud ? service.refreshCloudCatalog() : visibleTab === 'favorites' ? Promise.all([service.refreshCatalog(), service.refreshEnterpriseWorkbenches()]) : service.refreshCatalog()) }, h(MarketIcon, { name: 'refresh', size: 17 })), h('span', { id: 'dsh-workbench-refresh-tooltip', className: 'dshWbControlTooltip', role: 'tooltip' }, checkingUpdates ? tr('正在检查更新') : visibleTab === 'mine' ? tr('检查更新') : tr('刷新目录'))),
+            view.filter && h('label', { className: 'dshWbSort' }, h('select', { 'aria-label': view.filter === 'source' ? favoriteText('sourceFilter') : tr('按分类筛选'), value: category, onChange: (event) => { setCategory(event.target.value); setVisibleCount(PAGE_SIZE) } }, categories.map((value) => h('option', { key: value.id, value: value.id }, value.id === 'all' && view.filter === 'category' ? tr('全部类型') : value.name)))),
+            h('label', { className: 'dshWbSort' }, h('select', { 'aria-label': tr('工作台排序方式'), value: activeSort, onChange: (event) => { setSortBy(event.target.value); setVisibleCount(PAGE_SIZE) } },
+              ...view.sorts.map(key => h('option', { key, value: key }, sortLabel(key, favoriteText))))))),
         tab === 'submit' && h('section', { id: 'dsh-workbench-submit-panel', className: 'dshWbSubmit', 'aria-label': tr('制作我的工作台'), tabIndex: 0 },
           h('div', { className: 'dshWbSteps', 'aria-label': tr('工作台制作步骤') },
             h('div', { className: 'dshWbStep' },
@@ -2657,10 +2889,22 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
         tab !== 'submit' && !collectionBlocked && h('section', { id: `dsh-workbench-${visibleTab}-panel`, role: 'tabpanel', 'aria-labelledby': `dsh-workbench-${visibleTab}-tab`, tabIndex: 0 },
           showingCloud && cloudCatalogStatus === 'loading' && h('div', { className: 'dshWbNotice', role: 'status' }, cloudText('loading')),
           showingCloud && cloudCatalogError && h('div', { className: 'dshWbNotice', role: 'alert' }, cloudText(cloudCatalogError)),
+          visibleTab === 'favorites' && favoritesStatus === 'error' && h('div', { className: 'dshWbNotice', role: 'alert' }, favoriteText('failed')),
+          visibleTab === 'favorites' && !enterpriseVisible && h('div', { className: 'dshWbNotice dshWbFavoriteNotice', role: 'status' }, h('span', null, favoriteText('signIn')), h(Button, { onClick: signIn }, tr('登录毕昇账号'))),
+          visibleTab === 'favorites' && favoriteView.hiddenMarket > 0 && h('div', { className: 'dshWbNotice', role: 'status' }, fillCopy(favoriteText('marketHidden'), { count: favoriteView.hiddenMarket })),
           h('div', { className: 'dshWbGrid', 'data-tab': visibleTab }, displayedEntries.map((entry) => {
-            if (entry.cloud) return h(CloudInstalledCard, { key: entry.id, entry, service, disabled })
+            if (entry.favoriteUnavailable) {
+              const source = entry.favoriteSource
+              return unavailableFavoriteCard({ entry, source: sourceLabel(source, favoriteText, cloudText), disabled,
+                statusText: favoriteText(entry.favoriteUnavailable === 'unavailable' ? 'unavailable' : entry.favoriteUnavailable === 'failed' ? 'checkFailed' : 'checking'),
+                onRemove: () => service.run(source === 'market' ? service.toggleFavorite(entry.catalogId) : service.toggleAccountFavorite(source, entry.favoriteId)) })
+            }
+            // Installed keeps removal; the cloud and favorites collections offer the bookmark instead.
+            if (entry.cloud) return h(CloudInstalledCard, { key: entry.id, entry, service, disabled, collection: visibleTab,
+              favorite: visibleTab !== 'mine' && /^[a-f0-9]{32}$/.test(entry.appId ?? '') ? { active: accountFavoriteIds.has(`cloud:${entry.appId}`), disabled: disabled || favoritesStatus !== 'ready',
+                onToggle: () => service.run(service.toggleAccountFavorite('cloud', entry.appId)) } : null })
             const catalogId = entry.catalogId || entry.id
-            const isFavorite = favorites.includes(catalogId)
+            const isFavorite = entry.enterprise ? accountFavoriteIds.has(`enterprise:${entry.id}`) : favorites.includes(catalogId)
             const pluginName = service.pluginFor(entry)
             const activation = service.activationFor(entry)
             const bundle = pluginName && native?.bundles?.[pluginName]
@@ -2698,7 +2942,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
             return h('article', { key: catalogId, className: 'dshWbCard' },
               h('div', { className: 'dshWbMedia' }, h('button', { type: 'button', className: 'dshWbMediaOpen', 'aria-describedby': `dsh-wb-preview-tooltip-${catalogId}`, 'aria-label': both(`查看${entry.title}详情`, `View ${entry.title} details`), onClick: () => { setDetail(catalogId); if (entry.enterprise) service.run(service.openEnterpriseDetail(catalogId)) } }, h(Preview, { entry }), h('span', { className: 'dshWbMediaZoom', 'aria-hidden': true }, h(MarketIcon, { name: 'zoom', size: 18 }))), h('span', { id: `dsh-wb-preview-tooltip-${catalogId}`, className: 'dshWbControlTooltip', role: 'tooltip' }, tr('查看详情'))),
               h('div', { className: 'dshWbCardBody' },
-                h('div', { className: 'dshWbCardTitle' }, h('h2', null, h(EntryTitle, { entry })), tab === 'mine' && service.isLocalEntry(entry) && h('span', { className: 'dshWbCategory' }, tr('本地')), tab === 'mine' && h('span', { className: 'dshWbControlHint dshWbSwitchHint' }, h('button', { type: 'button', className: 'dshWbRunSwitch', role: 'switch', 'aria-checked': activation === 'on', 'aria-label': both(`${entry.title}运行状态`, `${entry.title} running state`), 'aria-describedby': `dsh-wb-switch-tooltip-${catalogId}`, disabled: disabled || !!togglingPlugin || !hasNativeControl || activation === 'unknown', onClick: () => service.run(service.setPluginEnabled(pluginName, activation !== 'on')) }), h('span', { id: `dsh-wb-switch-tooltip-${catalogId}`, className: 'dshWbControlTooltip', role: 'tooltip' }, activation === 'unknown' ? tr('原生插件状态暂不可用') : activation === 'on' ? tr('停用') : tr('启用')))),
+                h('div', { className: 'dshWbCardTitle' }, h('h2', null, h(EntryTitle, { entry })), (visibleTab === 'mine' || visibleTab === 'favorites') && h('span', { className: 'dshWbCategory' }, sourceLabel(sourceOf(entry), favoriteText, cloudText)), tab === 'mine' && h('span', { className: 'dshWbControlHint dshWbSwitchHint' }, h('button', { type: 'button', className: 'dshWbRunSwitch', role: 'switch', 'aria-checked': activation === 'on', 'aria-label': both(`${entry.title}运行状态`, `${entry.title} running state`), 'aria-describedby': `dsh-wb-switch-tooltip-${catalogId}`, disabled: disabled || !!togglingPlugin || !hasNativeControl || activation === 'unknown', onClick: () => service.run(service.setPluginEnabled(pluginName, activation !== 'on')) }), h('span', { id: `dsh-wb-switch-tooltip-${catalogId}`, className: 'dshWbControlTooltip', role: 'tooltip' }, activation === 'unknown' ? tr('原生插件状态暂不可用') : activation === 'on' ? tr('停用') : tr('启用')))),
                 h('div', { className: 'dshWbAuthorRow' }, h(AuthorItem, { entry, showVersion: false }), versionText && h('span', { className: 'dshWbCardVersion' }, versionText)),
                 tab === 'mine' && pluginName && service.revokedPlugins.has(pluginName) && h('p', { className: 'dshWbMuted', role: 'status' }, enterpriseText(service.ctx, 'revoked')),
                 h('div', { className: 'dshWbDescriptionHint' }, h('p', { className: 'dshWbMuted dshWbCardDescription' }, entry.description || tr('这个工作台暂时还没有填写介绍。'))),
@@ -2710,7 +2954,9 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
                     canRetryInstalled && h('button', { type: 'button', className: 'dshWbRetry', title: updating ? both(`正在重试安装${entry.title}`, `Retrying installation of ${entry.title}`) : both(`重试安装${entry.title}`, `Retry installing ${entry.title}`), 'aria-label': updating ? both(`正在重试安装${entry.title}`, `Retrying installation of ${entry.title}`) : both(`重试安装${entry.title}`, `Retry installing ${entry.title}`), 'aria-busy': updating, disabled: disabled || !!installing, onClick: () => installMarket(entry) }, h(MarketIcon, { name: 'refresh', size: 17 }))),
                   h('div', { className: 'dshWbCardControls' },
                   entry.listed === true && entry.repository && h('span', { className: 'dshWbControlHint' }, h('a', { className: 'dshWbRoundButton', href: entry.repository, target: '_blank', rel: 'noopener noreferrer', 'aria-describedby': `dsh-wb-github-tooltip-${catalogId}`, 'aria-label': both(`在 GitHub 查看${entry.title}`, `View ${entry.title} on GitHub`) }, h(MarketIcon, { name: 'github', size: 16 })), h('span', { id: `dsh-wb-github-tooltip-${catalogId}`, className: 'dshWbControlTooltip', role: 'tooltip' }, tr('查看 GitHub'))),
-                  (entry.listed === true || isFavorite) && h('span', { className: 'dshWbControlHint' }, h('button', { type: 'button', className: 'dshWbFavorite', 'aria-describedby': `dsh-wb-favorite-tooltip-${catalogId}`, 'aria-label': isFavorite ? both(`取消收藏${entry.title}`, `Remove ${entry.title} from favorites`) : both(`收藏${entry.title}`, `Add ${entry.title} to favorites`), 'aria-pressed': isFavorite, disabled: disabled, onClick: () => service.run(service.toggleFavorite(catalogId)) }, h(MarketIcon, { name: 'bookmark', size: 17 })), h('span', { id: `dsh-wb-favorite-tooltip-${catalogId}`, className: 'dshWbControlTooltip', role: 'tooltip' }, isFavorite ? tr(entry.listed === true ? '已收藏' : '取消收藏') : both('收藏', 'Favorite'))),
+                  visibleTab !== 'mine' && (entry.enterprise
+                    ? favoriteControl({ id: catalogId, title: entry.title, active: isFavorite, disabled: disabled || favoritesStatus !== 'ready' || !enterpriseVisible, onToggle: () => service.run(service.toggleAccountFavorite('enterprise', entry.id)) })
+                    : (entry.listed === true || isFavorite) && favoriteControl({ id: catalogId, title: entry.title, active: isFavorite, available: entry.listed === true, disabled, onToggle: () => service.run(service.toggleFavorite(catalogId)) })),
                   tab === 'mine' && !canUninstall && h('span', { className: 'dshWbFailureHint dshWbRemovalHint' },
                     h('span', { className: 'dshWbFailureIcon', tabIndex: 0, 'aria-label': tr(localRemoval?.reason) || tr('原生插件状态未知或不可卸载'), 'aria-describedby': `dsh-wb-uninstall-reason-${catalogId}` }, h(MarketIcon, { name: 'failure', size: 17 })),
                     h('span', { id: `dsh-wb-uninstall-reason-${catalogId}`, className: 'dshWbFailureTooltip', role: 'tooltip', tabIndex: 0 }, tr(localRemoval?.reason) || tr('原生插件状态未知或不可卸载'))),
@@ -2728,15 +2974,15 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
                         ? h('span', { className: 'dshWbInstalled', role: 'status' }, enterpriseText(service.ctx, 'restart'))
                         : enterpriseInstalled
                           ? h('span', { className: 'dshWbInstalled', role: 'status' }, enterpriseText(service.ctx, 'installed'))
-                          : h(React.Fragment, null,
-                            h(Button, { onClick: () => { setDetail(catalogId); service.run(service.openEnterpriseDetail(catalogId)) } }, enterpriseText(service.ctx, 'detail')),
-                            h(Button, { primary: true, disabled: disabled || !!installing, onClick: () => service.run(service.installEnterpriseWorkbench(catalogId)) }, installing === catalogId ? enterpriseText(service.ctx, 'installing') : enterpriseText(service.ctx, 'install')))
+                          // Details open from the screenshot, as on market cards.
+                          : h(Button, { primary: true, disabled: disabled || !!installing, onClick: () => service.run(service.installEnterpriseWorkbench(catalogId)) }, installing === catalogId ? enterpriseText(service.ctx, 'installing') : enterpriseText(service.ctx, 'install'))
                       : entry.distribution
                         ? h(Button, { primary: true, disabled: disabled || !!installing, onClick: () => installMarket(entry) }, installing === catalogId ? tr('正在安装…') : tr('安装'))
                         : entry.listed === true && entry.repository && h('a', { className: 'dshWbBtn dshWbPrimary', href: entry.repository, target: '_blank', rel: 'noopener noreferrer' }, tr('查看安装说明'))))))
-          }), entries.length === 0 && (tab !== 'market' || (ready && !catalogRefreshing) || catalogLoaded) && h('div', { className: 'dshWbEmpty' }, h('div', null,
-            h('strong', null, showingCloud && !search ? cloudLoading ? cloudText('loading') : cloudCatalogError ? cloudText(cloudCatalogError) : cloudText('emptyCatalog') : showingEnterprise && !search ? (enterpriseLoading ? enterpriseText(service.ctx, 'loading') : enterpriseCatalogStatus === 'unavailable' ? enterpriseText(service.ctx, 'unavailable') : enterpriseCatalogStatus === 'error' ? enterpriseText(service.ctx, 'failed') : enterpriseText(service.ctx, 'empty')) : tab === 'market' && !catalogLoaded && catalogError ? tr('市场目录暂不可用') : tab === 'favorites' && !search ? tr('还没有收藏工作台') : tab === 'mine' && !search ? tr('还没有安装工作台') : tr('没有找到匹配的工作台')),
-            h('p', { className: 'dshWbMuted' }, showingCloud && !search ? cloudCatalogError ? enterpriseText(service.ctx, 'retryHint') : '' : tab === 'market' && !catalogLoaded && catalogError ? tr('请重试读取目录，或使用已安装的工作台。') : tab === 'favorites' && !search ? tr('把鼠标移到市场卡片上，点击书签即可收藏。') : tab === 'mine' && !search ? tr('到工作台市场选择一个工作台开始。') : tr('试试其他关键词或分类。'))))),
+          // Hidden market favorites are already explained by the notice above.
+          }), entries.length === 0 && (visibleTab !== 'market' || (ready && !catalogRefreshing) || catalogLoaded) && !(visibleTab === 'favorites' && !search && favoriteView.hiddenMarket > 0) && h('div', { className: 'dshWbEmpty' }, h('div', null,
+            h('strong', null, showingCloud && !search ? cloudLoading ? cloudText('loading') : cloudCatalogError ? cloudText(cloudCatalogError) : cloudText('emptyCatalog') : showingEnterprise && !search ? (enterpriseLoading ? enterpriseText(service.ctx, 'loading') : enterpriseCatalogStatus === 'unavailable' ? enterpriseText(service.ctx, 'unavailable') : enterpriseCatalogStatus === 'error' ? enterpriseText(service.ctx, 'failed') : enterpriseText(service.ctx, 'empty')) : visibleTab === 'market' && !catalogLoaded && catalogError ? tr('市场目录暂不可用') : visibleTab === 'favorites' && !search ? tr('还没有收藏工作台') : visibleTab === 'mine' && !search ? tr('还没有安装工作台') : tr('没有找到匹配的工作台')),
+            h('p', { className: 'dshWbMuted' }, showingCloud && !search ? cloudCatalogError ? enterpriseText(service.ctx, 'retryHint') : '' : visibleTab === 'market' && !catalogLoaded && catalogError ? tr('请重试读取目录，或使用已安装的工作台。') : visibleTab === 'favorites' && !search ? favoriteText('emptyHint') : visibleTab === 'mine' && !search ? tr('到工作台市场选择一个工作台开始。') : tr('试试其他关键词或分类。'))))),
           hasMore && h('div', { className: 'dshWbMoreContainer' },
             h(Button, { className: 'dshWbBtn dshWbMore', onClick: () => setVisibleCount((current) => current + PAGE_SIZE) }, tr('加载更多')),
             h('p', { className: 'dshWbMoreCount' }, isEnglish() ? `Showing ${displayedEntries.length} of ${entries.length}` : `已显示 ${displayedEntries.length} / 共 ${entries.length} 个工作台`))),
@@ -2989,6 +3235,7 @@ ${ACCEPTANCE_READING}先确认要公开的仓库和内容，不得公开密钥�
       ctx.effect(() => ctx.locale.register(DOWNLOAD_NS, downloadCopy), 'workbenches: download dictionaries')
       ctx.effect(() => ctx.locale.register(CREATE_NS, createCopy), 'workbenches: creation dictionaries')
       ctx.effect(() => ctx.locale.register(CLOUD_CARD_NS, cloudCardCopy), 'workbenches: cloud card dictionaries')
+      ctx.effect(() => ctx.locale.register(FAVORITES_NS, favoritesCopy), 'workbenches: favorites dictionaries')
       const service = new Workbenches(ctx)
       // Resolve the account policy before making any public catalog request.
       service.networkMarketAllowed = false

@@ -4,6 +4,7 @@ import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { emptyState } from '../packages/dsh-desktop-workbenches/state.mjs'
+import { emptyFavorites, validateFavorites } from '../packages/dsh-desktop-workbenches/favorites.mjs'
 
 const Service = { tracker: Symbol('service-tracker') }
 let sidebarWide = false
@@ -202,8 +203,9 @@ function registerProvider(service, ctx, id, descriptor = {}, Component = () => n
   return service.register(descriptor, Component)
 }
 
-async function fixture(initial = emptyState()) {
+async function fixture(initial = emptyState(), initialFavorites = emptyFavorites(), { WorkbenchesClass = Workbenches } = {}) {
   let stored = { revision: 0, state: structuredClone(initial) }
+  let storedFavorites = { revision: 0, favorites: structuredClone(initialFavorites) }
   const list = { ids: ['old', 'writer-1', 'writer-2', 'research-1'], byId: {} }
   for (const id of list.ids) list.byId[id] = { sessionId: id, displayTitle: id }
   const projects = [{ workspaceId: 'project-1', title: 'User project', sessionIds: [...list.ids] }]
@@ -251,6 +253,16 @@ async function fixture(initial = emptyState()) {
         { id: 'research', owner: 'test', repository: 'research', url: 'https://github.com/test/research', name: 'Research', category: 'other', description: { zh: 'Research' }, screenshots: [], version: '1.0.0', distribution: { name: 'research' } }
       ] }
     })
+    // favorites.json has its own revision; writes go through the real validator.
+    if (url === '/api/desktop-workbenches/favorites') return Response.json(storedFavorites)
+    if (url === '/api/desktop-workbenches/favorites/write') {
+      const payload = JSON.parse(options.body)
+      if (payload.revision !== storedFavorites.revision) return Response.json({ error: 'Conflict' }, { status: 409 })
+      try {
+        storedFavorites = { revision: storedFavorites.revision + 1, favorites: validateFavorites(payload.favorites) }
+        return Response.json(storedFavorites)
+      } catch (error) { return Response.json({ error: error.message }, { status: error.status || 500 }) }
+    }
     if (options.method !== 'POST') return Response.json(stored)
     const payload = JSON.parse(options.body)
     if (payload.revision !== stored.revision) return Response.json({ error: 'Conflict' }, { status: 409 })
@@ -259,7 +271,7 @@ async function fixture(initial = emptyState()) {
       return Response.json(stored)
     } catch (error) { return Response.json({ error: error.message }, { status: error.status || 500 }) }
   })
-  service = new Workbenches(ctx, request)
+  service = new WorkbenchesClass(ctx, request)
   setFiberPackage(ctx, 'writer')
   service.register({ title: 'Writer' }, () => null)
   setFiberPackage(ctx, 'research')
@@ -269,6 +281,8 @@ async function fixture(initial = emptyState()) {
   return {
     service, ctx, request, list,
     saved: () => structuredClone(stored),
+    savedFavorites: () => structuredClone(storedFavorites),
+    externalFavoritesUpdate: (favorites) => { storedFavorites = { revision: storedFavorites.revision + 1, favorites: structuredClone(favorites) } },
     externalUpdate: (state = stored.state) => { stored = { revision: stored.revision + 1, state: structuredClone(state) } }
   }
 }
@@ -289,11 +303,11 @@ describe('desktop workbench client navigation', () => {
     const expected = {
       zh: {
         open: '列表来自网络工作台市场，也可以安装本机开发的工作台。企业上传的工作台在「来自企业」中安装。',
-        closed: '当前企业未开放网络工作台市场。工作台市场展示本企业上传的工作台，可以直接安装；已安装里保留本机已安装和本地开发的工作台。'
+        closed: '当前企业未开放网络工作台市场。本企业上传的工作台在「来自企业」中安装；已安装里保留本机已安装和本地开发的工作台。'
       },
       en: {
         open: 'The list comes from the network workbench market. Locally developed workbenches can also be installed. Enterprise uploads can be installed from From enterprise.',
-        closed: 'This enterprise has not opened the network workbench market. The workbench market shows workbenches uploaded by your enterprise, and they can be installed directly. Installed keeps local and previously installed workbenches.'
+        closed: 'This enterprise has not opened the network workbench market. Install workbenches uploaded by your enterprise from From enterprise. Installed keeps local and previously installed workbenches.'
       }
     }
     let client
@@ -2081,6 +2095,7 @@ describe('desktop workbench client navigation', () => {
         ] }
       })
       if (url === '/api/desktop-workbenches/submissions') return Response.json({ submissions: [] })
+      if (url === '/api/desktop-workbenches/favorites') return Response.json({ revision: 0, favorites: emptyFavorites() })
       const state = options.method === 'POST' ? JSON.parse(options.body).state : emptyState()
       return Response.json({ revision: options.method === 'POST' ? 1 : 0, state })
     })
@@ -2107,8 +2122,9 @@ describe('desktop workbench client navigation', () => {
     setFiberPackage(ctx, 'writer')
     service.register({ title: 'Writer' }, () => null)
     await service.add('example/writer')
-    // State, cached catalog, installs, submissions, online refresh, then state write.
-    expect(reply).toHaveBeenCalledTimes(6)
+    // State, cached catalog, installs, favorites, submissions, online refresh, then state write.
+    expect(reply).toHaveBeenCalledTimes(7)
+    expect(service.favoritesStatus).toBe('ready')
     expect(service.revision).toBe(1)
     expect(service.state.added).toEqual(['example/writer'])
   })
@@ -2907,8 +2923,9 @@ describe('workbench market screenshot and metadata display', () => {
     const source = Market.toString()
     expect(source).toContain("const [search, setSearch] = React.useState('')")
     expect(source).toContain("const [category, setCategory] = React.useState('all')")
-    expect(source).toContain("visibleTab === 'mine' ? service.checkUpdates() : showingEnterprise ? service.refreshEnterpriseCatalog() : showingCloud ? service.refreshCloudCatalog() : service.refreshCatalog()")
-    expect(source).toContain("tab === 'mine' ? tr('检查更新') : tr('刷新目录')")
+    // Favorites span all three catalogs, so refreshing there reloads each of them.
+    expect(source).toContain("visibleTab === 'mine' ? service.checkUpdates() : showingEnterprise ? service.refreshEnterpriseCatalog() : showingCloud ? service.refreshCloudCatalog() : visibleTab === 'favorites' ? Promise.all([service.refreshCatalog(), service.refreshEnterpriseWorkbenches()]) : service.refreshCatalog()")
+    expect(source).toContain("visibleTab === 'mine' ? tr('检查更新') : tr('刷新目录')")
     expect(source).toContain("h(MarketIcon, { name: 'refresh', size: 17 })")
     expect(fullSource).toContain('.dshWbRefresh[aria-busy=true] svg{animation:dshWbSpin .8s linear infinite}')
   })
@@ -3171,7 +3188,7 @@ describe('workbench market screenshot and metadata display', () => {
     expect(cards()).toEqual(['o/alpha', 'o/bravo', 'o/zulu', 'o/missing'])
   })
 
-  it('keeps sorting active while searching, filtering categories and switching collections', async () => {
+  it('keeps sorting while searching and filtering, and resets to each collection default when switching', async () => {
     const { service } = await fixture({ ...emptyState(), added: ['o/a', 'o/b'], favorites: ['o/a', 'o/b'] })
     service.remoteCatalog = [
       listed({ id: 'o/a', name: 'Alpha', categoryName: '效率', metrics: { githubStars: { value: 1 } } }),
@@ -3189,10 +3206,24 @@ describe('workbench market screenshot and metadata display', () => {
     node(item => item.type === 'input' && item.props['aria-label'] === '搜索工作台').props.onChange({ target: { value: 'Alpha' } })
     expect(cards()).toEqual(['o/a'])
     node(item => item.type === 'input' && item.props['aria-label'] === '搜索工作台').props.onChange({ target: { value: '' } })
+    const sortSelect = () => node(item => item.type === 'select' && item.props['aria-label'] === '工作台排序方式')
+    const sortOptions = () => sortSelect().props.children.map(option => option.props.value)
+    // Favorites: newest first. Favorites saved before favorite records keep
+    // their saved order, newest last in state.favorites.
     node(item => item.props?.id === 'dsh-workbench-favorites-tab').props.onClick()
+    expect(sortSelect().props.value).toBe('favorited')
+    expect(sortOptions()).toEqual(['favorited', 'name'])
     expect(cards()).toEqual(['o/b', 'o/a'])
+    // Installed follows the sidebar (added) order, then other installed providers.
     node(item => item.props?.id === 'dsh-workbench-mine-tab').props.onClick()
-    expect(cards()).toEqual(['o/b', 'o/a', 'writer', 'research'])
+    expect(sortSelect().props.value).toBe('added')
+    expect(sortOptions()).toEqual(['added', 'name'])
+    expect(cards()).toEqual(['o/a', 'o/b', 'writer', 'research'])
+    sortSelect().props.onChange({ target: { value: 'name' } })
+    expect(cards()).toEqual(['o/a', 'o/b', 'research', 'writer'])
+    node(item => item.props?.id === 'dsh-workbench-market-tab').props.onClick()
+    expect(sortSelect().props.value).toBe('stars')
+    expect(cards()).toEqual(['o/c', 'o/b', 'o/a'])
   })
 
   it('shows enable and disable switch tooltips and preserves unavailable protection', async () => {
@@ -3849,7 +3880,8 @@ describe('workbench market screenshot and metadata display', () => {
     expect(ui.find(card, node => node.props?.className === 'dshWbMuted dshWbCardDescription')[0].props.children).toEqual(['市场中文介绍'])
     expect(ui.find(card, node => node.type?.name === 'Preview')[0].props.entry.screenshots).toEqual(['https://market/screenshot.png'])
     expect(ui.find(card, node => node.props?.role === 'switch')[0].props['aria-checked']).toBe(true)
-    expect(ui.find(card, node => node.props?.className === 'dshWbCategory').map(node => node.props.children)).toEqual((origin === 'local' ? [['本地']] : []))
+    // Installed labels every card with where it came from; only local installs say 本地.
+    expect(ui.find(card, node => node.props?.className === 'dshWbCategory').map(node => node.props.children)).toEqual((origin === 'local' ? [['本地']] : [['市场']]))
     expect(JSON.stringify(card)).not.toContain('查看市场版本')
     expect(JSON.stringify(card)).not.toContain('来源未知')
   })
@@ -3867,7 +3899,7 @@ describe('workbench market screenshot and metadata display', () => {
     const ui = interactiveMarket(service, 'mine')
     const card = ui.find(ui.render(), node => node.type === 'article' && node.props.key === 'owner/local')[0]
     expect(card).toBeDefined()
-    expect(ui.find(card, node => node.props?.className === 'dshWbCategory').map(node => node.props.children)).toEqual([])
+    expect(ui.find(card, node => node.props?.className === 'dshWbCategory').map(node => node.props.children)).toEqual([['市场']])
   })
 
   it('keeps local metadata when an installed workbench has no market listing', async () => {
@@ -3893,7 +3925,8 @@ describe('workbench market screenshot and metadata display', () => {
         const expectedAction = version === '1.1.0' ? '更新' : null
         expect(updates).toHaveLength(expectedAction ? 1 : 0)
         if (updates.length) expect(updates[0].props.children.at(-1).props.children[0]).toBe(expectedAction)
-        expect(ui.find(card, node => node.props?.className === 'dshWbCategory').map(node => node.props.children)).toEqual(tab === 'mine' ? (origin === 'local' ? [['本地']] : []) : [])
+        // Installed shows the install origin; Favorites shows where it was favorited from.
+        expect(ui.find(card, node => node.props?.className === 'dshWbCategory').map(node => node.props.children)).toEqual(tab === 'mine' ? (origin === 'local' ? [['本地']] : [['市场']]) : tab === 'favorites' ? [['市场']] : [])
         if (tab === 'market') {
           expect(ui.find(card, node => node.props?.className === 'dshWbInstalled')[0].props.children).toEqual(['已安装'])
         }
@@ -4330,7 +4363,8 @@ describe('workbench host localization', () => {
     ui.find(ui.render(), node => node.props?.id === 'dsh-workbench-mine-tab')[0].props.onClick()
     tree = ui.render()
     expect(ui.find(tree, node => node.props?.className === 'dshWbInstalled')).toHaveLength(0)
-    expect(ui.find(tree, node => node.props?.className === 'dshWbCategory').map(node => node.props.children)).toEqual([['Local'], ['Local']])
+    // Every installed card names its source in the active language.
+    expect(ui.find(tree, node => node.props?.className === 'dshWbCategory').map(node => node.props.children)).toEqual([['Market'], ['Local'], ['Local']])
   })
 })
 
@@ -4347,7 +4381,10 @@ describe('sidebar central panel selection', () => {
     service.publish()
     const ui = interactiveMarket(service, 'enterprise', undefined, { known: true, connected: true, connectionKey, allowThirdPartyWorkbenches: false })
     let tree = ui.render()
-    expect(ui.find(tree, node => node.props?.role === 'tab')).toHaveLength(3)
+    // A closed public market hides its tab; enterprise keeps its own.
+    expect(ui.find(tree, node => node.props?.role === 'tab').map(node => node.props.id)).toEqual([
+      'dsh-workbench-enterprise-tab', 'dsh-workbench-cloud-tab', 'dsh-workbench-favorites-tab', 'dsh-workbench-mine-tab'
+    ])
     expect(ui.find(tree, node => node.type?.name === 'CloudInstalledCard')).toHaveLength(0)
     ui.find(tree, node => node.props?.id === 'dsh-workbench-cloud-tab')[0].props.onClick()
     tree = ui.render()
@@ -4365,6 +4402,9 @@ describe('sidebar central panel selection', () => {
     tree = ui.render()
     card = ui.find(tree, node => node.type?.name === 'CloudInstalledCard')[0]
     expect(ui.button(card.type(card.props), '打开工作台')).toBeDefined()
+    // Removing the sidebar entrance lives in Installed; this collection offers the bookmark.
+    expect(ui.find(card.type(card.props), node => node.props?.className === 'dshWbUninstall')).toHaveLength(0)
+    expect(ui.find(card.type(card.props), node => node.props?.className === 'dshWbFavorite')).toHaveLength(1)
     ui.find(tree, node => node.type === 'input' && node.props.type === 'search')[0].props.onChange({ target: { value: 'cloud' } })
     tree = ui.render()
     expect(ui.find(tree, node => node.type === 'article')).toHaveLength(0)
@@ -4418,10 +4458,10 @@ describe('sidebar central panel selection', () => {
       known: true, connected, allowThirdPartyWorkbenches: connected
     })
     let tree = ui.render()
+    // Browse collections first (enterprise leads), then the user's own.
     expect(ui.find(tree, node => node.props?.role === 'tab').map(node => node.props.id)).toEqual([
-      'dsh-workbench-market-tab', 'dsh-workbench-favorites-tab',
-      ...(connected ? ['dsh-workbench-enterprise-tab'] : []),
-      'dsh-workbench-mine-tab', 'dsh-workbench-cloud-tab'
+      'dsh-workbench-enterprise-tab', 'dsh-workbench-cloud-tab', 'dsh-workbench-market-tab',
+      'dsh-workbench-favorites-tab', 'dsh-workbench-mine-tab'
     ])
     expect(ui.find(tree, node => node.type === 'article').map(node => node.props.key)).toEqual(['o/a'])
     const preview = ui.find(tree, node => node.type?.name === 'Preview')[0]
@@ -4446,21 +4486,22 @@ describe('sidebar central panel selection', () => {
   })
 
 
-  it.each([false, undefined])('uses only enterprise distribution when public policy is %s', async policy => {
+  it.each([false, undefined])('hides the public market but keeps enterprise and favorites when public policy is %s', async policy => {
     const { service } = await fixture()
     service.remoteCatalog = [{ id: 'o/a', owner: 'o', name: 'Cached public workbench', description: { zh: '缓存目录', en: 'Cached catalog' }, screenshots: [], url: 'https://github.com/o/a' }]
     service.enterpriseCatalog = [{ id: 'enterprise-board', displayName: 'Enterprise board' }]
     service.publish()
+    // The previously selected market tab falls back to the enterprise collection.
     const ui = interactiveMarket(service, 'market', undefined, { known: true, connected: true, allowThirdPartyWorkbenches: policy })
     let tree = ui.render()
     expect(ui.find(tree, node => node.type === 'article')).toHaveLength(1)
     expect(ui.find(tree, node => node.type === 'article' && node.props.key === 'enterprise-board')).toHaveLength(1)
-    for (const tab of ['favorites', 'enterprise']) expect(ui.find(tree, node => node.props?.id === `dsh-workbench-${tab}-tab`)).toHaveLength(0)
+    expect(ui.find(tree, node => node.props?.id === 'dsh-workbench-market-tab')).toHaveLength(0)
     expect(ui.find(tree, node => node.props?.role === 'tab').map(node => node.props.id)).toEqual([
-      'dsh-workbench-market-tab', 'dsh-workbench-mine-tab', 'dsh-workbench-cloud-tab'
+      'dsh-workbench-enterprise-tab', 'dsh-workbench-cloud-tab', 'dsh-workbench-favorites-tab', 'dsh-workbench-mine-tab'
     ])
-    expect(ui.button(tree, '工作台市场')).toBeDefined()
-    expect(ui.find(tree, node => node.props?.className === 'dshWbFavorite')).toHaveLength(0)
+    expect(ui.button(tree, '工作台市场')).toBeUndefined()
+    expect(ui.find(tree, node => node.props?.id === 'dsh-workbench-enterprise-tab')[0].props['aria-selected']).toBe(true)
     expect(ui.button(tree, '安装本地工作台')).toBeUndefined()
     expect(ui.button(tree, '登录毕昇账号')).toBeUndefined()
     ui.button(tree, '制作我的工作台').props.onClick()
@@ -4695,5 +4736,291 @@ describe('revoked enterprise workbenches (F022)', () => {
     // The client logs and keeps its state; the check itself never rejects.
     await expect(service.checkEnterpriseAccess()).resolves.toBeUndefined()
     expect(service.revokedPlugins.has('writer')).toBe(true)
+  })
+})
+
+// One client realm holds both the controller and the Market so they share the
+// same signed-in account; tests switch accounts through enterpriseCapability.
+function favoritesRealm(account) {
+  let client
+  let stateIndex = 0
+  const hooks = []
+  const testReact = {
+    createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
+    Component: class {},
+    Fragment: Symbol('Fragment'),
+    useState: (initial) => {
+      const index = stateIndex++
+      if (!(index in hooks)) hooks[index] = initial
+      return [hooks[index], (value) => { hooks[index] = typeof value === 'function' ? value(hooks[index]) : value }]
+    },
+    useLayoutEffect: () => {},
+    useRef: () => ({ current: null }),
+    useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot()
+  }
+  vm.runInNewContext(code.replace('return { apply, inject:', 'return { enterpriseCapability, favoritesCopy, cloudCardCopy, apply, inject:'), {
+    window: { sessionStorage, localStorage: enabledStorage, __dshEnterpriseWorkbenchSnapshot: account, dshDesktopEnterprise: { releaseCloudWorkbench: async () => {} }, __ModuleLoader__: { load({ factory }) {
+      client = factory(name => name === 'react' ? testReact : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null, Toast: function Toast() {} })
+    } } },
+    document, setTimeout, clearTimeout, AbortController
+  })
+  const find = (node, predicate) => {
+    if (Array.isArray(node)) return node.flatMap(item => find(item, predicate))
+    if (!node || typeof node !== 'object') return []
+    return [...(predicate(node) ? [node] : []), ...find(node.props?.children, predicate)]
+  }
+  const text = node => Array.isArray(node) ? node.map(text).join('') : node && typeof node === 'object' ? text(node.props?.children) : node == null || node === false ? '' : String(node)
+  return {
+    client,
+    async fixture(initial = emptyState(), favorites = emptyFavorites()) {
+      const result = await fixture(initial, favorites, { WorkbenchesClass: client.Workbenches })
+      const base = result.ctx.locale.bind()
+      result.ctx.locale = { ...result.ctx.locale, bind: ns => key => ns.endsWith('.favorites') ? client.favoritesCopy.zh[key] : ns.endsWith('.cloud-card') ? client.cloudCardCopy.zh[key] : base(key) }
+      return result
+    },
+    signIn: (next) => client.enterpriseCapability.replace({ known: true, ...next }),
+    render(service, tab) {
+      if (tab !== undefined) hooks[0] = tab
+      stateIndex = 0
+      return client.Market({ service })
+    },
+    find,
+    text,
+    // Grid items in display order: market/enterprise articles and cloud cards.
+    items: tree => find(tree, node => node.props?.className === 'dshWbGrid')[0]?.props.children.flat().filter(Boolean) ?? [],
+    tabs: tree => find(tree, node => node.props?.role === 'tab').map(node => text(node.props.children))
+  }
+}
+
+describe('workbench favorites across market, enterprise and cloud', () => {
+  const ACCOUNT_A = 'a'.repeat(16)
+  const ACCOUNT_B = 'b'.repeat(16)
+  const ENTERPRISE = 'e'.repeat(32)
+  const ENTERPRISE_2 = 'f'.repeat(32)
+  const CLOUD = 'c'.repeat(32)
+  const signedIn = (connectionKey, allowThirdPartyWorkbenches = true) => ({ known: true, connected: true, connectionKey, allowThirdPartyWorkbenches })
+  const market = { id: 'o/a', owner: 'o', name: 'Public writer', description: { zh: '市场介绍' }, screenshots: [], url: 'https://github.com/o/a', version: '1.0.0' }
+  const enterpriseItem = (id = ENTERPRISE, displayName = 'Sales weekly', packageName = 'sales-weekly') => ({ id, displayName, packageName, identityKind: 'repository', currentVersion: { version: '1.0.0' }, updatedAt: '2026-11-10T00:00:00Z' })
+  function withCatalogs(service, key, { enterprise = [enterpriseItem()], cloud = [{ id: CLOUD, name: 'Team board', description: 'Shared data' }], enterpriseStatus = 'ready' } = {}) {
+    service.remoteCatalog = [market]
+    service.enterpriseCatalog = enterprise
+    service.enterpriseAccountKey = key
+    service.enterpriseCatalogStatus = enterpriseStatus
+    service.cloudCatalog = cloud
+    service.cloudAccountKey = key
+    service.cloudCatalogStatus = 'ready'
+    service.publish()
+  }
+  const keyOf = item => item.props.key
+
+  it('saves enterprise and cloud favorites for the signed-in account and lists all sources newest first', async () => {
+    const realm = favoritesRealm(signedIn(ACCOUNT_A))
+    const { service, saved, savedFavorites } = await realm.fixture()
+    withCatalogs(service, ACCOUNT_A)
+    await service.toggleFavorite('o/a')
+    await service.toggleAccountFavorite('enterprise', ENTERPRISE)
+    await service.toggleAccountFavorite('cloud', CLOUD)
+    // Market membership stays in state.json; favorites.json adds title and time.
+    expect(saved().state.favorites).toEqual(['o/a'])
+    const { favorites } = savedFavorites()
+    expect(favorites.market['o/a']).toMatchObject({ title: 'Public writer' })
+    expect(favorites.accounts[ACCOUNT_A].map(({ kind, id, title }) => ({ kind, id, title }))).toEqual([
+      { kind: 'enterprise', id: ENTERPRISE, title: 'Sales weekly' },
+      { kind: 'cloud', id: CLOUD, title: 'Team board' }
+    ])
+    const tree = realm.render(service, 'favorites')
+    expect(realm.tabs(tree)).toEqual(['来自企业', '云端工作台', '工作台市场', '我的收藏 (3)', '已安装 (2)'])
+    expect(realm.items(tree).map(keyOf)).toEqual([`cloud:${ACCOUNT_A}:${CLOUD}`, ENTERPRISE, 'o/a'])
+    const [cloudCard, enterpriseCard, marketCard] = realm.items(tree)
+    expect(cloudCard.type.name).toBe('CloudInstalledCard')
+    expect(cloudCard.props.collection).toBe('favorites')
+    expect(cloudCard.props.favorite.active).toBe(true)
+    expect(realm.find(enterpriseCard, node => node.props?.className === 'dshWbCategory').map(node => realm.text(node))).toEqual(['企业'])
+    expect(realm.find(marketCard, node => node.props?.className === 'dshWbCategory').map(node => realm.text(node))).toEqual(['市场'])
+    expect(realm.find(enterpriseCard, node => node.props?.className === 'dshWbFavorite')[0].props['aria-pressed']).toBe(true)
+    // Source filter keeps only enterprise favorites.
+    realm.find(tree, node => node.type === 'select' && node.props['aria-label'] === '按来源筛选')[0].props.onChange({ target: { value: 'enterprise' } })
+    expect(realm.items(realm.render(service)).map(keyOf)).toEqual([ENTERPRISE])
+    await service.toggleAccountFavorite('enterprise', ENTERPRISE)
+    expect(savedFavorites().favorites.accounts[ACCOUNT_A].map(item => item.kind)).toEqual(['cloud'])
+    service.dispose()
+  })
+
+  it('keeps account favorites per account and shows only market favorites when signed out', async () => {
+    const realm = favoritesRealm(signedIn(ACCOUNT_A))
+    const records = { version: 1, market: {}, accounts: {
+      [ACCOUNT_A]: [{ kind: 'enterprise', id: ENTERPRISE, title: 'Sales weekly', at: 2 }],
+      [ACCOUNT_B]: [{ kind: 'enterprise', id: ENTERPRISE_2, title: 'Onboarding', at: 3 }]
+    } }
+    const { service } = await realm.fixture({ ...emptyState(), favorites: ['o/a'] }, records)
+    withCatalogs(service, ACCOUNT_A, { enterprise: [enterpriseItem(), enterpriseItem(ENTERPRISE_2, 'Onboarding', 'onboarding')] })
+    expect(realm.items(realm.render(service, 'favorites')).map(keyOf)).toEqual([ENTERPRISE, 'o/a'])
+    realm.signIn(signedIn(ACCOUNT_B))
+    service.enterpriseAccountKey = ACCOUNT_B
+    service.publish()
+    expect(realm.items(realm.render(service)).map(keyOf)).toEqual([ENTERPRISE_2, 'o/a'])
+    realm.signIn({ connected: false })
+    let tree = realm.render(service)
+    expect(realm.items(tree).map(keyOf)).toEqual(['o/a'])
+    const notice = realm.find(tree, node => node.props?.className === 'dshWbNotice dshWbFavoriteNotice')[0]
+    expect(realm.text(notice)).toContain('登录后查看企业和云端的收藏。')
+    expect(realm.find(notice, node => node.type?.name === 'Button').map(node => realm.text(node))).toEqual(['登录毕昇账号'])
+    await expect(service.toggleAccountFavorite('enterprise', ENTERPRISE)).rejects.toThrow('工作台当前不可用')
+    // Signing back in restores that account's favorites; nothing was deleted.
+    realm.signIn(signedIn(ACCOUNT_A))
+    service.enterpriseAccountKey = ACCOUNT_A
+    service.publish()
+    tree = realm.render(service)
+    expect(realm.items(tree).map(keyOf)).toEqual([ENTERPRISE, 'o/a'])
+    service.dispose()
+  })
+
+  it('hides market favorites while the public market is closed and shows them again when it reopens', async () => {
+    const realm = favoritesRealm(signedIn(ACCOUNT_A, false))
+    const records = { version: 1, market: {}, accounts: { [ACCOUNT_A]: [{ kind: 'enterprise', id: ENTERPRISE, title: 'Sales weekly', at: 2 }] } }
+    const { service, saved } = await realm.fixture({ ...emptyState(), favorites: ['o/a'] }, records)
+    withCatalogs(service, ACCOUNT_A)
+    let tree = realm.render(service, 'favorites')
+    expect(realm.tabs(tree)).toEqual(['来自企业', '云端工作台', '我的收藏 (1)', '已安装 (2)'])
+    expect(realm.items(tree).map(keyOf)).toEqual([ENTERPRISE])
+    expect(realm.text(realm.find(tree, node => node.props?.className === 'dshWbNotice')[0])).toBe('公司已关闭第三方工作台市场，市场里的 1 个收藏暂不显示，重新开放后会回来。')
+    // With the enterprise favorite removed, only the notice explains the hidden ones.
+    service.favoriteRecords = { version: 1, market: {}, accounts: {} }
+    service.publish()
+    tree = realm.render(service)
+    expect(realm.items(tree)).toEqual([])
+    expect(realm.find(tree, node => node.props?.className === 'dshWbEmpty')).toHaveLength(0)
+    expect(realm.find(tree, node => node.props?.className === 'dshWbNotice')).toHaveLength(1)
+    service.favoriteRecords = records
+    service.publish()
+    realm.signIn(signedIn(ACCOUNT_A, true))
+    tree = realm.render(service)
+    expect(realm.tabs(tree)).toContain('我的收藏 (2)')
+    expect(realm.items(tree).map(keyOf)).toEqual([ENTERPRISE, 'o/a'])
+    expect(saved().state.favorites).toEqual(['o/a'])
+    service.dispose()
+  })
+
+  it('keeps a removed or revoked favorite with its remembered title, and only reports removal once its catalog answered', async () => {
+    const realm = favoritesRealm(signedIn(ACCOUNT_A))
+    const records = { version: 1, market: {}, accounts: { [ACCOUNT_A]: [{ kind: 'enterprise', id: ENTERPRISE_2, title: 'Retired board', at: 4 }] } }
+    const { service, savedFavorites } = await realm.fixture(emptyState(), records)
+    const card = () => realm.find(realm.render(service, 'favorites'), node => node.type === 'article')[0]
+    for (const [status, state, copy] of [
+      ['loading', 'checking', '正在确认是否还能使用…'],
+      ['error', 'failed', '暂时无法确认是否还能使用，请稍后刷新。'],
+      ['ready', 'unavailable', '已下架或你没有使用权限']
+    ]) {
+      withCatalogs(service, ACCOUNT_A, { enterpriseStatus: status })
+      expect(card().props.className).toBe('dshWbCard dshWbFavoriteUnavailable')
+      expect(card().props['data-favorite-state']).toBe(state)
+      expect(realm.text(card())).toContain('Retired board')
+      expect(realm.text(card())).toContain(copy)
+    }
+    const remove = realm.find(card(), node => node.type?.name === 'Button')
+    expect(remove.map(node => realm.text(node))).toEqual(['取消收藏'])
+    remove[0].props.onClick()
+    await vi.waitFor(() => expect(savedFavorites().favorites.accounts).toEqual({}))
+    expect(realm.find(realm.render(service), node => node.type === 'article')).toHaveLength(0)
+    service.dispose()
+  })
+
+  it('keeps workbenches usable when favorites cannot be read, and reloads after a conflicting write', async () => {
+    const realm = favoritesRealm(signedIn(ACCOUNT_A))
+    const first = await realm.fixture()
+    const base = first.request.getMockImplementation()
+    first.request.mockImplementation((url, options) => url === '/api/desktop-workbenches/favorites'
+      ? Response.json({ error: 'Stored workbench favorites are invalid.' }, { status: 500 })
+      : base(url, options))
+    await first.service.load()
+    expect(first.service.ready).toBe(true)
+    expect(first.service.favoritesStatus).toBe('error')
+    withCatalogs(first.service, ACCOUNT_A)
+    let tree = realm.render(first.service, 'favorites')
+    expect(realm.text(realm.find(tree, node => node.props?.role === 'alert')[0])).toBe('收藏记录暂时无法读取，企业和云端的收藏先不显示。')
+    tree = realm.render(first.service, 'enterprise')
+    expect(realm.find(tree, node => node.props?.className === 'dshWbFavorite')[0].props.disabled).toBe(true)
+    // Market favorites still save to state.json; no favorites write is attempted.
+    await first.service.toggleFavorite('o/a')
+    expect(first.saved().state.favorites).toEqual(['o/a'])
+    expect(first.request.mock.calls.some(([url]) => url === '/api/desktop-workbenches/favorites/write')).toBe(false)
+    first.service.dispose()
+
+    const second = await realm.fixture()
+    withCatalogs(second.service, ACCOUNT_A)
+    const external = { version: 1, market: {}, accounts: { [ACCOUNT_A]: [{ kind: 'cloud', id: CLOUD, title: 'Team board', at: 9 }] } }
+    second.externalFavoritesUpdate(external)
+    await expect(second.service.toggleAccountFavorite('enterprise', ENTERPRISE)).rejects.toThrow('工作台已在其他窗口更新')
+    expect(second.service.favoriteRecords).toEqual(external)
+    expect(second.service.favoritesStatus).toBe('ready')
+    expect(second.service.error).toContain('工作台已在其他窗口更新')
+    second.service.dispose()
+  })
+
+  it('offers the bookmark on enterprise and cloud cards, not in Installed, and opens enterprise details from the screenshot', async () => {
+    const realm = favoritesRealm(signedIn(ACCOUNT_A))
+    const { service, ctx } = await realm.fixture()
+    withCatalogs(service, ACCOUNT_A)
+    const toggle = vi.spyOn(service, 'toggleAccountFavorite').mockResolvedValue(undefined)
+    let tree = realm.render(service, null)
+    // Signed in: the enterprise collection opens first.
+    expect(realm.find(tree, node => node.props?.id === 'dsh-workbench-enterprise-tab')[0].props['aria-selected']).toBe(true)
+    const card = realm.find(tree, node => node.type === 'article')[0]
+    expect(realm.find(card, node => node.type?.name === 'Button').map(node => realm.text(node))).toEqual(['安装'])
+    realm.find(card, node => node.props?.className === 'dshWbFavorite')[0].props.onClick()
+    expect(toggle).toHaveBeenCalledWith('enterprise', ENTERPRISE)
+    service.openEnterpriseDetail = vi.fn(async () => {})
+    realm.find(card, node => node.props?.className === 'dshWbMediaOpen')[0].props.onClick()
+    expect(service.openEnterpriseDetail).toHaveBeenCalledWith(ENTERPRISE)
+    tree = realm.render(service, 'cloud')
+    const cloud = realm.items(tree)[0]
+    cloud.props.favorite.onToggle()
+    expect(toggle).toHaveBeenCalledWith('cloud', CLOUD)
+    // An installed enterprise package is labeled enterprise, not local, and
+    // Installed cards carry no bookmark.
+    setFiberPackage(ctx, 'sales-weekly')
+    service.register({ title: 'Sales weekly' }, () => null)
+    service.publish()
+    tree = realm.render(service, 'mine')
+    const installed = realm.find(tree, node => node.type === 'article' && node.props.key === 'local:sales-weekly')[0]
+    expect(realm.find(installed, node => node.props?.className === 'dshWbCategory').map(node => realm.text(node))).toEqual(['企业'])
+    expect(realm.find(tree, node => node.props?.className === 'dshWbFavorite')).toHaveLength(0)
+    expect(realm.find(tree, node => node.type === 'select' && node.props['aria-label'] === '按来源筛选')[0].props.children.flat().map(option => option.props.value))
+      .toEqual(['all', 'enterprise', 'cloud', 'market', 'local'])
+    service.dispose()
+  })
+
+  it('drops a cloud workbench from Installed once it is removed from the sidebar', async () => {
+    const realm = favoritesRealm(signedIn(ACCOUNT_A))
+    const { service, saved } = await realm.fixture()
+    withCatalogs(service, ACCOUNT_A)
+    service.syncCloudIdentity(ACCOUNT_A)
+    const id = `cloud:${ACCOUNT_A}:${CLOUD}`
+    await service.addCloud({ id: CLOUD, name: 'Team board' }, ACCOUNT_A)
+    const installedCount = tree => Number(realm.tabs(tree).find(label => label.startsWith('已安装')).match(/\((\d+)\)/)[1])
+    let tree = realm.render(service, 'mine')
+    const before = installedCount(tree)
+    expect(realm.items(tree).map(keyOf)).toContain(id)
+    await service.remove(id)
+    // The saved cloud record stays (so the same entrance can be added again),
+    // but it is no longer installed on this computer.
+    expect(saved().state.cloudWorkbenches[id]).toBeDefined()
+    expect(saved().state.added).not.toContain(id)
+    tree = realm.render(service, 'mine')
+    expect(installedCount(tree)).toBe(before - 1)
+    expect(realm.items(tree).map(keyOf)).not.toContain(id)
+    // The cloud collection still offers it.
+    tree = realm.render(service, 'cloud')
+    expect(realm.items(tree).map(keyOf)).toContain(id)
+    service.dispose()
+  })
+
+  it('opens the public market first when signed out', async () => {
+    const realm = favoritesRealm({ known: true, connected: false })
+    const { service } = await realm.fixture()
+    const tree = realm.render(service, null)
+    expect(realm.tabs(tree)).toEqual(['来自企业', '云端工作台', '工作台市场', '我的收藏 (0)', '已安装 (2)'])
+    expect(realm.find(tree, node => node.props?.id === 'dsh-workbench-market-tab')[0].props['aria-selected']).toBe(true)
+    service.dispose()
   })
 })
