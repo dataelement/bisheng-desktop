@@ -111,7 +111,7 @@ describe('enterprise module page theme', () => {
     // The shell re-declares the ramp on its layout root under the chat-theme attribute it derives
     // from the host; the override lands there too, or the embedded settings page keeps its own dark.
     const rules = css.split('\n')
-    expect(rules).toHaveLength(3)
+    expect(rules).toHaveLength(4)
     expect(rules[1]).toMatch(/^html\.dsh-module-dark body\[data-dsh-chat-theme\] :is\(\.dsh-web-chat,/u)
     expect(rules[1]?.slice(rules[1].indexOf('{'))).toBe(rules[0]?.slice(rules[0].indexOf('{')))
 

@@ -89,8 +89,8 @@ async function mount(connected = false, collection = {}, inert = false, workbenc
     openPage: vi.fn(async () => {}),
     open: vi.fn(async () => {})
   }
-  prepare?.()
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  prepare?.()
   let plugin, navigate
   let sessionList = { phase: 'ready', byId: { draft: { id: 'draft', blank: true, retainedBy: { mainView: 1 } } } }
   let liveState = { blank: true, pendingSubmissions: [], running: false, awaitingFirstTurn: false }
@@ -643,7 +643,7 @@ it('starts the Work toolbar reveal on tab entry and resets it on return to Chat'
   expect(work.dataset.revealControls).toBe('false')
 })
 
-async function mountLandingMorph({ footer = false, textMotion = false } = {}) {
+async function mountLandingMorph({ footer = false, textMotion = false, cases = false, prepare } = {}) {
   const draft = React.createElement('textarea', { defaultValue: footer ? 'retained draft\nsecond line\nthird line' : 'retained draft' })
   const work = React.createElement('div', { 'data-content-phase': 'hero' },
     React.createElement('div', { 'data-landing-fixture-title': '' },
@@ -661,8 +661,16 @@ async function mountLandingMorph({ footer = false, textMotion = false } = {}) {
         React.createElement('div', null,
           React.createElement('span', { 'data-slot': 'conversation.input.model' },
             React.createElement('button', { 'aria-haspopup': 'menu' }, React.createElement('span', null, 'Work model'), React.createElement('svg'))),
-          React.createElement('button', { 'aria-label': 'Send', style: { opacity: 1 } }, 'Send')))))
-  const ui = await mount(true, {}, false, undefined, undefined, work)
+          React.createElement('button', { 'aria-label': 'Send', style: { opacity: 1 } }, 'Send')))),
+    cases && React.createElement('div', { className: 'dso-dock-root' },
+      React.createElement('section', { className: 'dso-dock' },
+        React.createElement('section', { 'data-welcome-cases': 'normal' },
+          React.createElement('header', { className: 'dso-quick-heading' },
+            React.createElement('h3', null, 'Start with an example'),
+            React.createElement('button', { type: 'button', className: 'dso-quick-batch' }, 'Try another set')),
+          React.createElement('div', { className: 'dso-quick-stage' }, 'Example cards')),
+        React.createElement('div', { className: 'dso-reference-panel' }, 'Reference templates'))))
+  const ui = await mount(true, {}, false, undefined, prepare, work)
   const workPanel = container.querySelector('#dsh-panel-work')
   const chatPanel = container.querySelector('#dsh-panel-chat')
   const seat = new DOMRect(240, 56, 800, 640)
@@ -688,6 +696,15 @@ async function mountLandingMorph({ footer = false, textMotion = false } = {}) {
   for (const [name, element] of Object.entries(elements)) {
     element.getBoundingClientRect = () => rects[name]
     element.animate = frames => recordMotion(name, frames)
+  }
+  if (cases) {
+    for (const [name, selector] of Object.entries({
+      dock: '.dso-dock-root', caseHeader: '.dso-quick-heading',
+      caseStage: '.dso-quick-stage', references: '.dso-reference-panel'
+    })) {
+      elements[name] = workPanel.querySelector(selector)
+      elements[name].animate = frames => recordMotion(name, frames)
+    }
   }
   if (textMotion) {
     elements.writing = elements.card.querySelector('[data-input-scroll]')
@@ -721,7 +738,7 @@ async function mountLandingMorph({ footer = false, textMotion = false } = {}) {
   const bridge = window.dshEnterpriseChat
   bridge.landingGeometry = vi.fn(async () => ({
     seat: { x: 240, y: 56, width: 800, height: 640 },
-    composer: { x: 345, y: 326, width: 590, height: 108 },
+    composer: { x: 345, y: 326, width: 599.75, height: 108 },
     title: { x: 534, y: 248, width: 216, height: 30 },
     ...(footer ? { model: { label: 'Chat model', width: 84 }, sendOpacity: 0.4 } : {})
   }))
@@ -746,6 +763,7 @@ it('keeps the hidden Work landing laid out and paints frame zero before hiding C
   bridge.present.mockClear().mockImplementation(({ visible }) => visible ? Promise.resolve() : hide.promise)
   await ui.click('work')
   expect(motions.length).toBeGreaterThan(0)
+  expect(workPanel.hasAttribute('data-dsh-case-entry-held')).toBe(true)
   expect(motions.every(motion => motion.pause.mock.calls.length === 1 && !motion.play.mock.calls.length)).toBe(true)
   expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
   await act(async () => frames.shift()(0))
@@ -753,8 +771,10 @@ it('keeps the hidden Work landing laid out and paints frame zero before hiding C
   await act(async () => frames.shift()(16))
   expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }))
   expect(motions.every(motion => !motion.play.mock.calls.length)).toBe(true)
+  expect(workPanel.hasAttribute('data-dsh-case-entry-held')).toBe(true)
   await act(async () => hide.resolve())
   expect(motions.every(motion => motion.play.mock.calls.length === 1)).toBe(true)
+  expect(workPanel.hasAttribute('data-dsh-case-entry-held')).toBe(false)
   await act(async () => motions.forEach(motion => motion.resolve()))
   expect(workPanel.hasAttribute('inert')).toBe(false)
   expect(ui.draft()).toBe(draft)
@@ -825,7 +845,7 @@ it('morphs the same Work card and title in both directions while revealing and c
 
   expect(motions.map(motion => motion.name)).toEqual(['card', 'title', 'controls'])
   expect(motions[0].frames).toEqual([
-    { left: '345px', top: '326px', width: '590px', height: '108px' },
+    { left: '345px', top: '326px', width: '600px', height: '108px' },
     { left: '340px', top: '310px', width: '600px', height: '172px' }
   ])
   expect(motions[1].frames).toEqual([{ translate: '2px 27px' }, { translate: '0px 0px' }])
@@ -861,6 +881,72 @@ it('morphs the same Work card and title in both directions while revealing and c
   expect(chatPanel.hidden).toBe(false)
   expect(ui.draft()).toBe(draft)
   expect(draft.value).toBe('retained draft')
+})
+
+it('publishes changes to the Work card width while Chat is hidden and keeps the new width through handoff', async () => {
+  const resizeCallbacks = new Map()
+  const prepare = () => vi.stubGlobal('ResizeObserver', class {
+    constructor(notify) { this.notify = notify }
+    observe(target) { resizeCallbacks.set(target, this.notify) }
+    unobserve(target) { resizeCallbacks.delete(target) }
+    disconnect() {
+      for (const [target, notify] of resizeCallbacks) if (notify === this.notify) resizeCallbacks.delete(target)
+    }
+  })
+  const { ui, bridge, elements, motions } = await mountLandingMorph({ prepare })
+  await ui.click('work')
+  await act(async () => motions.forEach(motion => motion.resolve()))
+  expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false, landingComposerWidth: 600 }))
+
+  elements.card.getBoundingClientRect = () => new DOMRect(300, 310, 680, 172)
+  await act(async () => resizeCallbacks.get(elements.card)([{ target: elements.card }]))
+  expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false, landingComposerWidth: 680 }))
+
+  bridge.landingGeometry.mockImplementationOnce(async () => ({
+    seat: { x: 240, y: 56, width: 800, height: 640 },
+    composer: { x: 300, y: 326, width: 680, height: 108 },
+    title: { x: 534, y: 248, width: 216, height: 30 }
+  }))
+  const boundary = motions.length
+  await ui.click('chat')
+  expect(motions.slice(boundary).find(motion => motion.name === 'card').frames.map(frame => frame.width)).toEqual(['680px', '680px'])
+  elements.card.getBoundingClientRect = () => new DOMRect(320, 310, 640, 140)
+  await act(async () => resizeCallbacks.get(elements.card)([{ target: elements.card }]))
+  expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false, landingComposerWidth: 680 }))
+  elements.card.getBoundingClientRect = () => new DOMRect(300, 310, 680, 172)
+  await act(async () => motions.slice(boundary).forEach(motion => motion.resolve()))
+  expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true, landingComposerWidth: 680 }))
+})
+
+it('keeps the example heading and batch control visible while case content transitions in both modes', async () => {
+  const { ui, elements, motions } = await mountLandingMorph({ cases: true })
+  const heading = elements.caseHeader
+  const batch = heading.querySelector('button')
+
+  for (const mode of ['work', 'chat']) {
+    const boundary = motions.length
+    await ui.click(mode)
+    const contentMotions = motions.slice(boundary).filter(({ name }) => ['caseStage', 'references'].includes(name))
+    expect(contentMotions.map(({ name }) => name)).toEqual(mode === 'work' ? ['references'] : ['caseStage', 'references'])
+    expect(motions.some(({ name }) => name === 'dock' || name === 'caseHeader')).toBe(false)
+    expect(elements.dock.querySelector('.dso-quick-heading')).toBe(heading)
+    expect(heading.querySelector('button')).toBe(batch)
+    await act(async () => motions.slice(boundary).forEach(motion => motion.resolve()))
+  }
+})
+
+it('requests Chat case entry once even when geometry is unavailable for the composer morph', async () => {
+  const { ui, bridge, motions } = await mountLandingMorph({ cases: true })
+  bridge.landingGeometry.mockResolvedValue(undefined)
+  await ui.click('work')
+  bridge.present.mockClear()
+  await ui.click('chat')
+  expect(motions).toHaveLength(0)
+  expect(bridge.present).toHaveBeenCalledWith(expect.objectContaining({ visible: true, landingHandoff: true }))
+  bridge.present.mockClear()
+  await act(async () => window.dispatchEvent(new Event('resize')))
+  expect(bridge.present).toHaveBeenCalled()
+  expect(bridge.present.mock.calls.every(([value]) => !value.landingHandoff)).toBe(true)
 })
 
 it('pins the same composer footer during height changes and transitions the model label and send state both ways', async () => {
@@ -919,6 +1005,7 @@ it('skips geometry and animations when the user prefers reduced motion', async (
   await ui.click('chat')
   expect(chatPanel.hidden).toBe(false)
   expect(bridge.present).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }))
+  expect(bridge.present.mock.calls.every(([value]) => !value.landingHandoff)).toBe(true)
   expect(bridge.landingGeometry).not.toHaveBeenCalled()
   expect(motions).toHaveLength(0)
 })

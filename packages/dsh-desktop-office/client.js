@@ -71,6 +71,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
   const keyOf = id => id || staged
   const announce = (sessionId, mode, selectedPptTemplateId, caseSelection = false) => window.dispatchEvent(new CustomEvent(EVENT, { detail: { sessionId, mode, selectedPptTemplateId, caseSelection, origin: 'office' } }))
   const emptyCases = Object.freeze({ cases: [], batches: [], loading: false, error: false })
+  const CASE_BATCH_SIZE = 4
   const CASE_MOTION = { duration: 180, easing: 'cubic-bezier(.2,.7,.25,1)' }
   const canAnimate = element => typeof element?.animate === 'function' && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 
@@ -432,6 +433,43 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     return { choose, notice }
   }
 
+  function shuffle(items) {
+    const shuffled = [...items]
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      const item = shuffled[i]
+      shuffled[i] = shuffled[j]
+      shuffled[j] = item
+    }
+    return shuffled
+  }
+
+  function nextCaseBatch(cases, current, cards) {
+    const modeRoll = Math.random()
+    const previousIds = new Set(cards.map(item => item.id))
+    const seen = current?.seen ?? previousIds
+    const seenThisRound = seen.size < cases.length ? seen : new Set()
+    const alternatives = cases.filter(item => !previousIds.has(item.id))
+    const alternativeModes = new Set(alternatives.map(item => item.officeMode))
+    const pool = shuffle(alternatives.length >= CASE_BATCH_SIZE && alternativeModes.size >= 2 ? alternatives : cases)
+    const modes = shuffle([...new Set(pool.map(item => item.officeMode))])
+    const maxModes = Math.min(modes.length, CASE_BATCH_SIZE)
+    const modeCount = maxModes < 2 ? maxModes : 2 + Math.floor(modeRoll * (maxModes - 1))
+
+    // Reserve a spot for an unseen case so every case comes up over time.
+    const unseen = pool.filter(item => !seenThisRound.has(item.id))
+    const preferred = [...unseen, ...pool.filter(item => seenThisRound.has(item.id))]
+    const firstMode = modes.find(mode => unseen.some(item => item.officeMode === mode)) ?? modes[0]
+    const selectedModes = new Set([firstMode, ...modes.filter(mode => mode !== firstMode).slice(0, modeCount - 1)])
+    const selected = [...selectedModes].map(mode => preferred.find(item => item.officeMode === mode))
+    const remaining = preferred.filter(item => !selected.includes(item))
+    const sameModes = remaining.filter(item => selectedModes.has(item.officeMode))
+    const otherModes = remaining.filter(item => !selectedModes.has(item.officeMode))
+    // A smaller catalogue may need to fill the last slots from another mode.
+    const nextCards = shuffle([...selected, ...sameModes, ...otherModes].slice(0, CASE_BATCH_SIZE))
+    return { index: (current?.index ?? 0) + 1, cards: nextCards, seen: new Set([...seenThisRound, ...nextCards.map(item => item.id)]) }
+  }
+
   // Mirror the Chat welcome list's stagger and overlapping batch fade. React
   // keeps the previous grid mounted (and inert) until its fade finishes.
   function CaseStage({ batch, cards, renderCard }) {
@@ -469,7 +507,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     const showCases = mode === 'normal' || officeState.caseMode === mode
     const pendingState = React.useSyncExternalStore(listener => store.subscribe(undefined, listener), () => store.snapshot(undefined), () => store.snapshot(undefined))
     const catalog = React.useSyncExternalStore(store.subscribeCases, store.snapshotCases, store.snapshotCases)
-    const [batch, setBatch] = React.useState(0), [message, setMessage] = React.useState(''), [error, setError] = React.useState('')
+    const [batch, setBatch] = React.useState(null), [message, setMessage] = React.useState(''), [error, setError] = React.useState('')
     const generation = React.useRef(0), running = React.useRef(false), current = React.useRef(sessionId)
     const section = React.useRef(null), cancelEditorMotion = React.useRef(null)
     current.current = sessionId
@@ -477,11 +515,11 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     React.useEffect(() => {
       generation.current++
       running.current = false
-      setBatch(0); setMessage(''); setError('')
+      setBatch(null); setMessage(''); setError('')
       return () => { generation.current++; cancelEditorMotion.current?.() }
     }, [sessionId])
     // Case-driven mode changes leave the mixed recommendations on the current page.
-    React.useEffect(() => { if (!showCases) setBatch(0) }, [showCases])
+    React.useEffect(() => { if (!showCases) setBatch(null) }, [showCases])
     const choose = async (item, { fromTemplate = false, clear = false } = {}) => {
       if (running.current || officeState.busy || (liveInput && liveInput.phase !== 'plain')) return
       if (!sessionId || !inputActions || !liveInput) {
@@ -559,9 +597,7 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     if (!showCases) return error ? h('div', { role: 'alert' }, error) : null
 
     const disabled = officeState.busy || officeState.loading || (liveInput && liveInput.phase !== 'plain')
-    const batchCount = catalog.batches.length
-    const ids = catalog.batches[batch % (batchCount || 1)] ?? []
-    const cards = ids.map(id => catalog.cases.find(item => item.id === id)).filter(Boolean)
+    const cards = batch?.cards ?? (catalog.batches[0] ?? []).map(id => catalog.cases.find(item => item.id === id)).filter(Boolean)
     const pending = pendingState.pendingCase
     // With a composer, the draft is the source of the selection highlight.
     const selectedId = liveInput ? cards.find(item => promptSpan(liveInput, casePrompt(item, language)))?.id
@@ -570,11 +606,11 @@ window.__ModuleLoader__.load({ id: 'dsh-desktop-office', factory: require => {
     return h('section', { ref: section, className: 'dso-quick', 'data-welcome-cases': mode, 'aria-label': t('quickTitle'), 'aria-busy': officeState.busy || catalog.loading },
       h('header', { className: 'dso-dock-heading dso-quick-heading' },
         h('h3', null, t('quickTitle')),
-        batchCount > 1 ? h('button', {
+        catalog.cases.length > CASE_BATCH_SIZE ? h('button', {
           type: 'button', className: 'dso-quick-batch',
-          onClick: () => setBatch(value => (value + 1) % batchCount)
+          onClick: () => setBatch(nextCaseBatch(catalog.cases, batch, cards))
         }, t('quickNext')) : null),
-      cards.length > 0 && h(CaseStage, { key: `${sessionId ?? staged}:${language}`, batch, cards, renderCard: (item, index) => h('button', { key: item.id, type: 'button', className: 'dso-quick-card', style: { '--dso-row-delay': `${index * 100}ms` }, 'data-welcome-case': item.id, 'aria-pressed': selectedId === item.id, disabled, onClick: () => choose(item, { clear: selectedId === item.id }) },
+      cards.length > 0 && h(CaseStage, { key: `${sessionId ?? staged}:${language}`, batch: batch?.index ?? 0, cards, renderCard: (item, index) => h('button', { key: item.id, type: 'button', className: 'dso-quick-card', style: { '--dso-row-delay': `${index * 100}ms` }, 'data-welcome-case': item.id, 'aria-pressed': selectedId === item.id, disabled, onClick: () => choose(item, { clear: selectedId === item.id }) },
         h('span', { className: 'dso-quick-icon', 'aria-hidden': true }, h(QuickIcon, { kind: categoryIcons[item.category] ?? item.officeMode })),
         h('span', { className: 'dso-quick-title', title: item.preset === 'cordis' ? `${t('quickCreator')} · ${item.title[language]}` : item.title[language] }, item.title[language])) }),
       !catalog.loading && !catalog.error && !cards.length ? h('p', { role: 'status' }, t('empty')) : null,

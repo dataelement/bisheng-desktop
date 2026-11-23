@@ -8,6 +8,7 @@ import { chatDialogViewportScript, guardChatDialogViewportScript } from './chat-
 import { ChatDialogBacking } from './chat-dialog-backing'
 import { chatLocaleScript } from './chat-locale'
 import { chatLayoutCss } from './chat-layout'
+import { playChatLandingCasesScript, prepareChatLandingCasesScript } from './chat-landing-case-motion'
 import { chatLandingGeometryScript, parseChatLandingGeometry } from './chat-landing-geometry'
 import { chatLandingTextMotionScript } from './chat-landing-text-motion'
 import { parseUsageSummary, parseUsageStorage, type EnterpriseUsage, type UsageSection } from '../../shared/enterprise-usage'
@@ -21,6 +22,7 @@ const DOCUMENT_LOAD_TIMEOUT_MS = 45_000
 const CHAT_PRESENTATION_WORLD = 1001
 const LANDING_GEOMETRY_TIMEOUT_MS = 120
 const LANDING_HANDOFF_TIMEOUT_MS = 120
+const LANDING_CASE_PREPARE_TIMEOUT_MS = 70
 const LANDING_TEXT_MOTION_TIMEOUT_MS = 155
 const INITIAL_BACKOFF_MS = [2_000, 5_000, 10_000]
 const RENEWAL_BACKOFF_MS = [2_000, 5_000, 10_000, 30_000]
@@ -96,8 +98,10 @@ export class EnterpriseChatView {
   private modalOpening = false
   private modalBacking?: ChatDialogBacking
   private viewBackground?: string
-  private dialogViewport?: { pathname: string; script: string }
+  private dialogViewport?: { pathname: string; script: string; ready: Promise<void> }
   private dialogViewportRevision = 0
+  private preparingLanding?: { view: WebContentsView; url: string }
+  private landingCaseRevision = 0
   private landing?: boolean
   private landingPath?: string
   private navigation?: ReturnType<typeof parseEnterpriseNavigation>
@@ -192,13 +196,22 @@ export class EnterpriseChatView {
   }
 
   present(window: BrowserWindow, input: unknown): EnterpriseChatViewState {
-    this.presentation = parseChatPresentation(input)
+    return this.applyPresentation(window, parseChatPresentation(input))
+  }
+
+  private applyPresentation(window: BrowserWindow, presentation: EnterpriseChatPresentation): EnterpriseChatViewState {
+    this.presentation = presentation
+    if (!presentation.visible || presentation.settings) this.preparingLanding = undefined
     if (this.owner !== window) {
       this.clear()
       this.owner = window
       window.once('closed', () => { this.clear(); this.owner = undefined })
       window.webContents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => {
-        if (isMainFrame && this.presentation) { this.presentation.visible = false; this.layout() }
+        if (isMainFrame && this.presentation) {
+          this.preparingLanding = undefined
+          this.presentation.visible = false
+          this.layout()
+        }
       })
     }
     this.layout()
@@ -209,29 +222,43 @@ export class EnterpriseChatView {
 
   /** The host keeps Work painted until the newly shown Chat renderer has had a frame. */
   async presentWithLandingHandoff(window: BrowserWindow, input: unknown): Promise<EnterpriseChatViewState> {
-    const state = this.present(window, input)
+    const presentation = parseChatPresentation(input)
     const view = this.view, epoch = this.generation
-    const ready = () => this.owner === window && !window.isDestroyed() && !window.webContents.isDestroyed() &&
-      view && this.view === view && epoch === this.generation && !view.webContents.isDestroyed() && view.getVisible() &&
-      this.presentation?.visible && this.state.phase === 'ready' && this.landing === true && this.landingPath === '/workspace/c/new' &&
-      !this.modalOpen && !this.settingsSection && !this.presentation.settings
-    if (!view || this.presentation?.landingHandoff !== true || !ready()) return state
+    if (!presentation.visible || !presentation.landingHandoff || presentation.settings ||
+        !view || view.getVisible() || this.preparingLanding || this.owner !== window || window.isDestroyed() ||
+        window.webContents.isDestroyed() || view.webContents.isDestroyed() || this.state.phase !== 'ready' ||
+        this.landing !== true || this.landingPath !== '/workspace/c/new' || this.modalOpen || this.settingsSection ||
+        presentation.bounds.width <= 0 || presentation.bounds.height <= 0) return this.applyPresentation(window, presentation)
     const url = view.webContents.getURL(), page = new URL(url || 'about:blank')
-    const { width, height } = view.getBounds()
-    if (page.origin !== this.origin || page.pathname !== '/workspace/c/new' || width <= 0 || height <= 0) return state
+    if (page.origin !== this.origin || page.pathname !== '/workspace/c/new') return this.applyPresentation(window, presentation)
     const frame = view.webContents.mainFrame
-    const code = `(() => {
-      if (location.href !== ${JSON.stringify(url)}) return;
-      return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    })()`
+    const handoff = { view, url }
+    const revision = ++this.landingCaseRevision
+    const ready = () => this.owner === window && !window.isDestroyed() && !window.webContents.isDestroyed() &&
+      this.view === view && epoch === this.generation && !view.webContents.isDestroyed() &&
+      view.webContents.mainFrame === frame && view.webContents.getURL() === url &&
+      this.presentation?.visible && !this.presentation.settings && this.state.phase === 'ready' &&
+      this.landing === true && this.landingPath === '/workspace/c/new' && !this.modalOpen && !this.settingsSection
+    const deadline = Date.now() + LANDING_HANDOFF_TIMEOUT_MS
+    this.preparingLanding = handoff
+    this.applyPresentation(window, presentation)
     try {
-      // The first callback runs before paint. A second one lets Chromium commit that frame.
-      await loadWithin(view.webContents.executeJavaScriptInIsolatedWorld(CHAT_PRESENTATION_WORLD, [{ code }]), LANDING_HANDOFF_TIMEOUT_MS)
+      const code = prepareChatLandingCasesScript(url, revision, Date.now() + LANDING_CASE_PREPARE_TIMEOUT_MS)
+      await loadWithin(view.webContents.executeJavaScriptInIsolatedWorld(CHAT_PRESENTATION_WORLD, [{ code }]), LANDING_CASE_PREPARE_TIMEOUT_MS)
     } catch {
-      // A hidden or replaced renderer can stop scheduling frames. Never hold the outgoing Work frame indefinitely.
-      if (ready() && frame === view.webContents.mainFrame && url === view.webContents.getURL()) {
-        this.note('[enterprise-chat] landing_handoff_unavailable')
-      }
+      if (this.preparingLanding === handoff && ready()) this.note('[enterprise-chat] landing_case_prepare_unavailable')
+    }
+    // Bounds, theme and presenter updates can arrive while the hidden renderer is preparing.
+    // A newer hide or navigation must not reveal the old landing when this promise settles.
+    if (this.preparingLanding !== handoff) return this.snapshot()
+    this.preparingLanding = undefined
+    this.layout()
+    if (!ready() || !view.getVisible()) return this.snapshot()
+    const code = playChatLandingCasesScript(url, revision)
+    try {
+      await loadWithin(view.webContents.executeJavaScriptInIsolatedWorld(CHAT_PRESENTATION_WORLD, [{ code }]), Math.max(1, deadline - Date.now()))
+    } catch {
+      if (ready() && view.getVisible()) this.note('[enterprise-chat] landing_handoff_unavailable')
     }
     return this.snapshot()
   }
@@ -276,10 +303,13 @@ export class EnterpriseChatView {
       window.webContents.getZoomFactor() === hostZoom && view.webContents.getZoomFactor() === viewZoom &&
       window.getContentSize().join(',') === contentSize && JSON.stringify(view.getBounds()) === JSON.stringify(bounds) &&
       this.presentation?.visible === presentation.visible && this.presentation.theme === presentation.theme &&
-      this.presentation.locale === presentation.locale && JSON.stringify(this.presentation.bounds) === JSON.stringify(presentation.bounds)
+      this.presentation.locale === presentation.locale && this.presentation.landingComposerWidth === presentation.landingComposerWidth &&
+      JSON.stringify(this.presentation.bounds) === JSON.stringify(presentation.bounds)
     const code = chatLandingGeometryScript(url, seatWidth, seatHeight)
     const deadline = Date.now() + LANDING_GEOMETRY_TIMEOUT_MS
     const sample = async (): Promise<unknown> => {
+      // Geometry must include the current Work width before it becomes an animation endpoint.
+      if (presentation.landingComposerWidth !== undefined) await this.dialogViewport?.ready
       for (let attempt = 0; attempt < 4 && Date.now() < deadline && current(); attempt++) {
         const value: unknown = await view.webContents.executeJavaScriptInIsolatedWorld(CHAT_PRESENTATION_WORLD, [{ code }])
         if (value !== null) return value
@@ -642,13 +672,14 @@ export class EnterpriseChatView {
     if (!shown && this.view.getVisible()) this.view.setVisible(false)
     // Settings hides the view while changing locale; its navigation labels still need updates.
     if (this.state.phase === 'ready') this.applyLocale()
-    if (!visible && !measureHiddenLanding) return
+    const pathname = new URL(this.view.webContents.getURL() || 'about:blank').pathname
+    const landingComposerWidth = pathname === '/workspace/c/new' ? this.presentation.landingComposerWidth : undefined
+    if (!visible && !measureHiddenLanding && landingComposerWidth === undefined) return
     const [width = 0, height = 0] = this.owner.getContentSize()
     const x = Math.max(0, Math.round(bounds.x * zoom))
     const y = Math.max(0, Math.round(bounds.y * zoom))
     const contentBounds = { x, y, width: Math.max(0, Math.min(width - x, Math.round(bounds.width * zoom))), height: Math.max(0, Math.min(height - y, Math.round(bounds.height * zoom))) }
     const windowDialog = this.modalOpen && !this.modalOpening && !this.presentation.settings
-    const pathname = new URL(this.view.webContents.getURL() || 'about:blank').pathname
     const modulePage = new RegExp(MODULE_ROUTE_PATTERN, 'u').test(pathname)
     const surface = modulePage ? this.presentation.palette?.surface : undefined
     const background = surface ? `#${surface.map((channel) => channel.toString(16).padStart(2, '0')).join('')}` : theme === 'dark' ? '#141416' : '#ffffff'
@@ -658,18 +689,18 @@ export class EnterpriseChatView {
     const viewportScript = chatDialogViewportScript(!this.presentation.settings ? {
       x: x / viewZoom, y: y / viewZoom, width: contentBounds.width / viewZoom, height: contentBounds.height / viewZoom,
       windowWidth: width / viewZoom, windowHeight: height / viewZoom, background,
-      followNativeView: process.platform === 'darwin' && modulePage
+      followNativeView: process.platform === 'darwin' && modulePage, landingComposerWidth
     } : undefined)
     if (this.state.phase === 'ready' &&
         (this.dialogViewport?.pathname !== pathname || this.dialogViewport.script !== viewportScript)) {
-      const delivery = { pathname, script: viewportScript }
-      this.dialogViewport = delivery
       const script = guardChatDialogViewportScript(viewportScript, pathname, ++this.dialogViewportRevision)
-      void this.view.webContents.executeJavaScript(script).catch(() => {
-        if (this.dialogViewport === delivery) this.dialogViewport = undefined
+      const ready = this.view.webContents.executeJavaScript(script).then(() => {}, () => {
+        if (this.dialogViewport?.ready === ready) this.dialogViewport = undefined
         this.note('[enterprise-chat] dialog_viewport_failed')
       })
+      this.dialogViewport = { pathname, script: viewportScript, ready }
     }
+    if (!visible && !measureHiddenLanding) return
     const nextBounds = windowDialog ? { x: 0, y: 0, width, height } : contentBounds
     const currentBounds = this.view.getBounds()
     if (!currentBounds || currentBounds.x !== nextBounds.x || currentBounds.y !== nextBounds.y ||
@@ -679,7 +710,8 @@ export class EnterpriseChatView {
     if (this.viewBackground !== backing) { this.view.setBackgroundColor(backing); this.viewBackground = backing }
     if (this.state.phase === 'ready') this.applyTheme()
     // A newly visible native view can otherwise composite with its previous bounds or backing.
-    if (shown && !this.view.getVisible()) this.view.setVisible(true)
+    const preparing = this.preparingLanding?.view === this.view && this.preparingLanding.url === this.view.webContents.getURL()
+    if (shown && !preparing && !this.view.getVisible()) this.view.setVisible(true)
   }
 
   /** Theme reaches the document on every presentation, load and in-page route change. */
@@ -1122,6 +1154,7 @@ export class EnterpriseChatView {
     this.resetModalPresentation()
     this.viewBackground = undefined
     this.dialogViewport = undefined
+    this.preparingLanding = undefined
     clearTimeout(this.settingsTimer)
     this.settingsSection = undefined
     this.settingsReturnRoute = undefined

@@ -273,6 +273,13 @@ describe('enterprise Chat host boundary', () => {
     }
   })
 
+  it('accepts fractional Work widths and rejects invalid values at the presentation boundary', () => {
+    expect(parseChatPresentation({ ...presentation, landingComposerWidth: 858.21875 }).landingComposerWidth).toBe(858.21875)
+    for (const landingComposerWidth of [0, -1, NaN, Infinity, '858', null, 20001]) {
+      expect(() => parseChatPresentation({ ...presentation, landingComposerWidth })).toThrow('landing composer width')
+    }
+  })
+
   it('validates the ingress cookie name and supports the existing server default', () => {
     const body = { cookie: 'a'.repeat(40), expires_in: 300 }
     expect(parseWebSession(body, 'https://enterprise.example', 'a').cookieName).toBe('access_token_cookie')
@@ -958,9 +965,37 @@ it('measures only a confirmed blank Chat, updating a hidden seat without showing
   } finally { f.host.dispose() }
 })
 
-const LANDING_HANDOFF_FRAME_REQUEST = 'requestAnimationFrame(() => requestAnimationFrame('
+it('applies the latest Work width to the hidden landing before sampling its geometry', async () => {
+  const f = fixture()
+  try {
+    fake.loadLanding = 'https://enterprise.example/workspace/c/new?embed=dsh'
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:landing', { landing: true, path: '/workspace/c/new' })
+    let finishDelivery = () => {}
+    const delivery = new Promise<void>(resolve => { finishDelivery = resolve })
+    wc.executeJavaScript.mockImplementation(async (script: string) => {
+      if (script.includes('--dsh-welcome-max-width: 890.21875px')) await delivery
+    })
+    f.host.present(f.owner, { ...presentation, visible: false, landingComposerWidth: 858.21875 })
+    wc.executeJavaScriptInIsolatedWorld.mockResolvedValueOnce({
+      title: { x: 200, y: 50, width: 220, height: 32 },
+      composer: { x: 120, y: 140, width: 858.21875, height: 140 }
+    })
+    const measurement = f.host.landingGeometry(f.owner)
+    await flush()
+    expect(wc.executeJavaScript).toHaveBeenCalledWith(expect.stringContaining('--dsh-welcome-max-width: 890.21875px'))
+    expect(wc.executeJavaScriptInIsolatedWorld).not.toHaveBeenCalled()
+    expect(view.getVisible()).toBe(false)
+    finishDelivery()
+    expect(await measurement).toMatchObject({ composer: { width: 858.21875 } })
+  } finally { f.host.dispose() }
+})
 
-it('places the native Chat seat before showing it and waits two renderer frames on a landing handoff', async () => {
+const LANDING_HANDOFF_FRAME_REQUEST = 'requestAnimationFrame(() => resolve())'
+
+it('prepares transparent case rows before showing Chat and plays them on its first visible frame', async () => {
   const f = fixture()
   try {
     const url = 'https://enterprise.example/workspace/c/new?embed=dsh'
@@ -972,25 +1007,78 @@ it('places the native Chat seat before showing it and waits two renderer frames 
     wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:landing', { landing: true, path: '/workspace/c/new' })
     f.host.present(f.owner, { ...presentation, visible: false })
     const frames: Array<() => void> = []
-    wc.executeJavaScriptInIsolatedWorld.mockImplementation((_world: number, [script]: Array<{ code: string }>) => {
+    const previous = { id: 'dsh-chat-case-entry-0', cancel: vi.fn() }
+    const rows = [0, 1, 2, 3].map(() => {
+      const entry = { id: '', currentTime: null, playState: 'paused', pause: vi.fn(), play: vi.fn() }
+      return { entry, getAnimations: () => [previous], animate: vi.fn(() => entry) }
+    })
+    const querySelectorAll = vi.fn(() => rows)
+    const querySelector = vi.fn(() => ({ querySelectorAll }))
+    wc.executeJavaScriptInIsolatedWorld.mockImplementation(async (_world: number, [script]: Array<{ code: string }>) => {
       const code = script?.code
-      if (!code?.includes(LANDING_HANDOFF_FRAME_REQUEST)) return Promise.resolve()
-      expect(view.getVisible()).toBe(true)
-      return Function('location', 'requestAnimationFrame', `return ${code}`)({ href: url }, (callback: () => void) => frames.push(callback))
+      if (code?.includes('entry.pause()')) {
+        expect(view.getVisible()).toBe(false)
+        return Function('window', 'location', 'document', 'matchMedia', 'setTimeout', `return ${code}`)(
+          {}, { href: url }, { querySelector }, () => ({ matches: false }), vi.fn()
+        )
+      }
+      if (code?.includes(LANDING_HANDOFF_FRAME_REQUEST)) {
+        expect(view.getVisible()).toBe(true)
+        expect(rows.every(({ entry }) => entry.pause.mock.calls.length === 1 && entry.currentTime === 0)).toBe(true)
+        return Function('location', 'document', 'requestAnimationFrame', `return ${code}`)(
+          { href: url }, { getAnimations: () => rows.map(({ entry }) => entry) }, (callback: () => void) => frames.push(callback)
+        )
+      }
     })
     const bounds = { x: 80, y: 60, width: 900, height: 600 }
     const finish = vi.fn()
     const handoff = f.host.presentWithLandingHandoff(f.owner, { ...presentation, bounds, landingHandoff: true }).then(finish)
     expect(view.getBounds()).toEqual(bounds)
+    expect(view.getVisible()).toBe(false)
+    await flush()
     expect(view.setBounds.mock.invocationCallOrder.at(-1)).toBeLessThan(view.setVisible.mock.invocationCallOrder.at(-1))
+    expect(querySelectorAll).toHaveBeenCalledExactlyOnceWith('.chat-welcome-examples-list > li')
+    for (const [index, row] of rows.entries()) {
+      expect(row.animate).toHaveBeenCalledExactlyOnceWith(
+        [{ opacity: 0, translate: '-8px 0px' }, { opacity: 1, translate: '0px 0px' }],
+        expect.objectContaining({ delay: index * 100 })
+      )
+    }
+    expect(previous.cancel).toHaveBeenCalledTimes(rows.length)
     expect(frames).toHaveLength(1)
+    expect(rows.every(({ entry }) => !entry.play.mock.calls.length)).toBe(true)
     frames.shift()?.()
     await flush()
+    expect(rows.every(({ entry }) => entry.play.mock.calls.length === 1)).toBe(true)
     expect(finish).not.toHaveBeenCalled()
     expect(frames).toHaveLength(1)
     frames.shift()?.()
     await handoff
     expect(finish).toHaveBeenCalledWith(expect.objectContaining({ phase: 'ready', landing: true }))
+  } finally { f.host.dispose() }
+})
+
+it('keeps Chat hidden through a resize and ignores a handoff interrupted by switching back', async () => {
+  const f = fixture()
+  try {
+    fake.loadLanding = 'https://enterprise.example/workspace/c/new?embed=dsh'
+    f.host.present(f.owner, presentation)
+    await flush()
+    const view = fake.views[0], wc = view.webContents
+    wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:landing', { landing: true, path: '/workspace/c/new' })
+    f.host.present(f.owner, { ...presentation, visible: false })
+    let finishPrepare = () => {}
+    wc.executeJavaScriptInIsolatedWorld.mockImplementationOnce(() => new Promise<void>(resolve => { finishPrepare = resolve }))
+    const handoff = f.host.presentWithLandingHandoff(f.owner, { ...presentation, landingHandoff: true })
+    f.host.present(f.owner, { ...presentation, bounds: { ...presentation.bounds, width: 900 } })
+    expect(view.getBounds().width).toBe(900)
+    expect(view.getVisible()).toBe(false)
+
+    f.host.present(f.owner, { ...presentation, visible: false })
+    finishPrepare()
+    await handoff
+    expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(1)
+    expect(view.getVisible()).toBe(false)
   } finally { f.host.dispose() }
 })
 
@@ -1011,7 +1099,7 @@ it('skips the landing wait for ordinary, hidden, unconfirmed, or navigated prese
   } finally { f.host.dispose() }
 })
 
-it('releases Work if the native landing renderer stops scheduling frames', async () => {
+it.each(['prepare', 'paint'])('releases Work if the native landing stalls during %s', async phase => {
   vi.useFakeTimers()
   const f = fixture()
   try {
@@ -1021,12 +1109,14 @@ it('releases Work if the native landing renderer stops scheduling frames', async
     const view = fake.views[0], wc = view.webContents
     wc.emit('ipc-message', { senderFrame: wc.mainFrame }, 'enterprise-chat:landing', { landing: true, path: '/workspace/c/new' })
     f.host.present(f.owner, { ...presentation, visible: false })
+    const blockedScript = phase === 'prepare' ? 'entry.pause()' : LANDING_HANDOFF_FRAME_REQUEST
     wc.executeJavaScriptInIsolatedWorld.mockImplementation((_world: number, [script]: Array<{ code: string }>) =>
-      script?.code.includes(LANDING_HANDOFF_FRAME_REQUEST) ? new Promise(() => {}) : Promise.resolve())
+      script?.code.includes(blockedScript) ? new Promise(() => {}) : Promise.resolve())
     const finish = vi.fn()
     const handoff = f.host.presentWithLandingHandoff(f.owner, { ...presentation, landingHandoff: true }).then(finish)
-    await elapse(119)
+    await elapse(phase === 'prepare' ? 69 : 119)
     expect(finish).not.toHaveBeenCalled()
+    expect(view.getVisible()).toBe(phase === 'paint')
     await elapse(1)
     await handoff
     expect(finish).toHaveBeenCalledWith(expect.objectContaining({ phase: 'ready', landing: true }))
@@ -1100,7 +1190,7 @@ it('holds outgoing Chat text for the handoff, restores it on interruption, and p
   expect(animate).toHaveBeenCalledTimes(2)
 })
 
-it.each(['logout', 'navigation', 'resize', 'malformed geometry'])('discards a blank Chat measurement invalidated by %s', async change => {
+it.each(['logout', 'navigation', 'resize', 'Work width change', 'malformed geometry'])('discards a blank Chat measurement invalidated by %s', async change => {
   const f = fixture()
   try {
     fake.loadLanding = 'https://enterprise.example/workspace/c/new?embed=dsh'
@@ -1114,6 +1204,7 @@ it.each(['logout', 'navigation', 'resize', 'malformed geometry'])('discards a bl
     if (change === 'logout') f.change({ connected: false, connectionKey: 'tenant-a' })
     if (change === 'navigation') wc.setURL('https://enterprise.example/workspace/c/another')
     if (change === 'resize') f.host.present(f.owner, { ...presentation, bounds: { ...presentation.bounds, width: 800 } })
+    if (change === 'Work width change') f.host.present(f.owner, { ...presentation, landingComposerWidth: 700 })
     finish({
       title: { x: 200, y: 50, width: 220, height: 32 },
       composer: { x: 10, y: 140, width: change === 'malformed geometry' ? 2_000 : 600, height: 140 }
