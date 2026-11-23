@@ -17,6 +17,7 @@ export const PUBLIC_OVERRIDES = [
   { file: 'test/repair-draft-ui.test.ts', oid: '4ed0e86106c1a16c4c26d19147f607bbcc3bb7a5', reason: 'downstream repair UI coverage' },
   { file: 'test/shell/deep-links.test.ts', oid: '804387cceb609ee3d3f5cbdf6afcf5a87e5275ec', reason: 'enterprise deep-link regression coverage' },
   { file: 'test/shell/product-identity.test.ts', oid: '0638a19805e219cbe07d406fe4120ee770c8323a', reason: 'upstream candidate: product protocol scheme regression coverage' },
+  { file: 'test/shell/rc4-product-boundaries.test.ts', oid: 'e16ab305124888f72917b345390e0de40446231d', reason: 'BISHENG application update feed regression coverage' },
   { file: 'test/workbench-client.test.mjs', oid: '2b5c9b6314d7846a3d9e12d648079c4f63c893e8', reason: 'downstream workbench regression coverage' },
   { file: 'test/workspace-unread-patch.test.ts', oid: 'bf6ca467dd8faa8dbb39b77e631077de87d8ada5', reason: 'downstream workspace regression coverage' }
 ]
