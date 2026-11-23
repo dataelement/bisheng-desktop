@@ -806,6 +806,67 @@ window.__ModuleLoader__.load({
       }
     }
 
+    const ENTERPRISE_WORKBENCH_FAVORITES = 'bisheng.enterprise-workbench-favorites'
+
+    function EnterpriseWorkbenchCollection({ service }) {
+      const [state, setState] = useState({ loading: true, error: '', accountKey: '', items: [] })
+      const [favorites, setFavorites] = useState([])
+      const [busy, setBusy] = useState(null)
+      const load = useCallback(async () => {
+        setState(previous => ({ ...previous, loading: true, error: '' }))
+        try {
+          const response = await fetch('/api/enterprise.workbenches/catalog', { credentials: 'same-origin', cache: 'no-store' })
+          const value = await response.json()
+          if (!response.ok || !Array.isArray(value.data)) throw new Error(value.error || '企业工作台暂时无法读取。')
+          const accountKey = typeof value.accountKey === 'string' ? value.accountKey : ''
+          let saved = []
+          try {
+            const records = JSON.parse(window.localStorage?.getItem(`${ENTERPRISE_WORKBENCH_FAVORITES}:${accountKey}`) || '[]')
+            if (Array.isArray(records)) saved = records.filter(id => typeof id === 'string')
+          } catch {}
+          setFavorites(saved)
+          setState({ loading: false, error: '', accountKey, items: value.data })
+        } catch (error) {
+          setState(previous => ({ ...previous, loading: false, error: error instanceof Error ? error.message : String(error) }))
+        }
+      }, [])
+      useEffect(() => { void load() }, [load])
+      const toggleFavorite = (id) => {
+        const next = favorites.includes(id) ? favorites.filter(item => item !== id) : [...favorites, id]
+        setFavorites(next)
+        try { window.localStorage?.setItem(`${ENTERPRISE_WORKBENCH_FAVORITES}:${state.accountKey}`, JSON.stringify(next)) } catch {}
+      }
+      const install = async (id) => {
+        if (busy) return
+        setBusy(id)
+        try {
+          const response = await fetch('/api/desktop-workbenches/enterprise-install', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) })
+          const value = await response.json()
+          if (!response.ok || !['applied', 'restart-required'].includes(value.application)) throw new Error(value.error || '企业工作台安装失败。')
+          await service.refreshNative?.()
+        } catch (error) {
+          setState(previous => ({ ...previous, error: error instanceof Error ? error.message : String(error) }))
+        } finally { setBusy(null) }
+      }
+      return h('section', { className: 'dshEnterpriseWorkbenchCollection', 'aria-label': '来自企业' },
+        h('div', { className: 'dshEnterpriseWorkbenchToolbar' }, h('button', { type: 'button', onClick: () => { void load() }, disabled: state.loading }, state.loading ? '读取中…' : '刷新')),
+        state.error && h('p', { role: 'alert' }, state.error),
+        !state.loading && !state.error && !state.items.length && h('p', null, '企业暂未提供工作台。'),
+        h('div', { className: 'dshEnterpriseWorkbenchGrid' }, state.items.map(item => h('article', { key: item.id, className: 'dshEnterpriseWorkbenchCard' },
+          h('div', { className: 'dshEnterpriseWorkbenchCardHead' }, h('h3', null, item.displayName), h('button', { type: 'button', 'aria-label': favorites.includes(item.id) ? '取消收藏' : '收藏工作台', onClick: () => toggleFavorite(item.id) }, favorites.includes(item.id) ? '★' : '☆')),
+          item.description && h('p', null, item.description),
+          h('div', { className: 'dshEnterpriseWorkbenchCardActions' }, h('span', null, `v${item.currentVersion?.version || '—'}`), h('button', { type: 'button', disabled: busy === item.id, onClick: () => { void install(item.id) } }, busy === item.id ? '安装中…' : '安装'))
+        ))))
+    }
+
+    function bindEnterpriseWorkbenchCollection(ctx) {
+      return ctx.inject?.(['desktopWorkbenches'], scoped => {
+        const service = scoped.desktopWorkbenches
+        if (!service || typeof service.registerMarketCollection !== 'function') return undefined
+        return service.registerMarketCollection({ id: 'enterprise', label: '来自企业', order: 10, render: props => h(EnterpriseWorkbenchCollection, props) })
+      })
+    }
+
     function bindEnterpriseModelSync() {
       let pending, disposed = false, resync = false
       const sync = () => {
@@ -1943,6 +2004,7 @@ window.__ModuleLoader__.load({
       marketTranslate = ctx.locale.bind('settings.enterpriseMarket')
       ctx.effect(() => bindEnterpriseModelSync(), 'enterprise: foreground model catalog sync')
       ctx.effect(() => bindEnterpriseMarketTab(ctx), 'enterprise-market: account-bound plugins tab')
+      ctx.effect(() => bindEnterpriseWorkbenchCollection(ctx), 'enterprise-workbench: market collection')
       ctx.slots.inject('settings.section', () => ctx.slots.register({
         name: 'settings.section',
         id: ENTERPRISE_SECTION_ID,

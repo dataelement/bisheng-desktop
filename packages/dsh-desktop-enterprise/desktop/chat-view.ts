@@ -132,8 +132,13 @@ export class EnterpriseChatView {
   private appearance?: string
 
   constructor(private enterprise: EnterpriseDesktopRuntime, private note: (line: string) => void, private notificationWindow?: () => BrowserWindow | undefined) {
+    let profile = enterprise.snapshot().user
     this.unsubscribe = enterprise.subscribe((state) => {
+      const nextProfile = state.user
+      const profileChanged = profile?.username !== nextProfile?.username || profile?.display_name !== nextProfile?.display_name || profile?.name !== nextProfile?.name
+      profile = nextProfile
       if (!state.connected || (this.key !== undefined && state.connectionKey !== this.key)) this.clear()
+      else if (profileChanged && nextProfile) this.notifyWorkspaceProfileChanged()
       this.notify()
       if (state.connected && !this.view && this.state.phase !== 'error' && this.presentation?.visible && this.owner && !this.owner.isDestroyed()) {
         void this.connect()
@@ -166,6 +171,14 @@ export class EnterpriseChatView {
   private notify(): void {
     const window = this.notificationWindow?.() ?? this.owner
     if (window && !window.isDestroyed()) window.webContents.send('enterprise-chat:changed', this.snapshot())
+  }
+
+  private notifyWorkspaceProfileChanged(): void {
+    const contents = this.view?.webContents
+    if (!contents || contents.isDestroyed()) return
+    const url = new URL(contents.getURL() || 'about:blank')
+    if (url.origin !== this.origin || !/^\/workspace(?:\/|$)/u.test(url.pathname)) return
+    contents.send('enterprise-chat:profile-changed')
   }
 
   present(window: BrowserWindow, input: unknown): EnterpriseChatViewState {
@@ -715,7 +728,7 @@ export class EnterpriseChatView {
             } catch { this.note('[enterprise-chat] invalid_running_report') }
             return
           }
-          if (channel !== 'enterprise-chat:landing' || !/^\/workspace\/c\/[a-zA-Z0-9_-]+$/u.test(url.pathname) || typeof report.landing !== 'boolean') return
+          if (channel !== 'enterprise-chat:landing' || !/^\/workspace\/c\/(?:new|[a-zA-Z0-9_-]+)$/u.test(url.pathname) || typeof report.landing !== 'boolean') return
           this.landing = url.pathname === '/workspace/c/new' && report.landing
           this.notify()
         })

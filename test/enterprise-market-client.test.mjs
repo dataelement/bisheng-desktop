@@ -12,7 +12,7 @@ const localeSource = await readFile(new URL('../node_modules/@deepseek-ai/dsh-cl
 const disposers = []
 afterEach(async () => { for (const dispose of disposers.splice(0).reverse()) await dispose(); vi.useRealTimers() })
 
-async function client(initial, language = 'zh') {
+async function client(initial, language = 'zh', workbenches) {
   let account = initial, resolveState
   const events = new Map(), registrations = new Map()
   const dom = new JSDOM('<html lang="zh-CN"><head></head><body></body></html>', { url: 'http://localhost/' })
@@ -38,6 +38,7 @@ async function client(initial, language = 'zh') {
   plugin.apply({
     locale,
     effect: callback => { const dispose = callback(); if (dispose) disposers.push(dispose) },
+    ...(workbenches ? { inject: (names, callback) => { const dispose = callback({ desktopWorkbenches: workbenches }); if (dispose) disposers.push(dispose) } } : {}),
     slots: {
       inject: (_slot, callback) => callback(),
       register: (config, component) => {
@@ -54,6 +55,12 @@ async function client(initial, language = 'zh') {
 const account = { connected: true, base: 'https://bisheng.example', tenant: { id: '1', name: '企业一' }, user: { id: '20' }, sessionExpiresAt: new Date(Date.now() + 60000).toISOString() }
 
 describe('enterprise plugins entry', () => {
+  it('registers the enterprise workbench collection through the host slot', async () => {
+    const registerMarketCollection = vi.fn(() => () => {})
+    await client(account, 'zh', { registerMarketCollection })
+    expect(registerMarketCollection).toHaveBeenCalledWith(expect.objectContaining({ id: 'enterprise', label: '来自企业', order: 10, render: expect.any(Function) }))
+  })
+
   it('adds 来自企业 after login, replaces account context on tenant switch, and removes it on logout', async () => {
     const app = await client({ connected: false })
     expect(app.registrations.has('enterprise-market')).toBe(false)

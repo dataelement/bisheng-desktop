@@ -18,6 +18,12 @@ if (isEnterpriseAppUrl(location.href) && !process.argv.includes('--dsh-desktop-s
   })
 
   contextBridge.exposeInMainWorld('dshEnterpriseChat', Object.freeze({
+    onProfileChanged: (listener: () => void): (() => void) => {
+      if (typeof listener !== 'function') throw new TypeError('Profile listener must be a function.')
+      const receive = (): void => listener()
+      ipcRenderer.on('enterprise-chat:profile-changed', receive)
+      return () => ipcRenderer.removeListener('enterprise-chat:profile-changed', receive)
+    },
     onToolsChanged: (listener: () => void): (() => void) => {
       if (typeof listener !== 'function') throw new TypeError('Tool change listener must be a function.')
       const receive = (): void => listener()
