@@ -28,7 +28,7 @@ describe('rc.4 product boundaries', () => {
     const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as {
       build: { publish: { url: string }[]; asarUnpack: string[]; mac: { extendInfo: Record<string, string> } }
     }
-    expect(packageJson.build.publish.map(item => item.url)).toEqual(['https://dshdesktop.com/updates/latest/'])
+    expect(packageJson.build.publish.map(item => item.url)).toEqual(['https://dshdesktop.com/work/updates/latest/'])
     expect(packageJson.build.asarUnpack).toContain('node_modules/@deepseek-ai/dsh-experimental-cua-macos/native/**/*')
     expect(packageJson.build.mac.extendInfo.NSScreenCaptureUsageDescription).toMatch(/Computer Use/)
     const sources = await Promise.all([
