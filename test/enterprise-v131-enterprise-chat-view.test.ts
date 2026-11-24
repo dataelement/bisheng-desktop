@@ -1403,8 +1403,13 @@ it('keeps a ready workspace across a transient renewal and ignores publishes unt
   } finally { f.host.dispose(); vi.useRealTimers() }
 })
 
-it('spaces later renewal failures at 2s, 5s, 10s and then 30s until the platform returns', async () => {
+it.each([
+  { random: 0, gaps: [1_600, 4_000, 8_000, 24_000, 24_000] },
+  { random: 0.5, gaps: [2_000, 5_000, 10_000, 30_000, 30_000] },
+  { random: 0.999999, gaps: [2_400, 6_000, 12_000, 36_000, 36_000] }
+])('spaces renewal retries at each jitter boundary (random=$random) until recovery', async ({ random, gaps }) => {
   vi.useFakeTimers()
+  const jitter = vi.spyOn(Math, 'random').mockReturnValue(random)
   const f = fixture()
   try {
     f.host.present(f.owner, presentation)
@@ -1412,19 +1417,22 @@ it('spaces later renewal failures at 2s, 5s, 10s and then 30s until the platform
     f.enterprise.webSession.mockRejectedValue(networkError())
     await elapse(270_000)
     expect(f.enterprise.webSession).toHaveBeenCalledTimes(2)
-    for (const gap of [2_400, 6_000, 12_000, 36_000, 36_000]) {
+    for (const gap of gaps) {
       const before = f.enterprise.webSession.mock.calls.length
-      await elapse(gap)
+      // Advance from the actual prior retry, not cumulative worst-case windows.
+      await elapse(gap - 1)
+      expect(f.enterprise.webSession.mock.calls.length).toBe(before)
+      await elapse(1)
       expect(f.enterprise.webSession.mock.calls.length).toBe(before + 1)
       expect(f.host.snapshot().phase).toBe('ready')
       expect(fake.views[0].webContents.close).not.toHaveBeenCalled()
     }
     f.enterprise.webSession.mockImplementation(async () => ({ base: 'https://enterprise.example', cookie: 'renewed-cookie', cookieName: 'bs_credits_3007', connectionKey: 'tenant-a', expiresAt: Date.now() + 300_000 }))
-    await elapse(36_000)
+    await elapse(gaps.at(-1) ?? 30_000)
     expect(f.host.snapshot().phase).toBe('ready')
     expect(fake.views).toHaveLength(1)
     expect(fake.sessions[0].cookies.set).toHaveBeenLastCalledWith(expect.objectContaining({ value: 'renewed-cookie' }))
-  } finally { f.host.dispose(); vi.useRealTimers() }
+  } finally { f.host.dispose(); jitter.mockRestore(); vi.useRealTimers() }
 })
 
 it('reloads the workspace when a renewal lands after the document left it', async () => {
