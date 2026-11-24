@@ -33,7 +33,10 @@ test('boundary preparation fails closed and uses one explicit reviewed upstream'
     for (const job of Object.values(workflow(name).jobs)) {
       const fetch = job.steps.find(step => step.run?.includes('git fetch'))
       assert.ok(fetch, name)
-      assert.match(fetch.run, /V0.14.1:refs\/remotes\/upstream\/V0.14.1/)
+      assert.match(fetch.run, /ops\/ci\/upstream-baseline\.json/)
+      assert.match(fetch.run, /git fetch --no-tags upstream "\$baseline_commit"/)
+      assert.match(fetch.run, /git update-ref refs\/remotes\/upstream\/V0.14.1 "\$baseline_commit"/)
+      assert.doesNotMatch(fetch.run, /git fetch[^\n]*upstream V0\.14\.1/)
       assert.doesNotMatch(fetch.run, /\|\||continue-on-error|upstream main/)
       const gate = job.steps.find(step => step.run === 'npm run verify:boundary')
       assert.equal(gate.env.UPSTREAM_BASE, 'upstream/V0.14.1')

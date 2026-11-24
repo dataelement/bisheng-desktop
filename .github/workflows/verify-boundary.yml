@@ -25,7 +25,9 @@ jobs:
       - name: Fetch the reviewed upstream baseline
         run: |
           git remote add upstream https://github.com/dataelement/dsh-desktop.git
-          git fetch --no-tags upstream V0.14.1:refs/remotes/upstream/V0.14.1
+          baseline_commit=$(node -e "const b=require('./ops/ci/upstream-baseline.json');if(!/^[a-f0-9]{40}$/.test(b.commit))process.exit(1);process.stdout.write(b.commit)")
+          git fetch --no-tags upstream "$baseline_commit"
+          git update-ref refs/remotes/upstream/V0.14.1 "$baseline_commit"
           git rev-parse --verify upstream/V0.14.1
       - name: Verify downstream changes
         run: npm run verify:boundary
