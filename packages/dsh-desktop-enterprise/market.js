@@ -5,7 +5,7 @@ import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { acceptMarketSnapshot } from './market-policy.js'
-import { installOfflineBundle, sha256, verifyInstalledBundle } from './offline-bundle.js'
+import { assertEnterpriseGenerationPath, installOfflineBundle, sha256, verifyInstalledBundle } from './offline-bundle.js'
 import { createMarketRuntime } from './market-runtime.js'
 import { createManagedMarketSource, performMarketAction } from './managed-market.js'
 
@@ -146,7 +146,7 @@ export function createMarketController(ctx, accountController, options = {}) {
   const startRecord = async (record, startedEpoch) => {
     assertCurrentOperation()
     requireOnline()
-    if (!/^[a-z0-9+_.-]+$/iu.test(record.generation_id) || record.directory !== join(home, 'profiles', '.enterprise-generations', record.generation_id)) throw new Error('Invalid enterprise generation path.')
+    assertEnterpriseGenerationPath(home, record)
     if (!authorized(record) || startedEpoch !== epoch) throw new Error('Plugin usage authorization changed.')
     await verifyInstalledBundle(record, target)
     if (startedEpoch !== epoch) throw new Error('Enterprise account changed.')

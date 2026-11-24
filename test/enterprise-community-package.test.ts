@@ -10,7 +10,7 @@ import { mountRootInclude } from '@deepseek-ai/dsh-app-boot'
 import { Loader } from '@deepseek-ai/cordis-plugin-loader'
 import { createMarketRuntime } from '../packages/dsh-desktop-enterprise/market-runtime.js'
 import { isMarketVersionCompatible } from '../packages/dsh-desktop-enterprise/market.js'
-import { installOfflineBundle, sha256, verifyInstalledBundle } from '../packages/dsh-desktop-enterprise/offline-bundle.js'
+import { assertEnterpriseGenerationPath, installOfflineBundle, sha256, verifyInstalledBundle } from '../packages/dsh-desktop-enterprise/offline-bundle.js'
 import { readCommunityPackage } from '../packages/dsh-desktop-enterprise/community-package.js'
 import { isolatePackage } from './enterprise-isolated-package-tree.mjs'
 import { zipEntries } from './enterprise-bundle-fixture.mjs'
@@ -96,6 +96,10 @@ describe('community npm packages', () => {
     const expected = { name: 'company-demo', version: '1.2.3', digest: sha256(bytes) }
     const generation = await installOfflineBundle(root, bytes, expected, target, { dshEntryPath: join(process.cwd(), 'node_modules/@deepseek-ai/dsh/lib/bin.js') })
     expect(generation.directory).toContain(join('profiles', '.generations', 'live'))
+    expect(() => assertEnterpriseGenerationPath(root, { ...generation, generation_id: generation.id })).not.toThrow()
+    expect(() => assertEnterpriseGenerationPath(root, { ...generation, generation_id: generation.id, integrity: undefined })).toThrow('Invalid enterprise generation path.')
+    expect(() => assertEnterpriseGenerationPath(root, { ...generation, generation_id: '../escape' })).toThrow('Invalid enterprise generation path.')
+    expect(() => assertEnterpriseGenerationPath(root, { ...generation, generation_id: generation.id, directory: join(root, 'elsewhere', generation.id) })).toThrow('Invalid enterprise generation path.')
     expect(generation.integrity).toMatch(/^[a-f0-9]{64}$/)
     const installed = createRequire(join(generation.directory, 'node_modules/company-demo/package.json'))
     expect(installed.resolve('company-helper')).toContain('company-helper')

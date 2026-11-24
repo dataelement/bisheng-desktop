@@ -193,9 +193,16 @@ describe('enterprise policy', () => {
 
 })
 
-async function fixture(options: { authorizationAvailable?: boolean } = {}) {
+async function fixture(options: { authorizationAvailable?: boolean; community?: boolean } = {}) {
   const root = await home(), ctx = new Context()
   let current = bundle(), currentId = versionId, disabled = false, online = true, revision = 2, connected = true
+  if (options.community) {
+    const bytes = zipEntries({
+      'package.json': Buffer.from(JSON.stringify({ name: 'company-demo', version: '1.0.0', type: 'module', main: 'index.js' })),
+      'index.js': Buffer.from('export function apply(ctx) { ctx.effect(() => () => {}, "community test") }')
+    })
+    current = { ...current, bytes, expected: { ...current.expected, digest: sha256(bytes) } }
+  }
   let identity = account
   const approved = new Map([[versionId, current.expected.digest]])
   const request = vi.fn(async (path: string, body?: { device_id: string }) => {
@@ -225,6 +232,17 @@ async function fixture(options: { authorizationAvailable?: boolean } = {}) {
 }
 
 describe('account-bound lifecycle', () => {
+  it('installs and re-enables a community generation through the enterprise controller', async () => {
+    const { market, active } = await fixture({ community: true })
+    const state = await market.act({ action: 'install', plugin_id: pluginId })
+    expect(state.installed[0]?.status).toBe('enabled')
+    expect(active.has('1.0.0')).toBe(true)
+    await market.act({ action: 'disable', plugin_id: pluginId })
+    expect(active.size).toBe(0)
+    await market.act({ action: 'enable', plugin_id: pluginId })
+    expect(active.has('1.0.0')).toBe(true)
+  })
+
   it('fails closed before catalog or activation without the desktop authorization service', async () => {
     const { market, request, active } = await fixture({ authorizationAvailable: false })
     await market.synchronize()

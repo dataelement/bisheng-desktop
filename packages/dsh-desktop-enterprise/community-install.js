@@ -54,7 +54,6 @@ export async function installCommunityPackage(home, bytes, expected, target, opt
     const result = await installGeneration({
       ...options.installOptions,
       dshHome: home,
-      namespace: 'enterprise',
       pluginSpec: await realpath(archive),
       expectedPluginName: expected.name,
       expectedVersion: expected.version,
