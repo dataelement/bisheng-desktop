@@ -2,8 +2,6 @@ import type { EnterpriseFetch } from './platform-fetch'
 
 export const AUTH_MAX_REQUEST_BYTES = 1024 * 1024
 export const AUTH_MAX_RESPONSE_BYTES = 32 * 1024 * 1024
-export const AUTH_MAX_CONCURRENT = 8
-export const AUTH_MAX_INSTANCE_CONCURRENT = 4
 export const AUTH_HEADER_TIMEOUT_MS = 15_000
 export const AUTH_IDLE_TIMEOUT_MS = 60_000
 export const AUTH_TOTAL_TIMEOUT_MS = 5 * 60_000
@@ -114,9 +112,6 @@ export class EnterpriseAuthTransport {
     }
     try {
       options.assertSession(request.sessionVersion)
-      if (this.active.size >= AUTH_MAX_CONCURRENT || [...this.active.values()].filter(id => id === plugin.instanceId).length >= AUTH_MAX_INSTANCE_CONCURRENT) {
-        throw new EnterpriseAuthError('too_many_requests', 429)
-      }
     } catch (error) {
       audit({ pluginId: plugin.pluginId, path: request.path.split('?')[0] ?? '/', status: safeError(error).status, duration: 0 })
       throw safeError(error)

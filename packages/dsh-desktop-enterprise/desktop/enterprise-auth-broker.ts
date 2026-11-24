@@ -13,7 +13,6 @@ type ReadBody = (request: IncomingMessage, limit: number) => Promise<unknown>
 type SendJson = (response: ServerResponse, status: number, body: unknown) => void
 const WIRE_LIMIT = 6 * 1024 * 1024
 const MAX_GRANTS = 256
-const MAX_IN_FLIGHT = 8
 
 /** Only the trusted market owner can mint/revoke instance-scoped capabilities. */
 export function createEnterpriseAuthBroker(service: EnterpriseService, readBody: ReadBody, sendJson: SendJson) {
@@ -75,7 +74,6 @@ export function createEnterpriseAuthBroker(service: EnterpriseService, readBody:
           sendJson(response, 200, service.authState())
           return
         }
-        if (grant.controllers.size >= MAX_IN_FLIGHT) throw new EnterpriseAuthError('too_many_requests', 429)
         controller = new AbortController()
         grant.controllers.add(controller)
         request.once('aborted', abort)
