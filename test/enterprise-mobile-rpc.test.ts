@@ -51,3 +51,76 @@ it('serves phone Work and Chat cases from the enterprise catalog without a sessi
   expect(request.mock.calls[0]?.[0]).toBe('/api/enterprise.workbenches/welcome-cases.json')
   adapter.dispose()
 })
+
+  it('pages the desktop sidebar order and leaves hidden rows off the page', () => {
+    const items = [
+      { sessionId: 'old', updatedAt: 1, blank: false, projections: { values: { title: '旧的' } } },
+      { sessionId: 'child', updatedAt: 9, origin: 'subagent', projections: { values: { title: '子会话' } } },
+      { sessionId: 'blank-other', updatedAt: 8, blank: true },
+      { sessionId: 'blank-open', updatedAt: 2, blank: true },
+      { sessionId: 'pinned-old', updatedAt: 3, blank: false, projections: { values: { title: '置顶旧' } } },
+      { sessionId: 'pinned-new', updatedAt: 4, blank: false, projections: { values: { title: '置顶新' } } },
+      { sessionId: 'fresh', updatedAt: 7, blank: false, origin: 'main', projections: { values: { title: '新的' } } },
+      { sessionId: 'stray', updatedAt: 6, blank: false, projections: { values: { title: '未分组' } } }
+    ]
+    const membership = new Set(['old', 'child', 'blank-other', 'blank-open', 'pinned-old', 'pinned-new', 'fresh'])
+    const first = pageMobileSessions({
+      items,
+      sessionIds: membership,
+      archivedSessionIds: new Set(['old']),
+      pinnedSessionIds: new Set(['pinned-old', 'pinned-new']),
+      openSessionId: 'blank-open',
+      limit: 2
+    })
+    expect(first.items.map((item) => item.sessionId)).toEqual(['blank-open', 'pinned-new'])
+    expect(first.items[0]).toMatchObject({ blank: true, sessionId: 'blank-open' })
+    expect(first.hasMore).toBe(true)
+
+    const second = pageMobileSessions({
+      items,
+      sessionIds: membership,
+      archivedSessionIds: new Set(['old']),
+      pinnedSessionIds: new Set(['pinned-old', 'pinned-new']),
+      openSessionId: 'blank-open',
+      cursor: first.nextCursor,
+      limit: 2
+    })
+    expect(second.items.map((item) => item.sessionId)).toEqual(['pinned-old', 'fresh'])
+    expect(second.items[1]?.origin).toBe('main')
+    expect(second.hasMore).toBe(false)
+    expect(second.nextCursor).toBeUndefined()
+
+    const stray = pageMobileSessions({
+      items,
+      excludeSessionIds: membership,
+      openSessionId: 'blank-open'
+    })
+    expect(stray.items.map((item) => item.sessionId)).toEqual(['stray'])
+  })
+
+it('forwards open/pinned ordering and pages ungrouped sessions independently', async () => {
+  const items = [
+    { sessionId: 'blank', blank: true, updatedAt: 1 },
+    { sessionId: 'pin', updatedAt: 2, origin: 'main' },
+    { sessionId: 'recent', updatedAt: 10 },
+    { sessionId: 'other-workspace', updatedAt: 12 },
+    { sessionId: 'stray', updatedAt: 11 },
+    { sessionId: 'child', origin: 'subagent', updatedAt: 15 },
+    { sessionId: 'closed-blank', blank: true, updatedAt: 16 }
+  ]
+  const adapter = new EnterpriseMobileRpc({ port: () => 0, channelToken: () => '', request: vi.fn(),
+    forward: vi.fn(async () => ({ ok: true, value: { items: [
+      { workspaceId: 'a', sessionIds: ['blank', 'pin', 'recent'] },
+      { workspaceId: 'b', sessionIds: ['other-workspace'] }
+    ], pinnedSessionIds: ['pin'] } })),
+    invoke: vi.fn(async () => ({ ok: true, value: { items } })) })
+  const first = await adapter.dispatch({ method: 'session.listPage', payload: { workspaceId: 'a', openSessionId: 'blank', limit: 2 } })
+  expect(first?.value).toMatchObject({ items: [{ sessionId: 'blank' }, { sessionId: 'pin', origin: 'main' }], nextCursor: 'pinned:2:pin', hasMore: true })
+  const next = await adapter.dispatch({ method: 'session.listPage', payload: { workspaceId: 'a', openSessionId: 'blank', cursor: 'pinned:2:pin', limit: 2 } })
+  expect(next?.value).toMatchObject({ items: [{ sessionId: 'recent' }], hasMore: false })
+  const stray = await adapter.dispatch({ method: 'session.listPage', payload: { ungrouped: true } })
+  expect(stray?.value).toMatchObject({ items: [{ sessionId: 'stray' }], hasMore: false })
+  const invalidCursor = pageMobileSessions({ items, openSessionId: 'blank', cursor: '10:recent' })
+  expect(invalidCursor.items[0]?.sessionId).toBe('blank')
+  adapter.dispose()
+})

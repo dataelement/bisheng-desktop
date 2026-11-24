@@ -118,30 +118,58 @@ private async forwardSessionPage(
       ? listed.value.items
       : []
     const workspaceId = typeof fields.workspaceId === 'string' ? fields.workspaceId.trim() : ''
+    const openSessionId = typeof fields.openSessionId === 'string' && fields.openSessionId.trim() !== ''
+      ? fields.openSessionId.trim()
+      : undefined
+    const archived = sessionIdSet(ready.value.archivedSessionIds)
+    const pinned = sessionIdSet(ready.value.pinnedSessionIds)
+    // `ungrouped` is its own page. An empty workspaceId still means "do not
+    // filter by workspace", which is the whole list rather than the stray bucket.
+    if (fields.ungrouped === true) {
+      const accounted = new Set<string>()
+      for (const item of ready.value.items) {
+        if (!isRecord(item) || !Array.isArray(item.sessionIds)) continue
+        for (const id of item.sessionIds) {
+          if (typeof id === 'string' && id.length > 0) accounted.add(id)
+        }
+      }
+      return {
+        ok: true,
+        value: pageMobileSessions({
+          items,
+          excludeSessionIds: accounted,
+          archivedSessionIds: archived,
+          pinnedSessionIds: pinned,
+          openSessionId,
+          cursor: fields.cursor,
+          limit: fields.limit
+        })
+      }
+    }
     let sessionIds: Set<string> | undefined
     if (workspaceId !== '') {
       const workspace = ready.value.items.find((item) => workspaceIdOf(item) === workspaceId)
       if (!isRecord(workspace)) return { ok: true, value: { items: [], hasMore: false } }
-      const ids = Array.isArray(workspace.sessionIds) ? workspace.sessionIds : []
-      sessionIds = new Set(ids.filter((id): id is string => typeof id === 'string' && id.length > 0))
+      sessionIds = sessionIdSet(workspace.sessionIds)
     }
-    const archivedRaw = ready.value.archivedSessionIds
-    const archived = new Set(
-      Array.isArray(archivedRaw)
-        ? archivedRaw.filter((id): id is string => typeof id === 'string' && id.length > 0)
-        : []
-    )
     return {
       ok: true,
       value: pageMobileSessions({
         items,
         sessionIds,
         archivedSessionIds: archived,
+        pinnedSessionIds: pinned,
+        openSessionId,
         cursor: fields.cursor,
         limit: fields.limit
       })
     }
   }
+
+  /**
+   * Work-tab calls stay on the routes the desktop composer already uses.
+   * Upload chunks are reassembled here because a phone RPC body is capped.
+   */
 
 private async forwardWork(
     method: string,
@@ -333,6 +361,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 interface WorkspaceSnapshot extends Record<string, unknown> {
   items: unknown[]
   archivedSessionIds?: unknown
+  pinnedSessionIds?: unknown
 }
 
 /** Default and cap for one phone page. A page stays far under the gateway frame. */
@@ -340,38 +369,60 @@ export const SESSION_PAGE_LIMIT = 30
 const SESSION_PAGE_MAX = 100
 
 /**
+ * Sidebar segments. A blank placeholder and pinned rows sit ahead of recency,
+ * so one updatedAt keyset is not monotonic across the whole page. Each segment
+ * stays ordered by updatedAt, and the cursor names the segment it left off in.
+ */
+const SESSION_SEGMENTS = ['blank', 'pinned', 'plain'] as const
+type SessionSegment = (typeof SESSION_SEGMENTS)[number]
+
+/**
  * Cut a harness session list into one phone page.
  *
- * Harness orders only by `updatedAt`, so equal times are not stable. Sorting
- * by session id as well makes the keyset cursor repeatable. A cursor names
- * the last row already delivered; the next page is everything strictly after
- * that pair. A cursor that cannot be read starts at the first row.
+ * Membership matches the desktop sidebar's default view: subagent rows, archived
+ * rows, and blank rows other than the phone's open session stay off the page
+ * so they do not consume a slot. Within the page the open blank row is first,
+ * then pinned rows, then the rest. Each of those groups is newest-first, and
+ * equal times break ties by session id. A cursor names the segment and the last
+ * row already delivered. A cursor that cannot be read starts at the first row.
  */
 export function pageMobileSessions(input: {
   items: unknown
   sessionIds?: ReadonlySet<string>
+  excludeSessionIds?: ReadonlySet<string>
   archivedSessionIds?: ReadonlySet<string>
+  pinnedSessionIds?: ReadonlySet<string>
+  openSessionId?: string
   cursor?: unknown
   limit?: unknown
 }): { items: Record<string, unknown>[]; nextCursor?: string; hasMore: boolean } {
-  const rows: Array<{ updatedAt: number; sessionId: string; row: Record<string, unknown> }> = []
+  const pinned = input.pinnedSessionIds ?? new Set<string>()
+  const rows: Array<{
+    updatedAt: number
+    sessionId: string
+    segment: SessionSegment
+    row: Record<string, unknown>
+  }> = []
   if (Array.isArray(input.items)) {
     for (const item of input.items) {
       if (!isRecord(item) || typeof item.sessionId !== 'string' || item.sessionId.length === 0) continue
       if (input.sessionIds !== undefined && !input.sessionIds.has(item.sessionId)) continue
+      if (input.excludeSessionIds?.has(item.sessionId)) continue
       if (input.archivedSessionIds?.has(item.sessionId)) continue
+      if (item.origin === 'subagent') continue
+      if (item.blank === true && item.sessionId !== input.openSessionId) continue
       const updatedAt = typeof item.updatedAt === 'number' && Number.isFinite(item.updatedAt)
         ? item.updatedAt
         : 0
-      rows.push({ updatedAt, sessionId: item.sessionId, row: item })
+      rows.push({
+        updatedAt,
+        sessionId: item.sessionId,
+        segment: sessionSegment(item, input.openSessionId, pinned),
+        row: item
+      })
     }
   }
-  rows.sort((left, right) => {
-    if (left.updatedAt !== right.updatedAt) return right.updatedAt - left.updatedAt
-    if (left.sessionId < right.sessionId) return -1
-    if (left.sessionId > right.sessionId) return 1
-    return 0
-  })
+  rows.sort(compareSidebarRows)
   const cursor = parseSessionCursor(input.cursor)
   const start = cursor === undefined ? 0 : rows.findIndex((row) => isAfterSessionCursor(row, cursor))
   const offset = start < 0 ? rows.length : start
@@ -389,31 +440,77 @@ export function pageMobileSessions(input: {
   }
 }
 
+function sessionSegment(
+  row: Record<string, unknown>,
+  openSessionId: string | undefined,
+  pinned: ReadonlySet<string>
+): SessionSegment {
+  if (row.blank === true && row.sessionId === openSessionId) return 'blank'
+  if (typeof row.sessionId === 'string' && pinned.has(row.sessionId)) return 'pinned'
+  return 'plain'
+}
+
+function compareSidebarRows(
+  left: { updatedAt: number; sessionId: string; segment: SessionSegment },
+  right: { updatedAt: number; sessionId: string; segment: SessionSegment }
+): number {
+  const bySegment = SESSION_SEGMENTS.indexOf(left.segment) - SESSION_SEGMENTS.indexOf(right.segment)
+  if (bySegment !== 0) return bySegment
+  if (left.updatedAt !== right.updatedAt) return right.updatedAt - left.updatedAt
+  if (left.sessionId < right.sessionId) return -1
+  if (left.sessionId > right.sessionId) return 1
+  return 0
+}
+
 function sessionPageLimit(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 1) return SESSION_PAGE_LIMIT
   return Math.min(Math.floor(value), SESSION_PAGE_MAX)
 }
 
-function parseSessionCursor(value: unknown): { updatedAt: number; sessionId: string } | undefined {
+function parseSessionCursor(value: unknown): {
+  segment: SessionSegment
+  updatedAt: number
+  sessionId: string
+} | undefined {
   if (typeof value !== 'string') return undefined
   const split = value.indexOf(':')
   if (split <= 0) return undefined
-  const updatedAt = Number(value.slice(0, split))
-  const sessionId = value.slice(split + 1)
+  const segment = value.slice(0, split)
+  if (!isSessionSegment(segment)) return undefined
+  const rest = value.slice(split + 1)
+  const timeSplit = rest.indexOf(':')
+  if (timeSplit <= 0) return undefined
+  const updatedAt = Number(rest.slice(0, timeSplit))
+  const sessionId = rest.slice(timeSplit + 1)
   if (!Number.isFinite(updatedAt) || sessionId.length === 0) return undefined
-  return { updatedAt, sessionId }
+  return { segment, updatedAt, sessionId }
+}
+
+function isSessionSegment(value: string): value is SessionSegment {
+  return (SESSION_SEGMENTS as readonly string[]).includes(value)
 }
 
 function isAfterSessionCursor(
-  row: { updatedAt: number; sessionId: string },
-  cursor: { updatedAt: number; sessionId: string }
+  row: { updatedAt: number; sessionId: string; segment: SessionSegment },
+  cursor: { updatedAt: number; sessionId: string; segment: SessionSegment }
 ): boolean {
+  const bySegment = SESSION_SEGMENTS.indexOf(row.segment) - SESSION_SEGMENTS.indexOf(cursor.segment)
+  if (bySegment !== 0) return bySegment > 0
   if (row.updatedAt !== cursor.updatedAt) return row.updatedAt < cursor.updatedAt
   return row.sessionId > cursor.sessionId
 }
 
-function sessionCursor(row: { updatedAt: number; sessionId: string }): string {
-  return `${row.updatedAt}:${row.sessionId}`
+function sessionCursor(row: { updatedAt: number; sessionId: string; segment: SessionSegment }): string {
+  return `${row.segment}:${row.updatedAt}:${row.sessionId}`
+}
+
+function sessionIdSet(value: unknown): Set<string> {
+  const ids = new Set<string>()
+  if (!Array.isArray(value)) return ids
+  for (const id of value) {
+    if (typeof id === 'string' && id.length > 0) ids.add(id)
+  }
+  return ids
 }
 
 function isWorkspaceSnapshot(value: unknown): value is WorkspaceSnapshot {
@@ -424,11 +521,3 @@ function workspaceIdOf(value: unknown): string | undefined {
   if (!isRecord(value) || typeof value.workspaceId !== 'string' || value.workspaceId.length === 0) return undefined
   return value.workspaceId
 }
-
-/**
- * Fold one `workspace/follow` frame into the snapshot `workspace.list` serves.
- *
- * The Host has no unary workspace read. The opening frame is a full baseline;
- * later frames are increments. Increments that arrive before a baseline are
- * ignored, because there is no projection to apply them to.
- */
