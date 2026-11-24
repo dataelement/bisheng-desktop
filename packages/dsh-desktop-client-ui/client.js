@@ -2803,6 +2803,16 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         }
         style.textContent = `
           [data-dsh-sidebar-brand-identity] { display:none !important; }
+          /* Harness's sidebar column already tints the native material. Add
+             coverage here so a contrasting backdrop can't wash out either palette. */
+          html[data-platform=darwin] [data-dsh-sidebar-root] {
+            background-color: color-mix(in srgb, var(--dsw-specific-sidebar-fill) 76%, transparent);
+          }
+          @media (prefers-reduced-transparency: reduce) {
+            html[data-platform=darwin] [data-dsh-sidebar-root] {
+              background-color: var(--dsw-specific-sidebar-fill);
+            }
+          }
           :root { --dsh-page-title-top-spacing:56px; }
           /* Top-level page titles align with the sidebar brand row. Keep
              conversation chrome and detail/dialog headers in their own layout. */
