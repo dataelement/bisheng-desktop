@@ -2,9 +2,9 @@ name: Build BiSheng Web Runtime (Portable)
 
 on:
   pull_request:
-    branches: [main, codex/bisheng-unified]
+    branches: [main, V1.3.1, codex/bisheng-unified]
   push:
-    branches: [main, codex/bisheng-unified]
+    branches: [main, V1.3.1, codex/bisheng-unified]
   workflow_dispatch:
     inputs:
       target_platform:

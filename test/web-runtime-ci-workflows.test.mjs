@@ -14,9 +14,9 @@ test('candidate workflows cannot acquire publication permissions, secrets or tag
   for (const name of workflowNames) {
     const config = workflow(name)
     assert.deepEqual(config.permissions, { contents: 'read' }, name)
-    assert.deepEqual(config.on.push.branches, ['main', 'codex/bisheng-unified'])
+    assert.deepEqual(config.on.push.branches, ['main', 'V1.3.1', 'codex/bisheng-unified'])
     assert.equal(config.on.push.tags, undefined)
-    assert.deepEqual(config.on.pull_request.branches, ['main', 'codex/bisheng-unified'])
+    assert.deepEqual(config.on.pull_request.branches, ['main', 'V1.3.1', 'codex/bisheng-unified'])
     assert.ok(Object.hasOwn(config.on, 'workflow_dispatch'))
     for (const job of Object.values(config.jobs)) {
       assert.equal(job.permissions, undefined)
