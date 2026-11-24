@@ -28,7 +28,7 @@ const USAGE_FIELDS = [
   'reasoningTokens'
 ] as const
 
-const SESSION_ROW_FIELDS = ['updatedAt', 'running', 'blank'] as const
+const SESSION_ROW_FIELDS = ['updatedAt', 'running', 'blank', 'origin'] as const
 
 // Harness 0.2.1 keeps the preset inside the projection, not on the row.
 const SESSION_VALUE_FIELDS = [
