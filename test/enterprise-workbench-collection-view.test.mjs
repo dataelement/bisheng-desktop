@@ -8,7 +8,7 @@ const key = 'a'.repeat(16), id = '1'.repeat(32)
 const item = { id, displayName: 'Finance', packageName: 'finance', description: 'Reports', currentVersion: { version: '1.0.0' } }
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
 afterEach(async () => { if (root) await act(async () => root.unmount()); dom?.window.close(); vi.unstubAllGlobals() })
-async function mount({ revoked = [], kind = 'enterprise', cloud = [], market = [], marketFavorites = [], favoritesOnly = false, data = [item], saved = [], installResult = { application: 'restart-required', result: { application: 'restart-required', bundle: 'finance' } } } = {}) {
+async function mount({ search, revoked = [], kind = 'enterprise', cloud = [], market = [], marketFavorites = [], favoritesOnly = false, data = [item], saved = [], installResult = { application: 'restart-required', result: { application: 'restart-required', bundle: 'finance' } } } = {}) {
   dom = new JSDOM('<html><body><div id="root"></div></body></html>', { url: 'http://localhost' })
   vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   let revision = 0
@@ -29,8 +29,8 @@ async function mount({ revoked = [], kind = 'enterprise', cloud = [], market = [
   const service = { subscribe: () => () => {}, getSnapshot: () => native, recordApplication: vi.fn(), refreshNative: vi.fn(async () => {}), toggleFavorite: vi.fn(async () => {}) }
   const Component = createCollection(React, { locale: { bind: () => label => copy.zh[label] } }, service)
   root = createRoot(document.getElementById('root'))
-  await act(async () => { root.render(React.createElement(Component, { favoritesOnly, kind })); await tick() })
-  return { calls, service, fetcher }
+  await act(async () => { root.render(React.createElement(Component, { favoritesOnly, kind, search })); await tick() })
+  return { calls, service, fetcher, search: async value => act(async () => { root.render(React.createElement(Component, { favoritesOnly, kind, search: value })); await tick() }) }
 }
 it('removes a revoked favorite using the persisted revision and account, without requiring catalog membership', async () => {
   const { calls } = await mount({ favoritesOnly: true, data: [], saved: [{ kind: 'enterprise', id, title: 'Retired', at: 1 }] })
@@ -73,4 +73,17 @@ it('explains revoked installed workbenches while retaining their content', async
   expect(document.body.textContent).toContain('已被收回授权并停用')
   expect(document.body.textContent).toContain('文件和会话仍保留')
   expect(document.body.textContent).toContain('finance')
+})
+
+for (const kind of ['enterprise', 'cloud']) it(`filters ${kind} with the header query and restores rows when cleared`, async () => {
+  const view = await mount({ kind, search: '', cloud: [{ id, name: 'Finance', description: 'Reports' }] })
+  expect(document.querySelector('[aria-label="搜索工作台"]')).toBeNull()
+  expect(document.querySelectorAll('article')).toHaveLength(1)
+  await view.search(' Finance ')
+  expect(document.querySelectorAll('article')).toHaveLength(1)
+  await view.search('does-not-exist')
+  expect(document.querySelectorAll('article')).toHaveLength(0)
+  expect(document.body.textContent).toContain('没有找到匹配的工作台')
+  await view.search('')
+  expect(document.querySelectorAll('article')).toHaveLength(1)
 })
