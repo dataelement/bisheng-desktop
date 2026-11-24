@@ -17,7 +17,9 @@ import { zipEntries } from './enterprise-bundle-fixture.mjs'
 
 const paths: string[] = []
 const target = `${process.platform}-${process.arch}`
-afterEach(async () => { for (const path of paths.splice(0)) await rm(path, { recursive: true, force: true }) })
+// The isolation fixture copies the full peer closure. Windows removal can exceed
+// Vitest's 10-second default; await cleanup just as enterprise-market does.
+afterEach(async () => { for (const path of paths.splice(0)) await rm(path, { recursive: true, force: true }) }, 120_000)
 
 async function home() {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'enterprise-community-')))
