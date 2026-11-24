@@ -204,6 +204,7 @@ test('NUL-safe collection includes every nested untracked source and unusual fil
   f.git('add', '--', 'untracked-dir')
   const unusual = 'untracked-dir/ space\nand\ttab.js'
   f.stage(unusual, '100644')
+  assert.ok(f.git('ls-files', '-z').split('\0').includes(unusual), 'Git must accept the unusual index path before testing boundary collection')
   assert.deepEqual(f.check().illegalFiles, [...files, unusual].sort())
 })
 

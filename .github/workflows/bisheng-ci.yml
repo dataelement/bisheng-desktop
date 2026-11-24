@@ -80,6 +80,9 @@ jobs:
         run: npm ci --prefer-offline --no-audit --no-fund
       - name: Verify pinned pnpm
         run: node node_modules/pnpm/bin/pnpm.cjs --version | node -e "let s='';process.stdin.on('data',x=>s+=x).on('end',()=>{if(s.trim()!=='10.34.5')process.exit(1)})"
+      - name: Diagnose Windows enterprise installation and path regressions
+        if: matrix.platform == 'win32'
+        run: node node_modules/vitest/vitest.mjs run test/enterprise-community-package.test.ts test/enterprise-boundary-gate.test.mjs --maxWorkers=2
       - run: npm run typecheck
       - name: Build on supported native Office targets
         if: matrix.desktop

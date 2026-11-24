@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path, { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { create } from 'tar'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, onTestFailed } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { mountRootInclude } from '@deepseek-ai/dsh-app-boot'
 import { Loader } from '@deepseek-ai/cordis-plugin-loader'
@@ -24,6 +24,16 @@ async function home() {
   paths.push(directory)
   await mkdir(join(directory, 'profiles/node_modules'), { recursive: true })
   return directory
+}
+
+// Only synthetic local packages are installed here. Retain the pnpm phase and
+// missing path on fixture failure; production errors intentionally redact them.
+async function installFixtureBundle(...args: Parameters<typeof installOfflineBundle>) {
+  const traces: string[] = []
+  onTestFailed(() => console.error(traces.join('\n')))
+  const options = { ...args[4], installOptions: { onTrace: (line: string) => traces.push(line) } }
+  args[4] = options
+  return installOfflineBundle(...args)
 }
 
 function communityZip(files: Record<string, Buffer>, name = 'company-demo', version = '1.0.0') {
@@ -58,7 +68,7 @@ describe('community npm packages', () => {
       'package.json': Buffer.from(JSON.stringify({ name: 'company-demo', version: '1.0.0', type: 'module', main: 'index.js' })),
       'index.js': source
     })
-    await expect(installOfflineBundle(root, packed.bytes, packed.expected, target, {
+    await expect(installFixtureBundle(root, packed.bytes, packed.expected, target, {
       dshEntryPath: join(root, 'missing-host.js')
     })).rejects.toThrow(/Enterprise host entry was not found/)
   })
@@ -94,7 +104,7 @@ describe('community npm packages', () => {
     await create({ cwd: stage, file: archive, gzip: true, portable: true }, ['package'])
     const bytes = await readFile(archive)
     const expected = { name: 'company-demo', version: '1.2.3', digest: sha256(bytes) }
-    const generation = await installOfflineBundle(root, bytes, expected, target, { dshEntryPath: join(process.cwd(), 'node_modules/@deepseek-ai/dsh/lib/bin.js') })
+    const generation = await installFixtureBundle(root, bytes, expected, target, { dshEntryPath: join(process.cwd(), 'node_modules/@deepseek-ai/dsh/lib/bin.js') })
     expect(generation.directory).toContain(join('profiles', '.generations', 'live'))
     expect(() => assertEnterpriseGenerationPath(root, { ...generation, generation_id: generation.id })).not.toThrow()
     expect(() => assertEnterpriseGenerationPath(root, { ...generation, generation_id: generation.id, integrity: undefined })).toThrow('Invalid enterprise generation path.')
@@ -116,7 +126,7 @@ describe('community npm packages', () => {
       'index.js': Buffer.from(source),
       'cordis.patch.yml': Buffer.from('- insert:\n    - id: community-entry\n      name: ./index.js\n')
     })
-    const generation = await installOfflineBundle(root, packed.bytes, packed.expected, target, { dshEntryPath: join(process.cwd(), 'node_modules/@deepseek-ai/dsh/lib/bin.js') })
+    const generation = await installFixtureBundle(root, packed.bytes, packed.expected, target, { dshEntryPath: join(process.cwd(), 'node_modules/@deepseek-ai/dsh/lib/bin.js') })
     const context = new Context()
     const loaderFiber = context.plugin(Loader, { baseUrl: pathToFileURL(`${root}/`).href })
     await loaderFiber
@@ -136,7 +146,7 @@ describe('community npm packages', () => {
         'index.js': Buffer.from('export function apply() { throw new Error("bundle child failed") }\n'),
         'cordis.patch.yml': Buffer.from('- insert:\n    - id: community-entry\n      name: ./index.js\n')
       }, 'company-demo', '1.0.1')
-      const failed = await installOfflineBundle(root, broken.bytes, broken.expected, target, { dshEntryPath: join(process.cwd(), 'node_modules/@deepseek-ai/dsh/lib/bin.js') })
+      const failed = await installFixtureBundle(root, broken.bytes, broken.expected, target, { dshEntryPath: join(process.cwd(), 'node_modules/@deepseek-ai/dsh/lib/bin.js') })
       await expect(runtime!({ ...failed, name: broken.expected.name, config: {} })).rejects.toThrow(/bundle child failed|did not activate|not ready/)
     } finally { await context.loader.remove(ownerId); await loaderFiber.dispose() }
   })
