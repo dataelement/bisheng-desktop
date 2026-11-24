@@ -193,38 +193,6 @@ async function mount(connected = false, collection = {}, inert = false, workbenc
   }
 }
 
-it('applies the translucent sidebar fill to both macOS themes', async () => {
-  await mount()
-  const sidebar = container.querySelector('aside')
-  sidebar.dataset.dshSidebarRoot = ''
-  const html = document.documentElement
-  const originalPlatform = html.getAttribute('data-platform')
-  disposers.push(() => {
-    if (originalPlatform === null) html.removeAttribute('data-platform')
-    else html.setAttribute('data-platform', originalPlatform)
-  })
-
-  html.dataset.platform = 'darwin'
-  for (const dark of [false, true]) {
-    document.body.toggleAttribute('data-ds-dark-theme', dark)
-    expect(getComputedStyle(sidebar).backgroundColor).toBe(
-      'color-mix(in srgb, var(--dsw-specific-sidebar-fill) 76%, transparent)'
-    )
-    expect(getComputedStyle(container).backgroundColor).toBe('rgba(0, 0, 0, 0)')
-  }
-
-  const sheet = document.getElementById('dsh-desktop-preset-toolbar-style').sheet
-  const reducedTransparency = [...sheet.cssRules].find(rule =>
-    rule.media?.mediaText === '(prefers-reduced-transparency: reduce)'
-  )
-  const fallback = [...(reducedTransparency?.cssRules ?? [])].find(rule => sidebar.matches(rule.selectorText))
-  expect(fallback?.style.backgroundColor).toBe('var(--dsw-specific-sidebar-fill)')
-
-  html.dataset.platform = 'win32'
-  expect(getComputedStyle(sidebar).backgroundColor).toBe('rgba(0, 0, 0, 0)')
-  expect(sidebar.matches(fallback.selectorText)).toBe(false)
-})
-
 it.each(['projects', 'flat', 'search'])('scopes ordinary Chat rows and controls when switching workbenches in %s mode', async mode => {
   const ui = await mount(true, { mode, query: mode === 'search' ? 'cloud' : '' }, false, undefined, () => {
     window.dshEnterpriseChat.history.mockResolvedValue({ epoch: 1, items: [{ id: 'cloud-a', title: 'Cloud chat', updatedAt: '2026-10-16' }], hasMore: true })

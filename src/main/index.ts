@@ -3497,7 +3497,9 @@ async function showMobilePairing(): Promise<void> {
   }
 
   if (mobileWindow && !mobileWindow.isDestroyed()) mobileWindow.destroy()
-  nativeTheme.themeSource = harnessThemePreference()
+  // The active Harness theme already drives macOS window material. The legacy
+  // settings file may be gone after migration and would reset it to System.
+  if (process.platform !== 'darwin') nativeTheme.themeSource = harnessThemePreference()
   mobileWindow = new BrowserWindow({
     width: 560,
     height: 720,
