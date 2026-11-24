@@ -82,3 +82,14 @@ test('native candidate checks retain all Desktop targets and ordinary Node tests
   assert.ok(job.steps.some(step => step.run?.includes('ops/ci/desktop-artifacts.mjs development')))
   assert.ok(job.steps.every(step => !step.uses?.startsWith('actions/upload-artifact@')))
 })
+
+
+test('all candidate jobs disable checkout newline conversion before checkout', () => {
+  for (const name of workflowNames) {
+    for (const job of Object.values(workflow(name).jobs)) {
+      const preparation = job.steps.findIndex(step => step.run === 'git config --global core.autocrlf false')
+      const checkout = job.steps.findIndex(step => step.uses?.startsWith('actions/checkout@'))
+      assert.ok(preparation >= 0 && preparation < checkout, name)
+    }
+  }
+})

@@ -52,6 +52,9 @@ jobs:
       run:
         shell: bash
     steps:
+      # The boundary gate compares raw bytes against reviewed Git objects.
+      - name: Preserve repository bytes on checkout
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0

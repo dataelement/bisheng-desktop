@@ -228,3 +228,20 @@ test('legacy enterprise adapter deletion passes, edits remain blocked', t => {
   f.git('commit', '-m', 'remove migrated enterprise adapter')
   assert.deepEqual(f.check().illegalFiles, [])
 })
+
+
+test('LF checkout preserves reviewed bytes while CRLF conversion fails the exact override gate', t => {
+  const f = fixture(t)
+  // A downstream commit diverged, then restored the reviewed upstream file.
+  // Git reports this path in the committed diff, so the gate checks worktree bytes.
+  f.put('src/host/core.js', 'downstream change\n')
+  f.git('add', '.')
+  f.git('commit', '-m', 'diverged')
+  f.git('checkout', 'upstream/V0.14.1', '--', 'src/host/core.js')
+  rmSync(path.join(f.cwd, 'src/host/core.js'))
+  f.git('-c', 'core.autocrlf=true', 'checkout', '--', 'src/host/core.js')
+  assert.deepEqual(f.check().illegalFiles, ['src/host/core.js'])
+  rmSync(path.join(f.cwd, 'src/host/core.js'))
+  f.git('-c', 'core.autocrlf=false', 'checkout', '--', 'src/host/core.js')
+  assert.deepEqual(f.check().illegalFiles, [])
+})
