@@ -50,7 +50,7 @@ jobs:
       DSH_TELEMETRY_DISABLED: '1'
     defaults:
       run:
-        shell: bash
+        shell: ${{ matrix.platform == 'win32' && 'pwsh' || 'bash' }}
     steps:
       # The boundary gate compares raw bytes against reviewed Git objects.
       - name: Preserve repository bytes on checkout
@@ -67,6 +67,7 @@ jobs:
       - name: Verify native ordinary Node target
         run: node -e "if(process.platform !== '${{ matrix.platform }}' || process.arch !== '${{ matrix.arch }}' || process.version !== 'v24.15.0') process.exit(1)"
       - name: Fetch reviewed upstream baseline
+        shell: bash
         run: |
           git remote add upstream https://github.com/dataelement/dsh-desktop.git
           baseline_commit=$(node -e "const b=require('./ops/ci/upstream-baseline.json');if(!/^[a-f0-9]{40}$/.test(b.commit))process.exit(1);process.stdout.write(b.commit)")
@@ -80,9 +81,15 @@ jobs:
         run: npm ci --prefer-offline --no-audit --no-fund
       - name: Verify pinned pnpm
         run: node node_modules/pnpm/bin/pnpm.cjs --version | node -e "let s='';process.stdin.on('data',x=>s+=x).on('end',()=>{if(s.trim()!=='10.34.5')process.exit(1)})"
+      - name: Verify native Windows tar
+        if: matrix.platform == 'win32'
+        run: |
+          $expectedTar = Join-Path $env:SystemRoot 'System32/tar.exe'
+          if ((Get-Command tar.exe).Source -ne $expectedTar) { throw 'Expected Windows native tar, not Git Bash tar' }
+          tar.exe --version
       - name: Verify Windows enterprise installation and path regressions
         if: matrix.platform == 'win32'
-        run: node node_modules/vitest/vitest.mjs run test/enterprise-community-package.test.ts test/enterprise-market.test.ts test/enterprise-boundary-gate.test.mjs --maxWorkers=2
+        run: node node_modules/vitest/vitest.mjs run test/enterprise-community-package.test.ts test/enterprise-market.test.ts test/enterprise-boundary-gate.test.mjs test/generation-build-approval.integration.test.js test/packaged-layout.test.mjs --maxWorkers=2
       - run: npm run typecheck
       - name: Build on supported native Office targets
         if: matrix.desktop
@@ -92,7 +99,7 @@ jobs:
         run: npm test -- --maxWorkers=2
       - name: Run Linux pure Web regressions without native Office preparation
         if: ${{ !matrix.desktop }}
-        run: node node_modules/vitest/vitest.mjs run test/web-runtime-ci.test.mjs test/web-runtime-ci-workflows.test.mjs test/web-runtime-offline-launcher.test.mjs test/web-runtime-system-proxy.test.mjs --maxWorkers=2
+        run: node node_modules/vitest/vitest.mjs run test/web-runtime-ci.test.mjs test/web-runtime-ci-workflows.test.mjs test/web-runtime-offline-launcher.test.mjs test/web-runtime-system-proxy.test.mjs test/enterprise-linux-installer.test.mjs --maxWorkers=2
       - name: Verify native Desktop loader
         if: matrix.desktop
         run: node scripts/verify/verify-target.mjs ${{ matrix.platform }} ${{ matrix.arch }}

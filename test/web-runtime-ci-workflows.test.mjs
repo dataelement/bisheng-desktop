@@ -93,3 +93,14 @@ test('all candidate jobs disable checkout newline conversion before checkout', (
     }
   }
 })
+
+
+test('Windows uses its native shell while Linux executes the enterprise installer scripts', () => {
+  const job = workflow('bisheng-ci').jobs['native-checks']
+  assert.equal(job.defaults.run.shell, "${{ matrix.platform == 'win32' && 'pwsh' || 'bash' }}")
+  assert.equal(job.steps.find(step => step.name === 'Fetch reviewed upstream baseline').shell, 'bash')
+  const tar = job.steps.find(step => step.name === 'Verify native Windows tar')
+  assert.equal(tar.if, "matrix.platform == 'win32'")
+  assert.match(tar.run, /System32\/tar.exe/)
+  assert.match(job.steps.find(step => step.name?.includes('Linux pure Web')).run, /test\/enterprise-linux-installer.test.mjs/)
+})

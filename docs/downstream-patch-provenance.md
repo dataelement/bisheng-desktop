@@ -57,3 +57,8 @@
 共 49 个 patch，当前相对 `upstream/V0.14.1` 的 patch 文件差异为 0。
 
 本地开发功能不依赖修改这些 patch 文件。公共源码覆盖登记在 `scripts/downstream-public-overrides.mjs`，门禁按 blob hash 精确校验，未登记的底座改动仍会失败。
+
+
+## Windows CI 平台归属修正
+
+`test/packaged-layout.test.mjs` 中下游新增的两个 BISHENG Linux SUID 安装脚本测试迁至 `test/enterprise-linux-installer.test.mjs`。断言保持不变，Linux CI 明确执行；Windows 不执行 POSIX shell/权限用例，其余打包布局测试继续运行。原文件的精确 blob 记录随此搬迁更新，未扩大路径白名单。Windows CI 使用 PowerShell 和系统原生 tar，公共 generation 构建审批测试保持原样。本次未修改 upstream。

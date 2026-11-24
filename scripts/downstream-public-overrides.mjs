@@ -13,7 +13,7 @@ export const PUBLIC_OVERRIDES = [
   { file: 'test/desktop-client-locales.test.mjs', oid: '5bc5e52caab6b0451105b42d7818a35ab6b1ed5a', reason: 'downstream client UI regression coverage' },
   { file: 'test/desktop-client-ui.test.ts', oid: 'fe02280edbf0cbff7d9ae9468d8329de784c47ac', reason: 'downstream client UI regression coverage' },
   { file: 'test/linux-packaging.test.ts', oid: 'e1dd535053182f68c9fb16b3e689b5ec5ac104cc', reason: 'BISHENG Linux packaging coverage' },
-  { file: 'test/packaged-layout.test.mjs', oid: '16c597d51b91822e70c958ac8f0e2d8ea2468e99', reason: 'BISHENG package layout coverage' },
+  { file: 'test/packaged-layout.test.mjs', oid: 'a600a0d3a071fcc42cd2c7d0398c248c0e19cc34', reason: 'BISHENG package layout coverage' },
   { file: 'test/repair-draft-ui.test.ts', oid: '4ed0e86106c1a16c4c26d19147f607bbcc3bb7a5', reason: 'downstream repair UI coverage' },
   { file: 'test/shell/deep-links.test.ts', oid: '804387cceb609ee3d3f5cbdf6afcf5a87e5275ec', reason: 'enterprise deep-link regression coverage' },
   { file: 'test/shell/product-identity.test.ts', oid: '0638a19805e219cbe07d406fe4120ee770c8323a', reason: 'upstream candidate: product protocol scheme regression coverage' },
