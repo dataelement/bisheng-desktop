@@ -40,13 +40,13 @@ function git(cwd, args, input) {
 const splitPaths = text => text.split('\0').filter(Boolean)
 
 export function getUpstreamBase(cwd, upstreamBase = process.env.UPSTREAM_BASE) {
-  const ref = upstreamBase === undefined ? 'upstream/bisheng-adaptor' : upstreamBase
+  const ref = upstreamBase === undefined ? 'upstream/V0.14.1' : upstreamBase
   if (!ref || ref.startsWith('-') || /[\0\r\n]/.test(ref)) throw new Error('无效 UPSTREAM_BASE')
   try {
     const commit = git(cwd, ['rev-parse', '--verify', '--end-of-options', ref + '^{commit}']).trim()
     return { ref, commit }
   } catch {
-    throw new Error('无法验证上游基准 ' + JSON.stringify(ref) + '；请 fetch 已评审的 upstream/bisheng-adaptor 或显式设置 UPSTREAM_BASE。禁止回退到 origin/main 或 HEAD~1。')
+    throw new Error('无法验证上游基准 ' + JSON.stringify(ref) + '；请 fetch 已评审的 upstream/V0.14.1 或显式设置 UPSTREAM_BASE。禁止回退到 origin/main 或 HEAD~1。')
   }
 }
 

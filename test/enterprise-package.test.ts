@@ -53,7 +53,7 @@ describe('DSH Desktop enterprise package', () => {
 
   it('keeps model information without per-model quotas and uses shared credits for availability', async () => {
     const client = await readFile(path.join(projectRoot, 'packages/dsh-desktop-enterprise/client.js'), 'utf8')
-    const names = ['modelDisplayParts', 'isModelAvailable', 'renderModelRow']
+    const names = ['modelDisplayParts', 'isModelAvailable', 'pricingHintBadge', 'renderModelRow']
     const functions = names.map(name => client.match(new RegExp(`    function ${name}\\([^]*?\\n    \\}`))?.[0])
     expect(functions.every(Boolean)).toBe(true)
     const require = createRequire(import.meta.url)

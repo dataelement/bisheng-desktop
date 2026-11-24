@@ -4,6 +4,10 @@ export interface EnterpriseChatPresentation {
   theme: 'light' | 'dark'
   locale?: 'zh' | 'en'
   settings?: EnterpriseSettingsSection
+  /** Keep the outgoing Work frame while the native landing gets a chance to paint. */
+  landingHandoff?: true
+  /** Measured Work landing input card width in host CSS pixels. */
+  landingComposerWidth?: number
   /** Host surfaces and ink resolved from the active Harness theme; absent when they cannot be sampled. */
   palette?: EnterprisePalette
 }
@@ -14,6 +18,16 @@ export interface EnterpriseChatFrame {
   bounds: EnterpriseChatPresentation['bounds']
 }
 
+/** Blank Chat geometry in host CSS pixels and optional visual details of its bottom controls. */
+export interface EnterpriseChatLandingGeometry {
+  title: EnterpriseChatPresentation['bounds']
+  composer: EnterpriseChatPresentation['bounds']
+  seat: EnterpriseChatPresentation['bounds']
+  /** Closed selector's selected label, never an input or search value. */
+  model?: { label: string; width: number }
+  sendOpacity?: number
+}
+
 /** Roles the host samples from its own tokens; the embedded document never reads host CSS. */
 export const ENTERPRISE_PALETTE_ROLES = ['surface', 'raised', 'strong', 'labelPrimary', 'labelSecondary', 'labelTertiary', 'borderBase', 'borderDeep'] as const
 export type EnterprisePaletteRole = (typeof ENTERPRISE_PALETTE_ROLES)[number]
@@ -21,6 +35,8 @@ export type EnterprisePaletteRole = (typeof ENTERPRISE_PALETTE_ROLES)[number]
 export type EnterprisePalette = Record<EnterprisePaletteRole, readonly [number, number, number]> & {
   /** Composer fill, sampled independently from page and card surfaces. */
   composer?: readonly [number, number, number]
+  /** Opaque tint shared by the macOS window strip and the embedded Square banner. */
+  squareBanner?: readonly [number, number, number]
   /** Mask retains alpha so the host and embedded dialog dim the same underlying content. */
   mask?: readonly [number, number, number, number]
 }
@@ -37,12 +53,13 @@ function parseEnterprisePalette(value: unknown): EnterprisePalette | undefined {
     return [role, [channels[0] as number, channels[1] as number, channels[2] as number]]
   })
   const palette: EnterprisePalette = Object.fromEntries(entries) as Record<EnterprisePaletteRole, readonly [number, number, number]>
-  if (input.composer !== undefined) {
-    const channels = input.composer
+  for (const role of ['composer', 'squareBanner'] as const) {
+    const channels = input[role]
+    if (channels === undefined) continue
     if (!Array.isArray(channels) || channels.length !== 3 || channels.some(channel =>
       typeof channel !== 'number' || !Number.isInteger(channel) || channel < 0 || channel > 255
     )) throw new Error('Invalid Chat palette.')
-    palette.composer = [channels[0], channels[1], channels[2]]
+    palette[role] = [channels[0], channels[1], channels[2]]
   }
   if (input.mask !== undefined) {
     const channels = input.mask
@@ -68,6 +85,8 @@ export interface EnterpriseChatViewState {
   navigation?: EnterpriseNavigation
   path?: string
   epoch?: number
+  /** Account metadata can change without changing the native view epoch or connection. */
+  accountRevision?: number
   landing?: boolean
   conversationId?: string
   /** Stable, opaque enterprise identity for account-scoped desktop project storage. */
@@ -93,6 +112,14 @@ export function parseChatPresentation(value: unknown): EnterpriseChatPresentatio
   if (input.locale !== undefined && input.locale !== 'zh' && input.locale !== 'en') {
     throw new Error('Invalid Chat locale.')
   }
+  if (input.landingHandoff !== undefined && input.landingHandoff !== true) {
+    throw new Error('Invalid Chat landing handoff.')
+  }
+  const landingComposerWidth = input.landingComposerWidth
+  if (landingComposerWidth !== undefined && (typeof landingComposerWidth !== 'number' ||
+      !Number.isFinite(landingComposerWidth) || landingComposerWidth <= 0 || landingComposerWidth > 20000)) {
+    throw new Error('Invalid Chat landing composer width.')
+  }
   const settings = input.settings === undefined ? undefined : parseEnterpriseSettingsSection(input.settings)
   const palette = parseEnterprisePalette(input.palette)
   const bounds = input.bounds as Record<string, unknown> | undefined
@@ -104,6 +131,8 @@ export function parseChatPresentation(value: unknown): EnterpriseChatPresentatio
     theme: input.theme as 'light' | 'dark',
     locale: input.locale,
     settings,
+    ...(input.landingHandoff ? { landingHandoff: true } : {}),
+    ...(landingComposerWidth === undefined ? {} : { landingComposerWidth }),
     ...(palette ? { palette } : {}),
     bounds: { x: Number(bounds.x), y: Number(bounds.y), width: Number(bounds.width), height: Number(bounds.height) }
   }

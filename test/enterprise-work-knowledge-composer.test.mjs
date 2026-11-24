@@ -1,10 +1,11 @@
+import { shippedFixture, workUiBundle } from './enterprise-harness-fixture.mjs'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import * as zod from 'zod'
 import { describe, expect, it, vi } from 'vitest'
 
 let plugin
-vm.runInNewContext(readFileSync(new URL('../packages/dsh-desktop-client-ui/client.js', import.meta.url), 'utf8'), {
+vm.runInNewContext(workUiBundle, {
   window: { __ModuleLoader__: { load: ({ factory }) => { plugin = factory(() => ({})) } } }
 })
 
@@ -179,14 +180,8 @@ describe('Work inline knowledge references', () => {
 })
 
 const native = readFileSync(new URL('../node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js', import.meta.url), 'utf8')
-function nativeRegion(name) {
-  const start = native.indexOf('//#region ' + name)
-  if (start < 0) throw new Error('Missing native region: ' + name)
-  return native.slice(start, native.indexOf('//#endregion', start))
-}
-const sinkStart = native.indexOf('sinkSerialized(attempt, draft, mode) {')
-const sinkEnd = native.indexOf('\n\t\t\tnotifySubmission(', sinkStart)
-const nativeSink = new Function('zod', nativeRegion('lib/types/client/draft.js') + '\n' + nativeRegion('lib/types/client/input/prompt.js') + '\nreturn ({' + native.slice(sinkStart, sinkEnd) + '}).sinkSerialized')(zod)
+const nativeFixture = shippedFixture(native)
+const nativeSink = new Function('zod', nativeFixture.declarations('snapshotDraft', 'serializeDraftPrompt') + '\nreturn ({' + nativeFixture.method('sinkSerialized') + '}).sinkSerialized')(zod)
 function sinkFactory(actx, session) {
   const beforeSubmit = commandHookFactory(actx, session)
   const sink = this.sink
@@ -214,7 +209,7 @@ it('native send waits for the submitted reference snapshot for prose, slash prom
     expect(trace).toEqual(['scope', 'sent'])
     expect(actx.serial.mock.calls.at(-1)[2].references).toEqual(text ? refs : [])
   }
-  expect(native).toContain('await this.deps.beforeSubmit?.(occurrences, attempt.signal)')
+  expect(nativeFixture.method('sinkSerialized')).toMatch(/await this\.deps\.beforeSubmit\?\.\(occurrences,\s*attempt\.signal\)/)
 })
 
 it('native send blocks on revoked permission or cancellation instead of dispatching', async () => {
@@ -228,13 +223,10 @@ it('native send blocks on revoked permission or cancellation instead of dispatch
 })
 
 function commandHookFactory(actx, session) {
-  const match = native.match(/beforeSubmit: (async \(references, signal, command\) => \{[\s\S]*?\n\s*\}),/)
-  if (!match) throw new Error('Harness beforeSubmit reference-scope admission hook is missing')
   const binding = { sessionId: session.sessionId }
-  return new Function('actx', 'binding', 'return ' + match[1])
-    .call({ sessions: () => ({ binding: () => binding }) }, actx, binding)
+  return new Function('actx', 'binding', 'return ' + nativeFixture.property('beforeSubmit')).call({ sessions: () => ({ binding: () => binding }) }, actx, binding)
 }
-const commandSubmitFactory = new Function(`return function ${native.slice(native.indexOf('beginSubmit(attempt, claim, args) {'), native.indexOf('\n\t\t\t/** Late-settlement guard:', native.indexOf('beginSubmit(attempt, claim, args) {')))}`)
+const commandSubmitFactory = new Function('return ({' + nativeFixture.method('beginSubmit') + '}).beginSubmit')
 
 function commandFixture(prepare, occurrences) {
   let finish

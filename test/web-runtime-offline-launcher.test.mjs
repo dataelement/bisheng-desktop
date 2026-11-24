@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { test, onTestFinished } from 'vitest'
 import { fileURLToPath } from 'node:url'
+import { emptyState } from '../packages/dsh-desktop-enterprise/cloud-workbench-state.js'
 
 const source = fileURLToPath(new URL('../build/web-runtime/dsh-offline.mjs', import.meta.url))
 const cmd = fileURLToPath(new URL('../build/web-runtime/dsh-offline.cmd', import.meta.url))
@@ -20,6 +21,12 @@ function fixture() {
   const entry = path.join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
   mkdirSync(path.dirname(entry), { recursive: true })
   writeFileSync(entry,     "console.log(JSON.stringify({ args: process.argv.slice(2), home: process.env.DSH_HOME, flag: process.env.DSH_WEB_RUNTIME, cwd: process.cwd() })); process.exit(23)")
+  const enterprise = path.join(root, 'node_modules', 'dsh-desktop-enterprise')
+  mkdirSync(enterprise)
+  writeFileSync(path.join(enterprise, 'package.json'), JSON.stringify({ type: 'module', exports: { './legacy-cloud-state': './legacy-cloud-state.js' } }))
+  for (const name of ['legacy-cloud-state.js', 'cloud-workbench-state.js', 'cloud-record.js']) {
+    copyFileSync(fileURLToPath(new URL('../packages/dsh-desktop-enterprise/' + name, import.meta.url)), path.join(enterprise, name))
+  }
   return root
 }
 
@@ -57,6 +64,19 @@ test('preserves incomplete existing profile and fails clearly', () => {
   assert.equal(result.status, 1)
   assert.match(result.stderr, /Web profile is incomplete: cordis.yml/)
   assert.equal(readFileSync(path.join(profile, 'package.json'), 'utf8'), 'user data')
+})
+
+test('projects legacy cloud state before launching Harness and preserves its original bytes', () => {
+  const root = fixture()
+  const directory = path.join(root, 'data', 'desktop-workbenches')
+  mkdirSync(directory, { recursive: true })
+  const original = JSON.stringify({ revision: 4, state: { ...emptyState(), cloudWorkbenches: {}, cloudDevelopmentSessions: {} } })
+  writeFileSync(path.join(directory, 'state.json'), original)
+  const entry = path.join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+  writeFileSync(entry, "const fs = require('node:fs'); const path = require('node:path'); const saved = JSON.parse(fs.readFileSync(path.join(process.env.DSH_HOME, 'desktop-workbenches/state.json'))); if ('cloudWorkbenches' in saved.state || saved.revision !== 5) process.exit(1)")
+  const result = run(root, 'web')
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(readFileSync(path.join(directory, 'enterprise-cloud-v131.json'), 'utf8'), original)
 })
 
 test('Windows command shim delegates without blocks or package installation', () => {

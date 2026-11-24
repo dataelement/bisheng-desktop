@@ -2,7 +2,7 @@ import { LlmAdapter, type GenerateOptions, type LlmModelInfo, type LlmProviderIn
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type { EnterpriseModel } from './contract.js'
 
-export type EnterpriseAdapterModel = Pick<EnterpriseModel, 'id' | 'display_name' | 'reasoning' | 'capabilities'>
+export type EnterpriseAdapterModel = Pick<EnterpriseModel, 'id' | 'display_name' | 'reasoning' | 'context_window' | 'max_tokens' | 'input_modalities' | 'capabilities'>
 export interface EnterpriseAdapterOptions {
   models(): readonly EnterpriseAdapterModel[]
   providerName?(): string

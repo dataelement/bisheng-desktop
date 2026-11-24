@@ -49,12 +49,12 @@ jobs:
         shell: bash
         run: |
           git remote add upstream https://github.com/dataelement/dsh-desktop.git
-          git fetch --no-tags upstream bisheng-adaptor:refs/remotes/upstream/bisheng-adaptor
-          git rev-parse --verify upstream/bisheng-adaptor
+          git fetch --no-tags upstream V0.14.1:refs/remotes/upstream/V0.14.1
+          git rev-parse --verify upstream/V0.14.1
       - name: Verify downstream boundary
         run: npm run verify:boundary
         env:
-          UPSTREAM_BASE: upstream/bisheng-adaptor
+          UPSTREAM_BASE: upstream/V0.14.1
       - name: Install locked build dependencies with postinstall
         run: npm ci --prefer-offline --no-audit --no-fund
       - name: Verify pinned pnpm

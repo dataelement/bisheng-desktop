@@ -55,12 +55,6 @@ async function client(initial, language = 'zh', workbenches) {
 const account = { connected: true, base: 'https://bisheng.example', tenant: { id: '1', name: '企业一' }, user: { id: '20' }, sessionExpiresAt: new Date(Date.now() + 60000).toISOString() }
 
 describe('enterprise plugins entry', () => {
-  it('registers the enterprise workbench collection through the host slot', async () => {
-    const registerMarketCollection = vi.fn(() => () => {})
-    await client(account, 'zh', { registerMarketCollection })
-    expect(registerMarketCollection).toHaveBeenCalledWith(expect.objectContaining({ id: 'enterprise', label: '来自企业', order: 10, render: expect.any(Function) }))
-  })
-
   it('adds 来自企业 after login, replaces account context on tenant switch, and removes it on logout', async () => {
     const app = await client({ connected: false })
     expect(app.registrations.has('enterprise-market')).toBe(false)

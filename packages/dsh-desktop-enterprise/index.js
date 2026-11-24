@@ -1,3 +1,9 @@
+import { parseDisplayProfile } from './display-profile.js'
+import { createAuditFeedbackSync } from './audit-feedback.js'
+import { registerCloudTools } from './cloud-tools.js'
+import { changeCloudMembership } from './cloud-membership.js'
+import { createCloudSessionStore } from './cloud-session-store.js'
+import { applyCloudBrowse, cloudLaunch } from './cloud-browse.js'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
@@ -10,10 +16,13 @@ import { createContentSafetyLocaleScope } from './content-safety-locale.js'
 import { completionProjection } from './completion-projection.js'
 import { applyEnterpriseSkills } from './work-skills.js'
 import { applyWorkResources } from './work-resources.js'
+import { applyEnterpriseSearchPolicy } from './search-policy.js'
 import { applyWorkCapabilities } from './work-capabilities.js'
 import { requestImageDimensions } from '@deepseek-ai/dsh-attachment'
 import { applyEnterpriseMarket } from './market.js'
 import { applyEnterpriseWorkbenchMarket } from './workbench-market.js'
+import { applyWorkbenchFavorites } from './workbench-favorites.js'
+import { applyEnterpriseWorkbenchAccess } from './workbench-access.js'
 import { applyEnterpriseWorkbenchInstall } from './workbench-install.js'
 import { readScreenshotResponse } from './workbench-screenshots.js'
 import { applyEnterpriseAuth, createEnterpriseAuthTransport } from './enterprise-auth.js'
@@ -48,6 +57,7 @@ export const BISHENG_PROVIDER_ROUTE = 'bisheng-enterprise'
 
 const LOCAL_PATHS = Object.freeze({
   state: '/api/enterprise.state',
+  refreshProfile: '/api/enterprise.profile.refresh',
   inspectBase: '/api/enterprise.base.inspect',
   start: '/api/enterprise.login.start',
   manual: '/api/enterprise.login.manual',
@@ -314,6 +324,7 @@ function loadSessionFromDisk() {
 }
 
 export function apply(ctx, config) {
+  if (typeof ctx.inject === 'function') ctx.inject(['loader'], applyEnterpriseSearchPolicy)
   const broker = brokerConfig(ctx, config)
   const brokerJson = (path, body, signal) => requestBrokerJson(broker, path, body, signal)
   const connection = Reflect.get(ctx, 'connection')
@@ -500,6 +511,7 @@ export function apply(ctx, config) {
     }
     if ((!state.connected && account.connected) || account.connectionKey !== state.connectionKey) { workResources?.clear(); workSkills?.clear(); workCapabilities?.clear() }
     account = state
+    if (state.connected) void workCapabilities?.sync?.()?.catch(error => console.warn('[enterprise] tool catalog warmup failed', error))
     if (!state.connected) {
       capabilityPolicy?.reset()
       fallbackPolicy = { allowThirdPartyPlugins: false, allowThirdPartyWorkbenches: false, connectionKey: '' }
@@ -611,6 +623,7 @@ export function apply(ctx, config) {
     request: (body, signal) => enterpriseClient.handleWorkResources(body, signal)
   }) })
   if (typeof ctx.inject === 'function') ctx.inject(['skills'], scoped => { workSkills = applyEnterpriseSkills(scoped, {
+    resolveToolName: id => workCapabilities?.resolveToolName(id),
     state: () => account, refreshState: readBrokerState,
     request: (body, signal) => enterpriseClient.handleWorkSkills(body, signal)
   }) })
@@ -731,10 +744,54 @@ export function apply(ctx, config) {
     auth,
     authorizationAvailable: Boolean(broker || sessionAuth || process.env.DSH_WEB_RUNTIME === '1')
   })
+  for (const [name, type] of [['work-ui-client.js', 'text/javascript'], ['welcome-cases-client.js', 'text/javascript'], ['welcome-cases.json', 'application/json']]) {
+    connection.fetch.register({ path: `/api/enterprise.workbenches/${name}`, methods: ['GET'], requestBody: 'buffered', fetch: () => new Response(readFileSync(new URL(`./${name}`, import.meta.url)), { headers: { 'content-type': type + '; charset=utf-8', 'cache-control': 'no-cache' } }) })
+  }
+  connection.fetch.register({ path: '/api/enterprise.workbenches/cloud-collection-client.js', methods: ['GET'], requestBody: 'buffered', fetch: () => new Response(readFileSync(new URL('./cloud-collection-client.js', import.meta.url)), { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-cache' } }) })
+  connection.fetch.register({ path: '/api/enterprise.workbenches/client.js', methods: ['GET'], requestBody: 'buffered', fetch: () => new Response(readFileSync(new URL('./workbench-collection-client.js', import.meta.url)), { headers: { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-cache' } }) })
+  const cloudSessions = createCloudSessionStore(join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'enterprise'), () => {
+    if (!account.connected || !account.connectionKey) throw new Error('Enterprise login required.')
+    return account.base && account.tenant?.id && account.user?.id ? JSON.stringify([account.base, account.tenant.id, account.user.id]) : account.connectionKey
+  }, process.env.DSH_ENTERPRISE_LEGACY_CLOUD_PROJECTS)
+  const browseCloud = async (input, identity) => {
+    if (broker) return brokerJson('/v1/cloud', input)
+    const path = input.operation === 'list' ? `/api/v1/dsh/apps${input.cursor ? '?cursor=' + encodeURIComponent(input.cursor) : ''}` : `/api/v1/dsh/apps/${input.appId}/launch`
+    const value = await enterpriseClient.requestJson(path, { method: input.operation === 'launch' ? 'POST' : 'GET' })
+    if (value?.status_code !== 200 || !value.data) throw new Error(value?.status_message || 'Cloud workbench request failed.')
+    return input.operation === 'launch' ? cloudLaunch(value.data, identity.base, input.appId, identity.connectionKey) : { ...value.data, connectionKey: identity.connectionKey }
+  }
+  applyCloudBrowse(ctx, accountController, async (input, identity) => {
+    if (input.operation === 'state') return { state: (await cloudSessions.read()).state, connectionKey: identity.connectionKey }
+    if (['list', 'launch'].includes(input.operation)) return browseCloud(input, identity)
+    const saved = await changeCloudMembership(cloudSessions, input, async appId => {
+      const seen = new Set()
+      let cursor
+      for (let page = 0; page < 100; page++) {
+        const catalog = await browseCloud({ operation: 'list', ...(cursor ? { cursor } : {}) }, identity)
+        if (catalog.connectionKey !== identity.connectionKey || account.connectionKey !== identity.connectionKey) throw new Error('Enterprise account changed.')
+        if (!Array.isArray(catalog.items)) throw new Error('Invalid cloud catalog.')
+        const item = catalog.items.find(value => value.id === appId)
+        if (item) return item
+        cursor = catalog.next_cursor
+        if (!cursor) return undefined
+        if (!/^[a-f0-9]{32}$/.test(cursor) || seen.has(cursor)) throw new Error('Invalid cloud catalog cursor.')
+        seen.add(cursor)
+      }
+      throw new Error('Cloud catalog page limit exceeded.')
+    }, () => account.connected ? account.connectionKey : '')
+    return { state: saved.state, connectionKey: identity.connectionKey }
+  })
+  applyWorkbenchFavorites(ctx, accountController, join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'desktop-workbenches'))
+  if (broker && typeof ctx.provide === 'function' && typeof ctx.inject === 'function') {
+    ctx.provide('desktopCloud', { request: input => brokerJson('/v1/cloud', input) })
+    registerCloudTools(ctx, cloudSessions)
+  }
   workbenches = applyEnterpriseWorkbenchMarket(ctx, accountController)
+  const workbenchAccess = applyEnterpriseWorkbenchAccess(ctx, { root: join(process.env.DSH_HOME || join(homedir(), '.dsh'), 'desktop-workbenches'), account: accountController, market: workbenches })
   applyEnterpriseWorkbenchInstall(ctx)
   if (typeof ctx.provide === 'function') {
     ctx.provide('enterpriseWorkbenchPackages', {
+      record: install => workbenchAccess.record(install),
       async open(id) {
         const opened = await workbenches.packageForInstall(id)
         return {
@@ -772,6 +829,21 @@ export function apply(ctx, config) {
     })
   }
   registerJsonRoute(connection, LOCAL_PATHS.state, ['GET'], async () => readBrokerState())
+  registerJsonRoute(connection, LOCAL_PATHS.refreshProfile, ['POST'], async request => {
+    const body = await readJson(request)
+    if (!body || !['account', 'foreground', 'image'].includes(body.reason) || Object.keys(body).some(key => key !== 'reason')) {
+      throw Object.assign(new Error('Invalid profile refresh reason.'), { status: 400 })
+    }
+    if (broker) await brokerJson('/v1/profile/refresh', { reason: body.reason })
+    else if (account.connected) {
+      const before = account
+      const profile = await enterpriseClient.requestJson('/api/v1/dsh/profile')
+      const user = parseDisplayProfile(profile, before.base, before.user.id, before.tenant.id)
+      if (!account.connected || account.connectionKey !== before.connectionKey) throw Object.assign(new Error('Enterprise account changed.'), { status: 409 })
+      account = { ...account, user, revision: (account.revision || 0) + 1 }
+    }
+    return readBrokerState()
+  })
   registerJsonRoute(connection, LOCAL_PATHS.inspectBase, ['POST'], async (request) => {
     const body = await readJson(request)
     return inspectedBase(normalizeEnterpriseServerUrl(String(body?.base ?? ''), inspectUrlOptions()))
@@ -1131,12 +1203,31 @@ function startEnterpriseLlm(ctx, llm, broker, getSessionAuth) {
     },
     note: (reason, details) => console.warn('[enterprise-audit-title]', JSON.stringify({ reason, ...details }))
   })
+  const feedback = createAuditFeedbackSync({
+    ctx,
+    async send(body, signal) {
+      if (!broker) throw new Error('Enterprise broker unavailable.')
+      const response = await fetch(new URL('/v1/audit/message-feedback', broker.origin), {
+        method: 'POST', redirect: 'error', signal,
+        headers: { authorization: `Bearer ${broker.capability}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+      if (!response.ok) {
+        await response.body?.cancel()
+        throw Object.assign(new Error('Audit feedback synchronization failed.'), { status: response.status })
+      }
+      return response.json()
+    },
+    note: (reason, details) => console.warn('[enterprise-audit-feedback]', JSON.stringify({ reason, ...details })),
+    reread: async () => { if (broker && !stopped) ingest(await requestBrokerJson(broker, '/v1/state')) }
+  })
   const adapter = new EnterpriseLlmAdapter({
     providerName: () => latest.tenant?.name || latest.user?.display_name || 'BiSheng Enterprise',
     models: () => modelsAvailable ? models : [],
     auditFields: () => latest.connected ? latest.audit_context?.fields ?? [] : [],
     resolveAuditSession: (id) => {
       titles.track(id)
+      feedback.track(id)
       try {
         const header = ctx.get?.('sessions')?.get(id)?.header
         if (!header || header.id !== id) return undefined
@@ -1189,6 +1280,7 @@ function startEnterpriseLlm(ctx, llm, broker, getSessionAuth) {
   const ingest = (state) => {
     latest = state
     titles.ingest(state)
+    feedback.ingest(state)
     if (state.revision === revision) return
     const nextRevision = Number.isSafeInteger(state.revision) ? state.revision : revision
     models = Array.isArray(state.models) ? state.models : []
@@ -1233,6 +1325,7 @@ function startEnterpriseLlm(ctx, llm, broker, getSessionAuth) {
       safetyLocaleScope.dispose()
       safetyLocale.disable()
       titles.dispose()
+      feedback.dispose()
       if (timer) clearTimeout(timer)
       registration?.()
     }

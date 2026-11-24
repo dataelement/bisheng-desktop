@@ -20,13 +20,14 @@ describe('enterprise install route availability', () => {
     expect((await unavailable.json()).error).toMatch(/verified enterprise package service/)
     expect(unavailable.headers.get('cache-control')).toBe('no-store')
     const release = vi.fn()
-    const packages = { open: vi.fn(async () => ({ path: '/tmp/verified.tgz', packageName: 'company-workbench', version: '1.0.0', release })) }
+    const packages = { record: vi.fn(), open: vi.fn(async () => ({ path: '/tmp/verified.tgz', packageName: 'company-workbench', version: '1.0.0', release })) }
     const manager = { verifiedInstallContract: 1, listBundles: vi.fn(async () => []), installBundle: vi.fn(async () => ({ application: 'applied', stage: 'enable', bundle: 'company-workbench', version: '1.0.0' })) }
     const dispose = activate({ pluginManager: manager, enterpriseWorkbenchPackages: packages })
     expect((await route.fetch(request())).status).toBe(200)
     expect(packages.open).toHaveBeenCalledWith(id)
     expect(manager.installBundle).toHaveBeenCalledOnce()
     expect(release).toHaveBeenCalledOnce()
+    expect(packages.record).toHaveBeenCalledWith(expect.objectContaining({ id, pluginName: 'company-workbench', version: '1.0.0' }))
     dispose()
     expect((await route.fetch(request())).status).toBe(503)
     expect(manager.installBundle).toHaveBeenCalledOnce()

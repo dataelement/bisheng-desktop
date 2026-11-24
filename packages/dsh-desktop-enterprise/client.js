@@ -38,6 +38,7 @@ window.__ModuleLoader__.load({
     const ENTERPRISE_SECTION_ID = 'enterprise-account'
     const LEARN_MORE_URL = 'https://dshdesktop.com/zh/enterprise/deployment/'
     const OPEN_SETTINGS_SECTION_EVENT = 'dsh-desktop:open-settings-section'
+    const BISHENG_PROVIDER_ROUTE = 'bisheng-enterprise'
     const NS = 'settings.desktopEnterprise'
     const SAFETY_NS = 'enterprise.contentSafety'
     const safetyCopy = {
@@ -85,6 +86,9 @@ window.__ModuleLoader__.load({
     }
 
     const zh = {
+      ratioBase: '基准',
+      ratioFree: '免费',
+      ratioHint: '积分倍率：按输入与输出 3:1 估算，相对企业设置的基准模型；实际按每次用量扣积分。',
       seat_not_assigned: '当前服务版本不支持直接登录，请联系管理员升级平台。',
       seat_revoked: '当前登录已失效，请重新登录。',
       seat_limit_reached: '当前平台仍启用了旧版接入限制，请联系管理员升级。',
@@ -156,6 +160,9 @@ window.__ModuleLoader__.load({
     }
 
     const en = {
+      ratioBase: 'Base',
+      ratioFree: 'Free',
+      ratioHint: 'Credit ratio, estimated at 3:1 input to output against the base model set by your organization. Each call is charged by its actual usage.',
       seat_not_assigned: 'This server uses a legacy sign-in policy. Ask your administrator to upgrade the platform.',
       seat_revoked: 'Your sign-in is no longer valid. Sign in again.',
       seat_limit_reached: 'This server still enforces a legacy access limit. Ask your administrator to upgrade.',
@@ -536,6 +543,7 @@ window.__ModuleLoader__.load({
           line-height: 18px;
           white-space: nowrap;
         }
+        .dshEnterpriseModelRatio { color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;font-variant-numeric:tabular-nums;white-space:nowrap }
         .dshEnterpriseModelVision svg {
           flex: none;
         }
@@ -806,75 +814,167 @@ window.__ModuleLoader__.load({
       }
     }
 
-    const ENTERPRISE_WORKBENCH_FAVORITES = 'bisheng.enterprise-workbench-favorites'
+    function bindEnterpriseWorkUi(ctx) {
+      return ctx.inject?.(['slots', 'locale', 'remote', 'remote.session', 'sessions', 'uiWorkspace', 'layout'], scoped => {
+        let disposed = false
+        import('/api/enterprise.workbenches/work-ui-client.js').then(module => {
+          if (!disposed) module.createWorkUi(React, primitives).apply(scoped)
+        }).catch(error => { if (!disposed) console.error('[enterprise-work-ui] Client module failed to load', error) })
+        return () => { disposed = true }
+      })
+    }
 
-    function EnterpriseWorkbenchCollection({ service }) {
-      const [state, setState] = useState({ loading: true, error: '', accountKey: '', items: [] })
-      const [favorites, setFavorites] = useState([])
-      const [busy, setBusy] = useState(null)
-      const load = useCallback(async () => {
-        setState(previous => ({ ...previous, loading: true, error: '' }))
-        try {
-          const response = await fetch('/api/enterprise.workbenches/catalog', { credentials: 'same-origin', cache: 'no-store' })
-          const value = await response.json()
-          if (!response.ok || !Array.isArray(value.data)) throw new Error(value.error || '企业工作台暂时无法读取。')
-          const accountKey = typeof value.accountKey === 'string' ? value.accountKey : ''
-          let saved = []
-          try {
-            const records = JSON.parse(window.localStorage?.getItem(`${ENTERPRISE_WORKBENCH_FAVORITES}:${accountKey}`) || '[]')
-            if (Array.isArray(records)) saved = records.filter(id => typeof id === 'string')
-          } catch {}
-          setFavorites(saved)
-          setState({ loading: false, error: '', accountKey, items: value.data })
-        } catch (error) {
-          setState(previous => ({ ...previous, loading: false, error: error instanceof Error ? error.message : String(error) }))
-        }
-      }, [])
-      useEffect(() => { void load() }, [load])
-      const toggleFavorite = (id) => {
-        const next = favorites.includes(id) ? favorites.filter(item => item !== id) : [...favorites, id]
-        setFavorites(next)
-        try { window.localStorage?.setItem(`${ENTERPRISE_WORKBENCH_FAVORITES}:${state.accountKey}`, JSON.stringify(next)) } catch {}
-      }
-      const install = async (id) => {
-        if (busy) return
-        setBusy(id)
-        try {
-          const response = await fetch('/api/desktop-workbenches/enterprise-install', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) })
-          const value = await response.json()
-          if (!response.ok || !['applied', 'restart-required'].includes(value.application)) throw new Error(value.error || '企业工作台安装失败。')
-          await service.refreshNative?.()
-        } catch (error) {
-          setState(previous => ({ ...previous, error: error instanceof Error ? error.message : String(error) }))
-        } finally { setBusy(null) }
-      }
-      return h('section', { className: 'dshEnterpriseWorkbenchCollection', 'aria-label': '来自企业' },
-        h('div', { className: 'dshEnterpriseWorkbenchToolbar' }, h('button', { type: 'button', onClick: () => { void load() }, disabled: state.loading }, state.loading ? '读取中…' : '刷新')),
-        state.error && h('p', { role: 'alert' }, state.error),
-        !state.loading && !state.error && !state.items.length && h('p', null, '企业暂未提供工作台。'),
-        h('div', { className: 'dshEnterpriseWorkbenchGrid' }, state.items.map(item => h('article', { key: item.id, className: 'dshEnterpriseWorkbenchCard' },
-          h('div', { className: 'dshEnterpriseWorkbenchCardHead' }, h('h3', null, item.displayName), h('button', { type: 'button', 'aria-label': favorites.includes(item.id) ? '取消收藏' : '收藏工作台', onClick: () => toggleFavorite(item.id) }, favorites.includes(item.id) ? '★' : '☆')),
-          item.description && h('p', null, item.description),
-          h('div', { className: 'dshEnterpriseWorkbenchCardActions' }, h('span', null, `v${item.currentVersion?.version || '—'}`), h('button', { type: 'button', disabled: busy === item.id, onClick: () => { void install(item.id) } }, busy === item.id ? '安装中…' : '安装'))
-        ))))
+    function bindEnterpriseWelcomeCases(ctx) {
+      let disposed = false, cleanup
+      const controller = new AbortController()
+      import('/api/enterprise.workbenches/welcome-cases-client.js').then(async module => {
+        if (disposed) return
+        const response = await fetch('/api/enterprise.workbenches/welcome-cases.json', { signal: controller.signal })
+        if (!response.ok) throw new Error('Welcome catalog unavailable.')
+        const catalog = await response.json()
+        if (!disposed) cleanup = module.mountWelcomeCases(React, ctx, catalog)
+      }).catch(error => { if (!disposed) console.error('[enterprise-welcome] Client module failed to load', error) })
+      return () => { disposed = true; controller.abort(); cleanup?.() }
     }
 
     function bindEnterpriseWorkbenchCollection(ctx) {
       return ctx.inject?.(['desktopWorkbenches'], scoped => {
-        const service = scoped.desktopWorkbenches
-        if (!service || typeof service.registerMarketCollection !== 'function') return undefined
-        return service.registerMarketCollection({ id: 'enterprise', label: '来自企业', order: 10, render: props => h(EnterpriseWorkbenchCollection, props) })
+        let disposed = false, cleanup
+        import('/api/enterprise.workbenches/client.js').then(module => {
+          if (!disposed) cleanup = module.mountCollections(React, scoped, scoped.desktopWorkbenches)
+        }).catch(error => { if (!disposed) console.error('[enterprise-workbench] Client module failed to load', error) })
+        return () => { disposed = true; cleanup?.() }
       })
     }
 
-    function bindEnterpriseModelSync() {
+    function createPricingHintStore() {
+      let hints = new Map()
+      let version = 0
+      const listeners = new Set()
+      return {
+        ingest(state) {
+          const next = new Map()
+          if (state?.connected === true && Array.isArray(state.models)) {
+            for (const model of state.models) {
+              if (typeof model?.id === 'string' && model.pricing_hint) next.set(model.id, model.pricing_hint)
+            }
+          }
+          const unchanged = next.size === hints.size && [...next].every(([id, hint]) => {
+            const current = hints.get(id)
+            return current?.ratio === hint.ratio && current.base === hint.base && current.free === hint.free
+          })
+          if (unchanged) return
+          hints = next
+          version += 1
+          for (const listener of [...listeners]) listener()
+        },
+        get: (id) => hints.get(id),
+        entries: () => hints.entries(),
+        get size() { return hints.size },
+        version: () => version,
+        subscribe(listener) {
+          listeners.add(listener)
+          return () => { listeners.delete(listener) }
+        }
+      }
+    }
+
+    // Tag primitive palettes (dsh-client-ui-primitives Tag.module.css), applied to generated content.
+    const RATIO_TONES = {
+      neutral: 'background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-secondary);',
+      info: 'background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 10%, transparent); color: var(--dsw-alias-state-business-primary);',
+      success: 'background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 10%, transparent); color: var(--dsw-alias-state-success-primary);'
+    }
+    const MODEL_RATIO_STYLE_ID = 'dsh-desktop-enterprise-model-ratio'
+
+    /** A CSS string literal; ids and copy come from the server and the locale, never raw into CSS. */
+    function cssString(value) {
+      return `"${String(value).replace(/[\\"]/g, '\\$&').replace(/[\n\r\f]/g, ' ')}"`
+    }
+
+    /** Ratio badges for BiSheng model names, keyed by the picker's provider and model attributes. */
+    function modelRatioCss(hints, t) {
+      const owner = `[data-provider-id=${cssString(BISHENG_PROVIDER_ROUTE)}]`
+      const rules = []
+      for (const [id, hint] of hints.entries()) {
+        // The picker is narrow: the base model reads a plain "1.00x" here; the account page names it.
+        const badge = hint && !hint.free && hint.ratio ? { text: `${hint.ratio}x`, tone: hint.base ? 'info' : 'neutral' } : pricingHintBadge(hint, t)
+        if (!badge) continue
+        rules.push(`${owner}[data-model-id=${cssString(id)}]::after { content: ${cssString(badge.text)}; ${RATIO_TONES[badge.tone]} }`)
+      }
+      if (!rules.length) return ''
+      return `${owner}[data-model-id]::after { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px; font-size: 11px; line-height: 17px; font-weight: 500; white-space: nowrap; vertical-align: baseline; font-variant-numeric: tabular-nums; }\n${rules.join('\n')}`
+    }
+
+    /**
+     * Show the credit ratio after BiSheng model names in the Work model picker. The label slot is
+     * single-kind and the bundled DeepSeek 1017 badge lives there, so the ratio does not take the slot:
+     * the picker wraps every name in `data-provider-id` / `data-model-id`, which its README offers for
+     * styling without replacing the component. Both badges therefore show; signed out, on an older
+     * BiSheng server, or without enterprise models the style is empty.
+     */
+    function bindModelPricingLabel(locale, hints) {
+      const t = locale.bind(NS)
+      const update = () => {
+        let style = document.getElementById(MODEL_RATIO_STYLE_ID)
+        if (!style) {
+          style = document.createElement('style')
+          style.id = MODEL_RATIO_STYLE_ID
+          style.setAttribute('data-plugin-css', 'dsh-desktop-enterprise')
+          document.head.appendChild(style)
+        }
+        const css = modelRatioCss(hints, t)
+        if (style.textContent !== css) style.textContent = css
+      }
+      const unsubscribeHints = hints.subscribe(update)
+      const unsubscribeLocale = locale.subscribe?.(update)
+      update()
+      return () => { unsubscribeHints(); unsubscribeLocale?.(); document.getElementById(MODEL_RATIO_STYLE_ID)?.remove() }
+    }
+
+    let accountActionEpoch = 0
+    const actionOwner = {}
+    const observeAction = event => {
+      if (event.detail?.actionStarted && event.detail.source !== actionOwner) accountActionEpoch++
+    }
+    const staleAccountAction = () => Object.assign(new Error('Account action superseded.'), { staleAccountAction: true })
+    function pricingHintBadge(hint, t) {
+      if (!hint) return null
+      if (hint.free) return { text: t('ratioFree'), tone: 'success' }
+      if (!hint.ratio) return null
+      return hint.base
+        ? { text: `${hint.ratio}x · ${t('ratioBase')}`, tone: 'info' }
+        : { text: `${hint.ratio}x`, tone: 'neutral' }
+    }
+
+    function EnterpriseAvatar({ nickname, src, attempt, onImageError }) {
+      const [failed, setFailed] = useState(null)
+      useEffect(() => setFailed(null), [src, attempt])
+      const showImage = src && failed !== src
+      return h('span', { className: 'dshEnterpriseAvatar', 'data-avatar-variant': showImage ? 'image' : 'initial', 'aria-hidden': 'true' }, showImage
+        ? h('img', { key: `${src}:${attempt}`, src, alt: '', referrerPolicy: 'no-referrer', style: { width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }, onError: () => { setFailed(src); onImageError(src) } })
+        : (Array.from(nickname?.trim() ?? '')[0] ?? '?').toUpperCase())
+    }
+
+    function openEnterpriseSettingsSection() {
+      if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return
+      const dispatch = () => window.dispatchEvent(
+        new CustomEvent(OPEN_SETTINGS_SECTION_EVENT, { detail: { id: ENTERPRISE_SECTION_ID } })
+      )
+      dispatch()
+      window.setTimeout(dispatch, 0)
+    }
+
+    function bindEnterpriseModelSync(onState) {
       let pending, disposed = false, resync = false
       const sync = () => {
         if (disposed || document.visibilityState !== 'visible' || pending) return
         const controller = new AbortController()
         const timeout = window.setTimeout(() => controller.abort(), 30_000)
         pending = { controller, timeout }
-        void api('/api/enterprise.models.refresh', {}, controller.signal).catch(error => {
+        void api('/api/enterprise.models.refresh', {}, controller.signal).then(state => {
+          if (!disposed) onState?.(state)
+        }).catch(error => {
           if (!disposed && !controller.signal.aborted) console.warn('[enterprise-models] Catalog refresh failed', error)
         }).finally(() => {
           window.clearTimeout(timeout)
@@ -898,23 +998,55 @@ window.__ModuleLoader__.load({
     }
 
     async function api(path, body, signal) {
-      const response = await fetch(path, {
-        method: body === undefined ? 'GET' : 'POST',
-        credentials: 'same-origin',
-        signal,
-        headers: body === undefined ? {} : { 'content-type': 'application/json' },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) })
-      })
-      let invalidJson = false
-      const payload = await response.json().catch(() => { invalidJson = true; return {} })
-      if (!response.ok || payload?.ok === false) {
-        const failure = new Error(payload?.error || `Request failed (${response.status})`)
-        if (typeof payload?.errorCode === 'string' && payload.errorCode) failure.errorCode = payload.errorCode
-        else if (invalidJson && response.status === 404 && path.startsWith('/api/enterprise.market.')) failure.errorCode = 'market_endpoint_unavailable'
-        throw failure
+      const authorization = path === '/api/enterprise.login.start' || path === '/api/enterprise.deep-link.confirm'
+      const mutation = authorization || ['/api/enterprise.logout', '/api/enterprise.refresh', '/api/enterprise.login.manual'].includes(path)
+      if (mutation) { accountActionEpoch++; window.dispatchEvent(new CustomEvent(ACCOUNT_CHANGED_EVENT, { detail: { actionStarted: true, source: actionOwner } })) }
+      const actionEpoch = accountActionEpoch
+      try {
+        const response = await fetch(path, {
+          method: body === undefined ? 'GET' : 'POST',
+          credentials: 'same-origin',
+          signal,
+          headers: body === undefined ? {} : { 'content-type': 'application/json' },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) })
+        })
+        let invalidJson = false
+        const payload = await response.json().catch(() => { invalidJson = true; return {} })
+        if (!response.ok || payload.ok === false) {
+          if (mutation && actionEpoch !== accountActionEpoch) throw staleAccountAction()
+          const failure = new Error(payload.error || `Request failed (${response.status})`)
+          if (typeof payload.errorCode === 'string' && payload.errorCode) failure.errorCode = payload.errorCode
+          else if (invalidJson && response.status === 404 && path.startsWith('/api/enterprise.market.')) failure.errorCode = 'market_endpoint_unavailable'
+          throw failure
+        }
+        if (mutation) {
+          if (signal?.aborted || actionEpoch !== accountActionEpoch) throw staleAccountAction()
+          // Authorization has its own success contract. Notify readers independently;
+          // a failed display-state read must never discard a usable login URL.
+          if (authorization) {
+            window.dispatchEvent(new CustomEvent(ACCOUNT_CHANGED_EVENT))
+            return payload
+          }
+          let latest
+          try {
+            latest = await api('/api/enterprise.state', undefined, signal)
+          } catch (cause) {
+            if (signal?.aborted || actionEpoch !== accountActionEpoch) throw staleAccountAction()
+            // A confirmed sign-out must clear the identity even if its display read fails.
+            // Connected refresh/manual snapshots are not safe substitutes for a fresh read.
+            if (path !== '/api/enterprise.logout' || payload.connected !== false) throw cause
+            latest = payload
+          }
+          if (signal?.aborted || actionEpoch !== accountActionEpoch) throw staleAccountAction()
+          window.dispatchEvent(new CustomEvent(ACCOUNT_CHANGED_EVENT))
+          // Prefer authoritative current state; only confirmed logout has a safe fallback.
+          if (typeof payload.connected === 'boolean') return latest
+        }
+        return payload
+      } catch (cause) {
+        if (mutation && actionEpoch !== accountActionEpoch) throw staleAccountAction()
+        throw cause
       }
-      if (!path.startsWith('/api/enterprise.market.') && path !== '/api/enterprise.models.refresh') window.dispatchEvent(new CustomEvent(ACCOUNT_CHANGED_EVENT))
-      return payload
     }
 
     function usageText(usage, language, t) {
@@ -1074,6 +1206,10 @@ window.__ModuleLoader__.load({
           createVisionIcon(),
           t('vision'))
         : null
+      const badge = pricingHintBadge(model.pricing_hint, t)
+      const ratio = badge
+        ? h('span', { className: 'dshEnterpriseModelRatio', title: t('ratioHint') }, badge.text)
+        : null
 
       return h('li', { key: model.id },
         h('span', { className: 'dshEnterpriseModelIdentity' },
@@ -1083,9 +1219,10 @@ window.__ModuleLoader__.load({
               className: 'dshEnterpriseModelStatus', role: 'img',
               title: t('modelAvailable'), 'aria-label': t('modelAvailable')
             }) : null),
-          display.provider || vision ? h('span', { className: 'dshEnterpriseModelDetails' },
+          display.provider || vision || ratio ? h('span', { className: 'dshEnterpriseModelDetails' },
             display.provider ? h('span', { className: 'dshEnterpriseModelProvider' }, display.provider) : null,
-            vision) : null))
+            vision,
+            ratio) : null))
     }
 
     function EnterpriseSection({ t, renderSlot }) {
@@ -1098,6 +1235,8 @@ window.__ModuleLoader__.load({
       const [errorCode, setErrorCode] = useState('')
       const [confirmation, setConfirmation] = useState(null)
       const stateRef = useRef(null)
+      const lifetime = useRef({ alive: true, revision: 0, failure: null })
+      const [imageAttempt, setImageAttempt] = useState(0)
       const clearFailure = () => {
         setError('')
         setErrorCode('')
@@ -1108,20 +1247,59 @@ window.__ModuleLoader__.load({
         setErrorCode(failure.code)
       }
       const applyAccountState = useCallback((next) => {
+        if (!next || (Number.isFinite(next.revision) && Number.isFinite(stateRef.current?.revision) && next.revision < stateRef.current.revision)) return
+        const key = `${next.connectionKey || next.base || ''}:${next.user?.id || ''}:${next.connected}`
+        if (lifetime.current.identity !== key || lifetime.current.avatar !== next.user?.avatar) lifetime.current.failure = null
+        lifetime.current.identity = key
+        lifetime.current.avatar = next.user?.avatar
         stateRef.current = next
         setState(next)
         if (next?.connected === true) setConfirmation(null)
       }, [])
 
-      const refreshState = useCallback(async () => {
-        const next = await api('/api/enterprise.state')
-        applyAccountState(next)
-        if (next.base) {
-          setBase(next.base)
-          rememberBase(next.base)
+      const refreshState = useCallback(async (reason, retryImage = false) => {
+        const current = lifetime.current
+        // Background local reads must not cancel the higher-priority profile operation.
+        if (current.profile) {
+          current.readAfterProfile = true
+          current.retryAfterProfile ||= retryImage || reason === 'account' || reason === 'foreground'
+          return current.profile
         }
-        return next
+        current.request?.abort()
+        const request = new AbortController(), revision = ++current.revision
+        current.request = request
+        const task = (async () => {
+          try {
+            const next = await api(reason ? '/api/enterprise.profile.refresh' : '/api/enterprise.state', reason ? { reason } : undefined, request.signal)
+            if (!current.alive || request.signal.aborted || revision !== current.revision) return
+            applyAccountState(next)
+            const retry = retryImage || current.retryAfterProfile || reason === 'account' || reason === 'foreground'
+            current.retryAfterProfile = false
+            if (retry) { current.failure = null; setImageAttempt(value => value + 1) }
+            if (reason) window.dispatchEvent(new CustomEvent(ACCOUNT_CHANGED_EVENT, { detail: { source: current, retryImage: retry } }))
+            if (next.base) { setBase(next.base); rememberBase(next.base) }
+            return next
+          } catch (cause) {
+            if (!current.alive || request.signal.aborted || revision !== current.revision) return
+            throw cause
+          }
+        })()
+        if (reason) current.profile = task
+        try { return await task } finally {
+          if (current.profile === task) {
+            current.profile = null
+            if (current.readAfterProfile && current.alive) { const retry = current.retryAfterProfile; current.readAfterProfile = false; current.retryAfterProfile = false; void refreshState(undefined, retry).catch(() => {}) }
+          }
+        }
       }, [applyAccountState])
+
+      const imageFailed = src => {
+        const current = lifetime.current
+        if (current.failure?.src === src && Date.now() - current.failure.at < 60_000) return
+        current.failure = { src, at: Date.now() }
+        // Image-triggered success does not reset the failed image: only an explicit retry can remount it.
+        void refreshState('image').catch(() => { /* Keep fallback until the next user/foreground event. */ })
+      }
 
       const inspectDeepLink = useCallback(async (url) => {
         setBusy(true)
@@ -1138,23 +1316,50 @@ window.__ModuleLoader__.load({
           ) return
           setConfirmation(inspected)
         } catch (cause) {
-          showFailure(cause)
+          if (lifetime.current.alive && !cause?.staleAccountAction) showFailure(cause)
         } finally {
-          setBusy(false)
+          if (lifetime.current.alive) setBusy(false)
         }
       }, [])
 
       useEffect(() => {
-        refreshState().catch((cause) => {
-          showFailure(cause)
+        const current = lifetime.current
+        current.alive = true
+        window.addEventListener(ACCOUNT_CHANGED_EVENT, observeAction)
+        const changed = event => {
+          if (event.detail?.source === current) return
+          if (event.detail?.actionStarted || event.detail?.identityChanged) {
+            current.request?.abort(); current.revision++; current.profile = null
+            if (event.detail?.actionStarted) return
+          }
+          // Events invalidate; their response snapshots are never authoritative.
+          void refreshState(undefined, event.detail?.retryImage === true).catch(() => {})
+        }
+        window.addEventListener(ACCOUNT_CHANGED_EVENT, changed)
+        refreshState('account').catch(() => {
+          // Profile freshness is best effort; a local read keeps sign-in usable offline.
+          if (current.alive) void refreshState().catch(cause => { if (current.alive) showFailure(cause) })
+        })
+        let accountRevision
+        const unsubscribeAccount = window.dshEnterpriseChat?.subscribe?.(next => {
+          if (!next.connected || !Number.isFinite(next.accountRevision) || next.accountRevision === accountRevision) return
+          accountRevision = next.accountRevision
+          // The native event only invalidates the local broker snapshot.
+          if (accountRevision !== stateRef.current?.revision) void refreshState().catch(() => {})
         })
         const bridge = window.dshDesktopEnterprise
-        if (!bridge?.onLoginLink) return undefined
-        return bridge.onLoginLink((url) => {
+        const unsubscribe = bridge?.onLoginLink?.((url) => {
+          openEnterpriseSettingsSection()
           bridge.consumeLoginLink?.()
           void inspectDeepLink(url)
         })
-      }, [inspectDeepLink, refreshState])
+        return () => {
+          current.alive = false; current.revision++; accountActionEpoch++; current.request?.abort()
+          unsubscribeAccount?.()
+          unsubscribe?.(); window.removeEventListener(ACCOUNT_CHANGED_EVENT, changed)
+          window.removeEventListener(ACCOUNT_CHANGED_EVENT, observeAction)
+        }
+      }, [inspectDeepLink, refreshState, applyAccountState])
 
       useEffect(() => {
         setManualFallbackReady(false)
@@ -1183,7 +1388,7 @@ window.__ModuleLoader__.load({
         try {
           await operation()
         } catch (cause) {
-          showFailure(cause)
+          if (!cause?.staleAccountAction) showFailure(cause)
         } finally {
           setBusy(false)
         }
@@ -1199,7 +1404,7 @@ window.__ModuleLoader__.load({
       const language = readUiLanguage()
       const usageIdentity = JSON.stringify([state?.base ?? null, state?.tenant?.id ?? null, state?.user?.id ?? state?.user?.username ?? null])
 
-      const logoutButton = connected && h(Button, {
+      const logoutButton = connected && h(require('@deepseek-ai/dsh-client-ui-primitives').Button, {
         variant: 'ghost', size: 'md',
         className: 'dshEnterpriseLogout', disabled: busy,
         onClick: () => run(async () => {
@@ -1210,10 +1415,10 @@ window.__ModuleLoader__.load({
       }, t('logout'))
       const status = connected
         ? h('div', { className: 'dshEnterpriseIdentity' },
-          h('span', { className: 'dshEnterpriseAvatar', 'aria-hidden': 'true' }, String(userLabel).slice(0, 2).toLocaleUpperCase()),
+          h(EnterpriseAvatar, { nickname: state?.user?.username, src: state?.user?.avatar, attempt: imageAttempt, onImageError: imageFailed }),
           h('div', { className: 'dshEnterpriseAccount' },
             h('strong', null, userLabel),
-            h('span', { className: 'dshEnterpriseAccountLabel' }, state?.user?.username || t('accountLabel'))))
+            h('span', { className: 'dshEnterpriseAccountLabel' }, state?.user?.external_id || '—')))
         : null
 
       const accountContent = connected
@@ -2002,9 +2207,13 @@ window.__ModuleLoader__.load({
       accountTranslate = t
       ctx.effect(() => ctx.locale.register('settings.enterpriseMarket', { zh: marketZh, en: marketEn }), 'enterprise-market: translations')
       marketTranslate = ctx.locale.bind('settings.enterpriseMarket')
-      ctx.effect(() => bindEnterpriseModelSync(), 'enterprise: foreground model catalog sync')
+      const pricingHints = createPricingHintStore()
+      ctx.effect(() => bindEnterpriseModelSync(pricingHints.ingest), 'enterprise: foreground model catalog sync')
+      ctx.effect(() => bindModelPricingLabel(ctx.locale, pricingHints), 'enterprise: credit ratio in the Work model picker')
       ctx.effect(() => bindEnterpriseMarketTab(ctx), 'enterprise-market: account-bound plugins tab')
       ctx.effect(() => bindEnterpriseWorkbenchCollection(ctx), 'enterprise-workbench: market collection')
+      ctx.effect(() => bindEnterpriseWorkUi(ctx), 'enterprise: Chat and Work composition')
+      ctx.effect(() => ctx.inject?.(['desktopOffice', 'desktopPresentation'], scoped => bindEnterpriseWelcomeCases(scoped)), 'enterprise-welcome: example tasks')
       ctx.slots.inject('settings.section', () => ctx.slots.register({
         name: 'settings.section',
         id: ENTERPRISE_SECTION_ID,

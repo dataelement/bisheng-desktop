@@ -1,3 +1,9 @@
+import { createEnterpriseMobileExtension } from './mobile/mobile-extension'
+import { join } from 'node:path'
+import { adoptLegacyCloudState } from '../legacy-cloud-state.js'
+import { CloudWorkbenchView } from './cloud-workbench-view'
+import type { CloudLaunch } from './cloud-workbench'
+import { assertCloudRendererRequest, confirmCloudEffect } from './cloud-confirmation'
 import { app, ipcMain, net, safeStorage, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { startEnterpriseDesktop } from './enterprise-desktop'
 import { EnterpriseChatView } from './chat-view'
@@ -23,6 +29,8 @@ export interface EnterpriseHostActions {
 /** Initialized by the shell before Host launch; never mutates the shell environment. */
 export async function createEnterpriseProductRuntime(context: EnterpriseProductContext) {
   if (context.safeMode) return { hostEnvironment: () => ({}), attachWindow() {}, async dispose() {} }
+  adoptLegacyCloudState(join(context.dshHome, 'desktop-workbenches'))
+  const cloudView = new CloudWorkbenchView()
   let mainWindow: BrowserWindow | undefined
   let enterpriseChat: EnterpriseChatView | undefined
   let disposed = false
@@ -30,6 +38,7 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
   const channels = new Set<string>()
   const enterpriseDesktop = await startEnterpriseDesktop({
     userDataPath: context.userDataPath,
+    confirmCloudEffect: effect => confirmCloudEffect(effect, mainWindow, app.getLocale().startsWith('zh')),
     desktopVersion: context.version,
     activateDesktop: () => { mainWindow?.show(); mainWindow?.focus() },
     safeStorage,
@@ -37,9 +46,15 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
     allowInsecureLoopback: allowInsecureEnterpriseLoopback(),
     note: line => console.info(line)
   })
+  let cloudAccountKey = enterpriseDesktop.snapshot().connectionKey
+  const unsubscribeCloud = enterpriseDesktop.subscribe(state => {
+    if (!state.connected || state.connectionKey !== cloudAccountKey) cloudView.close()
+    cloudAccountKey = state.connectionKey
+  })
   // A missing broker must not silently activate Web/session authentication in Desktop.
   const environment = enterpriseDesktop.harnessEnvironment()
   if (!environment.DSH_DESKTOP_ENTERPRISE_BROKER_URL || !environment.DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY) {
+    unsubscribeCloud()
     await enterpriseDesktop.stop()
     throw new Error('Enterprise desktop broker failed to initialize.')
   }
@@ -57,10 +72,35 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
     mainWindow.webContents.send('enterprise:login-link', pendingLoginUrl)
     pendingLoginUrl = undefined
   }
+  const launchCloud = async (appId: string): Promise<CloudLaunch> => {
+    const value = await enterpriseDesktop.cloudRequest({ operation: 'launch', appId })
+    if (!value || typeof value !== 'object') throw new Error('Invalid cloud launch.')
+    const record = value as Record<string, unknown>
+    if (typeof record.appId !== 'string' || typeof record.slug !== 'string' || typeof record.ticket !== 'string' || typeof record.launchUrl !== 'string' || typeof record.entryUrl !== 'string' || typeof record.connectionKey !== 'string') throw new Error('Invalid cloud launch.')
+    return { appId: record.appId, slug: record.slug, ticket: record.ticket, launchUrl: record.launchUrl, entryUrl: record.entryUrl, connectionKey: record.connectionKey }
+  }
   function registerEnterpriseChatHandlers(): void {
+    for (const channel of ['enterprise-cloud:request', 'enterprise-cloud:open', 'enterprise-cloud:resize', 'enterprise-cloud:close', 'enterprise-cloud:occluded']) channels.add(channel)
+    ipcMain.handle('enterprise-cloud:request', (event, input: unknown) => {
+      assertTrustedMainWindowEvent(event)
+      assertCloudRendererRequest(input)
+      return enterpriseDesktop.cloudRequest(input)
+    })
+    ipcMain.handle('enterprise-cloud:open', async (event, id: unknown, bounds: unknown, key: unknown, owner: unknown) => {
+      const parent = assertTrustedMainWindowEvent(event)
+      if (typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id) || typeof owner !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(owner) || key !== enterpriseDesktop.snapshot().connectionKey) throw new Error('Invalid cloud request or account changed.')
+      const launch = await launchCloud(id)
+      if (launch.connectionKey !== key) throw new Error('Enterprise account changed.')
+      await cloudView.open(parent, launch, bounds, owner, () => enterpriseDesktop.snapshot().connectionKey, launchCloud)
+    })
+    ipcMain.handle('enterprise-cloud:resize', (event, bounds: unknown, owner: unknown) => { assertTrustedMainWindowEvent(event); cloudView.resizeFor(owner, bounds) })
+    ipcMain.handle('enterprise-cloud:close', (event, owner: unknown) => { assertTrustedMainWindowEvent(event); cloudView.closeFor(owner) })
+    ipcMain.handle('enterprise-cloud:occluded', (event, value: unknown) => { assertTrustedMainWindowEvent(event); if (typeof value !== 'boolean') throw new Error('Invalid occlusion.'); cloudView.setHostOccluded(value) })
     for (const channel of [
       'enterprise-chat:present',
       'enterprise-chat:capture',
+      'enterprise-chat:landing-geometry',
+      'enterprise-chat:landing-text-motion',
       'enterprise-chat:state',
       'enterprise-chat:retry',
       'enterprise-chat:usage',
@@ -90,6 +130,15 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
       assertTrustedMainWindowEvent(event)
       if (!enterpriseChat) throw new Error('Project sync unavailable.')
       return enterpriseChat.projectConversations(page, epoch)
+    })
+    ipcMain.handle('enterprise-chat:landing-geometry', event => {
+      const window = assertTrustedMainWindowEvent(event)
+      return requireChat().landingGeometry(window)
+    })
+    ipcMain.handle('enterprise-chat:landing-text-motion', (event, direction: unknown) => {
+      assertTrustedMainWindowEvent(event)
+      if (direction !== 'in' && direction !== 'out') throw new Error('Invalid landing motion.')
+      return requireChat().landingTextMotion(assertTrustedMainWindowEvent(event), direction)
     })
     ipcMain.handle('enterprise-chat:capture', (event) => {
       const window = assertTrustedMainWindowEvent(event)
@@ -141,7 +190,7 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
   }
 
 
-  const closeWindow = (): void => { enterpriseChat?.dispose(); enterpriseChat = undefined; mainWindow = undefined }
+  const closeWindow = (): void => { cloudView.close(); enterpriseChat?.dispose(); enterpriseChat = undefined; mainWindow = undefined }
   try {
     registerEnterpriseChatHandlers()
     for (const channel of ['enterprise:settings-info', 'enterprise:settings-action']) channels.add(channel)
@@ -163,13 +212,15 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
     if (link) pendingLoginUrl = link.url
   } catch (error) {
     for (const channel of channels) ipcMain.removeHandler(channel)
+    unsubscribeCloud()
     await enterpriseDesktop.stop()
     throw error
   }
   const onLogin = (): void => { deliverPendingEnterpriseLogin() }
   loginListeners.add(onLogin)
   return {
-    hostEnvironment: () => disposed ? {} : enterpriseDesktop.harnessEnvironment(),
+    hostEnvironment: () => disposed ? {} : { ...enterpriseDesktop.harnessEnvironment(), DSH_ENTERPRISE_LEGACY_CLOUD_PROJECTS: join(context.userDataPath, 'cloud-development') },
+    mobileExtension: () => createEnterpriseMobileExtension(enterpriseDesktop, context.userDataPath),
     attachWindow(window: BrowserWindow, services: EnterpriseHostActions): void {
       if (disposed) throw new Error('Enterprise desktop is stopping.')
       actions = services
@@ -177,6 +228,7 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
       if (mainWindow) {
         mainWindow.webContents.removeListener('did-finish-load', deliverPendingEnterpriseLogin)
         mainWindow.removeListener('closed', closeWindow)
+        cloudView.close()
         enterpriseChat?.dispose()
       }
       mainWindow = window
@@ -193,6 +245,7 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
       mainWindow?.webContents.removeListener('did-finish-load', deliverPendingEnterpriseLogin)
       mainWindow?.removeListener('closed', closeWindow)
       closeWindow()
+      unsubscribeCloud()
       await enterpriseDesktop.stop()
     }
   }

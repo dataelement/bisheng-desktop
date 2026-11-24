@@ -83,6 +83,7 @@ export function applyEnterpriseWorkbenchInstall(ctx) {
         const payload = await readInstallRequest(request)
         if (services !== current) throw new EnterpriseWorkbenchInstallError('The verified enterprise package service is unavailable.', 503)
         const result = await installEnterpriseWorkbench(current.manager, current.packages, payload.id)
+        if (result.body.install) await current.packages.record?.(result.body.install)
         return Response.json(result.body, { status: result.status, headers: { 'cache-control': 'no-store' } })
       } catch (error) {
         const status = Number.isInteger(error?.status) && error.status >= 400 && error.status <= 599 ? error.status : 500

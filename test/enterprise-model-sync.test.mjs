@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
+import { shippedFixture } from './enterprise-harness-fixture.mjs'
 import { afterEach, expect, it, vi } from 'vitest'
 
 const source = readFileSync(new URL('../packages/dsh-desktop-enterprise/client.js', import.meta.url), 'utf8')
-const start = source.indexOf('    function bindEnterpriseModelSync()')
+const start = source.indexOf('    function bindEnterpriseModelSync(')
 const end = source.indexOf('    async function api(', start)
-const accountChanged = 'test:account-changed'
+const accountChanged = 'dsh-desktop:enterprise-account-changed'
 let dispose
 
 afterEach(() => { dispose?.(); dispose = undefined; vi.useRealTimers() })
@@ -18,10 +19,10 @@ function fixture(realApi = false) {
   const warn = vi.fn()
   const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ ok: true }) }))
   const apiEnd = source.indexOf('    function usageText(', end)
-  const bind = vm.runInNewContext(`${source.slice(start, realApi ? apiEnd : end)}; bindEnterpriseModelSync`, {
+  const bind = vm.runInNewContext(`${realApi ? shippedFixture(source).declarations('bindEnterpriseModelSync') : source.slice(start, end)}; bindEnterpriseModelSync`, {
     window, document, ...(realApi ? { fetch, CustomEvent: class extends Event {} } : { api }), AbortController, ACCOUNT_CHANGED_EVENT: accountChanged, console: { warn }
   })
-  return { window, document, api, fetch, warn, start() { dispose = bind() } }
+  return { window, document, api, fetch, warn, start(onState) { dispose = bind(onState) } }
 }
 
 it('refreshes on startup, foreground focus, account changes and the no periodic polling', async () => {
@@ -96,4 +97,20 @@ it('does not recursively refresh after a successful real API response', async ()
   f.window.dispatchEvent(new Event(accountChanged))
   await vi.advanceTimersByTimeAsync(0)
   expect(f.fetch).toHaveBeenCalledTimes(2)
+})
+
+it('hands each refreshed account state to the caller and stops after disposal', async () => {
+  const f = fixture()
+  const onState = vi.fn()
+  const state = { connected: true, models: [{ id: 'bisheng:1', pricing_hint: { ratio: '2.00', base: false, free: false } }] }
+  let finish
+  f.api.mockResolvedValueOnce(state).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  f.start(onState)
+  await vi.advanceTimersByTimeAsync(0)
+  expect(onState).toHaveBeenCalledWith(state)
+  f.window.dispatchEvent(new Event('focus'))
+  dispose()
+  finish({ connected: false, models: [] })
+  await vi.advanceTimersByTimeAsync(0)
+  expect(onState).toHaveBeenCalledTimes(1)
 })

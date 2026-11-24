@@ -1,3 +1,4 @@
+import { shippedFixture, workUiBundle } from './enterprise-harness-fixture.mjs'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import { expect, it, vi } from 'vitest'
@@ -5,7 +6,7 @@ import { expect, it, vi } from 'vitest'
 function setup() {
   let plugin
   const fetch = vi.fn(async () => Response.json({ ok: true }))
-  vm.runInNewContext(readFileSync(new URL('../packages/dsh-desktop-client-ui/client.js', import.meta.url), 'utf8'), {
+  vm.runInNewContext(workUiBundle, {
     fetch, window: { __ModuleLoader__: { load: ({ factory }) => { plugin = factory(() => ({})) } } }
   })
   return { source: plugin.toolReferenceSource, fetch }

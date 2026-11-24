@@ -33,10 +33,10 @@ test('boundary preparation fails closed and uses one explicit reviewed upstream'
     for (const job of Object.values(workflow(name).jobs)) {
       const fetch = job.steps.find(step => step.run?.includes('git fetch'))
       assert.ok(fetch, name)
-      assert.match(fetch.run, /bisheng-adaptor:refs\/remotes\/upstream\/bisheng-adaptor/)
+      assert.match(fetch.run, /V0.14.1:refs\/remotes\/upstream\/V0.14.1/)
       assert.doesNotMatch(fetch.run, /\|\||continue-on-error|upstream main/)
       const gate = job.steps.find(step => step.run === 'npm run verify:boundary')
-      assert.equal(gate.env.UPSTREAM_BASE, 'upstream/bisheng-adaptor')
+      assert.equal(gate.env.UPSTREAM_BASE, 'upstream/V0.14.1')
     }
   }
 })

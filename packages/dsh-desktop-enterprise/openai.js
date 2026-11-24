@@ -300,6 +300,7 @@ const CHAT_PLATFORM_CODES = new Set([
   'quota_unavailable',
   'usage_unavailable',
   'model_not_allowed',
+  'model_pricing_missing',
   'invalid_request',
   'unsupported_parameter',
   'authorization_unavailable',
@@ -579,13 +580,15 @@ export class EnterpriseLlmAdapter extends LlmAdapter {
       name: model.display_name,
       ...(model.description ? { description: model.description } : {}),
       ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
-      inputModalities: model.capabilities?.vision ? ['text', 'image'] : ['text']
+      inputModalities: model.input_modalities ?? (model.capabilities?.vision ? ['text', 'image'] : ['text'])
     })))
   }
 
   resolveModel(provider, id) {
     const model = this.options.models().find((candidate) => candidate.id === id)
     if (!model) throw new LlmError(`BiSheng provider has no authorized model "${id}".`, 'UNKNOWN_MODEL')
+    // Harness 0.2.2 compaction requires positive capacity. Keep unified's runtime
+    // fallback for older servers; the catalog itself never invents metadata.
     const contextWindow = (
       (typeof model.context_window === 'number' && model.context_window > 0)
         ? model.context_window
@@ -606,8 +609,8 @@ export class EnterpriseLlmAdapter extends LlmAdapter {
       name: model.display_name,
       ...(model.description ? { description: model.description } : {}),
       ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
-      inputModalities: model.capabilities?.vision ? ['text', 'image'] : ['text'],
-      context: { contextWindow },
+      inputModalities: model.input_modalities ?? (model.capabilities?.vision ? ['text', 'image'] : ['text']),
+      ...(contextWindow === undefined ? {} : { context: { contextWindow } }),
       ...(defaultMaxTokens !== undefined ? { defaultMaxTokens } : {})
     })
   }

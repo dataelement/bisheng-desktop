@@ -1,3 +1,5 @@
+import type { MobileAccessAccount } from './mobile/mobile-access-protocol'
+import type { CloudAuthorize } from './cloud-workbench'
 import type { EnterpriseWebSession } from './web-session'
 import { join } from 'node:path'
 import { parseThirdPartyPolicy } from 'dsh-desktop-enterprise/contract'
@@ -15,6 +17,11 @@ import {
 } from './secure-credential-vault'
 
 export interface EnterpriseDesktopRuntime {
+  readMobileAccessAccount(): MobileAccessAccount
+  subscribeMobileAccessAccount(listener: (account: MobileAccessAccount) => void): () => void
+  cloudRequest(input: unknown): Promise<unknown>
+  profileUpdated(connectionKey: string): Promise<void>
+  profileWindowFocused(): Promise<void>
   snapshot(): EnterprisePublicState
   webSession(connectionKey: string): Promise<EnterpriseWebSession>
   subscribe(listener: (state: EnterprisePublicState) => void): () => void
@@ -25,6 +32,7 @@ export interface EnterpriseDesktopRuntime {
 }
 
 export async function startEnterpriseDesktop(options: {
+  confirmCloudEffect?: CloudAuthorize
   desktopVersion?: string
   activateDesktop?: () => Promise<void> | void
   userDataPath: string
@@ -46,6 +54,8 @@ export async function startEnterpriseDesktop(options: {
         catch { options.note?.('[enterprise] state_listener_failed') }
       }
     },
+    cloudRoot: join(options.userDataPath, 'cloud-development'),
+    confirmCloudEffect: options.confirmCloudEffect,
     desktopVersion: options.desktopVersion,
     activateDesktop: options.activateDesktop,
     vault,
@@ -74,6 +84,11 @@ export async function startEnterpriseDesktop(options: {
   }
 
   return {
+    readMobileAccessAccount: () => service.readMobileAccessAccount(),
+    subscribeMobileAccessAccount: listener => service.subscribeMobileAccessAccount(listener),
+    cloudRequest: input => service.cloudRequest(input),
+    profileUpdated: key => service.profileUpdated(key),
+    profileWindowFocused: () => service.profileWindowFocused(),
     snapshot: () => service.snapshot(),
     webSession: (key) => service.webSession(key),
     subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener) } },

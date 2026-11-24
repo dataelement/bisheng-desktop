@@ -1,3 +1,4 @@
+import { shippedFixture } from './enterprise-harness-fixture.mjs'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import { expect, it } from 'vitest'
@@ -5,16 +6,7 @@ import { expect, it } from 'vitest'
 // Execute the shipped candidate projection and ranking, not a duplicate mapper.
 const client = readFileSync('node_modules/@deepseek-ai/dsh-client-ui-skill/lib/client.js', 'utf8')
 const primitives = readFileSync('node_modules/@deepseek-ai/dsh-client-ui-primitives/lib/index.js', 'utf8')
-const start = client.indexOf('return (0, _deepseek_ai_dsh_client_ui_primitives.rankByName)(skills')
-const end = client.indexOf('}));', start) + 5
-const rankStart = primitives.indexOf('function boundaryBonus(')
-const rankEnd = primitives.indexOf('//#endregion', primitives.indexOf('function rankByName('))
-if (start < 0 || rankStart < 0) throw new Error('Missing shipped candidate/rank implementation')
-const project = vm.runInNewContext(
-  '(function(skills, query) {' + primitives.slice(rankStart, rankEnd) +
-  'const _deepseek_ai_dsh_client_ui_primitives = { rankByName }; const t = key => key;' +
-  client.slice(start, end) + '})'
-)
+const project = vm.runInNewContext('(function(skills, query) {' + shippedFixture(primitives).declarations('rankByName') + '; const _deepseek_ai_dsh_client_ui_primitives = { rankByName }; const t = key => key;' + shippedFixture(client).returnContaining('rankByName)(skills') + '})')
 
 it('searches enterprise display labels and preserves descriptions independently of invocation keys', () => {
   const internal = 'bisheng-123456789012345678901234-22'

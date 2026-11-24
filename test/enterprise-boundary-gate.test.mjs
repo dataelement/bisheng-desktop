@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { test, onTestFinished } from 'vitest'
 import { fileURLToPath } from 'node:url'
-import { checkBoundary, checkPaths, collectChanges } from '../scripts/verify-upstream-boundary.mjs'
+import { checkBoundary, checkPaths, collectChanges, getUpstreamBase } from '../scripts/verify-upstream-boundary.mjs'
 
 const script = fileURLToPath(new URL('../scripts/verify-upstream-boundary.mjs', import.meta.url))
 const overrides = fileURLToPath(new URL('../scripts/downstream-public-overrides.mjs', import.meta.url))
@@ -29,8 +29,8 @@ function fixture(t, { baseline = true } = {}) {
   put('packages/dsh-desktop-workbenches/install-outcome.mjs')
   git('add', '.')
   git('commit', '-m', 'initial reviewed baseline')
-  if (baseline) git('update-ref', 'refs/remotes/upstream/bisheng-adaptor', 'HEAD')
-  const check = () => checkBoundary({ cwd, upstreamBase: 'upstream/bisheng-adaptor' })
+  if (baseline) git('update-ref', 'refs/remotes/upstream/V0.14.1', 'HEAD')
+  const check = () => checkBoundary({ cwd, upstreamBase: 'upstream/V0.14.1' })
   // Git's index supports mode/type and NUL-safe filenames even where the host
   // filesystem cannot create executable bits, symlinks or newline/tab filenames.
   const stage = (file, mode, bytes = 'staged\n') => {
@@ -63,7 +63,7 @@ test('real CRLF Git checkout remains valid for Node CLI and Vite module imports'
   })
   try {
     const module = await server.ssrLoadModule('/' + relative)
-    assert.deepEqual(module.checkBoundary({ cwd: f.cwd, upstreamBase: 'upstream/bisheng-adaptor' }).illegalFiles, [])
+    assert.deepEqual(module.checkBoundary({ cwd: f.cwd, upstreamBase: 'upstream/V0.14.1' }).illegalFiles, [])
   } finally {
     await server.close()
   }
@@ -86,6 +86,15 @@ test('missing baseline refuses origin/main and HEAD~1 fallback', t => {
   const env = { ...process.env }
   delete env.UPSTREAM_BASE
   assert.equal(spawnSync(process.execPath, [script], { cwd: f.cwd, env }).status, 1)
+})
+
+test('default baseline uses V0.14.1 without falling back to the retired adaptor', t => {
+  const f = fixture(t)
+  assert.equal(getUpstreamBase(f.cwd).ref, 'upstream/V0.14.1')
+  assert.equal(getUpstreamBase(f.cwd).commit, f.git('rev-parse', 'HEAD'))
+  f.git('update-ref', 'refs/remotes/upstream/bisheng-adaptor', 'HEAD')
+  f.git('update-ref', '-d', 'refs/remotes/upstream/V0.14.1')
+  assert.throws(() => getUpstreamBase(f.cwd), /无法验证上游基准/)
 })
 
 test('explicit verified commit is accepted', t => {
@@ -127,7 +136,7 @@ test('upstream core synchronization passes only for identical final bytes and mo
   f.put('src/host/core.js', 'reviewed update\n')
   f.git('add', '.')
   f.git('commit', '-m', 'reviewed upstream core update')
-  f.git('update-ref', 'refs/remotes/upstream/bisheng-adaptor', 'HEAD')
+  f.git('update-ref', 'refs/remotes/upstream/V0.14.1', 'HEAD')
   f.git('checkout', 'main')
   assert.deepEqual(f.check().illegalFiles, ['src/host/core.js'])
   f.put('packages/dsh-desktop-enterprise/local.js')
@@ -145,7 +154,7 @@ test('working and staged synchronization match upstream bytes before commit', t 
   f.put('src/host/core.js', 'reviewed next\n')
   f.git('add', '.')
   f.git('commit', '-m', 'reviewed next core')
-  f.git('update-ref', 'refs/remotes/upstream/bisheng-adaptor', 'HEAD')
+  f.git('update-ref', 'refs/remotes/upstream/V0.14.1', 'HEAD')
   f.git('reset', '--hard', oldHead)
   f.put('src/host/core.js', 'reviewed next\n')
   assert.deepEqual(f.check().illegalFiles, [])
@@ -201,7 +210,7 @@ test('NUL-safe collection includes every nested untracked source and unusual fil
 test('ignored node_modules/tmp and exact untracked .tmp directory stay excluded', t => {
   const f = fixture(t)
   for (const file of ['node_modules/pkg/source.js', 'tmp/cache.js', '.tmp/cache.js']) f.put(file)
-  assert.deepEqual(collectChanges({ cwd: f.cwd, upstreamBase: 'upstream/bisheng-adaptor' }).files, [])
+  assert.deepEqual(collectChanges({ cwd: f.cwd, upstreamBase: 'upstream/V0.14.1' }).files, [])
   f.put('.gitignore', 'node_modules/\ntmp/\n')
   assert.equal(f.check().files.includes('.tmp/cache.js'), false)
   assert.deepEqual(f.check().illegalFiles, [])

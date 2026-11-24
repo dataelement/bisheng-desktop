@@ -18,11 +18,13 @@ let createRuntime, mocks, runtimes
 beforeEach(async () => {
   vi.resetModules()
   runtimes = []
-  const app = Object.assign(new EventEmitter(), { getAppPath: vi.fn(() => '/fixture/app') })
+  const app = Object.assign(new EventEmitter(), { getAppPath: vi.fn(() => '/fixture/app'), getLocale: () => 'en' })
   const handlers = new Map()
   const views = []
   const environment = { DSH_DESKTOP_ENTERPRISE_BROKER_URL: 'http://127.0.0.1:1', DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY: 'test-only-capability' }
-  const desktop = { harnessEnvironment: vi.fn(() => ({ ...environment })), stop: vi.fn(async () => {}) }
+  const accountListeners = new Set()
+  const cloud = { open: vi.fn(async () => {}), close: vi.fn(), closeFor: vi.fn(), resizeFor: vi.fn(), setHostOccluded: vi.fn() }
+  const desktop = { snapshot: () => ({ connected: true, connectionKey: 'account' }), cloudRequest: vi.fn(async () => ({ appId: 'a'.repeat(32), slug: 'board', ticket: 'ticket', launchUrl: 'https://enterprise.test/apps/board/_desktop', entryUrl: 'https://enterprise.test/apps/board/', connectionKey: 'account' })), subscribe: listener => { accountListeners.add(listener); return () => accountListeners.delete(listener) }, harnessEnvironment: vi.fn(() => ({ ...environment })), stop: vi.fn(async () => {}) }
   const start = vi.fn(async () => desktop)
   const ipcMain = {
     handle: vi.fn((channel, handler) => { if (handlers.has(channel)) throw new Error('duplicate handler'); handlers.set(channel, handler) }),
@@ -52,12 +54,13 @@ beforeEach(async () => {
   const harnessVersion = vi.fn(() => '0.2.2-test')
   vi.doMock('electron', () => ({ app, ipcMain, net: { fetch: vi.fn() }, safeStorage: {} }))
   vi.doMock(root + 'enterprise-desktop', () => ({ startEnterpriseDesktop: start }))
+  vi.doMock(root + 'cloud-workbench-view', () => ({ CloudWorkbenchView: class { constructor() { return cloud } } }))
   vi.doMock(root + 'chat-view', () => ({ EnterpriseChatView: Chat }))
   vi.doMock(root + 'platform-fetch', () => ({ createElectronEnterpriseFetch: () => vi.fn() }))
   vi.doMock(root + 'login-link', () => ({ allowInsecureEnterpriseLoopback: () => false, enterpriseLoginFromArgv: argvLink, parseEnterpriseLoginLink: parseLink, registerEnterpriseLoginProtocol: protocol }))
   vi.doMock('../src/main/version-info', () => ({ bundledHarnessVersion: harnessVersion }))
   createRuntime = (await import('../packages/dsh-desktop-enterprise/desktop/runtime')).createEnterpriseProductRuntime
-  mocks = { app, handlers, views, desktop, start, ipcMain, environment, argvLink, parseLink, protocol, harnessVersion }
+  mocks = { cloud, accountListeners, app, handlers, views, desktop, start, ipcMain, environment, argvLink, parseLink, protocol, harnessVersion }
 })
 afterEach(async () => {
   for (const runtime of runtimes) await runtime.dispose()
@@ -95,7 +98,7 @@ describe('enterprise desktop product runtime', () => {
     const runtime = await pending
     expect(completed).toBe(true)
     expect(mocks.start).toHaveBeenCalledWith(expect.objectContaining({ userDataPath: context.userDataPath, desktopVersion: context.version }))
-    expect(Object.keys(runtime.hostEnvironment()).sort()).toEqual(Object.keys(mocks.environment).sort())
+    expect(Object.keys(runtime.hostEnvironment()).sort()).toEqual([...Object.keys(mocks.environment), 'DSH_ENTERPRISE_LEGACY_CLOUD_PROJECTS'].sort())
     expect(runtime.hostEnvironment().DSH_DESKTOP_ENTERPRISE_BROKER_URL).toBe(mocks.environment.DSH_DESKTOP_ENTERPRISE_BROKER_URL)
     // Assert booleans so failures cannot print the caller's real environment values.
     expect(JSON.stringify(process.env) === JSON.stringify(before)).toBe(true)
@@ -281,4 +284,19 @@ describe('enterprise desktop product runtime', () => {
     await tick()
     expect(window.webContents.send).toHaveBeenCalledOnce()
   })
+})
+
+it('opens cloud apps only for the attached window and current account, and closes on account changes', async () => {
+  const runtime = await startRuntime()
+  const { window, event } = attach(runtime)
+  const bounds = { x: 0, y: 0, width: 400, height: 300 }
+  await expect(handler('enterprise-cloud:open')(event, 'a'.repeat(32), bounds, 'stale', 'owner')).rejects.toThrow('account changed')
+  expect(mocks.desktop.cloudRequest).not.toHaveBeenCalled()
+  await handler('enterprise-cloud:open')(event, 'a'.repeat(32), bounds, 'account', 'owner')
+  expect(mocks.cloud.open).toHaveBeenCalledWith(window, expect.objectContaining({ connectionKey: 'account' }), bounds, 'owner', expect.any(Function), expect.any(Function))
+  for (const listener of mocks.accountListeners) listener({ connected: false })
+  expect(mocks.cloud.close).toHaveBeenCalled()
+  expect(() => handler('enterprise-cloud:request')(event, { operation: 'publish' })).toThrow()
+  await runtime.dispose()
+  expect(mocks.accountListeners.size).toBe(0)
 })

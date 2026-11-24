@@ -54,13 +54,14 @@ export function parseWorkbenchListItem(value: unknown): EnterpriseWorkbenchListI
 export function parseWorkbenchDetail(value: unknown, expectedId: string): EnterpriseWorkbenchDetail | null
 export function createWorkbenchMarketController(accountController: {
   state: () => { connected?: boolean, connectionKey?: string }
-  marketRequest: (path: string) => Promise<{ status_code?: number, status_message?: string, data?: unknown }>
+  marketRequest: (path: string, body?: unknown) => Promise<{ status_code?: number, status_message?: string, data?: unknown }>
   workbenchScreenshotRequest?: (path: string, signal: AbortSignal | undefined, image: EnterpriseWorkbenchScreenshot) => Promise<Uint8Array>
   verifyWorkbenchArtifact?: (input: unknown) => Promise<{ ok: boolean, stage?: string, error?: string }>
   materializeWorkbenchArtifact?: (input: unknown) => Promise<{ ok: boolean, path?: string, ticket?: string, stage?: string, error?: string }>
   releaseWorkbenchArtifact?: (ticket: string, connectionKey: string) => Promise<unknown>
   refreshState?: () => Promise<unknown>
 }): {
+  checkAccess: (ids: string[]) => Promise<Record<string, boolean>>
   stop: () => void
   catalog: () => Promise<EnterpriseWorkbenchCatalogResult>
   detail: (id: string) => Promise<{ status: string, accountKey: string, detail: EnterpriseWorkbenchDetail | null }>
@@ -69,5 +70,6 @@ export function createWorkbenchMarketController(accountController: {
   packageForInstall: (id: string) => Promise<{ path: string, ticket: string, connectionKey: string, packageName: string, version: string }>
 }
 export function applyEnterpriseWorkbenchMarket(ctx: unknown, accountController: unknown): {
+  checkAccess: (ids: string[]) => Promise<Record<string, boolean>>
   stop: () => void
 }

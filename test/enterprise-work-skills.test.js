@@ -68,7 +68,7 @@ describe('enterprise Work skill provider', () => {
     expect(row.locator.displayName).toBe('Office')
     const loaded = await skills.load(row.name)
     expect(loaded.content).toContain('Enterprise instructions')
-    expect(loaded.content).toContain('mcp__bisheng__bisheng_tool_7')
+    expect(loaded.content).toContain('unavailable in the current tool catalog')
     expect(await readFile(join(loaded.resourceBase.path, 'templates/file.bin'))).toEqual(Buffer.from([0, 255, 42]))
     expect(await readFile(join(loaded.resourceBase.path, 'scripts/run.py'), 'utf8')).toBe('print(42)')
   })
@@ -146,7 +146,7 @@ it('returns fallback labels from the picker route and rechecks disabled skill se
   } })
   const send = body => route.fetch(new Request('http://localhost/api/enterprise.work-skills', { method: 'POST', body: JSON.stringify(body) }))
   const catalog = await (await send({ operation: 'catalog' })).json()
-  expect(catalog.skills).toEqual([{ name: expect.stringMatching(/^office-bisheng-[a-f0-9]{24}-7$/), displayName: 'office' }])
+  expect(catalog.skills).toEqual([{ name: expect.stringMatching(/^office-bisheng-[a-f0-9]{24}-7$/), displayName: 'office', uploaded: false }])
   const selection = { operation: 'validate', names: [catalog.skills[0].name] }
   expect((await send(selection)).status).toBe(200)
   f.disable()

@@ -5,8 +5,8 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
-const source = readFileSync('packages/dsh-desktop-client-ui/client.js', 'utf8')
-const componentSource = source.slice(source.indexOf('    function WorkResourceAccessory('), source.indexOf('    function installWorkResources('))
+const source = readFileSync('packages/dsh-desktop-enterprise/work-ui-client.js', 'utf8')
+const componentSource = source.slice(source.indexOf('function WorkResourceAccessory('), source.indexOf('function installWorkResources('))
 const Accessory = new Function('React', 'Modal', 'Button', 'workResourceRequest', `${componentSource}; return WorkResourceAccessory`)(React, () => null, 'button', vi.fn())
 let root, container
 afterEach(async () => {

@@ -59,11 +59,11 @@ flowchart TD
 ### 2.2 机械阻断原则
 对 `src/main/`、`src/host/`、`src/preload/`、`patches/` 等公共底座的下游漂移，本地 `npm run verify:boundary` 与 GitHub Actions 均阻断。`patches/` 没有目录白名单。只有最终文件字节、Git 文件模式和对象类型与已评审上游基准完全一致的核心同步才通过；暂存区有差异时也须与该基准一致，不能用恢复工作区来隐藏待提交的底座修改。
 
-基准取显式 `UPSTREAM_BASE`，未指定时只使用已验证的 `upstream/bisheng-adaptor`。所有 Git 调用使用 `execFileSync` 参数数组，无 shell 插值。基准不存在、不是 commit 或无法求 merge-base 时直接失败；禁止回退到 `origin/main`、`main` 或 `HEAD~1`。CI 应先获取已评审 ref，或显式传入已评审的上游 commit。维护者负责评审来源，脚本负责解析与内容核验。
+基准取显式 `UPSTREAM_BASE`，未指定时只使用已验证的 `upstream/V0.14.1`。所有 Git 调用使用 `execFileSync` 参数数组，无 shell 插值。基准不存在、不是 commit 或无法求 merge-base 时直接失败；禁止回退到 `origin/main`、`main` 或 `HEAD~1`。CI 应先获取已评审 ref，或显式传入已评审的上游 commit。维护者负责评审来源，脚本负责解析与内容核验。
 
 比较包含基准与 HEAD 的双点差异、暂存区和工作区差异，并通过 `git ls-files --others --exclude-standard -z` 逐文件收集未跟踪源文件。所有文件列表采用 NUL 分隔，保留空格、换行与 tab。未同步的上游底座更新同样会失败，须先同步再运行最终门禁。仅未跟踪的确切 `.tmp/` 路径可忽略；tracked/staged 的 `.tmp/` 变更一律失败，`.tmp-secret` 等相似前缀不享有例外。忽略规则中的 node_modules 和临时缓存不会纳入未跟踪列表。
 
-回归使用临时真实 Git 仓库：`node --test test/enterprise-boundary-gate.test.mjs`（Node 24 普通执行，无 Electron 或实验 VM 参数）。
+回归使用临时真实 Git 仓库：`npx vitest run test/enterprise-boundary-gate.test.mjs`（Vitest 执行，fixture 内调用普通 Git/Node，不使用 Electron 或实验 VM 参数）。
 
 ---
 
@@ -83,7 +83,7 @@ flowchart LR
 
 ### 角色 1：普通业务开发者（95% 研发场景，零心智负担）
 * **日常体感**：与普通的单仓库开发完全一致。
-* **基准准备**：开发环境或 CI 必须提供可验证的已评审上游基准（默认 `upstream/bisheng-adaptor`，也可显式设置 `UPSTREAM_BASE` 为已获取的上游 commit）；基准缺失会失败，不使用 origin 分支兜底。
+* **基准准备**：开发环境或 CI 必须提供可验证的已评审上游基准（默认 `upstream/V0.14.1`，也可显式设置 `UPSTREAM_BASE` 为已获取的上游 commit）；基准缺失会失败，不使用 origin 分支兜底。
 * **操作流程**：
   ```bash
   git clone https://github.com/dataelement/bisheng-desktop.git

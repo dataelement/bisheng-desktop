@@ -33,6 +33,8 @@ if (isEnterpriseAppUrl(location.href) && !process.argv.includes('--dsh-desktop-s
     focusSettings: (): Promise<void> => ipcRenderer.invoke('enterprise-chat:focus-settings'),
     present: (value: EnterpriseChatPresentation): Promise<EnterpriseChatViewState> => ipcRenderer.invoke('enterprise-chat:present', value),
     capture: () => ipcRenderer.invoke('enterprise-chat:capture'),
+    landingGeometry: () => ipcRenderer.invoke('enterprise-chat:landing-geometry'),
+    landingTextMotion: (direction: 'in' | 'out') => ipcRenderer.invoke('enterprise-chat:landing-text-motion', direction),
     state: (): Promise<EnterpriseChatViewState> => ipcRenderer.invoke('enterprise-chat:state'),
     retry: (): Promise<void> => ipcRenderer.invoke('enterprise-chat:retry'),
     usage: (): Promise<import('./shared/enterprise-usage').EnterpriseUsage> => ipcRenderer.invoke('enterprise-chat:usage'),
@@ -54,6 +56,17 @@ if (isEnterpriseAppUrl(location.href) && !process.argv.includes('--dsh-desktop-s
   contextBridge.exposeInMainWorld(
     'dshDesktopEnterprise',
     Object.freeze({
+      cloudRequest: (input: unknown): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:request', input),
+      openCloudWorkbench: (id: string, bounds: unknown, key: string, owner: string): Promise<void> => ipcRenderer.invoke('enterprise-cloud:open', id, bounds, key, owner),
+      resizeCloudWorkbench: (bounds: unknown, owner: string): Promise<void> => ipcRenderer.invoke('enterprise-cloud:resize', bounds, owner),
+      closeCloudWorkbench: (owner: string): Promise<void> => ipcRenderer.invoke('enterprise-cloud:close', owner),
+      setCloudHostOccluded: (value: boolean): Promise<void> => ipcRenderer.invoke('enterprise-cloud:occluded', value),
+      onCloudAccessRequired: (listener: (value: unknown) => void): (() => void) => {
+        if (typeof listener !== 'function') throw new TypeError('Cloud listener must be a function.')
+        const receive = (_event: Electron.IpcRendererEvent, value: unknown): void => listener(value)
+        ipcRenderer.on('enterprise-cloud:access-required', receive)
+        return () => ipcRenderer.removeListener('enterprise-cloud:access-required', receive)
+      },
       settingsInfo: (): Promise<{ desktopVersion: string; harnessVersion?: string }> => ipcRenderer.invoke('enterprise:settings-info'),
       settingsAction: (action: DesktopSettingsAction): Promise<void> => ipcRenderer.invoke('enterprise:settings-action', parseDesktopSettingsAction(action)),
       onSettingsClose: (listener: () => void): (() => void) => {

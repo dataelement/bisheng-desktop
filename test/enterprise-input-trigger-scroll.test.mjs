@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { shippedFixture } from './enterprise-harness-fixture.mjs'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import vm from 'node:vm'
@@ -8,16 +9,9 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const source = readFileSync(path.resolve('node_modules/@deepseek-ai/dsh-client-ui-input-trigger/lib/client.js'), 'utf8')
-function region(name) {
-  const start = source.indexOf(`//#region ${name}`)
-  const end = source.indexOf('//#endregion', start)
-  if (start < 0 || end < 0) throw new Error(`Missing runtime region: ${name}`)
-  return source.slice(start, end)
-}
-
+const fixture = shippedFixture(source)
 const { menuReduce, MenuView } = vm.runInNewContext(`(() => {
-  ${region('lib/types/core/menu.js')}
-  ${region('lib/types/client/MenuView.js')}
+  ${fixture.declarations('menuReduce', 'MenuView')}
   return { menuReduce, MenuView }
 })()`, {
   react: React,

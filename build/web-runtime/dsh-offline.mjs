@@ -37,6 +37,8 @@ async function main() {
       throw new Error(`Web profile is incomplete: ${name}; restore it before starting`, { cause: error })
     }
   }
+  const { adoptLegacyCloudState } = await import('dsh-desktop-enterprise/legacy-cloud-state')
+  adoptLegacyCloudState(path.join(home, 'desktop-workbenches'))
   const child = spawn(process.execPath, [entry, ...process.argv.slice(2)], {
     cwd: root,
     env: { ...systemProxyEnvironment(), PATH: path.join(root, 'node') + path.delimiter + (process.env.PATH ?? ''), DSH_HOME: home, DSH_WEB_RUNTIME: '1' },

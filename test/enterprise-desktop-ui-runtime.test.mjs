@@ -111,7 +111,7 @@ it.skipIf(!supported)('opens enterprise account settings through the real Electr
     const proof = JSON.parse(marker.slice(SUCCESS.length))
     expect(proof).toEqual({
       signedOut: true, bridge: true, securePreferences: true, hostEndpoint: 200, accountConnected: false,
-      accountPhase: 'idle', desktopVersion: version, harnessVersion: expect.any(String), loginForm: true, escapeClosed: true
+      accountPhase: 'idle', desktopVersion: version, harnessVersion: expect.any(String), loginForm: true, workModeMounted: true, escapeClosed: true
     })
     expect(proof.harnessVersion.length).toBeGreaterThan(0)
   } finally {
@@ -163,6 +163,7 @@ function electronFixture() {
             const timer = setTimeout(() => { observer.disconnect(); reject(new Error('Missing UI state: ' + selector)) }, timeout)
             observer.observe(document.documentElement, { childList: true, attributes: true, subtree: true })
           })
+          await waitFor('#dsh-panel-work')
           const launcher = await waitFor('[data-dsh-account-launcher]')
           await waitFor('[data-dsh-account-launcher] button[aria-label*="Not signed in"], [data-dsh-account-launcher] button[aria-label*="未登录"]')
           if (typeof window.dshEnterpriseChat?.state !== 'function' || typeof window.dshDesktopEnterprise?.settingsInfo !== 'function') throw new Error('Enterprise preload bridge missing')
@@ -187,7 +188,7 @@ function electronFixture() {
           await waitFor('[data-shortcut-modal="settings"]')
           await waitFor('.dshEnterprise input[placeholder="https://bisheng.example.com"]')
           return { signedOut: true, bridge: true, hostEndpoint: response.status, accountConnected: account.connected, accountPhase: account.phase,
-            desktopVersion: info.desktopVersion, harnessVersion: info.harnessVersion, loginForm: true }
+            desktopVersion: info.desktopVersion, harnessVersion: info.harnessVersion, loginForm: true, workModeMounted: true }
         }.toString() + ')()')
         await window.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
         window.webContents.focus()

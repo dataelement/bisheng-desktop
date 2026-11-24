@@ -1,0 +1,768 @@
+{
+  "source": {
+    "title": "BISHENG 3.0 提示词集",
+    "revision": 160,
+    "url": "https://dataelem.feishu.cn/wiki/R6Ckw0TGMin19tkP5qfcqZYfnKh",
+    "documentId": "LY4BdPL79ooRZLxJ2edc1BePnCg"
+  },
+  "chat": [
+    {
+      "id": "confirm-event",
+      "title": {
+        "zh": "写一封方案确认邮件",
+        "en": "Draft an event confirmation email"
+      },
+      "description": {
+        "zh": "把准备进展、回复期限和确认项写清楚。",
+        "en": "Clarify progress, response deadlines and decisions."
+      },
+      "prompt": "起草一封邀请合作方确认活动方案的邮件，成稿要能直接复制发送：给出明确主题；首段交代方案已完成哪些准备、目前等待哪项确认；第二段写清期待收到答复的具体日期与时刻；第三段把对方的回复压缩为少量确认项，例如场地、人数和议程是否有异议。语气友好、要求清楚，联系人姓名及日期时间用空白占位。",
+      "promptEn": "Draft a ready-to-send email asking a partner to confirm an event plan. Provide a clear subject line. In the first paragraph, state which preparations are complete and what still needs confirmation. In the second, give the exact date and time by which a reply is expected. In the third, keep the response simple by listing a few items to confirm, such as any objections to the venue, headcount, or agenda. Keep the tone friendly and the request clear. Leave blanks for contact names, dates, and times.",
+      "deepResearch": false
+    },
+    {
+      "id": "ai-brief",
+      "title": {
+        "zh": "看看今天的 AI 动态",
+        "en": "Catch up on AI news"
+      },
+      "description": {
+        "zh": "3 条以内官方消息，附发布时间与原始来源。",
+        "en": "Summarize up to three updates from official sources."
+      },
+      "prompt": "检索过去 24 小时官方发布的 AI 行业动态，最多选 3 项，逐项说明发生了什么、相较此前有哪些新变化，以及接下来值得跟踪的事项。以便于浏览的 Markdown 信息卡或表格交付。每项必须附相关机构或企业官网的原始发布链接和精确到小时的发布时间，不使用转载或聚合页作来源；合格信息不足 3 项就按实际数量提供，无法联网时明确告知。",
+      "promptEn": "Find AI industry updates officially announced in the past 24 hours. Select up to three and explain what happened, what is new compared with before, and what to watch next. Present them as easy-to-scan Markdown cards or a table. For each item, include the original announcement on the organization’s or company’s website and the publication time with hour-level precision. Do not cite reposts or aggregators. If fewer than three updates qualify, include only those that do; if web access is unavailable, say so explicitly.",
+      "deepResearch": false
+    },
+    {
+      "id": "enterprise-agents",
+      "title": {
+        "zh": "调研企业智能体应用",
+        "en": "Research enterprise AI agents"
+      },
+      "description": {
+        "zh": "看真实落地场景，分清已上线、演示与待核实。",
+        "en": "Compare documented deployments and their limitations."
+      },
+      "prompt": "调研企业智能体在供应链运营、人力服务和财务共享中的真实使用情况，联网寻找有代表性的企业案例。用 Markdown 表格呈现场景、部署范围与进度、已披露成效、证据链接和来源日期。将案例标为“已证实投入使用”“仅发布或演示”“证据不足”，没有公开效果数据的直接注明，不推算收益。最后归纳这些场景投入运行所需的条件及当前主要局限。",
+      "promptEn": "Research how enterprises actually use AI agents in supply chain operations, HR services, and financial shared services. Search the web for representative company cases. In a Markdown table, show each use case, deployment scope and progress, disclosed outcomes, evidence links, and source dates. Label each case “Verified in use,” “Announced or demonstrated only,” or “Insufficient evidence.” State explicitly when no outcome data is public; do not estimate returns. Conclude with the prerequisites for running these agents in production and their main limitations today.",
+      "deepResearch": true
+    },
+    {
+      "id": "headphones",
+      "title": {
+        "zh": "对比高端降噪耳机",
+        "en": "Compare noise-canceling headphones"
+      },
+      "description": {
+        "zh": "同维度比较产品差异，分开用户反馈与宣传。",
+        "en": "Compare models using consistent criteria and evidence."
+      },
+      "prompt": "研究高端无线降噪耳机，梳理不同产品的关键差异，交付一张横轴为品牌及具体型号、纵轴为比较维度的表格。统一比较降噪方案、电池续航、佩戴与重量、易损耗配件更换成本、售后保障；未公开或无法核实的参数一律写“未披露”，不要靠估算补齐。表格下另列差异证据：哪些由可追溯的用户使用反馈支持，哪些只来自品牌宣传，避免把广告表述当成实测结论。",
+      "promptEn": "Research high-end wireless noise-canceling headphones and identify key differences. Deliver a table with brands and specific models as columns and comparison criteria as rows. Compare noise-canceling technology, battery life, fit and weight, replacement costs for wear-prone parts, and after-sales coverage. Mark undisclosed or unverifiable specifications “Not disclosed” instead of estimating. Below the table, explain which differences are supported by traceable user feedback and which are based only on marketing. Do not present advertising claims as test results.",
+      "deepResearch": true
+    },
+    {
+      "id": "commercial-space",
+      "title": {
+        "zh": "研究商业航天的商业模式",
+        "en": "Research commercial space revenue"
+      },
+      "description": {
+        "zh": "围绕收入闭环，用证据区分商用与试点。",
+        "en": "Distinguish commercial operations from pilot programs."
+      },
+      "prompt": "研究商业航天产业，判断哪些环节已有证据支持持续收入，哪些仍以验证项目或试点为主。交付 Markdown 研究简报：开头用一句话给出核心判断；正文按运载与卫星制造、地面设施、卫星数据与通信运营三部分，分别梳理商业模式已跑通和仍未跑通的环节，并紧邻判断列出证据；结尾给出 2—3 个后续可观察、能支持或推翻判断的信号。重要结论逐条标注来源链接与日期，严格区分付费商用项目和试验示范项目；媒体引用的规模数字只能作为检索线索，不能直接支撑结论。无法确认的内容标注【数据待核】并说明缺少哪类材料。篇幅服从论证完整性，不以缩短篇幅为由省略关键证据。",
+      "promptEn": "Research the commercial space industry to determine which activities have evidence of recurring revenue and which remain largely validation projects or pilots. Deliver a Markdown research brief. Open with a one-sentence conclusion. Organize the body into launch and satellite manufacturing, ground infrastructure, and satellite data and communications operations. In each section, distinguish proven business models from those not yet proven and place the evidence next to each assessment. End with two or three observable signals that could support or overturn your conclusion. Attach a source link and date to each important conclusion. Distinguish paid commercial projects from tests and demonstrations. Treat market-size figures cited by the media as leads, not direct evidence. Label unconfirmed information [Data to verify] and explain what evidence is missing. Use the space needed to make the case without omitting key evidence for brevity.",
+      "deepResearch": false
+    },
+    {
+      "id": "booking-scope",
+      "title": {
+        "zh": "梳理预约登记需求",
+        "en": "Scope an appointment tracker"
+      },
+      "description": {
+        "zh": "确认需求，划定首版范围。",
+        "en": "Clarify needs and identify what belongs in the first release."
+      },
+      "prompt": "把下面这段业务想法整理成可供产品和研发对齐的首版需求草案，不联网。业务材料：“我们有三间培训教室，员工经常重复预订。希望做个预约登记工具，能查看空闲、提交预约和取消；行政每周看一次使用情况。现在只有一位行政同事维护，先在两周内做一个能试用的版本，不想接入复杂审批，也暂不对外开放。”请按“问题与目标—用户角色—首版流程—纳入／暂缓事项—待确认问题”五部分输出 Markdown；用表格列出不超过 6 项首版功能及其验收条件，验收条件要能判断是否完成。只根据材料陈述事实，补充推断标为【假设】，不要自行确定登录方式、技术方案或权限规则；最后按影响范围的大小列出最多 3 个优先澄清问题，不先追问，先给出草案。",
+      "promptEn": "Turn the following business idea into a first-release requirements draft for product and engineering without using the web. Business context: “We have three training rooms, and employees often double-book them. We want a booking tool to check availability, submit bookings, and cancel them. The administration team would review usage once a week. Only one administrator is available to maintain it. We want a trial version within two weeks, without complex approvals or external access for now.” Use five Markdown sections: Problem and goals, User roles, First-release workflow, In scope and deferred, and Open questions. Include a table of at most six first-release features with testable acceptance criteria. Base facts only on the brief and label inferences [Assumption]. Do not decide the login method, technical approach, or permission rules. End with up to three questions in priority order by scope of impact. Draft first; do not ask questions up front.",
+      "deepResearch": false
+    },
+    {
+      "id": "support-feedback",
+      "title": {
+        "zh": "归并客服反馈",
+        "en": "Organize customer feedback"
+      },
+      "description": {
+        "zh": "把零散反馈整理成结构化问题清单。",
+        "en": "Group repeated issues into a clear, structured summary."
+      },
+      "prompt": "仅依据下列 5 条客服记录，生成一份可直接放入 Markdown 的问题归并表，不联网、不推断后台原因。记录：A01｜11月3日｜陈同学｜“导出后中文标题变成方块，正文正常，Mac 上遇到的。”；A02｜11月3日｜林同学｜“同一份报告导出的标题乱码，Windows 是否也有还没测。”；A03｜11月4日｜周同学｜“我希望能一键复制图表的数据。”；A04｜11月4日｜陈同学｜“上次说的导出标题问题还在，换了一台 Mac 也是如此。”；A05｜11月5日｜吴同学｜“页面很慢”，未说明设备或发生步骤。表格列出问题类别、合并后的描述、原始记录 ID、已知环境、记录条数和仍缺的信息；把疑似同类的反馈归并，同时保留每个原始 ID 的追溯关系。A04 是跟进记录，不能据此新增一名反馈用户；记录条数与独立反馈人数分开统计，不能证明同一问题的不要强行合并。最后列出 3 个最值得补采的信息，不擅自承诺修复时间或标定严重程度。",
+      "promptEn": "Use only the following five support records to create a Markdown-ready issue consolidation table. Do not use the web or infer backend causes. Records: A01 | November 3 | Chen | “After export, the Chinese title turned into squares, but the body looked fine. This happened on a Mac.”; A02 | November 3 | Lin | “The exported title of the same report was garbled. We haven’t tested whether Windows is affected.”; A03 | November 4 | Zhou | “I’d like to be able to copy chart data in one click.”; A04 | November 4 | Chen | “The export title issue I reported last time is still happening, even on a different Mac.”; A05 | November 5 | Wu | “The page is very slow.” No device or reproduction step was provided. Include issue category, consolidated description, original record IDs, known environment, record count, and missing information. Group likely duplicates while retaining traceability to each original ID. A04 is a follow-up and does not add another reporter. Count records and distinct reporters separately; do not force a merge when the evidence does not establish that the issues are the same. Finish with the three most useful details to collect. Do not promise a fix date or assign severity without evidence.",
+      "deepResearch": false
+    },
+    {
+      "id": "team-event",
+      "title": {
+        "zh": "比较团队交流会方案",
+        "en": "Compare team event options"
+      },
+      "description": {
+        "zh": "对照备选方案，说明取舍理由。",
+        "en": "Weigh the options and explain the tradeoffs."
+      },
+      "prompt": "根据给定约束，为一次团队交流会比较方案并给出建议，不需要联网。已知：24 人参加，预算上限 6000 元，工作日可用时间 14:00—18:00；至少 60 分钟用于小组讨论，场地需可投屏，不能安排户外活动。方案 A：办公室，场地免费、可投屏，茶歇每人 80 元；方案 B：附近活动室，14:00—17:00 租金 2800 元，可投屏，茶歇每人 100 元；方案 C：酒店会议室，14:00—18:00 租金 4500 元，可投屏，最低餐饮消费 2000 元。以上报价均含税，无其他已知费用。先用一张表比较可用时长、已知总费用、预算余量、硬约束满足情况与主要取舍；再给出首选及理由，并为首选排一份包含讨论时间的简短议程。预算不足的方案明确排除；舒适度、交通便利等未提供的信息标为“待确认”，不要当成事实，也不要为缺失信息虚构评分。",
+      "promptEn": "Compare options for a team gathering and recommend one based on the given constraints. No web access is needed. There are 24 attendees and a budget limit of RMB 6,000. The available weekday time slot is 14:00–18:00. Allow at least 60 minutes for group discussion, use a venue with screen sharing or projection, and schedule no outdoor activities. Option A: office, free venue with projection and refreshments at RMB 80 per person. Option B: nearby event room with projection, rent RMB 2,800 from 14:00 to 17:00 and refreshments at RMB 100 per person. Option C: hotel meeting room with projection, rent RMB 4,500 from 14:00 to 18:00 and a minimum catering spend of RMB 2,000. All quotes include tax, and there are no other known fees. Begin with one table comparing available time, total known cost, budget remaining, compliance with hard constraints, and key trade-offs. Then recommend a first choice, explain why, and provide a short agenda that includes discussion time. Explicitly rule out options over budget. Mark unspecified factors such as comfort and transport convenience as “To confirm”; do not treat them as facts or invent scores.",
+      "deepResearch": false
+    },
+    {
+      "id": "museum-collections",
+      "title": {
+        "zh": "研究博物馆数字馆藏",
+        "en": "Compare digital museum collections"
+      },
+      "description": {
+        "zh": "对照馆藏开放方式与使用条件。",
+        "en": "Research how museums make their collections accessible."
+      },
+      "prompt": "研究大都会艺术博物馆、荷兰国立博物馆和史密森学会的数字馆藏开放方式，回答“公众与开发者分别能获取什么、以什么条件使用、有哪些实际限制”。优先检索各机构当前有效的开放数据页面、开发者文档与版权或使用条款，不用第三方汇总代替原始规则。交付 Markdown 对照表，统一比较可访问资源、获取途径、授权范围、是否需要注册或密钥、调用或下载限制、适用例外；区分作品、图片与元数据的许可，不把部分开放误写为全部开放。每个关键结论紧邻附一手链接、页面发布日期或更新日期，以及本次访问日期；页面未标日期就注明“未标注”，无法确认的写“待核实”，不要估算接口限额。表后分别用一段解释研究者查阅与开发者构建展示应用时的使用条件，并把机构明确规定与自己的适配判断分开。若规则在不同页面间冲突，列出冲突与需核实之处；无法联网则说明，不能假装完成查证。",
+      "promptEn": "Research how the Metropolitan Museum of Art, Rijksmuseum, and Smithsonian Institution make their digital collections available. Answer what the public and developers can access, on what terms, and with what practical limits. Prioritize each institution’s current open data pages, developer documentation, and copyright or usage terms; do not substitute third-party summaries for the original rules. Deliver a Markdown comparison table covering available resources, access methods, license scope, registration or key requirements, request or download limits, and exceptions. Distinguish licenses for works, images, and metadata; do not present partial access as full access. Next to each key conclusion, include a primary-source link, the page’s publication or update date, and the date accessed. Mark undated pages “No date listed” and unconfirmed details “To verify.” Do not estimate API quotas. After the table, devote one paragraph each to conditions for researchers consulting the collections and developers building a display app. Separate institutional rules from your own judgments about suitability. Flag conflicting rules and what needs verification. If the web is unavailable, say so rather than claiming to have verified anything.",
+      "deepResearch": true
+    },
+    {
+      "id": "urban-cooling",
+      "title": {
+        "zh": "研究城市降温措施",
+        "en": "Research urban cooling measures"
+      },
+      "description": {
+        "zh": "比较实际效果，标注适用条件。",
+        "en": "Compare evidence about effects and where each measure works."
+      },
+      "prompt": "研究城市公共空间降温中的三类措施：增加树荫、铺设高反射路面、建设遮阳设施。优先查找近 5 年有公开方法与结果的实地研究或城市评估，各选 1—2 个代表案例，比较其测得的效果、实施条件与局限；较早的重要基准研究可以补充，但要注明年份。交付 Markdown 研究简报：先给三条核心发现，再用同一张表列出地点、措施、对照或基准、测量指标与条件、主要结果、维护或实施限制、一手来源及日期，最后给出按场地条件选择措施时的核查问题。优先采用研究论文原文、城市政府或项目评估原始报告，注明发布日期与检索日期；气温、地表温度和人体热舒适指标须分开，不把不同指标或不同测量条件下的降幅直接排高低。没有披露的成本或长期效果写“未披露”，不要补算；明确区分实测事实、作者解释与自己的归纳，说明证据不足或结果冲突。无法联网时明确说明，不编造案例与数字。",
+      "promptEn": "Research three ways to cool urban public spaces: adding tree shade, using high-reflectance pavement, and building shade structures. Prioritize field studies or city evaluations from the past five years with published methods and results. Choose one or two representative cases per measure and compare measured effects, implementation conditions, and limitations. Include older landmark studies if useful, with their year. Deliver a Markdown research brief: start with three key findings, then use one table to show location, measure, control or baseline, metrics and measurement conditions, main results, maintenance or implementation limits, primary source, and date. Finish with questions to check when choosing a measure for a specific site. Prioritize original papers, city government reports, or original project evaluations, and note publication and access dates. Keep air temperature, surface temperature, and human thermal comfort metrics separate. Do not directly rank reductions measured with different metrics or under different conditions. Write “Not disclosed” for unreported costs or long-term effects rather than estimating. Separate measured findings, authors’ interpretations, and your own synthesis. Explain where evidence is weak or results disagree. If web access is unavailable, say so explicitly and do not invent cases or figures.",
+      "deepResearch": true
+    }
+  ],
+  "work": [
+    {
+      "id": "luma-launch",
+      "title": {
+        "zh": "策划 Luma 新品发布会",
+        "en": "Design a Luma launch deck"
+      },
+      "description": {
+        "zh": "用产品大图与场景叙事，制作 10—12 页发布 PPT。",
+        "en": "Build a visual product launch presentation."
+      },
+      "prompt": "围绕“Luma 智能空气管家新品发布”制作一份面向城市家庭的旗舰产品发布 PPT，塑造一款可自主感知并管理室内空气的智能设备。核心能力包括多维空气检测、颗粒物与异味净化、温湿度联动、分房间场景识别、静音运行、滤芯寿命监测、儿童与宠物场景适配、能耗管理和手机远程控制。叙事从“为什么好空气需要被持续管理”展开，依次呈现产品主张、工业设计、核心硬件、传感系统、调节策略、真实居住场景，以及它与传统空气净化器的体验差别，最终说明设备如何从被动过滤工具变成主动运行的家庭空气管家。控制在 10—12 页，主要使用产品大图、气流路径、传感器结构、使用前后对照、场景示意与参数重点，避免长段文字。以暖白、石墨灰和浅苔绿构建安静、精密的科技展厅风格，穿插半透明材质和细线示意图，用问题、能力揭示、场景验证和收束形成发布节奏。需要使用 AI 生成配图，模拟参数须明确标注，不冒充实测。",
+      "promptEn": "Create a flagship product launch deck for urban families about the Luma Smart Air Manager, a device that independently senses and manages indoor air. Its core features include multi-metric air sensing, particle and odor removal, temperature and humidity coordination, room-by-room context recognition, quiet operation, filter life tracking, modes for households with children or pets, energy management, and remote control by phone. Begin with why good air needs continual management, then present the product proposition, industrial design, core hardware, sensors, adjustment strategy, real-life home scenarios, and how it compares with traditional air purifiers. Show how it goes from a passive filter to an active home air manager. Use 10–12 slides built around large product images, airflow paths, sensor diagrams, before-and-after comparisons, scenario illustrations, and key specifications rather than long text. Use warm white, graphite gray, and pale moss green to evoke a quiet, precise technology showroom, with translucent materials and fine-line illustrations. Pace the presentation around the problem, feature reveal, validation through scenarios, and closing. Use AI-generated illustrations and clearly label simulated specifications; do not present them as measurements.",
+      "category": "PPT",
+      "officeMode": "ppt"
+    },
+    {
+      "id": "setouchi-travel",
+      "title": {
+        "zh": "做一份濑户内海旅行指南",
+        "en": "Create a Setouchi travel guide"
+      },
+      "description": {
+        "zh": "串联岛屿艺术、地方饮食与 7—10 天路线。",
+        "en": "Bring regional culture and a practical itinerary into a deck."
+      },
+      "prompt": "围绕“濑户内海慢旅行：岛屿艺术、港町建筑与地方饮食”制作一份具有文化旅行刊物质感的目的地研究 PPT。主动联网搜集最新旅行资料及目的地信息，重点介绍高松、直岛、丰岛、小豆岛、尾道和仓敷，从美术馆、城市肌理、地方历史、餐饮与海岛景观展现区域特色。结合地中美术馆、丰岛美术馆、栗林公园、仓敷美观地区、渡轮航线，以及乌冬、橄榄制品和濑户内海鲜等代表体验，设计一条 7—10 天路线，说明各地最佳体验、交通衔接、适合停留时长与行程节奏。全篇 10—12 页，以区域地图、岛屿摄影、建筑赏析、美食画面、行程时间轴和目的地对照为主，文字尽量精炼。视觉采用米白纸色、海雾蓝、炭黑与少量朱红，以留白、图注和摄影跨页形成安静的地方文化手册风格，兼顾可执行的攻略和连续的视觉叙事。需要用 AI 生成配图，生成画面标为示意，地点与交通信息以核实资料为准。",
+      "promptEn": "Create a destination research deck titled “Slow Travel in the Seto Inland Sea: Island Art, Port-Town Architecture, and Local Food,” with the feel of a cultural travel magazine. Search the web for up-to-date travel and destination information. Focus on Takamatsu, Naoshima, Teshima, Shodoshima, Onomichi, and Kurashiki, highlighting museums, urban fabric, local history, food, and island landscapes. Build a 7–10-day itinerary around experiences such as the Chichu Art Museum, Teshima Art Museum, Ritsurin Garden, the Kurashiki Bikan Historical Quarter, ferry routes, udon, olive products, and Setouchi seafood. Explain the best experiences at each stop, transport connections, suggested stay lengths, and trip pacing. Use 10–12 slides centered on area maps, island photography, architectural details, food imagery, an itinerary timeline, and destination comparisons, with concise text. Use ivory paper tones, sea-mist blue, charcoal, and a little vermilion. Use whitespace, captions, and photo spreads for a quiet local-culture guide that is both practical and visually coherent. Use AI-generated illustrations, label generated views as illustrative, and use verified sources for location and transport details.",
+      "category": "PPT",
+      "officeMode": "ppt"
+    },
+    {
+      "id": "data-infrastructure",
+      "title": {
+        "zh": "梳理数据基础设施趋势",
+        "en": "Brief data infrastructure trends"
+      },
+      "description": {
+        "zh": "研究实时数据、湖仓、治理与面向 AI 的数据服务。",
+        "en": "Compare technology trends in an evidence-based deck."
+      },
+      "prompt": "基于我在客户端已选择的 PPT 模板，沿用其结构和版式，制作一份近一年企业数据基础设施趋势分析 PPT，供技术战略研讨及管理层评审使用。联网研究实时数据平台、湖仓一体、数据治理、隐私计算、语义层和面向 AI 的数据服务，概括新进展、业务价值与未来走向。通过趋势矩阵、厂商能力对照和市场预测组织信息，预测需标注来源与日期，明确主要判断及其依据。",
+      "promptEn": "Use the PowerPoint template I selected in the client, keeping its structure and layouts, to create a deck on enterprise data infrastructure trends over the past year for a technology strategy discussion and management review. Research real-time data platforms, lakehouses, data governance, privacy-preserving computing, semantic layers, and data services for AI. Summarize recent advances, business value, and future direction. Organize the material with a trend matrix, vendor capability comparisons, and market forecasts. Give sources and dates for forecasts and make the main conclusions and their evidence clear.",
+      "category": "PPT",
+      "officeMode": "ppt",
+      "template": "PPT 模板"
+    },
+    {
+      "id": "customer-success-review",
+      "title": {
+        "zh": "做一份年度复盘 PPT",
+        "en": "Make an annual review deck"
+      },
+      "description": {
+        "zh": "讲清年度成果、客户项目与下一年行动。",
+        "en": "Present team outcomes and next year’s plan."
+      },
+      "prompt": "基于我在客户端已选择的 PPT 模板，沿用其结构和版式，制作一份 10 页的客户成功团队年度复盘 PPT，依次覆盖年度目标、重点客户项目、交付与续约成果、问题复盘和下一年度计划。尚未提供的数据及案例细节使用占位符。每页围绕一个明确结论，内容包括关键指标、客户项目、交付里程碑和季度行动路线图，清楚呈现团队贡献、业务结果与能力成长。",
+      "promptEn": "Use the PowerPoint template I selected in the client, keeping its structure and layouts, to make a 10-slide annual review for the customer success team. Cover annual goals, priority customer projects, delivery and renewal outcomes, lessons from problems, and the plan for next year, in that order. Use placeholders for data and case details not yet supplied. Build each slide around one clear takeaway and include key metrics, customer projects, delivery milestones, and a quarterly action roadmap. Clearly present the team’s contributions, business results, and how its capabilities grew.",
+      "category": "PPT",
+      "officeMode": "ppt",
+      "template": "PPT 模板"
+    },
+    {
+      "id": "ai-data-center-power",
+      "title": {
+        "zh": "分析 AI 数据中心的电力瓶颈",
+        "en": "Analyze data center power bottlenecks"
+      },
+      "description": {
+        "zh": "用电力需求与供给数据说明选址和投资取舍。",
+        "en": "Use power demand and supply data to weigh siting and investment decisions."
+      },
+      "prompt": "我要做一份 10 页左右的中文管理层 PPT，分析“AI 数据中心的下一道瓶颈为什么是电力，而不只是芯片”。对象是准备评估算力基础设施投资的管理层，希望最后能形成对选址、电力采购、建设节奏和风险储备的判断。\n\n我已经整理了以下数据，请直接基于这些信息完成汇报。\n\n数据 A｜需求规模与情景，单位：TWh\n年份/情景 | 全球数据中心用电量\n2024 实际 | 415，约占全球用电量 1.5%\n2030 基准情景 | 945，超过 2024 年的两倍，略高于日本当前全国用电量\n2035 基准情景 | 1200\n2035 低位情景 | 700\n2035 高位情景 | 1700\n2035 高效率情景 | 比基准情景低 20%\n\n补充趋势：全球数据中心用电量自 2017 年以来年均增长约 12%，增速超过全球总用电量增速的四倍。2024 年全球数据中心投资接近 5000 亿美元，较 2022 年接近翻倍。典型 AI 数据中心耗电量约等于 10 万户家庭，当前在建最大项目约为其 20 倍。\n\n数据 B｜2024 年区域用电分布\n区域 | 占全球数据中心用电量\n美国 | 45%\n中国 | 25%\n欧洲 | 15%\n其他地区 | 15%\n\n美国本地集中度更高：接近一半的数据中心容量集中在 5 个区域集群；在建容量中仍有 50%位于已有大型集群。美国数据中心将贡献本国到 2030 年新增用电需求的近一半；对全部先进经济体而言，数据中心占 2030 年前新增用电需求的 20%以上，而在新兴及发展中经济体约为 5%。\n\n数据 C｜当前全球数据中心实际用电来源\n能源 | 占比\n煤电 | 约 30%\n可再生能源 | 约 27%\n天然气 | 约 26%\n核电 | 约 15%\n其他 | 约 2%\n\n区域差异：美国当前约 40%以上来自天然气、24%来自可再生能源、约 20%来自核电、约 15%来自煤电；中国当前接近 70%来自煤电、近 20%来自可再生能源、接近 10%来自核电。到 2030 年，欧洲数据中心用电中可再生能源与核电合计预计达到 85%；日本和韩国两类低排放电源合计占比预计从当前 35%升至近 60%。\n\n数据 D｜新增供给与建设瓶颈\n指标 | 数值\n到 2035 年用于满足数据中心需求的可再生能源新增发电量 | 超过 450 TWh\n天然气新增发电量 | 约 175 TWh\n核电新增发电量 | 约 175 TWh\n2024—2030 年全球新增需求中天然气与煤电合计承担比例 | 超过 40%\n可能因电网问题延期的规划项目 | 约 20%\n先进经济体新建输电线路周期 | 通常 4—8 年\n变压器和电缆等待时间 | 过去 3 年翻倍\n美国科技企业已提出的小型模块化核反应堆支持计划 | 超过 20 GW\n\n请重点说明需求为什么增长、瓶颈为什么表现为局部电网和交付周期问题、不同能源组合有什么取舍，以及企业在选址、PPA、并网、备用电源、储能和建设节奏上应提前锁定什么。最后给出一套分阶段投资判断。关键图表旁标注来源机构、年份和“全球平均/区域结构/情景预测”的口径。\n\n来源：\n- IEA，Energy and AI，Executive Summary，2025\n  https://www.iea.org/reports/energy-and-ai/executive-summary\n- IEA，Energy and AI，Energy Supply for AI，2025\n  https://www.iea.org/reports/energy-and-ai/energy-supply-for-ai",
+      "promptEn": "Create a Chinese-language presentation of about 10 slides for executives on why electricity, not just chips, is the next bottleneck for AI data centers. The audience is evaluating computing infrastructure investments and needs to make decisions about siting, power procurement, construction timing, and risk reserves.\n\nUse the following data directly in the presentation.\n\nData A | Demand and scenarios, in TWh\nYear/scenario | Global data center electricity consumption\n2024 actual | 415, about 1.5% of global electricity consumption\n2030 base case | 945, more than twice 2024 and slightly above Japan’s current nationwide electricity use\n2035 base case | 1,200\n2035 low case | 700\n2035 high case | 1,700\n2035 high-efficiency case | 20% below the base case\n\nAdditional trends: Global data center electricity consumption has grown around 12% annually since 2017, over four times the growth rate of total global electricity consumption. Global data center investment approached USD 500 billion in 2024, nearly double its 2022 level. A typical AI data center uses about as much electricity as 100,000 households, and the largest project now under construction is about 20 times that scale.\n\nData B | Regional electricity consumption in 2024\nRegion | Share of global data center electricity consumption\nUnited States | 45%\nChina | 25%\nEurope | 15%\nOther regions | 15%\n\nWithin the United States, concentration is even higher: nearly half of data center capacity is in five regional clusters, and 50% of capacity under construction is still in existing major clusters. U.S. data centers will account for nearly half of the country’s additional electricity demand by 2030. Across advanced economies, data centers account for more than 20% of additional electricity demand through 2030, versus about 5% in emerging and developing economies.\n\nData C | Current electricity sources actually used by data centers worldwide\nSource | Share\nCoal | About 30%\nRenewables | About 27%\nNatural gas | About 26%\nNuclear | About 15%\nOther | About 2%\n\nRegional differences: In the United States, just over 40% currently comes from natural gas, 24% from renewables, about 20% from nuclear, and about 15% from coal. In China, nearly 70% currently comes from coal, nearly 20% from renewables, and nearly 10% from nuclear. By 2030, renewables and nuclear together are expected to provide 85% of Europe’s data center electricity. In Japan and South Korea, their combined share is expected to rise from 35% today to nearly 60%.\n\nData D | Additional supply and construction bottlenecks\nMetric | Value\nAdditional renewable electricity generation to meet data center demand by 2035 | More than 450 TWh\nAdditional natural gas generation | About 175 TWh\nAdditional nuclear generation | About 175 TWh\nShare of additional global demand met by gas and coal combined in 2024–2030 | More than 40%\nPlanned projects that may be delayed by grid issues | About 20%\nLead time for new transmission lines in advanced economies | Typically 4–8 years\nWait times for transformers and cables | Doubled over the past three years\nSupport plans already announced by U.S. technology companies for small modular reactors | More than 20 GW\n\nExplain why demand is rising, why bottlenecks show up in local grids and delivery lead times, the trade-offs between energy mixes, and what companies should secure early for site selection, power purchase agreements (PPAs), grid connections, backup power, storage, and construction timing. End with a phased investment assessment. Next to key charts, identify the source organization and year and label whether the figures reflect a global average, a regional breakdown, or a scenario projection.\n\nSources:\n- IEA, Energy and AI, Executive Summary, 2025\n  https://www.iea.org/reports/energy-and-ai/executive-summary\n- IEA, Energy and AI, Energy Supply for AI, 2025\n  https://www.iea.org/reports/energy-and-ai/energy-supply-for-ai",
+      "category": "PPT",
+      "officeMode": "ppt"
+    },
+    {
+      "id": "security-notice",
+      "title": {
+        "zh": "起草信息安全培训通知",
+        "en": "Draft a security training notice"
+      },
+      "description": {
+        "zh": "保留公文格式，未知安排统一标为待填写。",
+        "en": "Use a formal notice layout with placeholders for missing details."
+      },
+      "prompt": "星河科技拟面向全体员工举办一次信息安全培训，内容包括账号与设备安全、敏感信息处理、钓鱼邮件识别；要求员工提前完成自查，培训后参加随堂测试。培训日期、地点、报名方式、联系人、发文字号与签发日期尚未确定，统一用【待填写】保留，不自行补造。沿用模板的红色发文机构标志、文号、分隔线、居中标题、正文层级、署名日期、页码和版记；正文按培训安排、参加要求、准备事项分层表达。替换全部示例单位及旧内容，不把模板案例当成真实发文。",
+      "promptEn": "Xinghe Technology plans to hold information security training for all employees covering account and device security, handling sensitive information, and recognizing phishing emails. Employees must complete a self-check beforehand and take a quiz after the training. The date, venue, registration method, contact, official document number, and signing date are not yet set. Leave them as [To be filled in] and do not invent details. Retain the template’s red issuing-body identification, document number, separator line, centered title, heading hierarchy, signature and date, page numbers, and colophon. Organize the body into training arrangements, participation requirements, and preparation. Replace every sample organization and all old content; do not treat the template example as a real issuance.",
+      "category": "Word",
+      "officeMode": "word",
+      "template": "公文写作 · 通知"
+    },
+    {
+      "id": "event-minutes",
+      "title": {
+        "zh": "把讨论整理成会议纪要",
+        "en": "Turn discussion into meeting minutes"
+      },
+      "description": {
+        "zh": "区分已定事项、责任分工与待确认问题。",
+        "en": "Separate decisions, owners and open questions."
+      },
+      "prompt": "基于已选的「会议纪要 · 发布会筹备」模板，将下面的客户交流会讨论记录整理为可编辑 DOCX 纪要。记录：计划下月举行客户交流会，具体日期待销售团队确认；市场组负责邀请名单，本周五前发第一版；产品组准备两段演示，下周三前完成内部彩排；现场是否增加体验区尚未决定，需先确认场地与设备预算；会后应收集客户反馈，但问卷负责人还未明确。按会议基本信息、主要工作安排、主题议题、行动表和后续确认组织，区分已定事项与待确认事项，保留决定背后的条件和依赖。行动表沿用任务与交付要求、责任分工、期限三列；相对期限按记录保留，不在缺少会议日期时擅自换算，未知负责人和信息填“未明确”。保持模板的原生标题、表格、页码与整体版式，篇幅随材料确定，不机械凑够示例页数或行动数量；核对分页后交付 Word 文件。",
+      "promptEn": "Use the selected “Meeting Minutes · Launch Event Preparation” template to turn the following customer event discussion into editable DOCX minutes. Notes: A customer event is planned for next month; Sales still needs to confirm the exact date. Marketing owns the invite list and will send a first draft by this Friday. Product will prepare two demos and finish the internal rehearsal by next Wednesday. A hands-on area has not been approved; check venue and equipment budgets first. Collect customer feedback afterward, but the survey owner has not been identified. Organize the minutes into meeting information, main work arrangements, discussion topics, an action table, and follow-ups. Separate decisions from open issues and retain conditions and dependencies behind decisions. Keep the action table’s three columns: task and deliverable, owner, and deadline. Keep relative deadlines as recorded rather than converting them without a meeting date. Mark unknown owners and other details “Not specified.” Retain the template’s native headings, tables, page numbering, and overall layout. Let the material determine length, not the sample’s page or action count. Check pagination before delivering the Word file.",
+      "category": "Word",
+      "officeMode": "word",
+      "template": "会议纪要 · 发布会筹备"
+    },
+    {
+      "id": "tea-market",
+      "title": {
+        "zh": "写一份无糖茶市场研究报告",
+        "en": "Write a tea market research report"
+      },
+      "description": {
+        "zh": "核验公开资料，制作含图表与来源的报告。",
+        "en": "Create a Word report with charts and verifiable sources."
+      },
+      "prompt": "基于已选的「中国现制咖啡市场调研报告」模板，制作面向消费行业研究人员的中国即饮无糖茶市场研究 DOCX。研究期采用最近一个资料较完整的自然年度，明确资料截止日期；联网收集可核验的公开披露，重点分析品牌与渠道布局、产品价格带、消费场景、竞争变化及经营表现。借鉴模板的研究章节与 A4 报告版式，以关键判断、正文分析、对照表和 4 张匹配新主题的数据图表组织内容，末页集中列出来源链接及发布日期；正文、标题和表格保持 Word 原生可编辑，图表可使用清晰图片，不承诺图片图表可直接编辑数据。所有咖啡行业示例事实、旧图表与来源都要替换，逐图核对与新数据一致；区分公开事实、分析判断和假设测算，未披露的数据明确标注，不编造市场规模。参考模板约 7 页的节奏，必要时为完整证据调整篇幅，逐页检查后交付 DOCX。",
+      "promptEn": "Use the selected “China Freshly Prepared Coffee Market Research Report” template to produce a DOCX on China’s ready-to-drink unsweetened tea market for consumer industry researchers. Use the latest calendar year with reasonably complete data and state the data cutoff. Collect verifiable public disclosures online and focus on brand and channel footprints, product price tiers, consumption occasions, competitive shifts, and operating performance. Adapt the template’s research sections and A4 report layout. Organize the report around key findings, analysis, comparative tables, and four charts suited to the new topic. Put source links and publication dates on the final page. Keep body text, headings, and tables natively editable in Word. Clear chart images are acceptable; do not promise that their data can be edited directly. Replace all sample coffee industry facts, charts, and sources and verify that each chart matches the new data. Distinguish public facts, analytical judgments, and estimates based on assumptions. Mark undisclosed data and do not fabricate market size. Use the roughly seven-page template as a guide, lengthening it if necessary to retain evidence. Review each page before delivering the DOCX.",
+      "category": "Word",
+      "officeMode": "word",
+      "template": "中国现制咖啡市场调研报告"
+    },
+    {
+      "id": "subscription-analysis",
+      "title": {
+        "zh": "生成年度经营分析 Excel",
+        "en": "Build an annual operating workbook"
+      },
+      "description": {
+        "zh": "联动经营、客户留存与三种增长情景。",
+        "en": "Analyze revenue, retention and growth scenarios."
+      },
+      "prompt": "基于已选的「年度经营与客户分析」模板，制作一个订阅软件公司的年度经营复盘 XLSX。本次没有提供真实数据，请构造一组内部一致的全年模拟经营与客户批次数据，并在首页和数据页醒目标注“模拟数据，仅供演示”。保留经营总览、增长测算、增长质量、客户留存、月度经营数据、客户批次数据六张工作表的联动结构，围绕 MRR 增减、产品收入结构、客户留存和增长情景组织分析。沿用模板的原生公式、11 个原生图表、客户批次热力图及三种预测情景，用蓝绿与陶土色突出重点；日度新增 MRR 如由月度总额分配生成，明确拆分假设，确保月度汇总一致，并更新 7 日均线。说明金额单位和指标口径，核对客户数、MRR 变动、留存及情景测算之间的勾稽关系；替换模板示例公司与旧数据，完整重算并检查各表与图表后交付可编辑 XLSX。",
+      "promptEn": "Use the selected “Annual Operating and Customer Analysis” template to create an XLSX annual business review for a subscription software company. No real data was supplied: create an internally consistent year of simulated operating and customer cohort data, clearly labeled “Simulated data; for demonstration only” on the first and data sheets. Retain the six linked worksheets: Operating Overview, Growth Projections, Growth Quality, Customer Retention, Monthly Operating Data, and Customer Cohort Data. Analyze MRR additions and reductions, product revenue mix, retention, and growth scenarios. Retain the template’s native formulas, 11 native charts, cohort heatmap, and three forecast scenarios. Use teal and terracotta to highlight key details. If allocating monthly totals across days to derive daily new MRR, state the allocation assumptions, reconcile the monthly totals, and update the seven-day moving average. Define currency units and metrics, and check that customer counts, MRR movements, retention, and scenario projections reconcile. Replace the example company and old data. Recalculate fully and check every sheet and chart before delivering the editable XLSX.",
+      "category": "Excel",
+      "officeMode": "excel",
+      "template": "年度经营与客户分析"
+    },
+    {
+      "id": "port-review",
+      "title": {
+        "zh": "复盘港口月度作业",
+        "en": "Review monthly port operations"
+      },
+      "description": {
+        "zh": "从每日明细分析吞吐、航线与作业效率。",
+        "en": "Analyze throughput, routes and operating efficiency."
+      },
+      "prompt": "基于已选的「青岚港货物流向与作业效率」模板，制作“海岚港 2026 年 10 月作业复盘”XLSX。当前无真实记录，请生成覆盖该月每天的模拟装卸数据，并显著标注模拟性质；一条记录表示一次进港卸货或出港装货作业，保留原始明细并核对日期、货类、航线、方向、吨数、箱量与作业耗时的完整性。沿用港口总览、货类与航线、作业效率、日度汇总、作业明细五张工作表，以及模板的 8 张原生图表和公式关系，分析吞吐波动、进出港结构、主要航线和作业效率。吨数与 TEU 分开统计，不相加；装卸总量以作业口径解释，缺失或重复记录需列出检查结果，不静默删除。将全部日期、公式边界、图表横轴及核对值调整到本月范围，检查明细到汇总的一致性，重算并预览后交付可编辑 XLSX。",
+      "promptEn": "Use the selected “Qinglan Port Cargo Flows and Operating Efficiency” template to create an XLSX titled “Hailan Port: October 2026 Operations Review.” No real records are available. Generate simulated loading and unloading data for every day in the month and label it prominently as simulated. Each record represents one inbound unloading or outbound loading operation. Preserve the raw data and check completeness of dates, cargo types, routes, directions, tonnage, container volumes, and operation durations. Retain the five worksheets (Port Overview, Cargo Types and Routes, Operating Efficiency, Daily Summary, and Operation Details), eight native charts, and formula links. Analyze throughput fluctuations, the inbound/outbound mix, major routes, and operating efficiency. Report tons and TEUs separately, without adding them together, and explain how total handled cargo is defined. Report missing or duplicate records rather than deleting them silently. Adjust all dates, formula ranges, chart axes, and reconciliation values to October, and verify that detail and summary sheets agree. Recalculate and preview before delivering the editable XLSX.",
+      "category": "Excel",
+      "officeMode": "excel",
+      "template": "青岚港货物流向与作业效率"
+    },
+    {
+      "id": "enzyme-quality",
+      "title": {
+        "zh": "分析酶活性实验质控",
+        "en": "Check enzyme assay quality"
+      },
+      "description": {
+        "zh": "核对三批次、288 孔模拟读数与统计口径。",
+        "en": "Review simulated batches and quality metrics."
+      },
+      "prompt": "基于已选的「荧光酶活性筛选与批次质控」模板，制作一份酶活性剂量筛选与批次质量检查 XLSX。没有真实实验数据，请构造 3 个独立模拟批次、每批 96 孔、每剂量 8 个技术重复的完整 288 孔数据，设置明确的空白与溶剂对照；全部标注“模拟实验，仅用于方法演示”，不外推真实实验结论。保留实验总览、剂量响应、板内质控、原始读数四张工作表，按本板空白和溶剂对照归一化，再用三个批次均值计算跨批次样本标准差，不能把技术重复视作独立批次。利用模板的原生图表和三板条件格式热力图呈现剂量响应、技术重复 CV 与异常位置，保留全部原始读数。CV 的 15% 仅设为可调整的演示阈值，不当作通用合格标准；计算 50% 响应区间前检查曲线方向，遇到回升明确提示逐段复核。重算并核对归一化、统计公式、图表范围和质控标记后，交付可编辑 XLSX。",
+      "promptEn": "Use the selected “Fluorescence-Based Enzyme Activity Screening and Batch Quality Control” template to create an XLSX for enzyme activity dose screening and batch quality checks. No real data was supplied. Generate a complete simulated dataset of 288 wells across three independent batches, with 96 wells per batch and eight technical replicates per dose. Define blank and solvent controls. Label all data “Simulated experiment; for method demonstration only” and do not extrapolate to real experiments. Retain the Experiment Overview, Dose Response, Within-Plate QC, and Raw Readings worksheets. Normalize against the blank and solvent controls on each plate and calculate the between-batch sample standard deviation from the three batch means. Do not treat technical replicates as independent batches. Use the template’s native charts and conditional-formatting heatmaps for the three plates to show dose response, technical-replicate CV, and anomaly locations. Keep all raw readings. Use 15% CV only as an adjustable demo threshold, not a universal pass criterion. Check the curve direction before calculating the 50% response interval; if the response rises again, flag it for segment-by-segment review. Recalculate and verify normalization, statistical formulas, chart ranges, and QC flags before delivering the editable XLSX.",
+      "category": "Excel",
+      "officeMode": "excel",
+      "template": "荧光酶活性筛选与批次质控"
+    },
+    {
+      "id": "emergency-design",
+      "title": {
+        "zh": "设计家庭应急准备科普图",
+        "en": "Design a family preparedness graphic"
+      },
+      "description": {
+        "zh": "先确认受众、重点和风格，再组织图文。",
+        "en": "Define the audience, message and visual style."
+      },
+      "prompt": "生成一张家庭应急准备科普图。在开始设计前，先向我确认三件事：主要给谁看（独居青年／有孩子的家庭／长者家庭）、重点讲哪些应急准备（物资、联络或撤离等）、希望采用什么画面风格。根据回答再组织图文层级与视觉方案。",
+      "promptEn": "Create an educational graphic about household emergency preparedness. Before designing it, ask me three things: the main audience (young adults living alone, families with children, or households with older adults), the preparedness topics to emphasize (supplies, communication, evacuation, or others), and the preferred visual style. Use my answers to organize the text and images and plan the design.",
+      "category": "设计",
+      "officeMode": "normal"
+    },
+    {
+      "id": "reading-night",
+      "title": {
+        "zh": "设计城市读书夜主视觉",
+        "en": "Design a reading-night campaign"
+      },
+      "description": {
+        "zh": "把活动主题转成可用于传播的视觉。",
+        "en": "Create a visual identity for a community reading event."
+      },
+      "prompt": "为虚构活动“城市读书夜”生成一张可用于社交平台发布的竖版活动主视觉图。活动设定：面向下班后想轻松交流的城市读者，主题是“交换一本书，认识一个人”，地点为“街角书房”，时间统一写“周五 19:30”，不补造日期、地址或报名二维码。画面用打开的书、夜色中的窗和少量人物剪影表达温暖的晚间相聚，采用深靛蓝与柔和暖黄，保持主体明确和文字可读。图中只放活动名、主题、地点和时间这四组短文案，避免小字堆叠；不得出现真实品牌标志。直接生成完整主视觉图片，完成后核对中文是否正确、四组文字是否完整；若生成文字无法可靠呈现，明确说明，不把乱码当成成品。",
+      "promptEn": "Generate a portrait-oriented campaign graphic for a fictional event called “城市读书夜” (City Reading Night), suitable for social media. The event is for urban readers who want to socialize after work. The theme is “交换一本书，认识一个人” (Swap a book, meet someone), the location is “街角书房” (Corner Reading Room), and the time must read “周五 19:30” (Friday, 19:30). Do not invent a calendar date, address, or registration QR code. Use an open book, a window at night, and a few silhouettes to convey a warm evening gathering. Use deep indigo and soft warm yellow, with a clear focal point and legible text. Include only the four short text elements: event name, theme, venue, and time. Avoid cluttering the image with small text and do not show real brand logos. Generate the finished graphic directly and verify that the Chinese text is correct and all four elements are present. If the text cannot be rendered reliably, say so rather than passing off gibberish as finished work.",
+      "category": "设计",
+      "officeMode": "normal"
+    },
+    {
+      "id": "bottle-concept",
+      "title": {
+        "zh": "设计保温杯概念图",
+        "en": "Visualize a portable bottle concept"
+      },
+      "description": {
+        "zh": "用一组画面展示产品外观与使用场景。",
+        "en": "Explore a product concept across a set of visuals."
+      },
+      "prompt": "为一款虚构的无标识便携保温杯生成 3 张风格一致的产品概念图：第一张为纯净背景的完整产品展示，第二张为办公桌上的使用场景，第三张为背包侧袋中的通勤场景。产品设定保持一致：圆柱形杯身、浅砂色哑光表面、深灰杯盖、细窄提环，不添加品牌 Logo、文字或未经提供的功能结构。三张图均使用 1:1 比例、自然柔光和克制的暖中性色，材质、杯盖形态及比例一致，场景图中产品清楚可辨。交付 3 张图片，按“产品展示／办公／通勤”区分，并检查不同图片是否出现外形漂移。这些是设计概念示意，不附加保温时长、材质认证等无法核实的性能宣称。",
+      "promptEn": "Generate three visually consistent product concept images for a fictional unbranded portable insulated bottle: a full product view against a clean background, an office desk scene, and a commuting scene with the bottle in a backpack side pocket. Keep the design consistent: a cylindrical body, light sand-colored matte finish, dark gray lid, and thin carry loop. Do not add logos, text, or unprovided functional components. Use a 1:1 aspect ratio, soft natural light, and restrained warm neutrals throughout. Keep the materials, lid shape, and proportions consistent, and make the bottle easy to identify in the lifestyle scenes. Deliver three labeled images: Product, Office, and Commute. Check that the bottle’s shape does not drift across the images. These are illustrative concepts; do not add unverified claims about insulation duration or material certifications.",
+      "category": "设计",
+      "officeMode": "normal"
+    },
+    {
+      "id": "weekly-tech",
+      "title": {
+        "zh": "订阅每周科技动态简报",
+        "en": "Set up a weekly tech briefing"
+      },
+      "description": {
+        "zh": "每周五 16:30，精选 5 条附来源的科技消息。",
+        "en": "Draft a weekly briefing task with sources."
+      },
+      "prompt": "请创建一个按本地时区运行的定时任务：每周五 16:30 发送科技行业新动态简报，精选 5 条，每条用一句话概括并附原始来源链接。核实不到来源就明确写“来源未查到”，不要补造。创建成功后只回复一行，写明下次触发的本地日期和时间。",
+      "promptEn": "Create a scheduled task in my local time zone: every Friday at 16:30, send a tech industry briefing with five selected updates, each summarized in one sentence with a link to the original source. If a source cannot be verified, write “Source not found”; do not invent one. Once the task is created, reply with a single line stating its next local date and time.",
+      "category": "定时任务",
+      "officeMode": "normal"
+    },
+    {
+      "id": "project-reminder",
+      "title": {
+        "zh": "设置项目收尾提醒",
+        "en": "Set up a project wrap-up reminder"
+      },
+      "description": {
+        "zh": "工作日 17:30，检查进展、未结事项和明日准备。",
+        "en": "Prepare an end-of-day checklist and schedule."
+      },
+      "prompt": "设置每周一至周五本地时间 17:30 的项目收尾提醒，提醒我检查当日进展、未结事项和明日准备材料。若已给出真实项目日程与待办，就据此列出具体检查项；没有相关内容时，提供这三类通用检查清单，不虚构任务。完成创建后告知下一次提醒的本地日期与时间。",
+      "promptEn": "Set a project wrap-up reminder for Monday through Friday at 17:30 local time. Remind me to review today’s progress, open items, and materials to prepare for tomorrow. If actual project schedules and to-dos were provided, use them to make the checks specific. Otherwise, provide a general checklist covering the three areas without inventing tasks. Once created, give me the next reminder’s local date and time.",
+      "category": "定时任务",
+      "officeMode": "normal"
+    },
+    {
+      "id": "pomodoro-timer",
+      "title": {
+        "zh": "开发一个番茄时钟",
+        "en": "Build a Pomodoro timer"
+      },
+      "description": {
+        "zh": "实现 25 分钟专注倒计时，支持暂停、重置和 10 秒演示。",
+        "en": "Build a 25-minute countdown with pause, reset and a 10-second demo."
+      },
+      "prompt": "开发一个番茄时钟网页。默认显示 25:00，提供“开始”“暂停”“重置”三个按钮。暂停后点击“开始”可从剩余时间继续，倒计时归零时显示“专注结束”。提供“10 秒演示”按钮，点击后立即开始 10 秒倒计时。验收时启动演示，确认暂停时数字保持不变，继续后能倒数到 00:00 并显示“专注结束”，最后点击“重置”回到 25:00。交付一个可直接在浏览器打开的 index.html 文件。",
+      "promptEn": "Build a Pomodoro timer web page. Show 25:00 by default, with Start, Pause, and Reset buttons. Clicking Start after pausing should resume from the remaining time. At zero, display “Focus session complete.” Add a “10-second demo” button that starts a ten-second countdown immediately. For acceptance, run the demo and confirm that the display freezes on Pause, resumes and reaches 00:00 with the completion message, and returns to 25:00 on Reset. Deliver one index.html file that opens directly in a browser.",
+      "category": "开发",
+      "officeMode": "normal"
+    },
+    {
+      "id": "action-hub",
+      "title": {
+        "zh": "做一个团队行动管家",
+        "en": "Build a team decision tracker"
+      },
+      "description": {
+        "zh": "汇集记录、决策与行动项，支持检索和问答。",
+        "en": "Organize decisions, references and action items."
+      },
+      "prompt": "创建一个“团队决策与行动管家”Web 应用，让团队记录分散的讨论结论、参考资料和行动项。应用应自动分类、概括内容并关联相同项目或主题，支持关键词检索、基于已有记录的智能问答、关键决策提取和待办梳理；还可汇总某一阶段的决策变化、执行进展及下一步行动建议。将数据保存在云端，接入大模型，完成可访问的上线发布。界面围绕记录、查找和推进执行组织，未知人员与日期不要自行补造。",
+      "promptEn": "Create a “Team Decisions and Actions Tracker” web app to capture scattered discussion outcomes, references, and action items. Automatically categorize and summarize records, link records about the same project or topic, and support keyword search, Q&A grounded in existing records, key decision extraction, and to-do organization. The app should also summarize how decisions changed over a period, implementation progress, and suggested next steps. Store the data in the cloud, integrate a large language model, and publish an accessible deployment. Organize the interface around recording, finding, and following up on information. Do not invent unknown people or dates.",
+      "category": "开发",
+      "officeMode": "normal"
+    },
+    {
+      "id": "equipment-loans",
+      "title": {
+        "zh": "开发设备借还登记工具",
+        "en": "Build an equipment loan tracker"
+      },
+      "description": {
+        "zh": "记录共享设备的借出、归还和状态。",
+        "en": "Track shared equipment checkout and return."
+      },
+      "prompt": "创建一个可在浏览器中交互的共享设备借还登记 Web 工具，供小团队演示设备流转，不接真实员工数据，也不要求账号、外部接口或上线部署。主要流程：查看设备清单和可借状态，选择设备填写借用人、借出日期与预计归还日期，确认借出；在借出记录中执行归还，设备恢复可借。提供按设备状态和关键词筛选，展示当前借出及逾期数量。使用浏览器本地存储保存演示记录，刷新后仍可查看；提供导出 JSON 及二次确认后重置演示数据的入口。内置 6 台标为“演示”的设备，含可借、借出未逾期和已逾期记录，借用人用“演示用户甲”等虚构姓名。验收：已借出的设备不能再次借出，必填项缺失或归还日期早于借出日期时阻止提交，归还后统计同步更新；逾期按浏览器当前本地日期判断并注明。完成后提供可打开的应用及简短操作说明，明确本地存储不支持多人实时共享。",
+      "promptEn": "Build an interactive browser-based shared equipment checkout and return tool for a small-team demo. Do not use real employee data or require accounts, external APIs, or deployment. Show an equipment list and availability, let users choose an item, enter a borrower, checkout date, and expected return date, and confirm checkout. Returning an item from its loan record must make it available again. Include status and keyword filters and show counts of items on loan and overdue. Save demo records in browser local storage so they survive refreshes. Provide JSON export and require confirmation before resetting demo data. Include six clearly marked demo items spanning available, on loan but not overdue, and overdue states, with fictional borrower names such as “Demo User A.” To pass acceptance, prevent checking out an item already on loan, block submissions with missing required fields or a return date before checkout, and update counts after returns. Determine overdue status by the browser’s current local date and explain that rule. Deliver the runnable app and brief instructions; state that local storage does not support real-time sharing among users.",
+      "category": "开发",
+      "officeMode": "normal"
+    },
+    {
+      "id": "agenda-planner",
+      "title": {
+        "zh": "开发培训议程编排工具",
+        "en": "Build an agenda planner"
+      },
+      "description": {
+        "zh": "编排培训环节并核对时长。",
+        "en": "Arrange training sessions and check their duration."
+      },
+      "prompt": "开发一个培训议程编排 Web 工具，供组织者在浏览器中调整课程顺序并检查时间是否排得下，不需要接入日历、账号或外部服务。用户先设置活动开始与结束时间，再添加、编辑、删除议程项，填写主题、类型、时长和讲师；支持用上移／下移按钮调整顺序，自动计算每项开始与结束时间、总时长及剩余或超出时长。提供课程、讨论、休息三种类型，并可复制整份议程为纯文本。内置一份明确标为“演示”的议程：活动14:00—17:00，开场10分钟、主题分享40分钟、小组讨论45分钟、休息15分钟、案例练习50分钟、总结20分钟，讲师用虚构姓名。验收：初始示例总长180分钟且恰好排满；将任一项增加10分钟后明确提示超时10分钟，调整顺序后所有时间重新计算；时长为空、非正数或结束时间早于开始时间时给出错误提示。仅支持同一天内的议程，在界面说明该范围；交付可运行的应用及简短使用说明，不自动发布上线。",
+      "promptEn": "Build a training agenda planner web app that lets organizers reorder sessions in a browser and check whether the agenda fits. Do not integrate calendars, accounts, or external services. Let users set the event start and end times, then add, edit, or delete agenda items with topics, types, durations, and speakers. Offer Move Up and Move Down controls and automatically calculate each item’s start and end, total duration, and time remaining or overrun. Include three types: Session, Discussion, and Break. Allow copying the full agenda as plain text. Provide a clearly marked demo running 14:00–17:00: 10-minute opening, 40-minute talk, 45-minute group discussion, 15-minute break, 50-minute case exercise, and 20-minute wrap-up. Use fictional speaker names. For acceptance, verify that the initial agenda fills exactly 180 minutes, adding 10 minutes to any item shows a 10-minute overrun, and all times recalculate after reordering. Show errors for missing or nonpositive durations or an end time earlier than the start time. Support same-day agendas only and state that limitation in the interface. Deliver the runnable app and brief instructions without publishing it automatically.",
+      "category": "开发",
+      "officeMode": "normal"
+    },
+    {
+      "id": "break-even",
+      "title": {
+        "zh": "算清工作坊的保本人数",
+        "en": "Calculate workshop break-even"
+      },
+      "description": {
+        "zh": "用可调整参数测算成本、毛益与保本点。",
+        "en": "Use adjustable inputs and formulas to find the break-even point."
+      },
+      "prompt": "制作一份用于线下工作坊定价的 XLSX 盈亏平衡测算表。分为输入区与测算区：输入区包含场地与讲师等固定成本、每位学员的报名价格和人均材料等变动成本；测算区通过公式给出单位贡献毛益、保本报名人数与保本营业额。报名价格不高于人均变动成本时，显示清楚的不可保本提示，不返回负数结果。输入参数变化后自动重新计算；保本人数需向上取整，并注明计算口径。",
+      "promptEn": "Create an XLSX break-even calculator for pricing an in-person workshop. Separate inputs and calculations. Inputs should include fixed costs such as venue and instructor fees, registration price per participant, and variable costs per participant such as materials. Use formulas for contribution margin per participant, break-even enrollment, and break-even revenue. If the registration price is at or below the variable cost per participant, clearly indicate that break-even is not possible and do not return negative results. Recalculate automatically when inputs change. Round the break-even headcount up and explain the calculation basis.",
+      "category": "分析数据",
+      "officeMode": "excel"
+    },
+    {
+      "id": "launch-tracker",
+      "title": {
+        "zh": "跟踪新品上市的完整流程",
+        "en": "Track a product launch"
+      },
+      "description": {
+        "zh": "按阶段、状态和前置依赖管理任务。",
+        "en": "Track phases, owners, dates and dependencies."
+      },
+      "prompt": "生成一个 XLSX 新品上市任务管理表，用于跟踪从需求验证到上市复盘的完整流程。字段包含任务名称、阶段、负责人、开始日期、截止日期、当前状态和前置依赖。按状态用公式汇总任务完成情况，空白行不纳入统计。以轻量、清楚的排版区分阶段和重点，附 3 行明确标注“示例”的任务数据，并核对示例对应的统计结果。",
+      "promptEn": "Create an XLSX product launch task tracker covering the full process from validating demand through the post-launch review. Include task name, phase, owner, start date, due date, current status, and prerequisites. Use formulas to summarize completion by status, excluding blank rows. Use a clean, lightweight layout that distinguishes phases and key items. Include three task rows clearly marked as examples and verify that the summary matches them.",
+      "category": "分析数据",
+      "officeMode": "excel"
+    },
+    {
+      "id": "audit-checklist",
+      "title": {
+        "zh": "准备零售企业审计资料",
+        "en": "Prepare a retail audit checklist"
+      },
+      "description": {
+        "zh": "覆盖门店、函证、库存与合同，标出易延误项。",
+        "en": "Organize supporting documents and flag likely delays."
+      },
+      "prompt": "为连锁零售企业制作年报审计准备清单，以表格覆盖财务报表、银行及往来函证、门店收入与采购成本、库存与固定资产、税务申报、租赁及其他合同、内部控制材料。每项列明资料名称、负责人、截止时间、检查重点和完成状态，并突出跨门店收集、盘点和函证等容易延误的事项。有具体业务信息时直接适配；资料不足时先提供通用零售企业版本，不推测负责人或日期，相关栏位留空。交付后在聊天中询问是否需要补充电商渠道、会员储值等特殊事项。",
+      "promptEn": "Create an annual financial statement audit preparation checklist for a retail chain. Use a table covering financial statements, bank and counterparty confirmations, store revenue and procurement costs, inventory and fixed assets, tax filings, leases and other contracts, and internal control documentation. For each item, list the document, owner, deadline, review points, and completion status. Highlight likely delays such as collecting records across stores, inventory counts, and confirmations. Adapt to specific business information when provided. If not, give a generic retail version and leave unknown owners and dates blank rather than guessing. After delivery, ask in chat whether to add special topics such as e-commerce channels or prepaid membership balances.",
+      "category": "金融服务",
+      "officeMode": "normal"
+    },
+    {
+      "id": "restaurant-calculator",
+      "title": {
+        "zh": "做一个餐饮财务计算器",
+        "en": "Build a restaurant ratio calculator"
+      },
+      "description": {
+        "zh": "输入经营数据，查看比率、公式与缺项提示。",
+        "en": "Calculate key ratios and explain missing inputs."
+      },
+      "prompt": "制作一个可独立打开的单文件 HTML 餐饮经营财务计算器。输入项为营业收入、净利润、平均总资产、期末总资产和负债总额，输出净利率、总资产收益率及资产负债率。每项结果旁展示公式，输入缺失或对应分母为零时不给出数值，并提示需要补充或修正的项目。内置一组明确标为“教学示例”的门店经营数据，逐项核对计算结果。",
+      "promptEn": "Create a single, standalone HTML file for a restaurant financial ratio calculator. Inputs are operating revenue, net profit, average total assets, ending total assets, and total liabilities. Show net profit margin, return on assets, and the debt-to-assets ratio. Display the formula next to each result. When inputs are missing or the corresponding denominator is zero, omit the numeric result and say what needs to be added or corrected. Include a set of store operating figures clearly labeled “Teaching example,” and verify each calculation.",
+      "category": "金融服务",
+      "officeMode": "normal"
+    },
+    {
+      "id": "interview-template",
+      "title": {
+        "zh": "整理客户需求访谈",
+        "en": "Create an interview notes template"
+      },
+      "description": {
+        "zh": "用统一结构记录需求、取舍和后续行动。",
+        "en": "Capture needs, decisions and follow-up actions."
+      },
+      "prompt": "编写一份客户需求访谈记录模板，包含访谈摘要、关键需求与使用情境、备选方案及取舍、已确认结论和后续行动。没有访谈正文时，用一个简短的虚构示例演示填写方式，并显著标注“示例”；提供正文后只据原文归纳，不补写客户未说过的观点。行动表列出任务、负责人和截止时间，原文未交代的填“未明确”。使用层次清楚的 Markdown 排版，突出关键结论并配行动项表格，末尾邀请用户提供访谈记录。",
+      "promptEn": "Write a customer requirements interview notes template with an interview summary, key needs and use contexts, alternatives and trade-offs, confirmed conclusions, and follow-up actions. If no transcript is provided, show how to use it with a short fictional example prominently marked “Example.” Once a transcript is provided, summarize only what was said and do not attribute invented views to the customer. The actions table should list task, owner, and deadline; mark missing details “Not specified.” Use clear Markdown hierarchy, highlight key conclusions, and close by inviting the user to provide the interview notes.",
+      "category": "创作文档",
+      "officeMode": "normal"
+    },
+    {
+      "id": "plant-card",
+      "title": {
+        "zh": "做一页植物养护知识卡",
+        "en": "Design a plant care reference card"
+      },
+      "description": {
+        "zh": "用观察笔记风格，把资料变成图文知识卡。",
+        "en": "Turn reference material into a visual single-page guide."
+      },
+      "prompt": "把用户提供的资料整理成一页 HTML 知识卡，采用植物观察笔记的设计语言，以铅笔线条、绿色重点批注和紧凑分区组织知识。暂未提供资料时，以室内观叶植物养护为示例，通过对比插图解释光照不足、浇水过量与空气干燥造成的表现，配上观察指标和处理建议；加入标本标签式边框，并清楚标注“示例”。完成后询问用户准备整理哪类资料、偏好实物照片还是示意插画，提示可粘贴正文或上传材料。",
+      "promptEn": "Turn the supplied material into a one-page HTML reference card styled like a botanical field notebook, using pencil lines, green annotations, and compact sections. If no material is supplied, use indoor foliage plant care as an example. Add comparative illustrations showing how insufficient light, overwatering, and dry air affect plants, plus what to observe and how to respond. Use a specimen-label border and clearly mark the content “Example.” Then ask what kind of material the user is preparing and whether they prefer photos or illustrations. Let them know they can paste the text or upload the material.",
+      "category": "创作文档",
+      "officeMode": "normal"
+    },
+    {
+      "id": "creator-pomodoro",
+      "title": {
+        "zh": "制作番茄时钟插件",
+        "en": "Build a Pomodoro timer plugin"
+      },
+      "description": {
+        "zh": "在侧边栏计时，切换会话不中断。",
+        "en": "Keep the sidebar timer running across conversations."
+      },
+      "prompt": "创建一个从左侧边栏打开的番茄时钟插件。默认专注 25 分钟、休息 5 分钟，支持自定义时长，以及开始、暂停、继续和重置。界面显示剩余时间和当前阶段，倒计时结束时提醒我，并提供切换到下一阶段的按钮。切换到其他会话后再打开插件，倒计时应继续运行，不从头开始。",
+      "promptEn": "Create a Pomodoro timer plugin that opens from the left sidebar. Default to 25 minutes of focus and a 5-minute break, with customizable durations and controls to start, pause, resume, and reset. Show the time remaining and the current phase, notify me when the countdown ends, and provide a button to switch to the next phase. If I switch conversations and reopen the plugin, the timer should still be running rather than starting over.",
+      "category": "创作模式",
+      "officeMode": "normal",
+      "preset": "cordis"
+    },
+    {
+      "id": "creator-solar-system",
+      "title": {
+        "zh": "太阳系 3D 探索馆",
+        "en": "Build a 3D solar system explorer"
+      },
+      "description": {
+        "zh": "旋转缩放，探索天体与地月公转。",
+        "en": "Rotate and zoom to explore celestial bodies and the Earth–Moon orbit."
+      },
+      "prompt": "创建一个带左侧边栏入口的插件，用 3D 场景展示太阳、地球、月球和火星。支持旋转、缩放和天体切换，点击后显示简短介绍，并可播放地月公转示意动画。",
+      "promptEn": "Create a plugin with an entry in the left sidebar that shows the Sun, Earth, Moon, and Mars in a 3D scene. Support rotation, zoom, and switching between celestial bodies. Show a short introduction when a body is selected and let users play an illustrative animation of the Earth–Moon orbit.",
+      "category": "创作模式",
+      "officeMode": "normal",
+      "preset": "cordis"
+    },
+    {
+      "id": "creator-neural-network",
+      "title": {
+        "zh": "神经网络训练可视化",
+        "en": "Visualize neural network training"
+      },
+      "description": {
+        "zh": "用交互动画观察训练、决策边界与损失。",
+        "en": "Explore training, decision boundaries, and loss with an interactive animation."
+      },
+      "prompt": "创建一个从左侧边栏进入的插件，用交互动画演示小型神经网络如何学习区分两类平面散点。支持调整学习率、暂停训练和单步播放，同时展示决策边界与损失曲线，帮助我理解训练过程。",
+      "promptEn": "Create a plugin opened from the left sidebar that uses an interactive animation to demonstrate how a small neural network learns to distinguish two classes of points on a plane. Let me adjust the learning rate, pause training, and step through it one iteration at a time. Display the decision boundary and loss curve together so I can understand the training process.",
+      "category": "创作模式",
+      "officeMode": "normal",
+      "preset": "cordis"
+    },
+    {
+      "id": "creator-reading-appearance",
+      "title": {
+        "zh": "专注阅读外观切换",
+        "en": "Build a focused reading theme switcher"
+      },
+      "description": {
+        "zh": "实时预览主题、字号和内容宽度。",
+        "en": "Preview theme, font size, and content width changes instantly."
+      },
+      "prompt": "创建一个外观插件，从左侧边栏切换“暖纸阅读、午夜书房、森林绿”三种主题，并调整字号与内容宽度。提供即时预览和恢复默认按钮，让长对话更适合阅读。",
+      "promptEn": "Create an appearance plugin that lets me switch between three themes from the left sidebar: Warm Paper, Midnight Study, and Forest Green. Let me adjust the font size and content width. Include a live preview and a reset-to-default button to make long conversations more comfortable to read.",
+      "category": "创作模式",
+      "officeMode": "normal",
+      "preset": "cordis"
+    },
+    {
+      "id": "creator-reading-night-poster",
+      "title": {
+        "zh": "城市读书夜海报工作台",
+        "en": "Build a City Reading Night poster editor"
+      },
+      "description": {
+        "zh": "编辑活动信息与版式，预览并导出 PNG。",
+        "en": "Edit event details and layout, preview changes, and export PNG."
+      },
+      "prompt": "创建一个从会话进入的活动海报工作台，以“城市读书夜”为默认主题，采用纸张纹理和大字排版。支持修改活动名称、时间地点及配色，切换横竖版，实时预览并导出 PNG。",
+      "promptEn": "Create an event poster editor accessible from a conversation, with “城市读书夜” (City Reading Night) as the default theme. Use paper texture and large typography. Let me change the event name, time, venue, and color palette, switch between landscape and portrait layouts, preview changes live, and export the poster as a PNG.",
+      "category": "创作模式",
+      "officeMode": "normal",
+      "preset": "cordis"
+    },
+    {
+      "id": "creator-travel-video",
+      "title": {
+        "zh": "旅行短片剪辑台",
+        "en": "Build a travel video editor"
+      },
+      "description": {
+        "zh": "在时间轴剪辑，也能用自然语言编辑。",
+        "en": "Edit on the timeline or use natural language instructions."
+      },
+      "prompt": "创建一个从会话进入的旅行短片剪辑插件，上方预览、下方时间轴。支持导入多个视频、裁剪排序、添加片头和导出，也能通过“截取海边片段的前 5 秒”等自然语言完成剪辑。",
+      "promptEn": "Create a short travel video editing plugin accessible from a conversation, with a preview above and a timeline below. Let me import multiple videos, trim and reorder clips, add an intro, and export the result. Also support edits via natural language, such as “Keep the first five seconds of the seaside clip.”",
+      "category": "创作模式",
+      "officeMode": "normal",
+      "preset": "cordis"
+    },
+    {
+      "id": "creator-manual-reader",
+      "title": {
+        "zh": "产品手册阅读助手",
+        "en": "Build a product manual reader"
+      },
+      "description": {
+        "zh": "阅读 PDF、添加批注，并带页码提问。",
+        "en": "Read PDFs, bookmark and take notes, and ask questions with page numbers."
+      },
+      "prompt": "创建一个从右侧边栏进入的产品手册阅读插件，支持上传 PDF 并保留原始图文排版。选中文字后可添加书签、记录笔记，或带着页码在会话中提问；支持按关键词查找操作步骤。",
+      "promptEn": "Create a product manual reader plugin accessible from the right sidebar. Support PDF uploads and preserve the original text and image layout. Let me select text to add bookmarks, take notes, or ask a question in the conversation with the page number attached. Support keyword search for operating instructions.",
+      "category": "创作模式",
+      "officeMode": "normal",
+      "preset": "cordis"
+    },
+    {
+      "id": "creator-ai-weekly-report",
+      "title": {
+        "zh": "个人 AI 使用周报",
+        "en": "Build a weekly AI usage report"
+      },
+      "description": {
+        "zh": "用真实会话数据对比用量并导出周报。",
+        "en": "Compare weeks using real conversation data and export a report."
+      },
+      "prompt": "创建一个从左侧边栏进入的使用周报插件，基于真实会话数据展示本周会话数、token 用量和每日趋势，并对比上周变化。支持按模型筛选、设置每周用量目标和导出周报，缺失数据不编造。",
+      "promptEn": "Create a weekly usage report plugin accessible from the left sidebar. Use real conversation data to show this week’s conversation count, token usage, and daily trends, with a comparison to last week. Support filtering by model, setting a weekly usage goal, and exporting the weekly report. Do not invent missing data.",
+      "category": "创作模式",
+      "officeMode": "normal",
+      "preset": "cordis"
+    }
+  ],
+  "batches": {
+    "chat": [
+      [
+        "confirm-event",
+        "ai-brief",
+        "enterprise-agents",
+        "headphones"
+      ],
+      [
+        "booking-scope",
+        "support-feedback",
+        "museum-collections",
+        "urban-cooling"
+      ],
+      [
+        "team-event",
+        "commercial-space",
+        "confirm-event",
+        "museum-collections"
+      ]
+    ],
+    "work": [
+      [
+        "customer-success-review",
+        "event-minutes",
+        "subscription-analysis",
+        "creator-pomodoro"
+      ],
+      [
+        "luma-launch",
+        "tea-market",
+        "port-review",
+        "creator-solar-system"
+      ],
+      [
+        "setouchi-travel",
+        "security-notice",
+        "enzyme-quality",
+        "creator-neural-network"
+      ],
+      [
+        "data-infrastructure",
+        "break-even",
+        "creator-reading-appearance",
+        "action-hub"
+      ],
+      [
+        "customer-success-review",
+        "launch-tracker",
+        "creator-reading-night-poster",
+        "equipment-loans"
+      ],
+      [
+        "luma-launch",
+        "creator-travel-video",
+        "audit-checklist",
+        "agenda-planner"
+      ],
+      [
+        "setouchi-travel",
+        "subscription-analysis",
+        "restaurant-calculator",
+        "creator-manual-reader"
+      ],
+      [
+        "data-infrastructure",
+        "creator-ai-weekly-report",
+        "port-review",
+        "plant-card"
+      ],
+      [
+        "ai-data-center-power",
+        "weekly-tech",
+        "reading-night",
+        "pomodoro-timer"
+      ],
+      [
+        "luma-launch",
+        "bottle-concept",
+        "project-reminder",
+        "interview-template"
+      ],
+      [
+        "setouchi-travel",
+        "emergency-design",
+        "event-minutes",
+        "port-review"
+      ]
+    ]
+  }
+}

@@ -4,6 +4,15 @@ const PREFIX = 'enterprise:'
 const TARGET = /^enterprise:([a-f0-9]{64}):([a-f0-9]{32})$/u
 
 /**
+ * Catalog rows and restored install records are not field-validated. The host
+ * inventory schema rejects a non-string title, and one bad row fails the whole
+ * plugin page, so only a non-empty string is safe to project.
+ */
+function displayText(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+/**
  * An account-scoped source for the host Plugin Manager. Ordinary Profile
  * composition must never persist these bundles: authorization is checked on
  * every activation, including restoration after reconnecting.
@@ -19,14 +28,19 @@ export function createManagedMarketSource(market) {
     accepts: target => typeof target === 'string' && target.startsWith(PREFIX),
     listBundles() {
       const state = market.state()
-      return state.installed.map(record => ({
-        name: `${PREFIX}${state.accountKey}:${record.plugin_id}`,
-        description: `${record.display_name || record.name} (${record.name})`,
-        version: record.version, official: false, availability: 'profile',
-        installed: true, enabled: record.status === 'enabled', optional: false,
-        removable: true, rows: [], overrides: [],
-        ...(record.error ? { error: { code: 'operation-error', diagnostic: record.error } } : {})
-      }))
+      return state.installed.map(record => {
+        const title = displayText(record.display_name) ?? displayText(record.name)
+        const description = displayText(record.description)
+        return {
+          name: `${PREFIX}${state.accountKey}:${record.plugin_id}`,
+          ...(description ? { description } : {}),
+          ...(title || description ? { meta: { ...(title ? { title } : {}), ...(description ? { description } : {}) } } : {}),
+          version: record.version, official: false, availability: 'profile',
+          installed: true, enabled: record.status === 'enabled', optional: false,
+          removable: true, rows: [], overrides: [],
+          ...(record.error ? { error: { code: 'operation-error', diagnostic: record.error } } : {})
+        }
+      })
     },
     prepare(input) {
       const target = targetFor(input.plugin_id)

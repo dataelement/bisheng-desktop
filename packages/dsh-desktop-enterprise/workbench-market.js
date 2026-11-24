@@ -1,6 +1,7 @@
 import { parseWorkbenchScreenshots, validScreenshotIdentity, verifyScreenshotBytes } from './workbench-screenshots.js'
 
 const PREFIX = '/api/v1/dsh/market'
+export const MAX_ACCESS_IDS = 500
 const MAX_PAGES = 100
 const PAGE_SIZE = 20
 export const WORKBENCH_ARTIFACT_LIMIT = 512 * 1024 * 1024
@@ -101,13 +102,13 @@ export function createWorkbenchMarketController(accountController) {
     return state.connectionKey
   }
   const changed = () => invalid('Enterprise account changed.', 409)
-  const request = async (path) => {
+  const request = async (path, body) => {
     const started = epoch
     const key = identity()
     if (!key) throw invalid('Sign in to your enterprise account first.', 401)
     let data
     try {
-      data = await accountController.marketRequest(PREFIX + path)
+      data = body === undefined ? await accountController.marketRequest(PREFIX + path) : await accountController.marketRequest(PREFIX + path, body)
     } catch (error) {
       if (started !== epoch || identity() !== key) throw changed()
       if (error?.status === 404 || /\(404\)/u.test(error?.message ?? '')) {
@@ -197,6 +198,16 @@ export function createWorkbenchMarketController(accountController) {
         signal?.removeEventListener('abort', abort)
         imageRequests.delete(controller)
       }
+    },
+    async checkAccess(ids) {
+      if (!Array.isArray(ids) || ids.some(id => !HEX_ID.test(id ?? ''))) throw invalid('Invalid workbench identifier.')
+      const unique = [...new Set(ids)]
+      if (unique.length > MAX_ACCESS_IDS) throw invalid(`Ask about at most ${MAX_ACCESS_IDS} workbenches at once.`)
+      const data = await request('/workbenches/access', { workbench_ids: unique })
+      if (!data || typeof data !== 'object' || Array.isArray(data) || unique.some(id => typeof data[id] !== 'boolean')) {
+        throw invalid('Invalid enterprise workbench access answer.')
+      }
+      return Object.fromEntries(unique.map(id => [id, data[id]]))
     },
     async verify(id) {
       const loaded = await this.detail(id)

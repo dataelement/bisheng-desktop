@@ -1,3 +1,4 @@
+import { shippedFixture, workUiBundle } from './enterprise-harness-fixture.mjs'
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import React from 'react'
@@ -7,19 +8,11 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { JSDOM } from 'jsdom'
 import { describe, expect, it, vi } from 'vitest'
 
-const client = readFileSync(new URL('../packages/dsh-desktop-client-ui/client.js', import.meta.url), 'utf8')
+const client = workUiBundle
 const harness = readFileSync(new URL('../node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js', import.meta.url), 'utf8')
-function region(name) {
-  const start = harness.indexOf(`//#region ${name}`)
-  if (start < 0) throw new Error(`Harness region missing: ${name}`)
-  return harness.slice(start, harness.indexOf('//#endregion', start))
-}
-// Run the installed Harness evaluator and renderer, including range validation,
-// rule precedence and raw-text fallback; business code supplies only its slot.
-const UserTextDocument = vm.runInNewContext(`${region('lib/types/client/conversation/user-text-document.js')}; UserTextDocument`)
-const renderStart = harness.indexOf('function UserText({')
-const renderEnd = harness.indexOf('//#endregion', renderStart)
-const UserText = vm.runInNewContext(`${harness.slice(renderStart, renderEnd)}; UserText`, {
+const harnessFixture = shippedFixture(harness)
+const UserTextDocument = vm.runInNewContext(harnessFixture.declarations('UserTextDocument') + '; UserTextDocument')
+const UserText = vm.runInNewContext(harnessFixture.declarations('UserText') + '; UserText', {
   react: React, react_jsx_runtime: jsx,
   UserText_module_css_default: { root: 'userText', ellipsis: 'ellipsis' },
   _deepseek_ai_dsh_client_ui_primitives: {
@@ -27,11 +20,7 @@ const UserText = vm.runInNewContext(`${harness.slice(renderStart, renderEnd)}; U
     HoverCardGroup: ({ as, children, ...props }) => React.createElement(as, props, children)
   }
 })
-const sinkStart = harness.indexOf('sinkSerialized(attempt, draft, mode) {')
-const sinkEnd = harness.indexOf('\n\t\t\tnotifySubmission(', sinkStart)
-const sinkSerialized = new Function('zod', `${region('lib/types/client/draft.js')}
-${region('lib/types/client/input/prompt.js')}
-return ({${harness.slice(sinkStart, sinkEnd)}}).sinkSerialized`)(zod)
+const sinkSerialized = new Function('zod', harnessFixture.declarations('snapshotDraft', 'serializeDraftPrompt') + '\nreturn ({' + harnessFixture.method('sinkSerialized') + '}).sinkSerialized')(zod)
 
 function setup(language = 'zh') {
   const dom = new JSDOM('<!doctype html><head></head><body></body>')
@@ -176,7 +165,7 @@ describe('Work tool messages', () => {
   it('continues matching after a malformed reference and composes with existing session references', async () => {
     const { plugin, render } = setup()
     const tool = await plugin.toolReferenceSource.codec.serialize(reference())
-    const sessionRules = vm.runInNewContext(`${region('lib/types/client/user-text/session-reference-rule.js')}; sessionReferenceRule`)
+    const sessionRules = vm.runInNewContext(`${harnessFixture.declarations('sessionReferenceRule')}; sessionReferenceRule`)
     const text = `[Selected tool: ${name}; label: "\\q"]${tool}@[会话](dsh-session:one)`
     const view = render(text, [sessionRules])
     expect(view.querySelectorAll('.dshWorkToolReference')).toHaveLength(1)

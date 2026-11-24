@@ -12,6 +12,7 @@
       "default": "./index.js"
     },
     "./client": "./client.js",
+    "./legacy-cloud-state": "./legacy-cloud-state.js",
     "./contract": "./contract.js",
     "./deep-link": {
       "types": "./deep-link.d.ts",

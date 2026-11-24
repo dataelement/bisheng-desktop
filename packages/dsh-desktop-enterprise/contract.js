@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { normalizeEnterpriseServerUrl } from './deep-link.js'
 export { normalizeAuditContext } from './audit-context.js'
 export { parseAuditTitleUpdate } from './audit-title.js'
+export { parseAuditFeedbackUpdate } from './audit-feedback.js'
 
 export const CONTRACT_VERSION = '0.5.0'
 export const CLIENT_ID = 'dsh-desktop'
@@ -24,6 +25,7 @@ export const API_PATHS = Object.freeze({
   chat: '/api/v1/dsh/chat/completions',
   responses: '/api/v1/dsh/responses',
   auditTitle: '/api/v1/dsh/audit/conversations/title',
+  auditFeedback: '/api/v1/dsh/audit/message-feedback',
   usage: '/api/v1/dsh/usage'
 })
 
@@ -123,7 +125,9 @@ export function parseConfig(value) {
   return { enabled: true, client_id: CLIENT_ID, contract_version: contractVersion,
     ...(fields.length ? { audit_context: { fields } } : {}),
     ...(isObject(value.audit_conversation_title) && value.audit_conversation_title.version === 1
-      ? { audit_conversation_title: { version: 1 } } : {}) }
+      ? { audit_conversation_title: { version: 1 } } : {}),
+    ...(isObject(value.audit_message_feedback) && value.audit_message_feedback.version === 1
+      ? { audit_message_feedback: { version: 1 } } : {}) }
 }
 
 export function parseAuthorization(value, base) {
@@ -170,12 +174,22 @@ function parseModelReasoning(value) {
       throw new Error('BiSheng model reasoning effort is invalid.')
     }
     ids.add(effort.id)
-    return { id: effort.id, name: effort.name }
+    return { id: effort.id, name: effort.name, ...(typeof effort.description === 'string' ? { description: effort.description } : {}) }
   })
   if (value.defaultEffort !== undefined && !ids.has(value.defaultEffort)) {
     throw new Error('BiSheng model default reasoning effort is invalid.')
   }
   return { efforts, ...(value.defaultEffort === undefined ? {} : { defaultEffort: value.defaultEffort }) }
+}
+
+// Server-formatted ratio against the tenant base model: two decimals, or "<0.01".
+const PRICING_RATIO_PATTERN = /^(?:<0\.01|(?:0|[1-9]\d{0,11})\.\d{2})$/
+
+/** Credit ratio hint for display only; billing stays on the server. Invalid hints are dropped, never the model. */
+function parsePricingHint(value) {
+  if (!isObject(value) || typeof value.base !== 'boolean' || typeof value.free !== 'boolean') return undefined
+  if (value.ratio !== null && (typeof value.ratio !== 'string' || !PRICING_RATIO_PATTERN.test(value.ratio))) return undefined
+  return { ratio: value.ratio, base: value.base, free: value.free }
 }
 
 function parseModelEntry(entry, seen) {
@@ -192,24 +206,53 @@ function parseModelEntry(entry, seen) {
     return undefined
   }
   let reasoning
-  if (entry.reasoning !== undefined) {
-    try {
-      reasoning = parseModelReasoning(entry.reasoning)
-    } catch {
-      // Invalid capability metadata makes only this model unavailable.
-      return undefined
+  let inputModalities
+  try {
+    if (entry.reasoning !== undefined) reasoning = parseModelReasoning(entry.reasoning)
+    if (entry.supported_reasoning_levels !== undefined || entry.default_reasoning_level !== undefined) {
+      if (!Array.isArray(entry.supported_reasoning_levels)) return undefined
+      const declared = parseModelReasoning({
+        efforts: entry.supported_reasoning_levels.map((level) => isObject(level)
+          ? { id: level.effort, name: level.description, description: level.description }
+          : level),
+        ...(entry.default_reasoning_level === undefined ? {} : { defaultEffort: entry.default_reasoning_level })
+      })
+      // Two authoritative declarations must agree; never silently select one.
+      if (reasoning && (reasoning.defaultEffort !== declared.defaultEffort ||
+          reasoning.efforts.length !== declared.efforts.length ||
+          reasoning.efforts.some((effort) => !declared.efforts.some((item) => item.id === effort.id && item.name === effort.name &&
+            (effort.description === undefined || item.description === undefined || item.description === effort.description))))) return undefined
+      reasoning = reasoning
+        ? { ...declared, efforts: declared.efforts.map((effort) => ({
+          ...effort,
+          ...(reasoning.efforts.find((item) => item.id === effort.id)?.description === undefined
+            ? {}
+            : { description: reasoning.efforts.find((item) => item.id === effort.id)?.description })
+        })) }
+        : declared
     }
+    if (entry.input_modalities !== undefined) {
+      if (!Array.isArray(entry.input_modalities) || entry.input_modalities.length === 0 ||
+          entry.input_modalities.some((item) => item !== 'text' && item !== 'image') ||
+          new Set(entry.input_modalities).size !== entry.input_modalities.length) return undefined
+      inputModalities = [...entry.input_modalities]
+      if (entry.capabilities.vision !== undefined && entry.capabilities.vision !== inputModalities.includes('image')) return undefined
+    }
+  } catch {
+    // Reject invalid capability declarations; parseModels reports the invalid catalog.
+    return undefined
   }
   seen.add(entry.id)
   const usage = isObject(entry.usage) ? parseUsageLenient(entry.usage) : undefined
-  const contextWindow = optionalInteger(entry.context_window) ??
-    optionalInteger(entry.contextWindow) ??
-    optionalInteger(entry.capabilities.context_window) ??
-    optionalInteger(entry.capabilities.contextWindow)
-  const maxTokens = optionalInteger(entry.max_tokens) ??
-    optionalInteger(entry.maxTokens) ??
-    optionalInteger(entry.capabilities.max_tokens) ??
-    optionalInteger(entry.capabilities.maxTokens)
+  const contextWindow = optionalPositiveInteger(entry.context_window) ??
+    optionalPositiveInteger(entry.contextWindow) ??
+    optionalPositiveInteger(entry.capabilities.context_window) ??
+    optionalPositiveInteger(entry.capabilities.contextWindow)
+  const maxTokens = optionalPositiveInteger(entry.max_tokens) ??
+    optionalPositiveInteger(entry.maxTokens) ??
+    optionalPositiveInteger(entry.capabilities.max_tokens) ??
+    optionalPositiveInteger(entry.capabilities.maxTokens)
+  const pricingHint = parsePricingHint(entry.pricing_hint)
   return {
     id: entry.id,
     object: typeof entry.object === 'string' && entry.object.length > 0 ? entry.object : 'model',
@@ -217,17 +260,24 @@ function parseModelEntry(entry, seen) {
     owned_by: typeof entry.owned_by === 'string' && entry.owned_by.length > 0 ? entry.owned_by : 'bisheng',
     display_name: typeof entry.display_name === 'string' && entry.display_name.length > 0 ? entry.display_name : entry.id,
     ...(reasoning === undefined ? {} : { reasoning }),
+    ...(typeof entry.slug === 'string' && entry.slug.trim() ? { slug: entry.slug.trim() } : {}),
     ...(contextWindow && contextWindow > 0 ? { context_window: contextWindow } : {}),
     ...(maxTokens && maxTokens > 0 ? { max_tokens: maxTokens } : {}),
+    ...(inputModalities === undefined ? {} : { input_modalities: inputModalities }),
+    ...(entry.supported_reasoning_levels === undefined ? {} : {
+      supported_reasoning_levels: reasoning.efforts.map((effort) => ({ effort: effort.id, description: effort.name }))
+    }),
+    ...(entry.default_reasoning_level === undefined ? {} : { default_reasoning_level: reasoning.defaultEffort }),
     capabilities: {
       streaming: entry.capabilities.streaming,
       tools: entry.capabilities.tools,
-      vision: entry.capabilities.vision ?? false,
+      vision: inputModalities === undefined ? (entry.capabilities.vision ?? false) : inputModalities.includes('image'),
       reasoning_content: entry.capabilities.reasoning_content,
       ...(entry.capabilities.responses === undefined ? {} : { responses: entry.capabilities.responses }),
       ...(contextWindow && contextWindow > 0 ? { context_window: contextWindow } : {}),
       ...(maxTokens && maxTokens > 0 ? { max_tokens: maxTokens } : {})
     },
+    ...(pricingHint ? { pricing_hint: pricingHint } : {}),
     ...(usage && usage.source !== 'unavailable' ? { usage } : {})
   }
 }
@@ -253,6 +303,10 @@ export function parseModelsLenient(value) {
     const parsed = parseModelEntry(entry, seen)
     return parsed ? [parsed] : []
   })
+}
+
+function optionalPositiveInteger(value) {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
 }
 
 function optionalInteger(value) {
