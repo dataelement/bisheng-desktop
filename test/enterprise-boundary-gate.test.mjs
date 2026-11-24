@@ -203,6 +203,9 @@ test('NUL-safe collection includes every nested untracked source and unusual fil
   assert.deepEqual(f.check().illegalFiles, [...files].sort())
   f.git('add', '--', 'untracked-dir')
   const unusual = 'untracked-dir/ space\nand\ttab.js'
+  // Index-only fixture: Windows rejects control characters unless this guard is
+  // disabled. Never check this path out onto the Windows filesystem.
+  f.git('config', 'core.protectNTFS', 'false')
   f.stage(unusual, '100644')
   assert.ok(f.git('ls-files', '-z').split('\0').includes(unusual), 'Git must accept the unusual index path before testing boundary collection')
   assert.deepEqual(f.check().illegalFiles, [...files, unusual].sort())

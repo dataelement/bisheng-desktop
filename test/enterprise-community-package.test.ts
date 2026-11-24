@@ -20,7 +20,7 @@ const target = `${process.platform}-${process.arch}`
 afterEach(async () => { for (const path of paths.splice(0)) await rm(path, { recursive: true, force: true }) })
 
 async function home() {
-  const directory = await mkdtemp(join(tmpdir(), 'enterprise-community-'))
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'enterprise-community-')))
   paths.push(directory)
   await mkdir(join(directory, 'profiles/node_modules'), { recursive: true })
   return directory

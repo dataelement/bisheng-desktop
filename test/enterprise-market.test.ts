@@ -38,7 +38,7 @@ function bundle(version = '1.0.0', source = 'export function apply(ctx) { ctx.ef
   const bytes = zipEntries({ 'manifest.json': Buffer.from(JSON.stringify(manifest)), ...Object.fromEntries(Object.entries(files).map(([path, value]) => [`bundles/${target}/${path}`, value])) })
   return { bytes, manifest, expected: { name: 'company-demo', version, digest: sha256(bytes) } }
 }
-async function home() { const directory = await mkdtemp(join(tmpdir(), 'enterprise-market-')); paths.push(directory); await mkdir(join(directory, 'profiles/node_modules'), { recursive: true }); return directory }
+async function home() { const directory = await realpath(await mkdtemp(join(tmpdir(), 'enterprise-market-'))); paths.push(directory); await mkdir(join(directory, 'profiles/node_modules'), { recursive: true }); return directory }
 
 async function installHost(root: string) {
   const reactDom = join(root, 'node_modules/react-dom')
