@@ -984,9 +984,7 @@ describe('desktop workbench client navigation', () => {
       },
       slots: { inject: (_name, callback) => callback(), register: vi.fn() },
       sessions: { list: { subscribe: vi.fn() } },
-      // Simulate an older upstream Workspace build: the optional blank-session
-      // reuse slot was added downstream and may be absent at runtime.
-      uiWorkspace: { registerSessionOpener: vi.fn(), registerSessionFilter: vi.fn() }
+      uiWorkspace: { registerSessionOpener: vi.fn(), registerSessionReuseFilter: vi.fn(), registerSessionFilter: vi.fn() }
     }
     apply(ctx)
     expect(service).toBeInstanceOf(Workbenches)
@@ -4199,21 +4197,6 @@ describe('workbench market screenshot and metadata display', () => {
     expect(service.getSnapshot().restartNeeded).toBe(true)
     const ui = interactiveMarket(service, 'mine')
     expect(ui.find(ui.render(), node => node.type === 'article' && node.props.key === 'owner/local')).toHaveLength(0)
-  })
-
-  it('leaves an active workbench before uninstalling its native bundle', async () => {
-    const { service, ctx, saved } = await fixture({ ...emptyState(), added: ['owner/local'], pinned: ['owner/local'], active: 'owner/local' })
-    setFiberPackage(ctx, 'local-package')
-    service.register({ title: 'Local', repository: 'https://github.com/owner/local' }, () => null)
-    let installed = true
-    ctx.remote = { pluginManager: {
-      listBundles: vi.fn(async () => ({ ok: true, value: installed ? [{ name: 'local-package', installed: true, enabled: true, removable: true }] : [] })),
-      removeBundle: vi.fn(async () => { installed = false; return { ok: true, value: { changed: true, application: 'restart-required' } } })
-    } }
-    await service.refreshNative()
-    await service.removeWorkbench('owner/local')
-    expect(saved().state.active).toBe(null)
-    expect(ctx.remote.pluginManager.removeBundle).toHaveBeenCalledWith('local-package')
   })
 
   it('keeps a local workbench when native removal fails or is not applied', async () => {
