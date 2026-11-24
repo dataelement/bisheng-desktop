@@ -121,6 +121,8 @@ describe('BiSheng compatible client API mock', () => {
       '/api/enterprise.workbenches/welcome-cases-client.js',
       '/api/enterprise.workbenches/welcome-cases.json',
       '/api/enterprise.workbenches/cloud-collection-client.js',
+      '/api/enterprise.workbenches/workbench-card-client.js',
+      '/api/enterprise.workbenches/workbench-counts-client.js',
       '/api/enterprise.workbenches/client.js',
       '/api/enterprise.workbenches/cloud',
       '/api/enterprise.workbenches/favorites',

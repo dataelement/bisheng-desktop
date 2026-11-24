@@ -93,3 +93,103 @@ it('maps selected templates back to prompts without replacing manual text or inl
   expect(templatePromptEdit(input, template, [template], catalog.work, 'en')).toMatchObject({ text: item.promptEn, span: { start: 2, draftRev: 4 } })
   expect(templatePromptEdit({ ...input, occurrences: [{ offset: 7, length: 5 }] }, template, [template], catalog.work)).toBeUndefined()
 })
+
+it('shows cases through the sessionless hero and blank-session composer outlets, then hides them after a message', async () => {
+  const { JSDOM } = await import('jsdom')
+  const React = await import('react')
+  const { createRoot } = await import('react-dom/client')
+  const { mountWelcomeCases } = await import('../packages/dsh-desktop-enterprise/welcome-cases-client.js')
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' })
+  vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const components = new Map(), ctx = fixture()
+  ctx.locale.register = () => () => {}
+  ctx.slots = { inject: (_seat, run) => run(), register: (definition, component) => { components.set(definition.name, component); return () => {} } }
+  let root, dispose
+  try {
+    dispose = mountWelcomeCases(React, ctx, catalog)
+    root = createRoot(document.getElementById('root'))
+    const render = async (seat, props) => React.act(async () => root.render(React.createElement(components.get(seat), props)))
+    await render('conversation.hero.dock', {})
+    expect(document.querySelectorAll('.bishengWelcomeCases')).toHaveLength(1)
+    await render('conversation.composer.dock', { sessionId: 'blank', session: { blank: true } })
+    expect(document.querySelectorAll('.bishengWelcomeCases')).toHaveLength(1)
+    expect(document.querySelectorAll('.bishengWelcomeCaseGrid > button')).toHaveLength(3)
+    expect(document.querySelectorAll('.bsw-quick-icon svg')).toHaveLength(3)
+    expect(document.querySelector('header h3').textContent).toBe('从一个案例开始')
+    expect(document.querySelector('.bsw-dock-root .bsw-dock .bsw-viewport .bishengWelcomeCases')).not.toBeNull()
+    const before = document.querySelector('.bishengWelcomeCaseGrid').textContent
+    await React.act(async () => document.querySelector('.bishengWelcomeCases header button').click())
+    expect(document.querySelector('.bishengWelcomeCaseGrid').textContent).not.toBe(before)
+    await render('conversation.composer.dock', { sessionId: 'active', session: { blank: false } })
+    expect(document.querySelector('.bishengWelcomeCases')).toBeNull()
+  } finally {
+    if (root) await React.act(async () => root.unmount())
+    dispose?.(); dom.window.close(); vi.unstubAllGlobals()
+  }
+})
+
+it('gives PPT, Word and Excel choosers exclusive dock ownership and restores examples on exit', async () => {
+  const { JSDOM } = await import('jsdom')
+  const React = await import('react')
+  const { createRoot } = await import('react-dom/client')
+  const { mountWelcomeCases } = await import('../packages/dsh-desktop-enterprise/welcome-cases-client.js')
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' })
+  vi.stubGlobal('window', dom.window); vi.stubGlobal('document', dom.window.document); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const store = () => {
+    const states = new Map(), listeners = new Map()
+    return {
+      snapshot: id => states.get(id) || { templates: [] },
+      subscribe: (id, listener) => { const set = listeners.get(id) || new Set(); set.add(listener); listeners.set(id, set); return () => set.delete(listener) },
+      update: (id, value) => { states.set(id, { templates: [], ...value }); for (const listener of listeners.get(id) || []) listener() },
+      listeners
+    }
+  }
+  const ctx = fixture(), components = new Map()
+  ctx.desktopOffice = store(); ctx.desktopPresentation = store()
+  ctx.locale.register = () => () => {}
+  ctx.slots = { inject: (_seat, run) => run(), register: (definition, component) => { components.set(definition.name, component); return () => {} } }
+  let root, dispose
+  try {
+    dispose = mountWelcomeCases(React, ctx, catalog)
+    root = createRoot(document.getElementById('root'))
+    for (const sessionId of [undefined, 'blank']) {
+      const seat = sessionId ? 'conversation.composer.dock' : 'conversation.hero.dock'
+      await React.act(async () => root.render(React.createElement(components.get(seat), { sessionId, session: sessionId ? { blank: true } : undefined })))
+      expect(document.querySelector('.bsw-dock-root')).not.toBeNull()
+      for (const mode of ['ppt', 'word', 'excel']) {
+        const activeStore = mode === 'ppt' ? ctx.desktopPresentation : ctx.desktopOffice
+        await React.act(async () => activeStore.update(sessionId, mode === 'ppt' ? { activeMode: mode, selectedId: 'template' } : { mode }))
+        expect(document.querySelector('.bsw-dock-root')).toBeNull()
+        await React.act(async () => activeStore.update(sessionId, {}))
+        expect(document.querySelectorAll('.bishengWelcomeCases')).toHaveLength(1)
+      }
+    }
+    await React.act(async () => root.unmount()); root = null
+    for (const service of [ctx.desktopOffice, ctx.desktopPresentation]) for (const listeners of service.listeners.values()) expect(listeners.size).toBe(0)
+  } finally {
+    if (root) await React.act(async () => root.unmount())
+    dispose?.(); dom.window.close(); vi.unstubAllGlobals()
+  }
+})
+
+it('prepares Word and creator examples inside the declared Cordis injection boundary', async () => {
+  const { Context } = await import('@deepseek-ai/cordis')
+  const source = await readFile(new URL('../packages/dsh-desktop-enterprise/client.js', import.meta.url), 'utf8')
+  const declaration = source.match(/ctx\.inject\?\.\(\[([^\]]+)\], scoped => bindEnterpriseWelcomeCases\(scoped\)\)/)
+  expect(declaration).not.toBeNull()
+  const inject = [...declaration[1].matchAll(/'([^']+)'/g)].map(match => match[1])
+  const services = fixture(), ctx = new Context()
+  services.desktopOffice = { snapshot: () => ({}), mutate: vi.fn(async () => true) }
+  services.desktopPresentation = { snapshot: () => ({}), change: vi.fn(async () => true) }
+  for (const [name, service] of Object.entries(services)) ctx.provide(name, service)
+  ctx.provide('remote.agentPresets', services.remote.agentPresets)
+  let prepare
+  try {
+    await ctx.plugin({ inject, apply(scope) { prepare = async item => prepareWelcomeCase(scope, item, 'session', new AbortController().signal) } })
+    expect(prepare).toBeTypeOf('function')
+    await prepare(catalog.work.find(item => item.id === 'event-minutes'))
+    expect(services.connection.rpc.call).toHaveBeenCalledWith('/api', 'office-templates', { sessionId: 'session', endpoint: 'catalog' }, expect.any(AbortSignal))
+    await prepare(catalog.work.find(item => item.id === 'creator-pomodoro'))
+    expect(services.remote.agentPresets.select).toHaveBeenCalledWith('session', 'cordis')
+  } finally { await ctx.fiber.dispose() }
+})

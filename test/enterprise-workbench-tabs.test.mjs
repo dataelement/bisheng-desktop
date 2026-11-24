@@ -62,10 +62,10 @@ it('renders exactly five ordered tabs with the real upstream Market and four whe
 it('opts both source tabs into host search and forwards it only on capable hosts', () => {
   const { records, service, render } = fixture()
   registerCollectionTabs(service, key => copy.zh[key], render)
-  for (const id of ['enterprise', 'cloud']) {
+  for (const id of ['enterprise', 'cloud', 'favorites']) {
     expect(records.get(id)).toMatchObject({ controls: false, search: true })
     expect(records.get(id).render({ search: 'sample' }).search).toBeUndefined()
   }
   service.collectionSearch = true
-  for (const id of ['enterprise', 'cloud']) expect(records.get(id).render({ search: 'sample' }).search).toBe('sample')
+  for (const id of ['enterprise', 'cloud', 'favorites']) expect(records.get(id).render({ search: 'sample' }).search).toBe('sample')
 })

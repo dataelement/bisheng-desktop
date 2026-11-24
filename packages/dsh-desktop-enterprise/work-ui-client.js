@@ -3,7 +3,53 @@ export function createWorkUi(React, primitives = {}) {
   const { Menu, MenuItemButton, Modal, Button, HoverCard, StateDot, relativeTime, ReferenceIconRegular,
     IconChevronRightOutlineRegular, IconEditOutlineRegular, IconEllipsisOutlineRegular, IconFolderCloseRegular, IconFolderOpenRegular,
     IconNewChatOutlineRegular, IconPlusOutlineRegular, IconTrashOutlineRegular, IconTriangleRightFillRegular } = primitives
-function ConversationBrandTitle({ navigation, t }) {
+    // Paths are copied from build/bisheng-logo-mark.svg. Keeping the browser
+    // occupant self-contained makes it replayable when Harness loads plugins
+    // from an installed Profile rather than the repository.
+    const BISHENG_MARK_PATHS = [
+      'M697.188 502.5H764.315C801.418 502.5 831.503 532.585 831.503 569.688V578.317C831.503 615.42 794.4 645.505 764.315 645.505H697.188C660.085 645.505 630 608.402 630 578.317V569.688C630 532.585 667.102 502.5 697.188 502.5Z',
+      'M965.863 502.5H1503.17C1540.27 502.5 1570.36 532.585 1570.36 569.688V578.317C1570.36 615.42 1533.25 645.505 1503.17 645.505H965.863C928.761 645.505 898.676 608.402 898.676 578.317V569.688C898.676 532.585 935.778 502.5 965.863 502.5Z',
+      'M764.363 752.749H1704.69C1741.79 752.749 1771.88 782.834 1771.88 819.936V828.566C1771.88 865.668 1734.78 895.754 1704.69 895.754H764.363C727.261 895.754 697.176 858.651 697.176 828.566V819.936C697.176 782.834 734.278 752.749 764.363 752.749Z',
+      'M764.363 1003H1436.01C1473.12 1003 1503.2 1033.09 1503.2 1070.19V1078.82C1503.2 1115.92 1466.1 1146.01 1436.01 1146.01H764.363C727.261 1146.01 697.176 1108.91 697.176 1078.82V1070.19C697.176 1033.09 734.278 1003 764.363 1003Z',
+      'M764.363 1253.26H1570.35C1607.45 1253.26 1637.53 1283.34 1637.53 1320.44V1329.07C1637.53 1366.18 1600.43 1396.26 1570.35 1396.26H764.363C727.261 1396.26 697.176 1359.16 697.176 1329.07V1320.44C697.176 1283.34 734.278 1253.26 764.363 1253.26Z',
+      'M764.363 1503.5H1704.69C1741.79 1503.5 1771.88 1533.59 1771.88 1570.69V1579.32C1771.88 1616.42 1734.78 1646.51 1704.69 1646.51H764.363C727.261 1646.51 697.176 1609.41 697.176 1579.32V1570.69C697.176 1533.59 734.278 1503.5 764.363 1503.5Z',
+      'M697.188 1753.76H1234.49C1271.6 1753.76 1301.68 1783.84 1301.68 1820.94V1829.57C1301.68 1866.68 1264.58 1896.76 1234.49 1896.76H697.188C660.085 1896.76 630 1859.66 630 1829.57V1820.94C630 1783.84 667.102 1753.76 697.188 1753.76Z',
+      'M1436.04 1753.76H1503.17C1540.27 1753.76 1570.36 1783.84 1570.36 1820.94V1829.57C1570.36 1866.68 1533.26 1896.76 1503.17 1896.76H1436.04C1398.94 1896.76 1368.86 1859.66 1368.86 1829.57V1820.94C1368.86 1783.84 1405.96 1753.76 1436.04 1753.76Z'
+    ]
+
+    function BishengMark(props = {}) {
+      const { size = 17, ...svgProps } = props
+      return React.createElement(
+        'svg',
+        {
+          width: size,
+          height: size,
+          viewBox: '0 0 2400 2400',
+          fill: 'none',
+          'aria-hidden': 'true',
+          ...svgProps
+        },
+        React.createElement('rect', { width: 2400, height: 2400, rx: 360, fill: '#000000' }),
+        ...BISHENG_MARK_PATHS.map((d, index) =>
+          React.createElement('path', { key: index, d, fill: 'white' })
+        )
+      )
+    }
+
+    function ConversationBrandMark({ navigation, ...props }) {
+      const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
+      const icon = state.navigation?.branding?.assistantIcon
+      const [failedImage, setFailedImage] = React.useState(null)
+      if (icon?.enabled === false) return null
+      if (icon?.image && failedImage !== icon.image) {
+        return React.createElement('img', { width: props.size, height: props.size, className: props.className,
+          src: icon.image, alt: '', style: { objectFit: 'contain', flex: 'none' }, referrerPolicy: 'no-referrer',
+          onError: () => setFailedImage(icon.image) })
+      }
+      return BishengMark(props)
+    }
+
+    function ConversationBrandTitle({ navigation, t }) {
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
       return React.createElement('span', { 'data-dsh-welcome-title': true }, state.navigation?.branding?.welcomeMessage || t('welcomeMessage'))
     }
@@ -422,6 +468,7 @@ function ChatProjectRow({ project, chats, state, currentChat, navigation, t, pro
     }
 
 function ChatProjects({ navigation, t, projectText, deleteText, now }) {
+      const sections = React.useSyncExternalStore(navigation.sections.subscribe, navigation.sections.snapshot)
       const state = React.useSyncExternalStore(navigation.projects.subscribe, navigation.projects.snapshot)
       const host = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
       const grouped = React.useMemo(() => {
@@ -443,23 +490,25 @@ function ChatProjects({ navigation, t, projectText, deleteText, now }) {
       }, [host.items, state.assignments, state.rows])
       if (!host.connected || !state.scope) return null
       return React.createElement('section', { className: 'dshChatProjects', 'aria-label': projectText('title') },
-        React.createElement('div', { className: 'dshHistoryHeading' }, React.createElement('span', null, projectText('title')),
+        React.createElement('div', { className: 'dshHistoryHeading' },
+          React.createElement(SidebarSectionToggle, { collapsed: sections.projects, onClick: () => navigation.sections.toggle('projects') }, projectText('title')),
           React.createElement('button', { type: 'button', className: 'dshChatProjectAction', disabled: state.phase !== 'ready', 'aria-label': projectText('create'), onClick: () => navigation.projects.edit('create') },
             React.createElement(IconPlusOutlineRegular, { 'aria-hidden': true }))),
+        React.createElement('div', { hidden: sections.projects },
         state.phase !== 'error' && state.connection !== 'live' && React.createElement('div', { role: 'status', className: 'dshHistoryNotice' }, projectText(state.connection)),
         ['busy', 'error'].includes(state.migrationPhase) && React.createElement('p', { role: 'status', className: 'dshHistoryNotice' }, projectText(state.migrationPhase === 'busy' ? 'migrationRunning' : 'migrationRetry')),
         state.migrationResult > 0 && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: navigation.projects.showImportResults }, projectText('importDone', { count: state.migrationResult })),
         state.projects.length === 0 && state.phase === 'ready' && React.createElement('button', { type: 'button', className: 'dshChatProjectCreate', onClick: () => navigation.projects.edit('create') }, `+ ${projectText('create')}`),
         ...state.projects.map(project => React.createElement(ChatProjectRow, { key: `${state.scope}:${state.epoch}:${project.id}`, project, chats: grouped.get(project.id) || [], state, currentChat: host.mode === 'chat' && !host.pageId ? host.conversationId : undefined, navigation, t, projectText, deleteText, now })),
         state.error && !state.editor && React.createElement('div', { role: 'alert', className: 'dshHistoryNotice' }, projectText(state.error),
-          React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: navigation.projects.reload }, projectText('retry'))))
+          React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: navigation.projects.reload }, projectText('retry')))))
     }
 
 const MODES_NS = 'desktop.chatWork';
 
 const MODES_COPY = {
-      zh: { welcomeMessage: '来一起创造', welcome: '欢迎来到', newConversation: '新建对话', navigation: '导航', moreNavigation: '更多', recent: '对话', projects: '工作区', all: '所有会话', results: '搜索结果', cloud: '云端聊天', local: '本地工作', recentEmpty: '暂无最近会话', recentSearchEmpty: '当前列表没有匹配的会话', chat: '对话', work: '工作', label: '对话与工作', loading: '正在连接企业聊天…', error: '企业聊天连接失败，请重试', retry: '重新连接', refresh: '刷新聊天记录', historyLoading: '正在加载聊天记录…', historyError: '加载失败，点击重试', empty: '暂无聊天记录', more: '加载更多', newChat: '新聊天', signIn: '登录企业账号', signInTitle: '登录后使用聊天', signInDescription: '聊天由企业平台提供。登录后，即可使用平台中的模型和对话记录。', continueWork: '继续使用工作', close: '关闭' },
-      en: { welcomeMessage: "Let's Create Together", welcome: 'Welcome', newConversation: 'New conversation', navigation: 'Navigation', moreNavigation: 'More', recent: 'Conversations', projects: 'Workspaces', all: 'All conversations', results: 'Search results', cloud: 'Cloud chat', local: 'Local work', recentEmpty: 'No recent conversations', recentSearchEmpty: 'No matches in the current list', chat: 'Chat', work: 'Work', label: 'Chat and Work', loading: 'Connecting to enterprise Chat…', error: 'Could not connect to enterprise Chat. Try again.', retry: 'Reconnect', refresh: 'Refresh Chat history', historyLoading: 'Loading history…', historyError: 'Loading failed. Retry', empty: 'No chats yet', more: 'Load more', newChat: 'New chat', signIn: 'Sign in to your enterprise account', signInTitle: 'Sign in to use Chat', signInDescription: 'Chat is provided by your enterprise platform. Sign in to use its models and conversations.', continueWork: 'Continue in Work', close: 'Close' }
+      zh: { welcomeMessage: '来一起创造', welcome: '欢迎来到', newConversation: '新建对话', navigation: '导航', moreNavigation: '更多', plugins: '插件', recent: '对话', projects: '工作区', all: '所有会话', results: '搜索结果', cloud: '云端聊天', local: '本地工作', recentEmpty: '暂无最近会话', recentSearchEmpty: '当前列表没有匹配的会话', chat: '对话', work: '工作', label: '对话与工作', loading: '正在连接企业聊天…', error: '企业聊天连接失败，请重试', retry: '重新连接', refresh: '刷新聊天记录', historyLoading: '正在加载聊天记录…', historyError: '加载失败，点击重试', empty: '暂无聊天记录', more: '加载更多', newChat: '新聊天', signIn: '登录企业账号', signInTitle: '登录后使用聊天', signInDescription: '聊天由企业平台提供。登录后，即可使用平台中的模型和对话记录。', continueWork: '继续使用工作', close: '关闭' },
+      en: { welcomeMessage: "Let's Create Together", welcome: 'Welcome', newConversation: 'New conversation', navigation: 'Navigation', moreNavigation: 'More', plugins: 'Plugins', recent: 'Conversations', projects: 'Workspaces', all: 'All conversations', results: 'Search results', cloud: 'Cloud chat', local: 'Local work', recentEmpty: 'No recent conversations', recentSearchEmpty: 'No matches in the current list', chat: 'Chat', work: 'Work', label: 'Chat and Work', loading: 'Connecting to enterprise Chat…', error: 'Could not connect to enterprise Chat. Try again.', retry: 'Reconnect', refresh: 'Refresh Chat history', historyLoading: 'Loading history…', historyError: 'Loading failed. Retry', empty: 'No chats yet', more: 'Load more', newChat: 'New chat', signIn: 'Sign in to your enterprise account', signInTitle: 'Sign in to use Chat', signInDescription: 'Chat is provided by your enterprise platform. Sign in to use its models and conversations.', continueWork: 'Continue in Work', close: 'Close' }
     };
 
 const PALETTE_TOKENS = {
@@ -937,7 +986,40 @@ function CloudHistoryRow({ item, selected, navigation, t, projectText, deleteTex
       })
     }
 
+function createSidebarSections() {
+      const listeners = new Set()
+      const read = key => {
+        try { return window.localStorage.getItem(`dsh.sidebar.${key}Collapsed`) === 'true' }
+        catch { return false } // Storage restrictions must not prevent navigation.
+      }
+      let value = { workspace: read('workspace'), projects: read('projects'), conversations: read('conversations') }
+      return {
+        snapshot: () => value,
+        subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener) },
+        toggle(key) {
+          value = { ...value, [key]: !value[key] }
+          try { window.localStorage.setItem(`dsh.sidebar.${key}Collapsed`, String(value[key])) }
+          catch { /* Keep the in-memory preference when storage is unavailable. */ }
+          listeners.forEach(listener => listener())
+        }
+      }
+    }
+
+function SidebarSectionToggle({ collapsed, onClick, children }) {
+      return React.createElement('button', { type: 'button', className: 'dshEnterpriseSectionToggle', 'aria-expanded': !collapsed, onClick },
+        React.createElement('span', { className: 'dshEnterpriseSectionChevron', 'aria-hidden': true, style: { transform: collapsed ? 'rotate(0deg)' : 'rotate(90deg)' } },
+          React.createElement(IconChevronRightOutlineRegular)), children)
+    }
+
+function WorkspaceSectionTitle({ flat, navigation, t }) {
+      const sections = React.useSyncExternalStore(navigation.sections.subscribe, navigation.sections.snapshot)
+      if (flat) return t('all')
+      return React.createElement(SidebarSectionToggle, { collapsed: sections.workspace, onClick: () => navigation.sections.toggle('workspace') }, t('projects'))
+    }
+
 function SharedCollection({ projects, items, mode, query, archivedOnly, searchPending = false, navigation, t, projectText, deleteText }) {
+      const sections = React.useSyncExternalStore(navigation.sections.subscribe, navigation.sections.snapshot)
+      const groupedMode = mode === 'projects' && !query.trim()
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
       const projectState = React.useSyncExternalStore(navigation.projects.subscribe, navigation.projects.snapshot)
       // Cloud Chat has no workbench ownership; keep its rows and controls in the native scope.
@@ -957,12 +1039,15 @@ function SharedCollection({ projects, items, mode, query, archivedOnly, searchPe
         .map(conversation => ({ key: `chat:${state.epoch}:${conversation.id}`, kind: 'chat', updatedAt: Date.parse(conversation.updatedAt) || 0, conversation }))
       const rows = [...local, ...cloud].sort((a, b) => Number(!!b.blank) - Number(!!a.blank) || Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt || a.key.localeCompare(b.key))
       return React.createElement('div', { className: 'dshSharedCollection', 'data-mode': state.mode },
-        projects(state.mode === 'work'),
+        (!groupedMode || !sections.workspace) && projects(state.mode === 'work'),
         showProjects && React.createElement(ChatProjects, { navigation, t, projectText, deleteText, now }),
         showCloud && projectState.editor && React.createElement(ChatProjectDialog, { key: `${projectState.scope}:${projectState.editor.mode}:${projectState.editor.id || ''}`, store: navigation.projects, state: projectState, t: projectText }),
         React.createElement('section', { className: 'dshRecentHistory', 'aria-label': t(mode === 'projects' ? 'recent' : mode === 'search' ? 'results' : 'all') },
           React.createElement('div', { className: 'dshHistoryHeading' },
-            React.createElement('span', null, t(mode === 'projects' ? 'recent' : mode === 'search' ? 'results' : 'all'))),
+            groupedMode
+              ? React.createElement(SidebarSectionToggle, { collapsed: sections.conversations, onClick: () => navigation.sections.toggle('conversations') }, t('recent'))
+              : React.createElement('span', null, t(mode === 'search' ? 'results' : 'all'))),
+          React.createElement('div', { hidden: groupedMode && sections.conversations },
           rows.length > 0 && React.createElement('div', { className: 'dshRecentHistoryRows' },
             rows.map(row => row.kind === 'work'
               ? React.createElement('div', { key: row.key, 'data-history-kind': 'work' }, row.render(state.mode === 'work'))
@@ -975,7 +1060,7 @@ function SharedCollection({ projects, items, mode, query, archivedOnly, searchPe
           (state.hasMore || (search && projectState.search.nextCursor)) && showCloud && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: state.historyPhase === 'loading' || projectState.search.phase === 'loading', onClick: () => {
             if (state.hasMore) void navigation.refreshHistory(true)
             if (search && projectState.search.nextCursor) void navigation.projects.search(search, true)
-          } }, t('more'))))
+          } }, t('more')))))
     }
 
 function observeHostOverlays(report, { passive = false, gateName = '', gateModals = false } = {}) {
@@ -1466,12 +1551,14 @@ function animateLandingFooter(card, chat, animate, restore) {
     }
 
 function animateWorkLanding(work, { to, chat }) {
+      if (!landingMotionAllowed()) return
       const hero = work?.querySelector('[data-content-phase="hero"]')
       const card = hero?.querySelector('[data-composer-card]')
-      const controls = hero?.querySelector('[data-dsh-hero-controls]')
+      const controls = hero?.querySelector('[data-slot="conversation.hero.workspace"]')?.parentElement
       // The two public brand slots share the headline row in the native HeroShell.
-      const title = hero?.querySelector('[data-slot="conversation.hero.brand.title"]')?.parentElement?.parentElement
-      if (!title?.querySelector('[data-slot="conversation.hero.brand.mark"]') || !card || !controls || typeof card.animate !== 'function') return
+      let title = hero?.querySelector('[data-slot="conversation.hero.brand.title"]')?.parentElement
+      while (title && title !== hero && !title.querySelector('[data-slot="conversation.hero.brand.mark"]')) title = title.parentElement
+      if (!title || title === hero || !title.querySelector('[data-slot="conversation.hero.brand.mark"]') || !card || !controls || typeof card.animate !== 'function') return
       const panel = work.getBoundingClientRect()
       if (Math.abs(chat.seat.y - panel.y) > 1 || Math.abs(chat.seat.y + chat.seat.height - panel.bottom) > 1 ||
           Math.abs(chat.seat.x + chat.seat.width - panel.right) > 1) return
@@ -1529,7 +1616,7 @@ function animateWorkLanding(work, { to, chat }) {
         }
         // The shared case heading stays visible while only the recommendations change.
         // Work cards play their own stagger on entry after the native Chat view yields.
-        for (const content of hero.querySelectorAll(fromChat ? '.dso-reference-panel' : '.dso-quick-stage, .dso-reference-panel')) {
+        for (const content of hero.querySelectorAll(fromChat ? '.dso-reference-panel' : '.dso-quick-stage, .bsw-quick-grid, .dso-reference-panel')) {
           animate(content, { opacity: 0 }, { opacity: 1 })
         }
         if (fromChat) {
@@ -1854,7 +1941,7 @@ function NavigationIcon({ id, size = 16 }) {
         React.createElement('path', { d: NAV_ICON_PATHS[id === 'capabilities' ? 'skills' : id] || NAV_ICON_PATHS.apps }))
     }
 
-function PrimaryNavigation({ wide, renderAction, expandSidebar, panels, selectPanel, renderPanelIcon, navigation, t }) {
+function PrimaryNavigation({ wide, renderAction, expandSidebar, panels, selectPanel, navigation, t }) {
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
       const [menuOpen, setMenuOpen] = React.useState(false)
       React.useEffect(() => { setMenuOpen(false) }, [state.epoch])
@@ -1869,25 +1956,33 @@ function PrimaryNavigation({ wide, renderAction, expandSidebar, panels, selectPa
       }, [menuOpen])
       const entries = state.connected ? state.navigation?.entries || [] : []
       const activeId = state.mode === 'chat' ? entries.find(entry => entry.active)?.id : undefined
-      const plugins = panels.find(panel => panel.id === 'plugins')
-      const morePanels = panels.filter(panel => panel.id !== 'plugins')
+      // New hosts expose Plugins as a settings section; older hosts still supply a panel.
+      const hasPluginPanel = panels.some(panel => panel.id === 'plugins')
+      // Panel icons belong to a host factory slot; the legacy callback cannot render
+      // them from this entry's child scope. Keep menu-owned icons independent.
       const items = [
         ...entries.map(entry => ({ id: `web:${entry.id}`, label: entry.label, icon: React.createElement(NavigationIcon, { id: entry.id }) })),
-        ...morePanels.map(panel => ({ id: `local:${panel.id}`, label: panel.label, icon: renderPanelIcon(panel.id) }))
+        ...(!hasPluginPanel ? [{ id: 'settings:plugins', label: t('plugins'), icon: React.createElement(NavigationIcon, { id: 'apps' }) }] : []),
+        ...panels.map(panel => ({ id: `local:${panel.id}`, label: panel.label, icon: React.createElement(NavigationIcon, { id: panel.id }) }))
       ]
       return React.createElement('nav', { className: 'dshPrimaryNavigation', 'data-wide': wide, 'aria-label': t('navigation') },
-        plugins && renderAction({ id: plugins.id, label: plugins.label, icon: renderPanelIcon(plugins.id), active: state.mode === 'work' && state.activePanelId === plugins.id, onClick: () => { setMenuOpen(false); navigation.select('work'); selectPanel(plugins.id) } }),
         items.length > 0 && React.createElement(Menu, {
           open: menuOpen, onClose: () => setMenuOpen(false), items, autoFocus: true, dense: true,
           className: 'dshNavigationMenu', listClassName: 'dshNavigationMenuList',
-          selectedId: activeId ? `web:${activeId}` : undefined,
-          onSelect: id => { setMenuOpen(false); if (id.startsWith('web:')) void navigation.openPage(id.slice(4)); else { navigation.select('work'); selectPanel(id.slice(6)) } },
-          anchor: renderAction({ id: 'more', label: t('moreNavigation'), icon: React.createElement(NavigationIcon, { id: 'more' }), active: Boolean(activeId) || (state.mode === 'work' && morePanels.some(panel => panel.id === state.activePanelId)), expanded: menuOpen, onClick: () => { if (!wide) expandSidebar(); setMenuOpen(open => !open) } })
+          selectedId: activeId ? `web:${activeId}` : state.mode === 'work' && state.activePanelId ? `local:${state.activePanelId}` : undefined,
+          onSelect: id => {
+            setMenuOpen(false)
+            if (id === 'settings:plugins') window.dispatchEvent(new CustomEvent('dsh-desktop:open-settings-section', { detail: { id: 'plugins' } }))
+            else if (id.startsWith('web:')) void navigation.openPage(id.slice(4))
+            else { navigation.select('work'); selectPanel(id.slice(6)) }
+          },
+          anchor: renderAction({ id: 'more', label: t('moreNavigation'), icon: React.createElement(NavigationIcon, { id: 'more' }), active: Boolean(activeId) || (state.mode === 'work' && panels.some(panel => panel.id === state.activePanelId)), expanded: menuOpen, onClick: () => { if (!wide) expandSidebar(); setMenuOpen(open => !open) } })
         }))
     }
 
 function installDesktopModes(ctx) {
       const navigation = createChatNavigation(ctx)
+      navigation.sections = createSidebarSections()
       ctx.effect(() => () => { navigation.deletion.dispose(); navigation.renaming.dispose() })
       ctx.effect(() => ctx.locale.register(MODES_NS, MODES_COPY), 'desktop: Chat and Work locale')
       ctx.effect(() => ctx.locale.register(CLOUD_DELETE_NS, CLOUD_DELETE_COPY))
@@ -1905,7 +2000,8 @@ function installDesktopModes(ctx) {
         const style = document.createElement('style')
         style.dataset.plugin = 'bisheng-work-ui'
         style.textContent = `
-          .dshPrimaryNavigation{display:flex;flex-direction:column;flex:none;gap:4px;padding:0 0 12px}
+          /* rc.5 sidebar uses a grid: navigation occupies the same seat as the native panel list. */
+          .dshPrimaryNavigation{grid-area:3/2;min-width:0;display:flex;flex-direction:column;flex:none;gap:4px;padding:0 0 12px}
           .dshPrimaryNavigation[data-wide=false]{gap:12px}
           .dshNavigationMenu{display:flex;flex-direction:column;position:relative;width:100%}.dshNavigationMenu .dshNavigationMenuList{width:100%;min-width:0;max-width:100%;box-sizing:border-box}
           .dshModes{grid-column:2 / -1;min-width:0;min-height:0;width:100%;height:100%;display:flex;flex-direction:column;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary)}
@@ -1927,8 +2023,8 @@ function installDesktopModes(ctx) {
           .dshWorkContent[hidden][data-keep-landing-layout]{display:grid;visibility:hidden;opacity:0;pointer-events:none}
           /* Replay the Work cards when its retained landing becomes visible. */
           .dshWorkContent[hidden] .dso-quick-card{animation-name:none}
-          .dshWorkContent[data-dsh-case-entry-held] .dso-quick-card{animation-play-state:paused}
-          .dshWorkContent [data-dsh-landing-morph-placeholder]{flex:none;anchor-name:--dso-hero-composer}
+          .dshWorkContent[data-dsh-case-entry-held] :is(.dso-quick-card,.bsw-quick-card){animation-play-state:paused}
+          .dshWorkContent [data-dsh-landing-morph-placeholder]{flex:none;anchor-name:--dso-hero-composer,--bsw-hero-composer}
           .dshWorkContent [data-composer-card][data-dsh-landing-morph-card]{position:fixed;max-width:none;min-height:0;margin:0;padding-block-end:var(--dsh-morph-footer-clearance,0px);overflow:clip;z-index:2;anchor-name:none!important}
           .dshWorkContent [data-dsh-landing-morph-card]:has(>[data-dsh-landing-morph-footer]) > :not([data-dsh-landing-morph-footer]){flex-shrink:1;min-block-size:0;overflow:clip}
           .dshWorkContent [data-dsh-landing-morph-footer]{position:absolute;inset-inline:0;inset-block-end:0;z-index:1}
@@ -1936,7 +2032,9 @@ function installDesktopModes(ctx) {
           .dshWorkContent [data-dsh-landing-morph-model-label]{position:absolute;inset-inline:8px 24px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;pointer-events:none}
           /* Match the borderless Chat surface. The frame owns the resize handle separately. */
           html[data-platform=darwin] .dshWorkContent > [data-dsh-layout-center]{border-left:0}
-          .dshWorkContent[data-reveal-controls=true] [data-dsh-hero-controls] {
+          /* rc.5 places the default badge beside the title slot; enterprise branding has no badge. */
+          .dshWorkContent [data-content-phase="hero"] span:has(> [data-slot="conversation.hero.brand.title"]) + span {display:none}
+          .dshWorkContent[data-reveal-controls=true] [data-content-phase="hero"] :has(> [data-slot="conversation.hero.workspace"]) {
             animation: dshWorkControlsRise 240ms cubic-bezier(.25,.5,.35,1);
           }
           /* Clip the rising row at its lower edge so it emerges above the composer. */
@@ -1947,7 +2045,7 @@ function installDesktopModes(ctx) {
           }
           @media(prefers-reduced-motion:reduce){
             .dshModesTabs::before{transition:none}
-            .dshWorkContent[data-reveal-controls=true] [data-dsh-hero-controls]{animation:none}
+            .dshWorkContent[data-reveal-controls=true] [data-content-phase="hero"] :has(> [data-slot="conversation.hero.workspace"]){animation:none}
           }
           .dshSharedCollection{min-width:0}
           .dshRecentHistory{margin-top:12px;min-width:0}
@@ -1955,7 +2053,12 @@ function installDesktopModes(ctx) {
           /* Match the native workspace section's title inset, line height and spacing. */
           .dshHistoryHeading{box-sizing:border-box;display:flex;align-items:center;justify-content:space-between;height:36px;margin-block-end:4px;padding-inline-start:4px;color:var(--dsw-alias-label-tertiary);line-height:20px}
           /* The workspace label sits 1px before its row padding; align only the conversation heading. */
-          .dshRecentHistory>.dshHistoryHeading{padding-inline-start:calc(var(--dsh-sidebar-row-padding,12px) - 1px);font-family:inherit;font-size:14px;font-weight:400;line-height:20px}
+          .dshRecentHistory>.dshHistoryHeading,.dshChatProjects>.dshHistoryHeading{padding-inline-start:calc(var(--dsh-sidebar-row-padding,12px) - 1px);font-family:inherit;font-size:14px;font-weight:400;line-height:20px}
+          .dshEnterpriseSectionToggle{display:inline-flex;align-items:center;gap:6px;min-width:0;padding:0;border:0;background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:14px;font-weight:400;line-height:20px;text-align:start;cursor:pointer}
+          .dshEnterpriseSectionChevron{display:inline-flex;flex:none;width:12px;height:12px}
+          .dshEnterpriseSectionToggle svg{flex:none;width:12px;height:12px}
+          .dshEnterpriseSectionToggle:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
+          .dshRecentHistory>div[hidden],.dshChatProjects>div[hidden]{display:none}
           .dshChatProjects{margin-top:12px;min-width:0}
           /* The native list already accounts for the scrollbar. Match the workspace header's trailing button. */
           .dshChatProjects>.dshHistoryHeading>.dshChatProjectAction{width:28px;height:28px}
@@ -2050,7 +2153,7 @@ function installDesktopModes(ctx) {
         return () => style.remove()
       })
       ctx.slots.inject('sidebar.primaryNavigation', () => ctx.slots.register({ name: 'sidebar.primaryNavigation', id: 'desktop-primary-navigation', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS) }) }, PrimaryNavigation))
-      ctx.slots.inject('sidebar.workspaces.title', () => ctx.slots.register({ name: 'sidebar.workspaces.title', inject: () => ({ t: ctx.locale.bind(MODES_NS) }) }, ({ flat, t }) => t(flat ? 'all' : 'projects')))
+      ctx.slots.inject('sidebar.workspaces.title', () => ctx.slots.register({ name: 'sidebar.workspaces.title', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS) }) }, WorkspaceSectionTitle))
       ctx.slots.inject('desktop.mode.content', () => ctx.slots.register({ name: 'desktop.mode.content', id: 'desktop-chat-work', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS), locale: ctx.locale }) }, DesktopModes))
       ctx.slots.inject('sidebar.workspaces.collection', () => ctx.slots.register({ name: 'sidebar.workspaces.collection', id: 'desktop-shared-collection', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS), projectText: ctx.locale.bind(PROJECTS_NS), deleteText: ctx.locale.bind(CLOUD_DELETE_NS) }) }, SharedCollection))
       return navigation
@@ -2530,6 +2633,7 @@ function apply(ctx) {
   ctx.inject(['desktopWorkbenches'], scoped => scoped.effect(() => navigation.bindWorkbench(scoped.desktopWorkbenches)))
   ctx.inject(['uiConversation'], installWorkToolMessages)
   ctx.inject(['commandUi', 'inputTriggers', 'conversation', 'remote.skills'], installWorkResources)
+  ctx.slots.inject('conversation.hero.brand.mark', () => ctx.slots.register({ name: 'conversation.hero.brand.mark', id: 'enterprise-welcome-mark', priority: -100, inject: () => ({ navigation }) }, ConversationBrandMark))
   ctx.slots.inject('conversation.hero.brand.title', () => ctx.slots.register({ name: 'conversation.hero.brand.title', id: 'enterprise-welcome-title', inject: () => ({ navigation, t: ctx.locale.bind(MODES_NS) }) }, ConversationBrandTitle))
 }
 return { apply, createWorkKnowledgeComposer, skillReferenceSource, toolReferenceSource, installWorkCompletionNotifications }

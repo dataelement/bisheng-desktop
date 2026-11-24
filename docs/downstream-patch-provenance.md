@@ -51,7 +51,9 @@
 | `pnpm+10.34.5.patch` | `upstream/V0.14.1` | 字节一致，按同步补丁处理 |
 | `sherpa-onnx-node+1.13.8.patch` | `upstream/V0.14.1` | 字节一致，按同步补丁处理 |
 | `undici+8.11.2.patch` | `upstream/V0.14.1` | 字节一致，按同步补丁处理 |
+| `@deepseek-ai+dsh-http-proxy+0.2.2-rc.5.patch` | `upstream/V0.14.1` | 字节一致，按同步补丁处理 |
+| `@deepseek-ai+dsh-subprocess-local+0.2.2-rc.5.patch` | `upstream/V0.14.1` | 字节一致，按同步补丁处理 |
 
-共 47 个 patch，当前相对 `upstream/V0.14.1` 的 patch 文件差异为 0。
+共 49 个 patch，当前相对 `upstream/V0.14.1` 的 patch 文件差异为 0。
 
 本地开发功能不依赖修改这些 patch 文件。公共源码覆盖登记在 `scripts/downstream-public-overrides.mjs`，门禁按 blob hash 精确校验，未登记的底座改动仍会失败。

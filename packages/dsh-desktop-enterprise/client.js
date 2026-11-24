@@ -2088,7 +2088,7 @@ window.__ModuleLoader__.load({
         return () => { alive.current = false }
       }, [])
       const openSection = useCallback(id => {
-        if (!['enterprise-account', 'desktop-ai-access', 'desktop-about'].includes(id)) return
+        if (!['enterprise-account', 'desktop-ai-access', 'desktop-about', 'plugins'].includes(id)) return
         setMenuOpen(false); setApprovalsOpen(false)
         if (typeof openSettingsSection === 'function') openSettingsSection(id)
         else openSettings()
@@ -2213,7 +2213,7 @@ window.__ModuleLoader__.load({
       ctx.effect(() => bindEnterpriseMarketTab(ctx), 'enterprise-market: account-bound plugins tab')
       ctx.effect(() => bindEnterpriseWorkbenchCollection(ctx), 'enterprise-workbench: market collection')
       ctx.effect(() => bindEnterpriseWorkUi(ctx), 'enterprise: Chat and Work composition')
-      ctx.effect(() => ctx.inject?.(['desktopOffice', 'desktopPresentation'], scoped => bindEnterpriseWelcomeCases(scoped)), 'enterprise-welcome: example tasks')
+      ctx.effect(() => ctx.inject?.(['connection', 'remote', 'remote.agentPresets', 'desktopOffice', 'desktopPresentation'], scoped => bindEnterpriseWelcomeCases(scoped)), 'enterprise-welcome: example tasks')
       ctx.slots.inject('settings.section', () => ctx.slots.register({
         name: 'settings.section',
         id: ENTERPRISE_SECTION_ID,
