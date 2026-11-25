@@ -91,7 +91,9 @@ const HARNESS_ENDPOINTS: Record<
 const RPC_ALLOWLIST = new Set([...Object.keys(HARNESS_ENDPOINTS), 'session.history', 'workspace.list'])
 
 export interface LanMobileBridgeOptions {
-  product?: MobileProductExtension
+  // The shell builds this bridge before the product runtime exists. A function
+  // is read on each use, including attach at start, so a later login still registers.
+  product?: MobileProductExtension | (() => MobileProductExtension | undefined)
   harnessUrl(): string | undefined
   /**
    * Session cookie the shell already traded for the launch token.
@@ -254,7 +256,7 @@ export class LanMobileBridge {
       throw error
     }
     this.port = (this.server.address() as AddressInfo).port
-    try { this.detachProduct = this.options.product?.attach?.(this.productTransport()) || undefined }
+    try { this.detachProduct = this.productExtension()?.attach?.(this.productTransport()) || undefined }
     catch (error) { await this.stop(); throw error }
     this.syncConnected()
     return this.snapshot()
@@ -1098,7 +1100,7 @@ export class LanMobileBridge {
       })
     }
     if (request.method === 'GET' && url.pathname === '/') {
-      return this.html(response, this.options.product?.renderPage?.(this.locale()) ?? renderMobilePage({ locale: this.locale() }))
+      return this.html(response, this.productExtension()?.renderPage?.(this.locale()) ?? renderMobilePage({ locale: this.locale() }))
     }
     if (request.method === 'GET' && url.pathname === '/api/session/stream') {
       this.verifyTrustedOrigin(request)
@@ -1113,6 +1115,11 @@ export class LanMobileBridge {
       return this.json(response, result.status, result.body)
     }
     this.text(response, 404, 'Not found.')
+  }
+
+  private productExtension(): MobileProductExtension | undefined {
+    const product = this.options.product
+    return typeof product === 'function' ? product() : product
   }
 
   private productTransport(): MobileProductTransport {
@@ -1133,7 +1140,7 @@ export class LanMobileBridge {
 
   private productRemoteAuthorized(request: IncomingMessage): boolean {
     try {
-      return this.options.product?.authorizeRemote(request.headers) === true
+      return this.productExtension()?.authorizeRemote(request.headers) === true
     } catch {
       // Account lookup failures must deny access; do not log account headers or error secrets.
       console.warn('[mobile-product] Authorization check failed; remote access denied.')
@@ -1169,7 +1176,7 @@ export class LanMobileBridge {
 
   private async dispatchMobileRpc(input: { method?: unknown; payload?: unknown }): Promise<{ status: number; body: MobileRpcResult }> {
     if (!input || typeof input !== 'object') return { status: 400, body: { ok: false, error: 'Invalid mobile request.' } }
-    const custom = await this.options.product?.rpc?.(input, this.productTransport())
+    const custom = await this.productExtension()?.rpc?.(input, this.productTransport())
     if (custom) return { status: custom.ok ? 200 : 400, body: custom }
       if (input.method === 'interaction.pending') {
         const sessionId = requiredStringField(input.payload, 'sessionId')
@@ -1690,7 +1697,7 @@ export class LanMobileBridge {
     const abort = new AbortController()
     this.sessionStreamAborts.add(abort)
 
-    const projection = this.options.product?.sessionProjection?.(sessionId, new URL(request.url || '/', 'http://localhost').searchParams.get('view'))
+    const projection = this.productExtension()?.sessionProjection?.(sessionId, new URL(request.url || '/', 'http://localhost').searchParams.get('view'))
 
     response.statusCode = 200
     response.setHeader('content-type', 'text/event-stream; charset=utf-8')
