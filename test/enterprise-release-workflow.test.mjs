@@ -139,7 +139,9 @@ describe('private desktop release YAML contracts', () => {
           const ctx = context({ matrix: { arch } })
           ctx.inputs.mode = channel === 'release' ? 'signed' : 'development'
           expect(interpolate(verification.env.BUILD_CHANNEL, ctx)).toBe(channel)
-          expect(interpolate(verification.run, ctx)).toBe('node ops/ci/desktop-artifacts.mjs "$BUILD_CHANNEL" ' + platform + ' ' + arch)
+          const channelArgument = platform === 'win' ? '$env:BUILD_CHANNEL' : '$BUILD_CHANNEL'
+          expect(interpolate(verification.run, ctx)).toBe('node ops/ci/desktop-artifacts.mjs "' + channelArgument + '" ' + platform + ' ' + arch)
+          if (platform === 'win') expect(verification.shell).toBe('pwsh')
           expect(jobs[job].steps.indexOf(verification)).toBeLessThan(jobs[job].steps.indexOf(upload))
         }
       }
@@ -248,4 +250,23 @@ describe('metadata-derived desktop output verification', () => {
     }
     expect(() => desktopArtifacts(config, { channel: 'development', platform: 'win', arch: 'arm64' })).toThrow()
   })
+})
+
+
+it('prepares the pinned baseline before changing release inputs on both native jobs', () => {
+  const fetches = []
+  for (const name of ['macos', 'windows-x64']) {
+    const steps = jobs[name].steps
+    const fetch = steps.find(step => step.name === 'Fetch reviewed upstream baseline')
+    expect(fetch.shell).toBe('bash')
+    expect(fetch.run).toContain('ops/ci/upstream-baseline.json')
+    expect(fetch.run).toContain('git fetch --no-tags upstream "$baseline_commit"')
+    expect(fetch.run).toContain('git update-ref refs/remotes/upstream/V0.14.1 "$baseline_commit"')
+    const gate = steps.find(step => step.run === 'npm run verify:boundary')
+    expect(gate.env.UPSTREAM_BASE).toBe('upstream/V0.14.1')
+    expect(steps.indexOf(gate)).toBeGreaterThan(steps.indexOf(fetch))
+    expect(steps.indexOf(gate)).toBeLessThan(steps.findIndex(step => step.name === 'Set app version from release tag'))
+    fetches.push(fetch.run)
+  }
+  expect(fetches[0]).toBe(fetches[1])
 })
