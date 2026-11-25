@@ -1,8 +1,9 @@
 import {
   parseProjectAction, parseProjectConversationRows, parseProjectPage, parseProjectResult,
   parseProjectSnapshot, projectRecord,
-  type ChatProjectsState, type ProjectActionResult, type ProjectConversationPage
+  projectUuid, type ChatProjectsState, type ProjectActionResult, type ProjectConversationPage
 } from '../../shared/chat-projects'
+import { parseChatId } from '../../shared/enterprise-chat-view'
 
 interface ProjectTransport {
   epoch: number
@@ -40,6 +41,19 @@ export class EnterpriseChatProjects {
 
   state(): ChatProjectsState {
     return { ...this.value, projects: this.value.projects.map(row => ({ ...row })), assignments: { ...this.value.assignments } }
+  }
+
+  /** Presentation hint from a committed SSE creation, never a server-side assignment operation. */
+  conversationCreated(creation: unknown): void {
+    this.current()
+    const input = projectRecord(creation)
+    const id = parseChatId(input.conversationId), projectId = projectUuid(input.projectId)
+    if (id === 'new') throw new Error('A created conversation needs a persisted id.')
+    if (!this.value.projects.some(project => project.id === projectId) || this.value.assignments[id]) return
+    this.sequence += 1n
+    this.publish({ assignments: { ...this.value.assignments, [id]: projectId }, revision: String(this.sequence) })
+    // Bypass focus throttling and reconcile with the current account's server snapshot.
+    void this.refresh().catch(() => this.options.note('[project-sync] creation_refresh_failed'))
   }
 
   private current(epoch = this.options.epoch): void {
@@ -131,6 +145,9 @@ export class EnterpriseChatProjects {
         this.dirty = false
         const snapshot = parseProjectSnapshot(await this.json(`${ENDPOINT}/snapshot`))
         this.current()
+        // A creation/action during this request requires a newer read. Do not
+        // briefly publish the old membership set before that read completes.
+        if (this.dirty) continue
         if ((this.options.expectedUserId && String(snapshot.identity.user_id) !== this.options.expectedUserId) || (this.options.expectedTenantId && String(snapshot.identity.tenant_id) !== this.options.expectedTenantId)) throw new ProjectTransportError(401)
         const ids = new Set(snapshot.projects.map(row => row.id))
         if (ids.size !== snapshot.projects.length || snapshot.memberships.some(row => !ids.has(row.project_id)) || new Set(snapshot.memberships.map(row => row.chat_id)).size !== snapshot.memberships.length) throw new ProjectTransportError(0)

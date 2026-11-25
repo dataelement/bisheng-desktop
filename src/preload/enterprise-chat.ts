@@ -33,6 +33,9 @@ contextBridge.exposeInMainWorld('dshChatPresentation', Object.freeze({
   reportRunning(ids: unknown): void {
     ipcRenderer.send('enterprise-chat:running', { ids, path: window.location.pathname })
   },
+  reportProjectConversationCreated(creation: unknown): void {
+    ipcRenderer.send('enterprise-chat:project-conversation-created', { creation, path: window.location.pathname })
+  },
   reportNavigation(navigation: unknown): void {
     ipcRenderer.send('enterprise-chat:navigation', { navigation, path: window.location.pathname })
   },
