@@ -98,3 +98,51 @@ it('refuses a snapshot from an identity other than the owning enterprise account
   expect(controller.state()).toMatchObject({ projects: [], assignments: {}, error: 'auth_required' })
   controller.dispose()
 })
+
+it('publishes creation membership immediately and rereads the server before an answer finishes', async () => {
+  const changed = vi.fn()
+  let persisted = snapshot()
+  const transport = vi.fn(async () => json(persisted))
+  const controller = new EnterpriseChatProjects({ epoch: 4, changed, note: vi.fn(), renew: async () => {}, fetch: transport })
+  await controller.refresh()
+  persisted = { ...snapshot(), memberships: [...snapshot().memberships, { chat_id: 'created-chat', project_id: projectId }] }
+  controller.conversationCreated({ conversationId: 'created-chat', projectId })
+  expect(controller.state().assignments['created-chat']).toBe(projectId)
+  expect(changed).toHaveBeenCalledWith(expect.objectContaining({ assignments: expect.objectContaining({ 'created-chat': projectId }) }))
+  await vi.waitFor(() => expect(transport).toHaveBeenCalledTimes(2))
+  await controller.refresh()
+  expect(controller.state().assignments['created-chat']).toBe(projectId)
+  controller.dispose()
+})
+
+it('never lets an older in-flight snapshot hide a newly created project conversation', async () => {
+  const changed = vi.fn()
+  const transport = vi.fn().mockResolvedValueOnce(json(snapshot()))
+  const controller = new EnterpriseChatProjects({ epoch: 4, changed, note: vi.fn(), renew: async () => {}, fetch: transport })
+  await controller.refresh()
+  let resolveOld: (value: Response) => void = () => {}
+  const created = { ...snapshot(), memberships: [...snapshot().memberships, { chat_id: 'created-chat', project_id: projectId }] }
+  transport.mockImplementationOnce(() => new Promise<Response>(resolve => { resolveOld = resolve })).mockResolvedValue(json(created))
+  const pending = controller.refresh()
+  controller.conversationCreated({ conversationId: 'created-chat', projectId })
+  changed.mockClear()
+  resolveOld(json(snapshot()))
+  await pending
+  expect(controller.state().assignments['created-chat']).toBe(projectId)
+  expect(changed.mock.calls.every(([state]) => state.assignments['created-chat'] === projectId)).toBe(true)
+  controller.dispose()
+})
+
+it('rejects invalid creation hints, ignores unknown projects and never undoes an existing assignment', async () => {
+  const transport = vi.fn(async () => json(snapshot()))
+  const controller = new EnterpriseChatProjects({ epoch: 4, changed: vi.fn(), note: vi.fn(), renew: async () => {}, fetch: transport })
+  await controller.refresh()
+  expect(() => controller.conversationCreated({ conversationId: '../bad', projectId })).toThrow()
+  expect(() => controller.conversationCreated({ conversationId: 'new', projectId })).toThrow()
+  controller.conversationCreated({ conversationId: 'created-chat', projectId: '22222222-2222-4222-8222-222222222222' })
+  controller.conversationCreated({ conversationId: 'chat-one', projectId })
+  expect(controller.state().assignments).toEqual({ 'chat-one': projectId })
+  expect(transport).toHaveBeenCalledTimes(1)
+  controller.dispose()
+  expect(() => controller.conversationCreated({ conversationId: 'late-chat', projectId })).toThrow('identity changed')
+})

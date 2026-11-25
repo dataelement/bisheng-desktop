@@ -1804,6 +1804,53 @@ describe('cloud conversation rename', () => {
 })
 
 // The enterprise document reports which conversations it is still generating.
+describe('project conversation creation reports', () => {
+  const projectId = '11111111-1111-4111-8111-111111111111'
+  async function ready() {
+    const f = fixture()
+    f.host.present(f.owner, presentation)
+    await flush()
+    let membership = false
+    fake.sessions[0].fetch.mockImplementation(async () => new Response(JSON.stringify({ status_code: 200, data: {
+      identity: { user_id: 7, tenant_id: 2 }, projects: [{ id: projectId, name: 'Research' }],
+      memberships: membership ? [{ chat_id: 'created-chat', project_id: projectId }] : []
+    } }), { headers: { 'content-type': 'application/json' } }))
+    await f.host.projectsState()
+    await vi.waitFor(async () => expect((await f.host.projectsState()).phase).toBe('ready'))
+    const wc = fake.views[0].webContents
+    wc.setURL('https://enterprise.example/workspace/c/new?projectId=' + projectId)
+    const report = (detail: unknown, frame: unknown = wc.mainFrame) => wc.emit('ipc-message', { senderFrame: frame }, 'enterprise-chat:project-conversation-created', detail)
+    return { f, wc, report, committed: () => { membership = true } }
+  }
+
+  it('notifies the native sidebar at creation, including an IPC arriving just after route promotion', async () => {
+    const { f, wc, report, committed } = await ready()
+    try {
+      committed()
+      wc.setURL('https://enterprise.example/workspace/c/created-chat')
+      f.owner.webContents.send.mockClear()
+      report({ creation: { conversationId: 'created-chat', projectId }, path: '/workspace/c/new' })
+      expect(f.owner.webContents.send).toHaveBeenCalledWith('enterprise-chat:projects-changed', expect.objectContaining({
+        assignments: { 'created-chat': projectId }, epoch: f.host.snapshot().epoch
+      }))
+      expect(f.host.snapshot().running).toBeUndefined()
+    } finally { f.host.dispose() }
+  })
+
+  it.each(['subframe', 'stale-path', 'invalid-id', 'unrelated-promotion'])('rejects %s creation reports', async kind => {
+    const { f, wc, report } = await ready()
+    try {
+      if (kind === 'unrelated-promotion') wc.setURL('https://enterprise.example/workspace/c/unrelated')
+      f.owner.webContents.send.mockClear()
+      report({
+        creation: { conversationId: kind === 'invalid-id' ? '../bad' : 'created-chat', projectId },
+        path: kind === 'stale-path' ? '/workspace/knowledge' : '/workspace/c/new'
+      }, kind === 'subframe' ? {} : wc.mainFrame)
+      expect(f.owner.webContents.send).not.toHaveBeenCalled()
+    } finally { f.host.dispose() }
+  })
+})
+
 describe('cloud conversation activity', () => {
   async function ready() {
     const f = fixture()

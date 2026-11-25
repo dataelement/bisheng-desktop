@@ -769,7 +769,13 @@ export class EnterpriseChatView {
           if (channel === 'enterprise-chat:settings-ready') {
             this.note(`[enterprise-settings] ready_report path_match=${report.path === url.pathname} section_match=${report.section === this.settingsSection} content_mode=${url.searchParams.get('dshSettings') === '1'}`)
           }
-          if (report.path !== url.pathname) return
+          // Creation can race the SPA promotion from /c/new to the persisted id.
+          // Accept that one transition; all other stale-path reports stay rejected.
+          const creation = report.creation && typeof report.creation === 'object' ? report.creation as Record<string, unknown> : undefined
+          const promotedCreation = channel === 'enterprise-chat:project-conversation-created' &&
+            report.path === '/workspace/c/new' && typeof creation?.conversationId === 'string' &&
+            url.pathname === `/workspace/c/${creation.conversationId}`
+          if (report.path !== url.pathname && !promotedCreation) return
           if (channel === 'enterprise-chat:modal') {
             if (typeof report.open !== 'boolean') return
             const changed = report.open !== this.modalOpen
@@ -832,6 +838,11 @@ export class EnterpriseChatView {
               this.running = running
               this.notify()
             } catch { this.note('[enterprise-chat] invalid_running_report') }
+            return
+          }
+          if (channel === 'enterprise-chat:project-conversation-created') {
+            try { this.projects?.conversationCreated(report.creation) }
+            catch { this.note('[enterprise-chat] invalid_project_creation_report') }
             return
           }
           if (channel !== 'enterprise-chat:landing' || !/^\/workspace\/c\/[a-zA-Z0-9_-]+$/u.test(url.pathname) || typeof report.landing !== 'boolean') return

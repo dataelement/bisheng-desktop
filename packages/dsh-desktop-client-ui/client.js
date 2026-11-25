@@ -635,6 +635,9 @@ window.__ModuleLoader__.load({
       const menu = useSidebarRowMenu()
       const store = navigation.projects
       const open = !!state.expanded[project.id]
+      const page = state.rows[project.id]
+      // Keep the last confirmed empty state visible while the page refreshes.
+      const empty = chats.length === 0 && page?.revision !== undefined && page.phase !== 'error'
       const panelId = React.useId()
       const current = state.assignments[currentChat] === project.id
       return React.createElement('div', { className: 'dshChatProject', 'data-chat-project': project.id },
@@ -658,10 +661,9 @@ window.__ModuleLoader__.load({
               React.createElement(IconNewChatOutlineRegular, { 'aria-hidden': true })))),
         open && React.createElement('div', { id: panelId },
           ...chats.map(item => React.createElement(CloudHistoryRow, { key: item.id, item, now, selected: currentChat === item.id, navigation, t, projectText, deleteText })),
-          state.rows[project.id]?.phase === 'loading' && React.createElement('div', { role: 'status', className: 'dshChatProjectEmpty' }, projectText('pending')),
-          state.rows[project.id]?.phase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => { void store.load(project.id) } }, projectText('unavailable')),
-          state.rows[project.id]?.nextCursor && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: state.rows[project.id]?.phase === 'loading', onClick: () => { void store.load(project.id, true) } }, t('more')),
-          chats.length === 0 && state.rows[project.id]?.phase === 'ready' && React.createElement('div', { className: 'dshChatProjectEmpty' }, projectText('empty'))))
+          page?.phase === 'error' && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', onClick: () => { void store.load(project.id) } }, projectText('unavailable')),
+          page?.nextCursor && React.createElement('button', { type: 'button', className: 'dshHistoryNotice', disabled: page.phase === 'loading', onClick: () => { void store.load(project.id, true) } }, t('more')),
+          empty && React.createElement('div', { className: 'dshChatProjectEmpty' }, projectText('empty'))))
     }
     function ChatProjects({ navigation, t, projectText, deleteText, now }) {
       const state = React.useSyncExternalStore(navigation.projects.subscribe, navigation.projects.snapshot)

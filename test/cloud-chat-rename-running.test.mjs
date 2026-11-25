@@ -17,8 +17,9 @@ afterEach(async () => { await cleanup?.(); cleanup = undefined; vi.restoreAllMoc
 // `project` turns on one cloud project: its memberships and what its pages and searches return.
 async function fixture({ language = 'zh', rename = async () => {}, mode = 'projects', query = '', project } = {}) {
   let plugin
+  let projectRevision = '1'
   const entries = new Map(), dictionaries = new Map(), disposers = []
-  let state = { connected: true, phase: 'ready', epoch: 1, conversationId: 'cloud-a', ...(project ? { projectScope: 'scope-a' } : {}) }, listener
+  let state = { connected: true, phase: 'ready', epoch: 1, conversationId: 'cloud-a', ...(project ? { projectScope: 'scope-a' } : {}) }, listener, projectListener
   let items = [{ id: 'cloud-a', title: '季度复盘', updatedAt: '2026-11-03' }, { id: 'cloud-b', title: '', updatedAt: '2026-11-02' }]
   const bridge = {
     state: async () => state,
@@ -31,8 +32,9 @@ async function fixture({ language = 'zh', rename = async () => {}, mode = 'proje
     }),
     remove: vi.fn(async (_id, epoch) => ({ epoch })),
     open: vi.fn(async () => {}),
-    projectsState: vi.fn(async () => ({ epoch: state.epoch, phase: 'ready', connection: 'live', revision: '1', projects: [{ id: 'project-a', name: '研究' }], assignments: project.assignments })),
-    projectConversations: vi.fn(async input => ({ epoch: state.epoch, revision: '1', items: await project.list(input), nextCursor: null }))
+    projectsState: vi.fn(async () => ({ epoch: state.epoch, phase: 'ready', connection: 'live', revision: projectRevision, projects: [{ id: 'project-a', name: '研究' }], assignments: project.assignments })),
+    onProjectsChanged: fn => { projectListener = fn; return () => { projectListener = undefined } },
+    projectConversations: vi.fn(async input => ({ epoch: state.epoch, revision: projectRevision, items: await project.list(input), nextCursor: null }))
   }
   window.dshEnterpriseChat = bridge
   window.__ModuleLoader__ = { load({ factory }) {
@@ -105,7 +107,8 @@ async function fixture({ language = 'zh', rename = async () => {}, mode = 'proje
       await act(async () => document.querySelector('[role=dialog] input').dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init })))
       await settle()
     },
-    async push(patch) { state = { ...state, ...patch }; await act(async () => listener(state)); await settle() }
+    async push(patch) { state = { ...state, ...patch }; await act(async () => listener(state)); await settle() },
+    async pushProjects(snapshot) { projectRevision = snapshot.revision; await act(async () => projectListener(snapshot)); await settle() }
   }
 }
 
@@ -320,4 +323,38 @@ it.each([
   expect(ui.row('旧项目会话').querySelector('.dshHistoryStatus')).toBeNull()
   await ui.push({ running: ['cloud-old'] })
   expect(ui.row('旧项目会话').querySelector('.dshHistoryStatus svg[data-state=ongoing]')).toBeTruthy()
+})
+
+it.each([
+  ['empty', []],
+  ['populated', [{ id: 'cloud-old', title: '旧项目会话', updatedAt: '2026-10-01' }]]
+])('loads and refreshes a %s project silently while showing its new running conversation', async (_label, initialItems) => {
+  const created = { id: 'created-chat', title: '新聊天', updatedAt: '2026-11-25' }
+  const assignments = Object.fromEntries(initialItems.map(item => [item.id, 'project-a']))
+  const initial = Promise.withResolvers()
+  const refresh = Promise.withResolvers()
+  const list = vi.fn().mockReturnValueOnce(initial.promise).mockReturnValue(refresh.promise)
+  const ui = await fixture({ project: { assignments, list } })
+  const project = () => document.querySelector('[data-chat-project="project-a"]')
+  await expandProject(ui)
+  expect(list).toHaveBeenCalledTimes(1)
+  expect(project().querySelector('[role=status]')).toBeNull()
+  await act(async () => initial.resolve(initialItems))
+  const initialContent = initialItems[0]?.title ?? '暂无对话'
+  expect(project().textContent).toContain(initialContent)
+  await ui.pushProjects({ epoch: 1, phase: 'ready', connection: 'live', revision: '2',
+    projects: [{ id: 'project-a', name: '研究' }], assignments: { ...assignments, 'created-chat': 'project-a' } })
+  expect(list).toHaveBeenCalledTimes(2)
+  expect(project().querySelector('[role=status]')).toBeNull()
+  expect(project().textContent).toContain(initialContent)
+
+  ui.bridge.history.mockResolvedValue({ epoch: 1, items: [created], hasMore: false })
+  await ui.push({ conversationId: 'created-chat', running: ['created-chat'] })
+  expect(project().contains(ui.row('新聊天'))).toBe(true)
+  expect(project().textContent).not.toContain('暂无对话')
+  expect(document.querySelectorAll('[data-history-kind=chat][aria-label="新聊天"]')).toHaveLength(1)
+  expect(ui.row('新聊天').querySelector('.dshHistoryStatus svg[data-state=ongoing]')).toBeTruthy()
+
+  await act(async () => refresh.resolve([created, ...initialItems]))
+  expect(project().contains(ui.row('新聊天'))).toBe(true)
 })
