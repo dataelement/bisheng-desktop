@@ -25,7 +25,8 @@ import { applyWorkbenchFavorites } from './workbench-favorites.js'
 import { applyEnterpriseWorkbenchAccess } from './workbench-access.js'
 import { applyEnterpriseWorkbenchInstall } from './workbench-install.js'
 import { readScreenshotResponse } from './workbench-screenshots.js'
-import { applyEnterpriseAuth, createEnterpriseAuthTransport } from './enterprise-auth.js'
+import { applyEnterpriseAuth, createEnterpriseAuthTransport, EnterpriseAuthError } from './enterprise-auth.js'
+import { createWebEnterpriseAuth } from './web-auth.js'
 import {
   API_PATHS,
   CLIENT_ID,
@@ -390,44 +391,69 @@ export function apply(ctx, config) {
     return { models, usage }
   }
 
+  let disposed = false
   let tokenRefreshPromise = null
+  let tokenRefreshKey
+  const sessionChanged = () => new EnterpriseAuthError('session_changed', 'Enterprise account changed.', 409)
   const refreshSessionTokens = async () => {
     if (!sessionAuth?.tokens?.refresh_token || !sessionAuth?.base) return
-    if (tokenRefreshPromise) return tokenRefreshPromise
-    tokenRefreshPromise = (async () => {
+    const previous = sessionAuth
+    const connectionKey = account.connectionKey
+    const assertCurrent = () => {
+      if (disposed || sessionAuth !== previous || account.connectionKey !== connectionKey) throw sessionChanged()
+    }
+    const sameIdentity = value => value?.base === previous.base &&
+      previous.user?.id && value.user?.id === previous.user.id &&
+      previous.tenant?.id && value.tenant?.id === previous.tenant.id &&
+      previous.tokens?.session_id && value.tokens?.session_id === previous.tokens.session_id
+    if (tokenRefreshPromise && tokenRefreshKey === connectionKey) return tokenRefreshPromise
+    tokenRefreshKey = connectionKey
+    const pending = (async () => {
       try {
         const disk = loadSessionFromDisk()
-        if (disk?.tokens?.refresh_token && disk.tokens.refresh_token !== sessionAuth.tokens.refresh_token && !accessNeedsRefresh(disk.tokens)) {
+        assertCurrent()
+        if (sameIdentity(disk) && disk?.tokens?.refresh_token && disk.tokens.refresh_token !== previous.tokens.refresh_token && !accessNeedsRefresh(disk.tokens)) {
           sessionAuth = disk
           return
         }
-        const res = await fetch(`${sessionAuth.base}${API_PATHS.token}`, {
+        const res = await fetch(`${previous.base}${API_PATHS.token}`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', accept: 'application/json' },
           body: JSON.stringify({
             grant_type: 'refresh_token',
-            refresh_token: sessionAuth.tokens.refresh_token
+            refresh_token: previous.tokens.refresh_token
           })
         })
+        assertCurrent()
         if (!res.ok) {
           const payload = await res.json().catch(() => ({}))
-          console.warn('[enterprise] token refresh failed', res.status, payload)
+          assertCurrent()
+          console.warn('[enterprise] token refresh failed', { status: res.status })
           const reloaded = loadSessionFromDisk()
-          if (reloaded?.tokens?.refresh_token && reloaded.tokens.refresh_token !== sessionAuth.tokens?.refresh_token) {
+          if (sameIdentity(reloaded) && reloaded?.tokens?.refresh_token && reloaded.tokens.refresh_token !== previous.tokens.refresh_token && !accessNeedsRefresh(reloaded.tokens)) {
             sessionAuth = reloaded
             return
           }
           if (res.status === 400 || res.status === 401 || res.status === 403) {
             account = {
               ...account,
+              connected: false,
               phase: 'reauthRequired',
               error: payload.error?.message || `Token refresh failed (${res.status}).`
             }
+            webAuth?.invalidate()
             ingestEnterpriseState(account)
           }
-          return
+          throw new EnterpriseAuthError('authorization_denied', 'Enterprise session refresh failed.', res.status)
         }
-        const newTokens = parseToken(await res.json(), sessionAuth.base)
+        const newTokens = parseToken(await res.json(), previous.base)
+        assertCurrent()
+        if (newTokens.user.id !== previous.user?.id || newTokens.tenant.id !== previous.tenant?.id) {
+          webAuth?.invalidate()
+          account = { ...account, connected: false, phase: 'reauthRequired' }
+          ingestEnterpriseState(account)
+          throw sessionChanged()
+        }
         sessionAuth = {
           ...sessionAuth,
           tokens: newTokens,
@@ -436,21 +462,36 @@ export function apply(ctx, config) {
         }
         saveSessionToDisk(sessionAuth)
       } catch (err) {
+        if (err instanceof EnterpriseAuthError) throw err
         console.warn('[enterprise] token refresh error', err)
-      } finally {
-        tokenRefreshPromise = null
+        throw new EnterpriseAuthError('request_failed', 'Enterprise session refresh failed.', 503)
       }
     })()
-    return tokenRefreshPromise
+    tokenRefreshPromise = pending
+    try { return await pending } finally {
+      if (tokenRefreshPromise === pending) tokenRefreshPromise = null
+    }
   }
 
   const ensureValidSessionAuth = async () => {
-    if (!sessionAuth) return null
+    if (!sessionAuth || disposed) return null
+    const connectionKey = account.connectionKey
+    const expiresAt = sessionAuth.tokens.session_expires_at
+    if (expiresAt !== undefined && !(Date.parse(expiresAt) > Date.now())) {
+      webAuth?.invalidate()
+      account = { ...account, connected: false, phase: 'reauthRequired' }
+      ingestEnterpriseState(account)
+      throw new EnterpriseAuthError('not_connected', 'Enterprise session expired.', 401)
+    }
     if (accessNeedsRefresh(sessionAuth.tokens)) {
       await refreshSessionTokens()
     }
+    if (disposed || !account.connected || account.connectionKey !== connectionKey) throw sessionChanged()
     return sessionAuth
   }
+
+  const webAuth = broker ? null : createWebEnterpriseAuth({ getAccount: () => account, getSessionAuth: ensureValidSessionAuth })
+  ctx.effect(() => () => { disposed = true; webAuth?.invalidate() }, 'dsh-desktop-enterprise: Web authorization')
 
   const enterpriseClient = new EnterpriseClient({
     getSessionAuth: ensureValidSessionAuth,
@@ -504,6 +545,7 @@ export function apply(ctx, config) {
     }
     const state = broker ? await brokerJson('/v1/state') : account
     if (account.connectionKey !== state.connectionKey) {
+      webAuth?.invalidate()
       await market?.stop()
       await workbenches?.stop()
       capabilityPolicy?.reset()
@@ -714,7 +756,7 @@ export function apply(ctx, config) {
   }
   applyEnterpriseAuth(ctx)
   const grants = new WeakMap()
-  const auth = {
+  const auth = webAuth ?? {
     async grant(identity) {
       const value = await brokerJson('/v1/auth/grant', identity)
       if (typeof value.capability !== 'string' || !value.capability) throw new Error('Invalid enterprise grant.')
@@ -900,6 +942,7 @@ export function apply(ctx, config) {
       ...(account.navigation ? { navigation: account.navigation } : {})
     }
     if (account.connectionKey !== state.connectionKey) {
+      webAuth?.invalidate()
       await market?.stop()
       await workbenches?.stop()
       capabilityPolicy?.reset()
@@ -1009,6 +1052,7 @@ export function apply(ctx, config) {
     if (broker) {
       const state = await brokerJson('/v1/login/manual', { identityTicket: ticket })
       if (account.connectionKey !== state.connectionKey) {
+        webAuth?.invalidate()
         await market?.stop()
         await workbenches?.stop()
         capabilityPolicy?.reset()
@@ -1071,7 +1115,9 @@ export function apply(ctx, config) {
     if (broker) {
       state = await brokerJson('/v1/logout', {})
     } else {
+      webAuth?.invalidate()
       sessionAuth = null
+      sessionPending?.callbackServer?.close?.()
       sessionPending = null
       saveSessionToDisk(null)
       state = disabledState()
