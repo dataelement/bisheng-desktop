@@ -189,7 +189,7 @@ jobs:
           key: electron-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
           restore-keys: electron-downloads-v1-${{ runner.os }}-${{ runner.arch }}-
       - name: Install dependencies with timings
-        run: npm ci --prefer-offline --no-audit --no-fund --timing --logs-dir "${{ runner.temp }}/npm-timings"
+        run: node ops/ci/npm-ci.mjs --prefer-offline --no-audit --no-fund --timing --logs-dir "${{ runner.temp }}/npm-timings"
       - name: Upload dependency installation timings
         if: always()
         uses: actions/upload-artifact@v4
@@ -420,7 +420,7 @@ jobs:
           restore-keys: |
             windows-packaging-v1-
       - name: Install dependencies with timings
-        run: npm ci --prefer-offline --no-audit --no-fund --timing --logs-dir "${{ runner.temp }}/npm-timings"
+        run: node ops/ci/npm-ci.mjs --prefer-offline --no-audit --no-fund --timing --logs-dir "${{ runner.temp }}/npm-timings"
       - name: Upload dependency installation timings
         if: always()
         uses: actions/upload-artifact@v4

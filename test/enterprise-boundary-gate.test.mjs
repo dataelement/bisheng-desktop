@@ -173,7 +173,7 @@ test('core symlink replacement is rejected even when target bytes match', t => {
 
 test('precise downstream enterprise, Web packaging and enterprise CI paths pass', t => {
   const f = fixture(t)
-  const files = ['packages/dsh-desktop-enterprise/deep/new.js', 'scripts/pack-office-web.mjs', 'scripts/pack-ppt-web.mjs', 'scripts/pack-workbenches-web.mjs', 'scripts/pack-web-runtime.mjs', 'scripts/prepare-web-ci-inputs.mjs', '.github/workflows/release.yml', '.github/workflows/build-web-runtime.yml', '.github/workflows/verify-boundary.yml', '.github/workflows/bisheng-ci.yml', 'test/enterprise-bundle-fixture.d.mts', 'build/web-runtime/cordis.patch.yml', 'ops/ci/run.sh', 'ops/nginx/work-updates.conf', 'scripts/mock-bisheng-enterprise.d.mts']
+  const files = ['packages/dsh-desktop-enterprise/deep/new.js', 'scripts/pack-office-web.mjs', 'scripts/pack-ppt-web.mjs', 'scripts/pack-workbenches-web.mjs', 'scripts/pack-web-runtime.mjs', 'scripts/prepare-web-ci-inputs.mjs', '.github/workflows/release.yml', '.github/workflows/build-web-runtime.yml', '.github/workflows/verify-boundary.yml', '.github/workflows/bisheng-ci.yml', 'test/enterprise-bundle-fixture.d.mts', 'test/enterprise-electron-download-retry.test.mjs', 'build/web-runtime/cordis.patch.yml', 'ops/ci/run.sh', 'ops/ci/npm-ci.mjs', 'ops/nginx/work-updates.conf', 'scripts/mock-bisheng-enterprise.d.mts']
   for (const file of files) f.put(file)
   assert.deepEqual(f.check().illegalFiles, [])
 })

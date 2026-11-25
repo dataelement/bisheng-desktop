@@ -78,7 +78,7 @@ jobs:
         env:
           UPSTREAM_BASE: upstream/V0.14.1
       - name: Install locked dependencies with postinstall
-        run: npm ci --prefer-offline --no-audit --no-fund
+        run: node ops/ci/npm-ci.mjs --prefer-offline --no-audit --no-fund
       - name: Verify pinned pnpm
         run: node node_modules/pnpm/bin/pnpm.cjs --version | node -e "let s='';process.stdin.on('data',x=>s+=x).on('end',()=>{if(s.trim()!=='10.34.5')process.exit(1)})"
       - name: Verify native Windows tar
