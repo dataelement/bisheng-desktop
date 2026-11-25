@@ -9,7 +9,7 @@ import '@deepseek-ai/dsh-web'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createMarketController, hostDshEntryPath, type MarketController } from '../packages/dsh-desktop-enterprise/market.js'
 import { sha256 } from '../packages/dsh-desktop-enterprise/offline-bundle.js'
-import { zipEntries } from '../scripts/pack-enterprise-plugin.mjs'
+import { zipEntries } from './enterprise-bundle-fixture.mjs'
 import { applyEnterpriseAuth } from '../packages/dsh-desktop-enterprise/enterprise-auth.js'
 
 const cleanups: Array<() => Promise<unknown>> = []

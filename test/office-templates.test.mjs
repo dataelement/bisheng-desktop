@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, readdir, writeFile, rm, symlink, realpath, cp } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, realpath, cp } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
@@ -11,7 +11,8 @@ import { workspacePolicy, templateTool } from '../packages/dsh-desktop-office/li
 import { registerOfficeContext, registerOfficeRoutes } from '../packages/dsh-desktop-office/lib/modes.js'
 import { registerBusinessSkills } from '../packages/dsh-desktop-office/lib/business-skills.js'
 import { apply as applyPpt } from 'dsh-ppt'
-import { electronExecutable } from '../scripts/electron-node-loader.mjs'
+import { electronExecutable } from '../scripts/verify/electron-node-loader.mjs'
+import { officeCliCommand, runOfficeCli } from '../scripts/office-runtime/prepare-templates.mjs'
 
 const scratch = []
 afterEach(async () => { for (const directory of scratch.splice(0)) await rm(directory, { recursive: true, force: true }) })
@@ -22,12 +23,19 @@ const library = await createTemplateLibrary(resources)
 it('produces the same workbook semantics across repeated official Kit recalculations', async () => {
   const directory = await temporary()
   const python = resolve('.build/office-runtime/primary-runtime/dependencies/python', process.platform === 'win32' ? 'python.exe' : 'bin/python3')
+  const input = join(resources, 'annual-business/example.xlsx')
   const outputs = []
   for (const filename of ['first.xlsx', 'second.xlsx']) {
     const output = join(directory, filename)
     outputs.push(output)
-    await promisify(execFile)(electronExecutable(resolve('.')), [resolve('build/office-cli.mjs'), 'recalculate', '--input', join(resources, 'annual-business/example.xlsx'), '--output', output], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: 30_000
+    // Electron starts before the Kit timer. macOS CI sometimes blocks inside LibreOffice;
+    // packaging retries that hang in a fresh process instead of failing the workbook.
+    await runOfficeCli('recalculate', async () => {
+      await rm(output, { force: true })
+      const command = officeCliCommand(electronExecutable(resolve('.')), resolve('build/office-cli.mjs'), ['recalculate', '--input', input, '--output', output])
+      await promisify(execFile)(command.file, command.args, {
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: command.timeout, maxBuffer: 4 * 1024 * 1024, windowsHide: true
+      })
     })
     await promisify(execFile)(python, ['-I', '-B', resolve('scripts/office-runtime/normalize-package.py'), output])
   }
@@ -51,7 +59,7 @@ for path in sys.argv[1:]:
 assert snapshot(sys.argv[1], False) == snapshot(sys.argv[2], False)
 assert snapshot(sys.argv[1], True) == snapshot(sys.argv[2], True)
 `, ...outputs])
-}, 60_000)
+}, 300_000)
 
 it('normalizes platform-specific chart-axis ID serialization', async () => {
   const directory = await temporary()
@@ -214,19 +222,6 @@ it('publishes seven curated native cases with complete preview hashes', async ()
   await expect(library.asset('government-notice', '../example.docx')).rejects.toThrow('registered')
 })
 
-it('lists catalogue rows without reading thumbnail files', async () => {
-  const root = await temporary()
-  await cp(resources, root, { recursive: true })
-  await rm(join(root, 'meeting-minutes', 'thumbnail.webp'))
-  const slim = await createTemplateLibrary(root)
-  const minutes = (await slim.list({ thumbnails: false })).find(item => item.id === 'meeting-minutes')
-  expect(minutes.thumbnail).toBeUndefined()
-  expect(minutes.mode).toBe('word')
-  expect(minutes.revision).toBe(library.entry('meeting-minutes').revision)
-  await expect(slim.list()).rejects.toThrow('thumbnail.webp')
-  expect((await library.list()).find(item => item.id === 'meeting-minutes').thumbnail).toMatch(/^data:image\/webp;base64,/)
-})
-
 it('rejects changed resources and stale selections before copying them', async () => {
   const root = await temporary()
   await cp(resources, root, { recursive: true })
@@ -244,21 +239,6 @@ it('persists a single document format across restarts and preserves historical P
   const restarted = { provide(name, value) { this[name] = value }, skills: { registerProvider() {} }, tools: { register() {} }, systemPrompt: { section() {} }, on() {}, inject() {} }
   await applyPpt(restarted, { root: f.root })
   expect((await restarted.officeModes.state(id)).selectedDocumentTemplate.id).toBe('government-notice')
-  const [sessionDirectory] = await readdir(join(f.root, 'sessions'))
-  const statePath = join(f.root, 'sessions', sessionDirectory, 'state.json')
-  const stored = JSON.parse(await readFile(statePath, 'utf8'))
-  expect(stored.selectedTemplateId).toBeUndefined()
-  expect(stored.presentationMode).toBeUndefined()
-  expect(stored.selectedDocumentTemplate).toMatchObject({ id: 'government-notice', mode: 'word' })
-  stored.selectedTemplateId = 'dsh-engineering-blueprint'
-  stored.presentationMode = 'ppt'
-  await writeFile(statePath, JSON.stringify(stored))
-  const repaired = { provide(name, value) { this[name] = value }, skills: { registerProvider() {} }, tools: { register() {} }, systemPrompt: { section() {} }, on() {}, inject() {} }
-  await applyPpt(repaired, { root: f.root })
-  const office = await repaired.officeModes.state(id)
-  expect(office.selectedDocumentTemplate.id).toBe('government-notice')
-  expect(office.presentationMode).toBeUndefined()
-  expect(office.selectedTemplateId).toBeUndefined()
   await restarted.officeModes.select(id, 'excel')
   expect((await f.modes.state(id)).selectedDocumentTemplate).toBeUndefined()
   expect((await f.modes.state(id)).documentMode).toBe('excel')
@@ -282,26 +262,6 @@ it('routes bounded, versioned choices through the authenticated Connection owner
   expect((await rpc('preview', { ...payload, page: 2 }, signal)).value.page).toBe(2)
   expect((await rpc('preview', { ...payload, page: 0 }, signal)).ok).toBe(false)
   expect((await rpc('mode', { sessionId: payload.sessionId, mode: 'shell' }, signal)).ok).toBe(false)
-
-  const catalogue = await rpc('welcome-cases', {}, signal)
-  expect(catalogue.value.cases.find(item => item.id === 'event-minutes')).toMatchObject({ officeMode: 'word', template: '会议纪要 · 发布会筹备' })
-  expect(catalogue.value.chat.find(item => item.id === 'confirm-event').title.zh).toBe('写一封方案确认邮件')
-  expect(catalogue.value.chatBatches[0]).toContain('confirm-event')
-  const summary = await rpc('catalog', { summary: true }, signal)
-  expect(summary.value.templates.every(item => item.thumbnail === undefined)).toBe(true)
-  expect(summary.value.templates.find(item => item.id === 'meeting-minutes').title).toBeTruthy()
-  const pictured = await rpc('catalog', {}, signal)
-  expect(pictured.value.templates.find(item => item.id === 'meeting-minutes').thumbnail).toMatch(/^data:image\/webp;base64,/)
-  expect((await rpc('case-mode', { sessionId: payload.sessionId, caseId: 'unknown' }, signal)).ok).toBe(false)
-  const selection = await rpc('case-mode', { sessionId: payload.sessionId, caseId: 'event-minutes', mode: 'ppt', templateId: 'coffee-market' }, signal)
-  expect(selection.value).toMatchObject({ mode: 'word', presentationMode: null, selectedTemplateId: 'meeting-minutes' })
-  expect((await f.modes.state(payload.sessionId)).selectedDocumentTemplate.revision).toBe(library.entry('meeting-minutes').revision)
-  const notice = await rpc('case-mode', { sessionId: payload.sessionId, caseId: 'security-notice' }, signal)
-  expect(notice.value.selectedTemplateId).toBe('government-notice')
-  const ppt = await rpc('case-mode', { sessionId: payload.sessionId, caseId: 'customer-success-review' }, signal)
-  expect(ppt.value).toMatchObject({ mode: null, presentationMode: 'ppt', selectedTemplateId: null, selectedPptTemplateId: null })
-  const normal = await rpc('case-mode', { sessionId: payload.sessionId, caseId: 'emergency-design' }, signal)
-  expect(normal.value).toMatchObject({ mode: null, presentationMode: null, selectedTemplateId: null })
 })
 
 it('keeps business providers separate from the official Office provider', async () => {

@@ -244,6 +244,14 @@ function parseModelEntry(entry, seen) {
   }
   seen.add(entry.id)
   const usage = isObject(entry.usage) ? parseUsageLenient(entry.usage) : undefined
+  const contextWindow = optionalPositiveInteger(entry.context_window) ??
+    optionalPositiveInteger(entry.contextWindow) ??
+    optionalPositiveInteger(entry.capabilities.context_window) ??
+    optionalPositiveInteger(entry.capabilities.contextWindow)
+  const maxTokens = optionalPositiveInteger(entry.max_tokens) ??
+    optionalPositiveInteger(entry.maxTokens) ??
+    optionalPositiveInteger(entry.capabilities.max_tokens) ??
+    optionalPositiveInteger(entry.capabilities.maxTokens)
   const pricingHint = parsePricingHint(entry.pricing_hint)
   return {
     id: entry.id,
@@ -253,7 +261,8 @@ function parseModelEntry(entry, seen) {
     display_name: typeof entry.display_name === 'string' && entry.display_name.length > 0 ? entry.display_name : entry.id,
     ...(reasoning === undefined ? {} : { reasoning }),
     ...(typeof entry.slug === 'string' && entry.slug.trim() ? { slug: entry.slug.trim() } : {}),
-    ...(Number.isSafeInteger(entry.context_window) && entry.context_window > 0 ? { context_window: entry.context_window } : {}),
+    ...(contextWindow && contextWindow > 0 ? { context_window: contextWindow } : {}),
+    ...(maxTokens && maxTokens > 0 ? { max_tokens: maxTokens } : {}),
     ...(inputModalities === undefined ? {} : { input_modalities: inputModalities }),
     ...(entry.supported_reasoning_levels === undefined ? {} : {
       supported_reasoning_levels: reasoning.efforts.map((effort) => ({ effort: effort.id, description: effort.name }))
@@ -264,7 +273,9 @@ function parseModelEntry(entry, seen) {
       tools: entry.capabilities.tools,
       vision: inputModalities === undefined ? (entry.capabilities.vision ?? false) : inputModalities.includes('image'),
       reasoning_content: entry.capabilities.reasoning_content,
-      ...(entry.capabilities.responses === undefined ? {} : { responses: entry.capabilities.responses })
+      ...(entry.capabilities.responses === undefined ? {} : { responses: entry.capabilities.responses }),
+      ...(contextWindow && contextWindow > 0 ? { context_window: contextWindow } : {}),
+      ...(maxTokens && maxTokens > 0 ? { max_tokens: maxTokens } : {})
     },
     ...(pricingHint ? { pricing_hint: pricingHint } : {}),
     ...(usage && usage.source !== 'unavailable' ? { usage } : {})
@@ -292,6 +303,10 @@ export function parseModelsLenient(value) {
     const parsed = parseModelEntry(entry, seen)
     return parsed ? [parsed] : []
   })
+}
+
+function optionalPositiveInteger(value) {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
 }
 
 function optionalInteger(value) {

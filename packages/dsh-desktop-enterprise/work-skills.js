@@ -7,9 +7,7 @@ const PROVIDER = 'bisheng-enterprise'
 const hash = value => createHash('sha256').update(value).digest('hex')
 const identity = state => state.connected && state.connectionKey && state.base && state.tenant?.id != null && state.user?.id != null
   ? hash(JSON.stringify([state.base, String(state.tenant.id), String(state.user.id)])) : null
-// The public name is also the picker's label/search key. Lead with the bundle
-// name, but retain account/id isolation for local and duplicate enterprise names.
-// Invalid legacy names keep their safe identifier rather than hiding the catalog.
+// Keep invocation keys valid and isolated even when API names collide or are legacy labels.
 export const enterpriseSkillName = (account, id, name) => {
   const identifier = `bisheng-${account.slice(0, 24)}-${id}`
   return typeof name === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name) ? `${name}-${identifier}` : identifier
@@ -28,15 +26,12 @@ export function createEnterpriseSkills({ state, request, resolveToolName, home =
   let revision = 0
   let snapshot
   const pending = new Map()
-  // `load()` must recheck authorization. The skill list can reuse the snapshot just
-  // fetched for the picker, so opening the menu does not download the catalog twice.
+  // Discovery may reuse the just-refreshed catalog; every load still rechecks authorization.
   const catalog = async (signal, reuse = false) => {
     const account = state(), key = identity(account), started = revision
+    signal?.throwIfAborted()
     if (!key) return []
-    if (reuse && snapshot?.key === key && snapshot.revision === started) {
-      signal?.throwIfAborted()
-      return snapshot.rows
-    }
+    if (reuse && snapshot?.key === key && snapshot.connectionKey === account.connectionKey && snapshot.revision === started) return snapshot.rows
     const rows = await request({ operation: 'list', connectionKey: account.connectionKey }, signal)
     signal?.throwIfAborted()
     if (revision !== started || identity(state()) !== key || state().connectionKey !== account.connectionKey) throw new Error('Enterprise account changed.')
@@ -46,12 +41,11 @@ export function createEnterpriseSkills({ state, request, resolveToolName, home =
       if (!Number.isSafeInteger(row.id) || row.id <= 0 || ids.has(row.id) || typeof row.name !== 'string' ||
           !/^[a-f0-9]{64}$/.test(row.content_hash) || typeof row.description !== 'string' || typeof row.display_name !== 'string') throw new Error('Invalid enterprise skill metadata.')
       ids.add(row.id)
-      // Platforms before the runtime catalog carried `source` list every skill as provided.
       return { name: enterpriseSkillName(key, row.id, row.name), displayName: row.display_name || row.name, description: row.description || row.display_name,
         invocation: { modelInvocable: true, userInvocable: true }, source: 'bisheng', provider: PROVIDER, rank: 500,
         locator: { id: row.id, key, connectionKey: account.connectionKey, version: row.content_hash, originalName: row.name, displayName: row.display_name, uploaded: row.source === 'personal' } }
     })
-    if (started === revision && identity(state()) === key && state().connectionKey === account.connectionKey) snapshot = { key, revision: started, rows: mapped }
+    snapshot = { key, connectionKey: account.connectionKey, revision: started, rows: mapped }
     return mapped
   }
   const materialize = async (candidate, signal) => {
@@ -137,7 +131,7 @@ export function applyEnterpriseSkills(ctx, options) {
         if (body.operation === 'catalog') {
           const rows = await skills.catalog(request.signal)
           invalidate()
-          return Response.json({ skills: rows.map(row => ({ name: row.name, displayName: row.locator.displayName, uploaded: row.locator.uploaded })) }, { headers: { 'cache-control': 'no-store' } })
+          return Response.json({ skills: rows.map(row => ({ name: row.name, displayName: row.displayName, uploaded: row.locator.uploaded })) }, { headers: { 'cache-control': 'no-store' } })
         }
         if (body.operation !== 'validate' || !Array.isArray(body.names) || body.names.length > 50 || body.names.some(name => typeof name !== 'string')) throw new Error('Invalid skill selection.')
         for (const name of new Set(body.names)) await skills.load(name, request.signal)

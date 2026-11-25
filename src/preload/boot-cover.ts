@@ -1,0 +1,260 @@
+import { desktopLocale, type DesktopLocale } from '../shared/desktop-locale'
+import { updateText } from '../shared/desktop-update-messages'
+import { isHarnessBootPage } from '../shared/harness-boot'
+
+export const BOOT_COVER_ID = 'dsh-desktop-boot-cover'
+export const BOOT_COVER_STYLE_ID = 'dsh-desktop-boot-cover-style'
+export const BOOT_COVER_STALL_MS = 20_000
+/** Same files splash.html loads, served by the desktop protocol so the Harness origin can paint them. */
+export const BOOT_COVER_MARK_URL = 'dsh-desktop://desktop/startup-whale.gif'
+
+// The supplied GIF has an opaque background and an embedded caption. Match
+// splash.html in both themes rather than recoloring or duplicating that caption.
+const BACKGROUND = '#fbfbfb'
+const MARK_WIDTH_PX = 280
+const MARK_ASPECT_RATIO = '480 / 276'
+
+export interface BootCoverOptions {
+  document: Document
+  locale: DesktopLocale
+  stallMs?: number
+  schedule?: (callback: () => void, delayMs: number) => number
+  cancel?: (timer: number) => void
+  subscribePageHide?: (listener: () => void) => () => void
+}
+
+export interface BootCover {
+  holdForFailure(): void
+  releaseWhenReady(): void
+  dispose(): void
+}
+
+/**
+ * A client shell is ready only when Harness has mounted it and this launch has
+ * not already started collecting a boot failure. The failure screen can briefly
+ * coexist with a sidebar root; failure keeps the cover up.
+ */
+export function shouldReleaseBootCover(input: {
+  bootFailurePending: boolean
+  clientReady: boolean
+}): boolean {
+  return input.clientReady && !input.bootFailurePending
+}
+
+/** Cover the packaged Harness shell and legacy loopback page, never recovery documents. */
+export const isHarnessBootCoverTarget = isHarnessBootPage
+
+const covers = new WeakMap<Document, BootCover>()
+
+/**
+ * Cover the Harness document until its client shell is ready.
+ * The boot failure screen is painted by Harness itself; this host seam hides
+ * that screen without navigating away from the diagnostics Desktop still reads.
+ * There is no plugin slot at this point because the failure is that plugins did not mount.
+ */
+export function mountBootCover(href: string, options: BootCoverOptions): BootCover | undefined {
+  if (!isHarnessBootCoverTarget(href)) return undefined
+  const existing = covers.get(options.document)
+  if (existing) return existing
+
+  const doc = options.document
+  const locale = options.locale
+  const stallMs = options.stallMs ?? BOOT_COVER_STALL_MS
+  const schedule = options.schedule ?? ((callback, delayMs): number => {
+    const view = doc.defaultView
+    // The DOM timer id is a number. The compiler also sees Node's Timeout
+    // because this package typechecks with both libraries.
+    const timer = view ? view.setTimeout(callback, delayMs) : setTimeout(callback, delayMs)
+    return timer as unknown as number
+  })
+  const cancel = options.cancel ?? ((timer: number) => {
+    const view = doc.defaultView
+    if (view) view.clearTimeout(timer)
+    else clearTimeout(timer)
+  })
+  const subscribePageHide = options.subscribePageHide ?? ((listener: () => void) => {
+    const view = doc.defaultView
+    if (!view) return () => {}
+    view.addEventListener('pagehide', listener)
+    view.addEventListener('unload', listener)
+    return () => {
+      view.removeEventListener('pagehide', listener)
+      view.removeEventListener('unload', listener)
+    }
+  })
+
+  const pageStyle = doc.createElement('style')
+  pageStyle.id = BOOT_COVER_STYLE_ID
+  // A descendant can set visibility:visible and show through a hidden parent.
+  // Hide the whole boot tree, then explicitly paint the cover which lives
+  // outside body so Harness cannot replace it with the failure screen.
+  pageStyle.textContent = `
+    html { background: ${BACKGROUND} !important; }
+    body, body * { visibility: hidden !important; }
+    #${BOOT_COVER_ID}, #${BOOT_COVER_ID} * { visibility: visible !important; }
+  `
+  const cover = doc.createElement('div')
+  cover.id = BOOT_COVER_ID
+  cover.setAttribute('role', 'status')
+  cover.setAttribute('aria-live', 'polite')
+  cover.style.cssText = [
+    'position:fixed',
+    'inset:0',
+    'z-index:2147483646',
+    `background:${BACKGROUND}`,
+    'color:#17181a'
+  ].join(';')
+  const shadow = cover.attachShadow({ mode: 'open' })
+  // Matches build/splash.html. The outer visibility rule cannot enter this
+  // shadow tree, so the splash itself forces visibility.
+  const style = doc.createElement('style')
+  style.textContent = `
+    :host, :host * { visibility: visible !important; }
+    :host { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    .panel {
+      position:fixed;
+      inset:0;
+      box-sizing:border-box;
+      display:grid;
+      align-content:center;
+      justify-items:center;
+      gap:12px;
+      padding:32px;
+      text-align:center;
+    }
+    .markFrame { display:grid; place-items:center; width:100%; transform:translateY(-80px); }
+    .mark {
+      grid-area:1 / 1;
+      width:min(${MARK_WIDTH_PX}px, 100%);
+      aspect-ratio:${MARK_ASPECT_RATIO};
+      height:auto;
+      display:block;
+      object-fit:contain;
+    }
+    .startupCopy { position:absolute; display:grid; gap:12px; width:1px; height:1px; padding:0; overflow:hidden; clip-path:inset(50%); }
+    :host([data-stalled]) .startupCopy {
+      top:calc(50% + 28px); left:32px; right:32px; width:auto; height:auto;
+      overflow:visible; clip-path:none;
+    }
+    h1 { margin:0; font-size:23px; font-weight:650; letter-spacing:-0.02em; }
+    p { margin:-4px 0 0; color:#777a80; font-size:13px; }
+  `
+  const panel = doc.createElement('div')
+  panel.className = 'panel'
+  const markFrame = doc.createElement('div')
+  markFrame.className = 'markFrame'
+  markFrame.setAttribute('aria-hidden', 'true')
+  const mark = doc.createElement('img')
+  mark.className = 'mark'
+  mark.alt = ''
+  mark.src = BOOT_COVER_MARK_URL
+  mark.width = 480
+  mark.height = 276
+  markFrame.append(mark)
+  const copy = doc.createElement('div')
+  copy.className = 'startupCopy'
+  const title = doc.createElement('h1')
+  const status = doc.createElement('p')
+  const relabel = (): void => {
+    const active = desktopLocale(doc.documentElement?.lang) ?? locale
+    const stalled = cover.hasAttribute('data-stalled')
+    title.textContent = updateText(active, stalled ? 'stalled' : 'starting')
+    status.textContent = updateText(active, stalled ? 'stillLoading' : 'firstLaunch')
+  }
+  relabel()
+  copy.append(title, status)
+  panel.append(markFrame, copy)
+  shadow.append(style, panel)
+
+  let failureHeld = false
+  let disposed = false
+  let released = false
+  let stallTimer: number | undefined
+  let documentObserver: MutationObserver | undefined
+  let rootObserver: MutationObserver | undefined
+  let observedRoot: Node | undefined
+  const unsubscribePageHide = subscribePageHide(() => dispose())
+
+  // Paint as soon as <html> exists. Waiting for <body> is the blank frame
+  // between splash and this cover. Do not synthesize a <body>: the parser owns
+  // it, and a stand-in leaves the theme probe looking at the wrong element.
+  // The parser can still discard nodes inserted before it finishes the tree.
+  const attach = (): void => {
+    if (disposed || released) return
+    const root = doc.documentElement
+    if (!root) return
+    if (observedRoot !== root) {
+      rootObserver?.disconnect()
+      rootObserver = new MutationObserver(() => { relabel(); attach() })
+      rootObserver.observe(root, { childList: true, attributes: true, attributeFilter: ['lang'] })
+      observedRoot = root
+    }
+    if (cover.isConnected && pageStyle.isConnected) return
+    if (!pageStyle.isConnected) root.append(pageStyle)
+    if (!cover.isConnected) root.append(cover)
+  }
+
+  const watchDocument = (): void => {
+    if (documentObserver) return
+    documentObserver = new MutationObserver(() => attach())
+    documentObserver.observe(doc, { childList: true })
+  }
+
+  const stopWatching = (): void => {
+    rootObserver?.disconnect()
+    rootObserver = undefined
+    documentObserver?.disconnect()
+    documentObserver = undefined
+    observedRoot = undefined
+  }
+
+  const revealStall = (): void => {
+    stallTimer = undefined
+    if (disposed) return
+    cover.setAttribute('data-stalled', '')
+    relabel()
+  }
+
+  const stopStallTimer = (): void => {
+    if (stallTimer === undefined) return
+    cancel(stallTimer)
+    stallTimer = undefined
+  }
+
+  stallTimer = schedule(revealStall, stallMs)
+  watchDocument()
+  attach()
+
+  const detach = (): void => {
+    released = true
+    stopStallTimer()
+    stopWatching()
+    pageStyle.remove()
+    cover.remove()
+  }
+
+  const dispose = (): void => {
+    if (disposed) return
+    disposed = true
+    detach()
+    unsubscribePageHide()
+    covers.delete(doc)
+  }
+  const controller: BootCover = {
+    holdForFailure() {
+      if (disposed) return
+      failureHeld = true
+      released = false
+      if (stallTimer === undefined) stallTimer = schedule(revealStall, stallMs)
+      watchDocument()
+      attach()
+    },
+    releaseWhenReady() {
+      if (disposed || failureHeld) return
+      detach()
+    },
+    dispose
+  }
+  covers.set(doc, controller)
+  return controller
+}

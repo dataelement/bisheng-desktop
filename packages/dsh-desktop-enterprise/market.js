@@ -2,9 +2,10 @@ import semver from 'semver'
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { acceptMarketSnapshot } from './market-policy.js'
-import { installOfflineBundle, sha256, verifyInstalledBundle } from './offline-bundle.js'
+import { assertEnterpriseGenerationPath, installOfflineBundle, sha256, verifyInstalledBundle } from './offline-bundle.js'
 import { createMarketRuntime } from './market-runtime.js'
 import { createManagedMarketSource, performMarketAction } from './managed-market.js'
 
@@ -20,7 +21,16 @@ const hostRequire = createRequire(import.meta.url)
  * the current installation and must be passed through unchanged.
  */
 export function hostDshEntryPath() {
-  return hostRequire.resolve('@deepseek-ai/dsh/lib/bin.js')
+  try {
+    return hostRequire.resolve('@deepseek-ai/dsh/lib/bin.js')
+  } catch {
+    try {
+      const cwdRequire = createRequire(join(process.cwd(), 'package.json'))
+      return cwdRequire.resolve('@deepseek-ai/dsh/lib/bin.js')
+    } catch {
+      return undefined
+    }
+  }
 }
 
 /** Both the UI and installer consume this host-owned compatibility verdict. */
@@ -53,9 +63,9 @@ function rememberedInstall(value) {
 }
 
 export function createMarketController(ctx, accountController, options = {}) {
-  const home = options.home ?? process.env.DSH_HOME
+  const home = options.home ?? (process.env.DSH_HOME || join(homedir(), '.dsh'))
   const target = options.target ?? `${process.platform}-${process.arch}`
-  const desktopVersion = () => options.desktopVersion ?? accountController.state().desktopVersion ?? ''
+  const desktopVersion = () => options.desktopVersion ?? accountController.state().desktopVersion ?? process.env.DSH_DESKTOP_VERSION ?? '1.0.1'
   const load = options.load ?? createMarketRuntime(ctx, options.auth, (record, error) => {
     const requestEpoch = epoch
     void serialized(async () => {
@@ -121,17 +131,10 @@ export function createMarketController(ctx, accountController, options = {}) {
     const rule = policy?.policies.find(p => p.plugin_id === record.plugin_id && p.name === record.name)
     return rule && !rule.disabled && rule.versions.some(v => v.id === record.version_id && v.digest === record.digest)
   }
-  // Why a confirmed policy stopped this installation. The server leaves out
-  // plugins the employee may no longer see, so a missing policy is a revoked
-  // grant (F022); deleted plugins stay in the policies and keep running.
-  const stopReason = record => {
-    const rule = policy?.policies.find(p => p.plugin_id === record.plugin_id)
-    if (!rule) return 'revoked'
-    return rule.disabled ? 'disabled' : 'version'
-  }
   const sessionOpen = () => !(account?.sessionExpiresAt && Date.parse(account.sessionExpiresAt) <= Date.now())
   const requireOnline = () => {
     if (!sessionOpen()) throw marketFailure('Enterprise session expired.', 'session_expired')
+    if (options.authorizationAvailable === false) throw marketFailure('Enterprise plugins require the desktop authorization service. Open the market in BISHENG Desktop or contact your administrator.', 'authorization_unavailable')
     if (!online || !policy) throw marketFailure(lastError || 'Connect to the enterprise market to enable plugins.', failureCode || 'offline')
     return policy
   }
@@ -143,7 +146,7 @@ export function createMarketController(ctx, accountController, options = {}) {
   const startRecord = async (record, startedEpoch) => {
     assertCurrentOperation()
     requireOnline()
-    if (!/^[a-z0-9+_.-]+$/iu.test(record.generation_id) || record.directory !== join(home, 'profiles', '.enterprise-generations', record.generation_id)) throw new Error('Invalid enterprise generation path.')
+    assertEnterpriseGenerationPath(home, record)
     if (!authorized(record) || startedEpoch !== epoch) throw new Error('Plugin usage authorization changed.')
     await verifyInstalledBundle(record, target)
     if (startedEpoch !== epoch) throw new Error('Enterprise account changed.')
@@ -152,19 +155,14 @@ export function createMarketController(ctx, accountController, options = {}) {
     running.set(record.plugin_id, fiber)
     record.status = 'enabled'
     delete record.error
-    delete record.reason
   }
   const enforce = async () => {
     const valid = Boolean(account && online && policy && sessionOpen())
     for (const record of document.installed) {
       if (!valid || !authorized(record)) {
         await stopRecord(record)
-        // Only a confirmed policy explains a stop; an outage keeps the last reason.
-        if (valid) { record.enabled = false; record.reason = stopReason(record) }
+        if (valid) record.enabled = false
         record.revision = policy?.policies.find(p => p.plugin_id === record.plugin_id)?.revision ?? record.revision
-      } else if (record.reason) {
-        // The cause is gone; the switch stays off until the employee turns it on.
-        delete record.reason
       }
     }
     await save()
@@ -249,7 +247,8 @@ export function createMarketController(ctx, accountController, options = {}) {
       const data = catalog.data.map(plugin => ({ ...plugin, versions: plugin.versions.map(version => ({
         ...version, compatible: Boolean(version.manifest?.targets?.[target]) && isMarketVersionCompatible(desktopVersion(), version.manifest?.plugin?.desktop_min)
       })) }))
-      return { ...state(), data, total: catalog.total, installReady: online }
+      return { ...state(), data, total: catalog.total, installReady: online && options.authorizationAvailable !== false,
+        ...(online && options.authorizationAvailable === false ? { error: 'Enterprise plugins require the desktop authorization service. Open the market in BISHENG Desktop or contact your administrator.', failureCode: 'authorization_unavailable' } : {}) }
     }),
     act: input => serialized(async () => {
       if (!['install', 'enable', 'disable', 'uninstall', 'configure'].includes(input.action)) throw new Error('Unknown plugin operation.')
@@ -274,7 +273,7 @@ export function createMarketController(ctx, accountController, options = {}) {
         await save(); return state()
       }
       await synchronize()
-      if (!online) throw marketFailure(lastError || 'Connect to the enterprise market to enable plugins.', failureCode || 'offline')
+      requireOnline()
       if (input.action === 'configure') {
         if (!previous || input.config === undefined) throw new Error('Choose an installed plugin and provide its configuration.')
         const saved = { ...previous }
@@ -379,9 +378,10 @@ export function applyEnterpriseMarket(ctx, accountController, options = {}) {
     }
   } })
   register('/api/enterprise.market.state', ['GET'], () => market.state())
-  register('/api/enterprise.market.catalog', ['GET'], request => {
+  register('/api/enterprise.market.catalog', ['GET'], async request => {
     const url = new URL(request.url)
-    return market.catalog(url.searchParams.get('q') || '', Math.max(1, Number(url.searchParams.get('page') || 1)))
+    const catalog = await market.catalog(url.searchParams.get('q') || '', Math.max(1, Number(url.searchParams.get('page') || 1)))
+    return ctx.get('pluginManager')?.managedBundleSourceContract === 1 ? catalog : { ...catalog, installReady: false }
   })
   register('/api/enterprise.market.action', ['POST'], async request => {
     const body = await request.text()

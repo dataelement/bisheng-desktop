@@ -19,10 +19,10 @@ describe('provider error classification patches', () => {
       deepseekPatch.lastIndexOf('status === 401')
     )
     expect(piAiPatch).toContain(
-      '+\tif (/\\b401\\b/.test(message)) return "AUTH";'
+      '+\tif (/\\b401\\b/.test(statusSource)) return "AUTH";'
     )
     expect(piAiPatch).toContain(
-      '+\tif (/\\b403\\b/.test(message)) return "FORBIDDEN";'
+      '+\tif (/\\b403\\b/.test(statusSource)) return "FORBIDDEN";'
     )
     expect(piAiPatch.indexOf('isQuotaExceededError(message)')).toBeLessThan(
       piAiPatch.lastIndexOf('\\b401\\b')
@@ -30,103 +30,37 @@ describe('provider error classification patches', () => {
   })
 
   it('surfaces quota and forbidden failures in both client surfaces', async () => {
-    // Harness 0.2.1 already ships the quota and forbidden copy. The desktop
-    // patch only has to keep the enterprise platform codes on top of that.
+    // Upstream moved failure display out of dsh-client-runtime (deleted in
+    // 0.1.2-alpha.1) into the chat and trajectory surfaces, and made the copy
+    // i18n-driven. The desktop customization follows that shape rather than
+    // reinstating hardcoded English.
     for (const [packageName, prefix] of [
       ['@deepseek-ai/dsh-client-ui-chat', 'message'],
       ['@deepseek-ai/dsh-client-ui-trajectory', 'details']
     ] as const) {
-      const client = await readFile(
-        new URL(`../node_modules/${packageName}/lib/client.js`, import.meta.url),
-        'utf8'
-      )
+      const patch = await readPatch(packageName)
 
-      expect(client).toContain(`"${prefix}.failure.quota"`)
-      expect(client).toContain(`"${prefix}.failure.forbidden"`)
-      expect(client).toContain('账户额度或余额不足')
-      expect(client).toContain('模型服务商拒绝了本次请求')
-      expect(client).toContain(
+      expect(patch).toContain(`"${prefix}.failure.quota"`)
+      expect(patch).toContain(`"${prefix}.failure.forbidden"`)
+      expect(patch).toContain('账户额度或余额不足')
+      expect(patch).toContain('模型服务商拒绝了本次请求')
+      expect(patch).toContain(
         "Your account has insufficient quota or balance. Add credits or check your provider's usage limits."
       )
-      expect(client).toContain(
+      expect(patch).toContain(
         'The model provider denied this request. Check your account permissions, region, or model access.'
       )
     }
   })
 
-  it('localizes enterprise chat failures from the platform code and hides that badge', async () => {
-    const patch = await readPatch('@deepseek-ai/dsh-client-ui-chat')
-    for (const copy of [
-      '模型服务调用失败，请稍后手动重试。',
-      'The model request failed. Try again manually later.',
-      '当前模型本月额度已用尽，请联系管理员调整额度，或等待下月重置。',
-      'This model\'s monthly allowance is used up. Ask an administrator to adjust it, or wait for the monthly reset.',
-      '额度服务暂不可用，请稍后重试。',
-      'The allowance service is temporarily unavailable. Try again later.',
-      '平台授权服务暂不可用，请稍后重试。',
-      'The authorization service is temporarily unavailable. Try again later.',
-      '当前模型服务尚未就绪，请确认账号已连接后再试。',
-      'This model service is not ready. Confirm the account is connected, then try again.'
-    ]) expect(patch).toContain(copy)
-    expect(patch).toContain('case "upstream_error": return "message.failure.upstreamError";')
-    expect(patch).toContain('case "monthly_token_limit_exceeded": return "message.failure.monthlyTokenLimit";')
-    expect(patch).toContain('case "quota_unavailable": return "message.failure.quotaUnavailable";')
-    // F016 (BiSheng 26176): a model without a price is refused until the administrator fixes it.
-    expect(patch).toContain('case "model_pricing_missing": return "message.failure.modelPricingMissing";')
-    expect(patch).toContain('"message.failure.modelPricingMissing": "该模型尚未配置价格，暂时无法使用，请联系管理员。"')
-    expect(patch).toContain('"message.failure.modelPricingMissing": "This model has no price configured yet, so it can\'t be used. Contact your administrator."')
-    expect(patch).toContain('case "NO_ADAPTER": return "message.failure.noAdapter";')
-    expect(patch).toContain('if (platformKey) return t(platformKey);')
-    expect(patch).toContain('code === "CONTEXT_WINDOW_EXCEEDED" && message === "Model context length exceeded"')
-    expect(patch).toContain('if (bishengContextWindowFailure(message, code)) return t("message.failure.contextLength");')
-    expect(patch).toContain('localizedFailureKey(node.message, node.code) === void 0 && !bishengContextWindowFailure(node.message, node.code) && node.code !== void 0')
-    expect(patch).not.toContain('case "CONTEXT_WINDOW_EXCEEDED"')
-    for (const code of [
-      'internal_error',
-      'user_disabled',
-      'UNKNOWN_MODEL',
-      'STREAM_CLOSED',
-      'enterprise_models_unavailable'
-    ]) expect(patch).toContain(`case "${code}":`)
-    for (const copy of [
-      '平台服务异常，请稍后重试或联系管理员。',
-      'The platform service failed. Try again later or contact an administrator.',
-      '当前账号不可用，请联系管理员。',
-      'This account is unavailable. Contact your administrator.',
-      '当前模型不在已授权列表中，请刷新模型列表后重选。',
-      'This model is not in the authorized list. Refresh the model list and choose again.',
-      '当前模型不支持工具调用，请关闭工具或更换模型。',
-      'This model does not support tools. Turn tools off or switch models.'
-    ]) expect(patch).toContain(copy)
-  })
-
-  it('localizes the same enterprise failures in the trajectory surface', async () => {
-    const patch = await readPatch('@deepseek-ai/dsh-client-ui-trajectory')
-    for (const copy of [
-      '平台服务异常，请稍后重试或联系管理员。',
-      'The platform service failed. Try again later or contact an administrator.',
-      '当前账号不可用，请联系管理员。',
-      'This account is unavailable. Contact your administrator.',
-      '当前模型不在已授权列表中，请刷新模型列表后重选。',
-      'This model is not in the authorized list. Refresh the model list and choose again.'
-    ]) expect(patch).toContain(copy)
-    expect(patch).toContain('function trajectoryFailureKey(message, code)')
-    expect(patch).toContain('case "user_disabled": return "details.failure.userDisabled";')
-    expect(patch).toContain('case "UNKNOWN_MODEL": return "details.failure.unknownModel";')
-    expect(patch).toContain('case "model_pricing_missing": return "details.failure.modelPricingMissing";')
-    expect(patch).toContain('"details.failure.modelPricingMissing": "该模型尚未配置价格，暂时无法使用，请联系管理员。"')
-    expect(patch).toContain('const platformKey = trajectoryFailureKey(request.error, request.errorCode);')
-  })
-
   it('recovers a provider terminal message that omits its content array', async () => {
-    const patch = await readPatch('@deepseek-ai/dsh-llm-pi-ai')
-    const additions = patch
-      .split('\n')
-      .filter((line) => line.startsWith('+') && !line.startsWith('+++'))
-      .map((line) => line.slice(1))
-      .join('\n')
-    const helper = additions.match(
-      /function completeTerminalMessage\(message, completed\) \{[\s\S]*?^\}/m
+    // rc.4 ships the recovery in the package. The desktop patch only splits 401 and 403.
+    const source = await readFile(
+      'node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/index.js',
+      'utf8'
+    )
+    const helper = source.match(
+      /function completeTerminalMessage\(message, completed\) \{[\s\S]*?\n\}/
     )?.[0]
 
     expect(helper).toBeDefined()
@@ -151,11 +85,7 @@ describe('provider error classification patches', () => {
     })
     const valid = { ...malformed, content: [] }
     expect(completeTerminalMessage(valid, completed)).toBe(valid)
-    expect(patch).toContain(
-      '+\t\t\tconst message = completeTerminalMessage(event.message, completed);'
-    )
-    expect(patch).toContain(
-      '+\t\t\t\treplayState: toPiReplayState(message, requestedModel)'
-    )
+    expect(source).toContain('const message = completeTerminalMessage(event.message, completed);')
+    expect(source).toContain('replayState: toPiReplayState(message, requestedModel, prefixDigest)')
   })
 })

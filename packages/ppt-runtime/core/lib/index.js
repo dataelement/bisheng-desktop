@@ -23,6 +23,8 @@ import yaml from "js-yaml";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { convertPptxToPptd, yamlText, record } from "./pptx-converter.js";
+export { installWebModePolicy } from './web-mode-policy.js';
+export { createOfficePptxScopePolicyController, registerOfficePptxScopePolicy } from './office-pptx-scope-policy.js';
 //#region lib/types/dsh-ppt-skill.js
 /** First-party DSH PPT workflow Skill bundled with the local PPTD route. */
 const PROVIDER = "dsh-ppt-bundled";
@@ -781,12 +783,10 @@ var PptService = class {
 	selectPresentationMode(sessionId, active, actor) {
 		return this.mutate(sessionId, "select-presentation-mode", actor, (state) => {
 			const { presentationMode: _presentationMode, ...rest } = state;
-			const pptId = (Array.isArray(state.templates) ? state.templates : []).find((item) => item.id === state.selectedTemplateId && templateSupportsMode(item, "ppt"))?.id;
 			return {
 				state: active ? {
 					...rest,
-					presentationMode: "ppt", documentMode: undefined, selectedDocumentTemplate: undefined,
-					...pptId === void 0 ? { selectedTemplateId: void 0 } : { selectedTemplateId: pptId }
+					presentationMode: "ppt", documentMode: undefined, selectedDocumentTemplate: undefined
 				} : rest,
 				value: true,
 				summary: active ? "已进入 PPT 模式" : "已退出 PPT 模式",
@@ -802,28 +802,12 @@ var PptService = class {
                 summary: mode === null ? '已进入普通对话' : `已进入 ${mode} 模式`, facts: { mode } };
         });
     }
-    selectCaseMode(sessionId, mode, template, keepPresentationTemplate, actor) {
-        if (!['normal', 'word', 'excel', 'ppt'].includes(mode) || (template && template.mode !== mode)) {
-            throw new PptError('invalid-request', 'Choose a compatible Work case format');
-        }
-        // One persisted update prevents a format change from leaving a previous
-        // format's template active, even when users immediately switch again.
-        return this.mutate(sessionId, 'select-work-case-mode', actor, state => {
-            const { presentationMode, selectedTemplateId, templateMigration, documentMode, selectedDocumentTemplate, ...rest } = state;
-            const next = mode === 'ppt'
-                ? { ...rest, presentationMode: 'ppt', ...(keepPresentationTemplate && presentationMode === 'ppt' && selectedTemplateId ? { selectedTemplateId } : {}) }
-                : mode === 'normal' ? rest
-                : { ...rest, documentMode: mode, ...(template ? { selectedDocumentTemplate: template } : {}) };
-            return { state: next, value: true, summary: `已选择工作案例输出模式 ${mode}`, facts: { mode, ...(template ? { templateId: template.id } : {}) } };
-        });
-    }
     selectDocumentTemplate(sessionId, template, actor) {
         if (!template || !['word', 'excel'].includes(template.mode) || typeof template.id !== 'string' || !/^[a-z0-9-]{1,96}$/.test(template.id)
             || typeof template.revision !== 'string' || !/^[a-zA-Z0-9.-]{1,96}$/.test(template.revision)) throw new PptError('invalid-request', 'Choose a versioned Office template');
         return this.mutate(sessionId, 'select-document-template', actor, state => {
             if (state.documentMode !== template.mode) throw new PptError('conflict', 'Choose the matching document format');
-            const { presentationMode: _presentationMode, selectedTemplateId: _selectedTemplateId, templateMigration: _templateMigration, ...rest } = state;
-            return { state: { ...rest, selectedDocumentTemplate: { id: template.id, mode: template.mode, revision: template.revision } }, value: true,
+            return { state: { ...state, selectedDocumentTemplate: { id: template.id, mode: template.mode, revision: template.revision } }, value: true,
                 summary: `已选择 Office 案例 ${template.id}`, facts: { ...template } };
         });
     }
@@ -1350,21 +1334,20 @@ function persistedState(value, sessionId, personalTemplates = []) {
  const missingPersonal = requested?.startsWith("personal-") && selected === undefined;
  const retired = requested !== undefined && selected === undefined && !missingPersonal;
  const fallback = BUILT_IN_TEMPLATES.find(template => template.id === "dsh-engineering-blueprint") ?? BUILT_IN_TEMPLATES[0];
- const documentActive = record.documentMode === "word" || record.documentMode === "excel";
- const selectedTemplateId = documentActive ? undefined : retired ? fallback.id : selected?.id;
+ const selectedTemplateId = retired ? fallback.id : selected?.id;
  return {
   sessionId, templates,
   // Preserve historical decks and generated files; they are user-owned records.
   decks: Array.isArray(record.decks) ? record.decks : [],
   activities: Array.isArray(record.activities) ? record.activities : [],
-  ...(documentActive ? { documentMode: record.documentMode } :
+  ...(['word', 'excel'].includes(record.documentMode) ? { documentMode: record.documentMode } :
       record.presentationMode === "ppt" ? { presentationMode: "ppt" } : {}),
-  ...(documentActive && record.selectedDocumentTemplate?.mode === record.documentMode
+  ...(['word', 'excel'].includes(record.documentMode) && record.selectedDocumentTemplate?.mode === record.documentMode
       && /^[a-z0-9-]{1,96}$/.test(record.selectedDocumentTemplate?.id ?? '') && /^[a-zA-Z0-9.-]{1,96}$/.test(record.selectedDocumentTemplate?.revision ?? '')
       ? { selectedDocumentTemplate: { id: record.selectedDocumentTemplate.id, mode: record.documentMode, revision: record.selectedDocumentTemplate.revision } } : {}),
   ...(selectedTemplateId === undefined ? {} : { selectedTemplateId }),
-  ...(!documentActive && missingPersonal ? { templateMigration: { reason: "personal-template-deleted" } } : !documentActive && retired ? { templateMigration: { reason: "template-retired", replacementId: fallback.id } } :
-     !documentActive && record.templateMigration?.reason === "template-retired" ? { templateMigration: record.templateMigration } : {})
+  ...(missingPersonal ? { templateMigration: { reason: "personal-template-deleted" } } : retired ? { templateMigration: { reason: "template-retired", replacementId: fallback.id } } :
+     record.templateMigration?.reason === "template-retired" ? { templateMigration: record.templateMigration } : {})
  };
 }
 /** Local store containing only PPT route state, source projects, and output files. */
@@ -3239,7 +3222,6 @@ async function apply(ctx, config) {
     ctx.provide('officeModes', {
         state: sessionId => service.state(sessionId),
         select: (sessionId, mode) => service.selectDocumentMode(sessionId, mode, { kind: 'user' }),
-        selectCaseMode: (sessionId, mode, template, keepPresentationTemplate) => service.selectCaseMode(sessionId, mode, template, keepPresentationTemplate, { kind: 'user' }),
         selectTemplate: (sessionId, template) => service.selectDocumentTemplate(sessionId, template, { kind: 'user' }),
         deselectTemplate: sessionId => service.deselectDocumentTemplate(sessionId, { kind: 'user' }),
         record: (sessionId, operation, facts) => service.mutate(sessionId, operation, { kind: 'agent' }, state => ({ state, value: true, summary: operation, facts }))

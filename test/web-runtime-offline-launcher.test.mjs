@@ -1,0 +1,87 @@
+import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { test, onTestFinished } from 'vitest'
+import { fileURLToPath } from 'node:url'
+import { emptyState } from '../packages/dsh-desktop-enterprise/cloud-workbench-state.js'
+
+const source = fileURLToPath(new URL('../build/web-runtime/dsh-offline.mjs', import.meta.url))
+const cmd = fileURLToPath(new URL('../build/web-runtime/dsh-offline.cmd', import.meta.url))
+const names = ['package.json', 'cordis.yml', 'cordis.patch.yml']
+
+function fixture() {
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'offline runtime (test) ')))
+  onTestFinished(() => rmSync(root, { recursive: true, force: true }))
+  copyFileSync(source, path.join(root, 'dsh-offline.mjs'))
+  copyFileSync(fileURLToPath(new URL('../build/web-runtime/system-proxy.mjs', import.meta.url)), path.join(root, 'system-proxy.mjs'))
+  mkdirSync(path.join(root, 'profile'))
+  for (const name of names) writeFileSync(path.join(root, 'profile', name), 'template ' + name)
+  const entry = path.join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+  mkdirSync(path.dirname(entry), { recursive: true })
+  writeFileSync(entry,     "console.log(JSON.stringify({ args: process.argv.slice(2), home: process.env.DSH_HOME, flag: process.env.DSH_WEB_RUNTIME, cwd: process.cwd() })); process.exit(23)")
+  const enterprise = path.join(root, 'node_modules', 'dsh-desktop-enterprise')
+  mkdirSync(enterprise)
+  writeFileSync(path.join(enterprise, 'package.json'), JSON.stringify({ type: 'module', exports: { './legacy-cloud-state': './legacy-cloud-state.js' } }))
+  for (const name of ['legacy-cloud-state.js', 'cloud-workbench-state.js', 'cloud-record.js']) {
+    copyFileSync(fileURLToPath(new URL('../packages/dsh-desktop-enterprise/' + name, import.meta.url)), path.join(enterprise, name))
+  }
+  return root
+}
+
+function run(root, ...args) {
+  return spawnSync(process.execPath, [path.join(root, 'dsh-offline.mjs'), ...args], { encoding: 'utf8' })
+}
+
+test('initializes once and forwards arguments, environment and exit code', () => {
+  const root = fixture()
+  const result = run(root, 'web', '--name', 'hello world')
+  assert.equal(result.status, 23, result.stderr)
+  assert.deepEqual(JSON.parse(result.stdout), { args: ['web', '--name', 'hello world'], home: path.join(root, 'data'), flag: '1', cwd: root })
+  const profile = path.join(root, 'data', 'profiles', 'web')
+  for (const name of names) assert.equal(readFileSync(path.join(profile, name), 'utf8'), 'template ' + name)
+  writeFileSync(path.join(profile, 'cordis.yml'), 'user data')
+  assert.equal(run(root, '--version').status, 23)
+  assert.equal(readFileSync(path.join(profile, 'cordis.yml'), 'utf8'), 'user data')
+})
+
+test('missing runtime or template fails before creating data', () => {
+  const root = fixture()
+  rmSync(path.join(root, 'profile', 'cordis.yml'))
+  const result = run(root, 'web')
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /Initialization failed/)
+  assert.throws(() => readFileSync(path.join(root, 'data', 'profiles', 'web', 'package.json')))
+})
+
+test('preserves incomplete existing profile and fails clearly', () => {
+  const root = fixture()
+  const profile = path.join(root, 'data', 'profiles', 'web')
+  mkdirSync(profile, { recursive: true })
+  writeFileSync(path.join(profile, 'package.json'), 'user data')
+  const result = run(root, 'web')
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /Web profile is incomplete: cordis.yml/)
+  assert.equal(readFileSync(path.join(profile, 'package.json'), 'utf8'), 'user data')
+})
+
+test('projects legacy cloud state before launching Harness and preserves its original bytes', () => {
+  const root = fixture()
+  const directory = path.join(root, 'data', 'desktop-workbenches')
+  mkdirSync(directory, { recursive: true })
+  const original = JSON.stringify({ revision: 4, state: { ...emptyState(), cloudWorkbenches: {}, cloudDevelopmentSessions: {} } })
+  writeFileSync(path.join(directory, 'state.json'), original)
+  const entry = path.join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+  writeFileSync(entry, "const fs = require('node:fs'); const path = require('node:path'); const saved = JSON.parse(fs.readFileSync(path.join(process.env.DSH_HOME, 'desktop-workbenches/state.json'))); if ('cloudWorkbenches' in saved.state || saved.revision !== 5) process.exit(1)")
+  const result = run(root, 'web')
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(readFileSync(path.join(directory, 'enterprise-cloud-v131.json'), 'utf8'), original)
+})
+
+test('Windows command shim delegates without blocks or package installation', () => {
+  const text = readFileSync(cmd, 'utf8')
+  assert.match(text, /"%~dp0node\\node.exe" "%~dp0dsh-offline.mjs" %\*/i)
+  assert.match(text, /exit \/b %errorlevel%/i)
+  assert.doesNotMatch(text, /npm|\n\s*if.*\(/i)
+})

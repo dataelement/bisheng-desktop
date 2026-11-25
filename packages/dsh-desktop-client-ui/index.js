@@ -1,7 +1,10 @@
-import { completionProjection } from './completion-projection.js'
+import { registerDesktopBootRoute } from './boot.js'
+import { repairPresetDefinition } from './repair-preset.js'
 
-/** Desktop completion facts share Harness's authenticated, reconnecting control stream. */
-export const inject = ['sessionProjections']
-export function apply(ctx) {
-  ctx.sessionProjections.register(completionProjection)
+/** The registry and tools belong to the existing Harness runtime. */
+export const inject = ['agentPresets']
+export async function apply(ctx) {
+  registerDesktopBootRoute(ctx)
+  const dispose = await ctx.agentPresets.register(repairPresetDefinition())
+  ctx.effect(() => dispose)
 }

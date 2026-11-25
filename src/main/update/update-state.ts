@@ -1,14 +1,14 @@
 import type { UpdateStatus } from '../../shared/contracts'
 
 export type UpdateStateEvent =
-  | { type: 'check'; manual: boolean; source?: UpdateStatus['source']; presentationId?: number }
+  | { type: 'check'; manual: boolean; source?: UpdateStatus['source'] }
   | { type: 'available'; version: string; releaseNotes?: string }
   | { type: 'progress'; percent: number }
   | { type: 'downloaded'; version: string }
   | { type: 'not-available' }
   | { type: 'error'; message: string }
   | { type: 'unsupported'; message: string }
-  | { type: 'present-manual'; presentationId?: number }
+  | { type: 'present-manual' }
   | { type: 'reset' }
 
 export function initialUpdateStatus(currentVersion: string): UpdateStatus {
@@ -22,31 +22,21 @@ export function reduceUpdateStatus(
   const base = {
     currentVersion: current.currentVersion,
     manual: current.manual,
-    ...(current.source === undefined ? {} : { source: current.source }),
-    ...(current.releaseNotes === undefined ? {} : { releaseNotes: current.releaseNotes }),
-    ...(current.presentationId === undefined ? {} : { presentationId: current.presentationId })
+    source: current.source,
+    presentationId: current.presentationId,
+    locale: current.locale,
+    downgrade: current.downgrade
   }
 
   switch (event.type) {
     case 'check':
-      return {
-        ...base,
-        phase: 'checking',
-        manual: event.manual,
-        source: event.source ?? (event.manual ? 'manual' : 'runtime'),
-        ...(event.presentationId === undefined ? {} : { presentationId: event.presentationId })
-      }
+      return { ...base, phase: 'checking', manual: event.manual, source: event.source ?? (event.manual ? 'manual' : 'runtime') }
     case 'available':
-      return {
-        ...base,
-        phase: 'available',
-        availableVersion: event.version,
-        ...(event.releaseNotes === undefined ? {} : { releaseNotes: event.releaseNotes })
-      }
+      return { ...base, phase: 'available', availableVersion: event.version, releaseNotes: event.releaseNotes }
     case 'progress':
       return { ...current, phase: 'downloading', percent: clampPercent(event.percent) }
     case 'downloaded':
-      return { ...base, phase: 'downloaded', availableVersion: event.version }
+      return { ...base, phase: 'downloaded', availableVersion: event.version, releaseNotes: current.releaseNotes }
     case 'not-available':
       return { ...base, phase: 'up-to-date' }
     case 'error':
@@ -54,12 +44,7 @@ export function reduceUpdateStatus(
     case 'unsupported':
       return { ...base, phase: 'unsupported', message: event.message }
     case 'present-manual':
-      return {
-        ...current,
-        manual: true,
-        source: 'manual',
-        ...(event.presentationId === undefined ? {} : { presentationId: event.presentationId })
-      }
+      return { ...current, manual: true, source: 'manual' }
     case 'reset':
       return initialUpdateStatus(current.currentVersion)
   }

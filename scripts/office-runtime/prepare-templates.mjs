@@ -4,8 +4,9 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { electronExecutable } from '../electron-node-loader.mjs'
+import { electronExecutable } from '../verify/electron-node-loader.mjs'
 import { createTemplateLibrary } from '../../packages/dsh-desktop-office/lib/templates.js'
+import { templateOfficeFontOptions } from '../../packages/ppt-runtime/core/lib/office-font-options.js'
 
 const exec = promisify(execFile)
 const project = resolve(import.meta.dirname, '../..')
@@ -20,6 +21,25 @@ export const officeCliTimeoutMs = 30_000
 
 /** Fresh process after a hang. The same workbook then finishes on the next attempt. */
 export const officeCliAttempts = 3
+
+const fontOptionsPath = fileURLToPath(new URL('../../packages/ppt-runtime/core/lib/office-font-options.js', import.meta.url))
+
+/**
+ * Meeting minutes names Hiragino Sans GB W3. That face is installed on macOS.
+ * When it is absent, the Kit's default sans-serif group ranks Arial ahead of
+ * CJK faces, so the missing family is replaced by a Latin font and the title
+ * loses simplified Chinese glyphs. Keep the exact face first: an installed
+ * copy still wins. Do not insert the unweighted Hiragino Sans GB alias; the
+ * macOS engine matches that name to Japanese Hiragino Sans.
+ */
+export const officePreviewFontFallbacks = [
+  ['Hiragino Sans GB W3', 'Microsoft YaHei', 'Microsoft YaHei UI', '微软雅黑', 'PingFang SC', 'Noto Sans CJK SC', 'Noto Sans SC', 'Source Han Sans SC', 'SimHei', '黑体', 'SimSun', 'NSimSun', '宋体'],
+  ...templateOfficeFontOptions.fontFallbacks,
+]
+
+export function officePreviewFontArgs() {
+  return ['--font-fallbacks', JSON.stringify(officePreviewFontFallbacks)]
+}
 
 /** Electron startup happens before the Kit timer, so the process limit is longer than 30s. */
 export function officeCliCommand(executable, script, args, timeoutMs = officeCliTimeoutMs) {
@@ -37,34 +57,14 @@ export function officeCliTimedOut(error) {
   return Boolean(error && typeof error === 'object' && error.killed === true && error.signal === 'SIGTERM')
 }
 
-function commandErrorText(error) {
-  const stderrValue = error && typeof error === 'object' && 'stderr' in error ? error.stderr : ''
-  const stderr = Buffer.isBuffer(stderrValue) ? stderrValue.toString('utf8') : typeof stderrValue === 'string' ? stderrValue : ''
-  const message = error instanceof Error ? error.message : ''
-  return `${stderr}\n${message}`
-}
-
-/**
- * Electron worker threads on the Rosetta Intel runner sometimes fail to stat
- * `unicode-properties` while resolving fontkit, after the parent thread in the
- * same process has already loaded it. A new process succeeds.
- */
-export function officeCliRetriable(error) {
-  if (officeCliTimedOut(error)) return true
-  const text = commandErrorText(error)
-  return text.includes("Cannot find package 'unicode-properties'") &&
-    text.includes('node_modules/fontkit/dist/module.mjs')
-}
-
-/** Retry a Kit timeout, the outer process kill, or a transient worker module lookup. Other failures stop immediately. */
+/** Retry only a Kit timeout or the outer process kill. Other failures stop immediately. */
 export async function runOfficeCli(label, run, attempts = officeCliAttempts) {
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       return await run()
     } catch (error) {
-      if (attempt === attempts || !officeCliRetriable(error)) throw error
-      const reason = officeCliTimedOut(error) ? 'timed out' : 'could not resolve a worker module'
-      console.log(`Office ${label} ${reason}, retrying (${attempt + 1}/${attempts})`)
+      if (attempt === attempts || !officeCliTimedOut(error)) throw error
+      console.log(`Office ${label} timed out, retrying (${attempt + 1}/${attempts})`)
     }
   }
 }
@@ -80,21 +80,6 @@ async function files(root, prefix = '') {
   return result
 }
 
-/**
- * Git for Windows checks text out as CRLF. The notice OFL is pinned to the LF
- * bytes, so the staged copy is canonicalized before it is hashed or packaged.
- */
-export async function canonicalizeOfficeText(root) {
-  for (const name of await files(root)) {
-    if (!name.endsWith('.txt') && !name.endsWith('.md') && !name.endsWith('.json')) continue
-    const path = join(root, name)
-    const data = await readFile(path)
-    const text = data.toString('latin1')
-    const canonical = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-    if (canonical !== text) await writeFile(path, canonical, 'latin1')
-  }
-}
-
 /** Generate all previews with the same installed Kit used by Office tasks. */
 export async function prepareOfficeTemplates({ runtime = join(project, '.build/office-runtime'), cache = join(project, '.build/office-template-cache') } = {}) {
   const manifest = JSON.parse(await readFile(join(runtime, 'primary-runtime/runtime.json'), 'utf8'))
@@ -102,8 +87,9 @@ export async function prepareOfficeTemplates({ runtime = join(project, '.build/o
   const kit = JSON.parse(await readFile(join(project, 'node_modules/@deepseek-ai/libreoffice-kit/package.json'), 'utf8'))
   const inputs = await files(sources)
   const fingerprint = hash(Buffer.concat([
-    Buffer.from(JSON.stringify({ format: 2, platform: manifest.platform, arch: manifest.arch, payloadDigest: manifest.payloadDigest, kit: kit.version })),
-    await readFile(fileURLToPath(import.meta.url)), await readFile(join(import.meta.dirname, 'normalize-package.py')),
+    Buffer.from(JSON.stringify({ format: 1, python: manifest.python, kit: kit.version })),
+    await readFile(fileURLToPath(import.meta.url)), await readFile(fontOptionsPath),
+    await readFile(join(import.meta.dirname, 'normalize-package.py')),
     await readFile(join(import.meta.dirname, 'check-templates.py')),
     ...await Promise.all(inputs.map(async path => Buffer.concat([Buffer.from(path), await readFile(join(sources, path))])))
   ]))
@@ -118,7 +104,6 @@ export async function prepareOfficeTemplates({ runtime = join(project, '.build/o
     try {
       const legacy = JSON.parse(await readFile(join(sources, 'catalog.json'), 'utf8'))
       for (const item of legacy) await cp(join(sources, item.source), join(staging, item.id), { recursive: true })
-      await canonicalizeOfficeText(staging)
       const ordered = [legacy.find(x => x.id === 'government-notice'),
         ...legacy.filter(x => x.mode === 'word' && x.id !== 'government-notice'), ...legacy.filter(x => x.mode === 'excel')]
       const catalog = []
@@ -128,7 +113,7 @@ export async function prepareOfficeTemplates({ runtime = join(project, '.build/o
         const produced = outputFlag >= 0 ? args[outputFlag + 1] : directoryFlag >= 0 ? args[directoryFlag + 1] : undefined
         // A timed-out helper may leave the exclusive output behind; the next call opens it with wx.
         if (produced) await rm(produced, { recursive: true, force: true })
-        const command = officeCliCommand(electronExecutable(project), join(project, 'build/office-cli.mjs'), args)
+        const command = officeCliCommand(electronExecutable(project), join(project, 'build/office-cli.mjs'), [...args, ...officePreviewFontArgs()])
         const { stdout } = await exec(command.file, command.args,
           { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, timeout: command.timeout, maxBuffer: 4 * 1024 * 1024, windowsHide: true })
         return JSON.parse(stdout.trim())
@@ -174,6 +159,7 @@ export async function prepareOfficeTemplates({ runtime = join(project, '.build/o
         const revisions = Object.fromEntries(await Promise.all((await files(directory)).map(async file => [file, hash(await readFile(join(directory, file)))])))
         catalog.push({ ...item, sampleFile, pages: images.length, pageAspectRatios: images.map(x => x.width / x.height),
           ...(sheets.length ? { sheets } : {}), missingFonts: [...missingFonts], revision: hash(Buffer.from(JSON.stringify(revisions))).slice(0, 24), files: revisions })
+        if (missingFonts.size) console.log(`Office missing fonts: ${item.id}: ${[...missingFonts].join(', ')}`)
         console.log(`Office example: ${item.id}, ${images.length} pages`)
       }
       for (const entry of await readdir(staging)) {

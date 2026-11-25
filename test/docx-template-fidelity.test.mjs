@@ -2,9 +2,11 @@ import { mkdtemp, mkdir, readFile, realpath, rm, writeFile, access, symlink } fr
 import { resolve, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID, createHash } from 'node:crypto'
+import { spawnSync } from 'node:child_process'
 import { afterEach, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { ToolRuntime, defineTool } from '@deepseek-ai/dsh-tools'
+import * as nativeExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { LocalSandboxProvider } from '@deepseek-ai/dsh-sandbox-local'
 import { LocalSubprocessRuntime } from '@deepseek-ai/dsh-subprocess-local'
@@ -13,10 +15,34 @@ import { createDocxWorkflow, docxWorkerArgv, docxWorkerEnvironment, docxWorkerPy
 const cleanups = []
 afterEach(async () => { for (const fn of cleanups.splice(0).reverse()) await fn() })
 const sha = data => createHash('sha256').update(data).digest('hex')
+
+it('treats empty native property containers as inherited while still rejecting new formatting', () => {
+  const worker = resolve('packages/dsh-desktop-office/lib/docx-layout.py')
+  const program = `import runpy, copy
+from lxml import etree as E
+w=runpy.run_path(${JSON.stringify(worker)});q=w['Q']
+body=b'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Inherited</w:t></w:r></w:p><w:p><w:pPr><w:spacing w:line="240"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="20"/></w:rPr><w:t>Explicit</w:t></w:r></w:p></w:body></w:document>'
+source={'word/document.xml':body};root=E.fromstring(body)
+first=root.find('.//'+q('p'));first.insert(0,E.Element(q('pPr')));first.find(q('r')).insert(0,E.Element(q('rPr')))
+candidate={'word/document.xml':E.tostring(root)}
+assert 'paragraph-and-run-styles' in w['validate'](source,candidate,None)
+for name in ['sz','spacing','rFonts']:
+ changed=copy.deepcopy(root)
+ if name=='spacing':changed.find('.//'+q('spacing')).set(q('line'),'999')
+ elif name=='sz':changed.find('.//'+q('sz')).set(q('val'),'100')
+ else:E.SubElement(changed.find('.//'+q('rPr')),q('rFonts')).set(q('ascii'),'Unapproved Font')
+ try:w['validate'](source,{'word/document.xml':E.tostring(changed)},None)
+ except ValueError:pass
+ else:raise AssertionError('format mutation accepted: '+name)
+print('inherited-properties-and-format-guards-pass')`
+  const result = spawnSync(docxWorkerPython(resolve('.build/office-runtime')), ['-I', '-B', '-c', program], { encoding: 'utf8' })
+  expect(result.stderr).toBe(''); expect(result.status).toBe(0)
+  expect(result.stdout).toContain('inherited-properties-and-format-guards-pass')
+})
 async function fixture(templateId = 'government-notice') {
   const workspace = await realpath(await mkdtemp(join(tmpdir(), 'docx-layout-'))); cleanups.push(() => rm(workspace, { recursive: true, force: true }))
   const ctx = new Context()
-  for (const plugin of [SystemPrompt, ToolRuntime, LocalSandboxProvider, LocalSubprocessRuntime]) { const fork = ctx.plugin(plugin, {}); await fork; cleanups.push(() => fork.dispose()) }
+  for (const plugin of [SystemPrompt, ToolRuntime, nativeExecutor, LocalSandboxProvider, LocalSubprocessRuntime]) { const fork = ctx.plugin(plugin, {}); await fork; cleanups.push(() => fork.dispose()) }
   const catalog = JSON.parse(await readFile(resolve('packages/dsh-desktop-office/sources/catalog.json'), 'utf8'))
   const sourceRoot = resolve('packages/dsh-desktop-office/sources', catalog.find(item => item.id === templateId).source)
   const source = await readFile(join(sourceRoot, 'example.docx'))
@@ -39,7 +65,7 @@ async function fixture(templateId = 'government-notice') {
   const normal = prepared.paragraphs.find(p => p.text.startsWith('为做好公园'))
   const other = prepared.paragraphs.find(p => p.text === '一、服务主题和时间')
   const plan = templateId === 'government-notice' ? { output_path: 'result.docx', replacements: [{ id: 'p0', text: '示例市公园管理局文件' }, { id: title.id, text: '关于公园节假日开放安排的通告' }, { id: normal.id, text: '现将公园节假日开放有关事项通告如下。' }], additions: [{ after: normal.id, source: normal.id, text: '具体开放时间以已确认的安排为准。' }], removals: [other.id] } : { output_path: 'result.docx', replacements: [{ id: prepared.paragraphs.find(p => p.text && p.can_remove).id, text: '当前材料的标题与内容' }] }
-  const call = async (name, args) => ctx.tools.execute({ name, arguments: args, callId: randomUUID(), ...exec })
+  const call = async (name, args) => (await ctx.tools.execute({ ...exec, calls: [{ type: 'tool-call', id: randomUUID(), name, arguments: JSON.stringify(args) }] })).results[0].result
   return { ctx, workflow, prepared, plan, call, delivered, workspace, modes, exec, setDirectory: value => { currentDirectory = value }, setMode: value => { mode = value }, clearSelection: () => { selection = {} } }
 }
 it('writes the real Word worker output in a changed session directory', async () => {
@@ -242,13 +268,17 @@ it.each(['coffee-market', 'equity-research', 'meeting-minutes'])('retains the na
   expect((await f.call('office_template_write', f.plan)).isError).toBe(false)
   expect((await f.call('present', { files: [{ path: 'result.docx' }] })).isError).toBe(false)
 })
-// Each mutation exercises a separate Python/tool round trip. Give each
-// independent safety assertion the same per-test budget as other tool cases.
-it.each(['font', 'footer', 'divider', 'text-style', 'page-margins', 'document-grid', 'style-definition', 'table-columns'])('blocks %s mutation before delivery', async (kind) => {
+// One fixture plus eight mutations uses 18 sequential Python launches
+// (prepare/write, then mutate/validate per case). Budget the batch separately
+// from each 45-second worker bound, including contention in the full suite.
+it('blocks layout and style mutations before delivery', async () => {
   const f = await fixture(); await f.call('office_template_write', f.plan)
   const resultPath = join(f.workspace, 'result.docx')
+  const original = await readFile(resultPath)
   const { execFile } = await import('node:child_process'); const { promisify } = await import('node:util')
   const python = resolve('.build/office-runtime/primary-runtime/dependencies/python', process.platform === 'win32' ? 'python.exe' : 'bin/python3')
+  for (const kind of ['font', 'footer', 'divider', 'text-style', 'page-margins', 'document-grid', 'style-definition', 'table-columns']) {
+    await writeFile(resultPath, original)
     await promisify(execFile)(python, ['-I', '-B', '-c', `
 import sys,zipfile
 from lxml import etree as E
@@ -269,10 +299,11 @@ else:
  parts['word/document.xml']=E.tostring(d)
 with zipfile.ZipFile(p,'w',zipfile.ZIP_DEFLATED) as z:
  for name,data in parts.items():z.writestr(name,data)
-`, resultPath, kind])
+`, resultPath, kind], { timeout: 45_000 })
     expect((await f.call('present', { files: [{ path: 'result.docx' }] })).isError).toBe(true)
     expect(f.delivered).not.toHaveBeenCalled()
-}, 60_000)
+  }
+}, 120_000)
 
 it('retains mixed heading/body typography with explicit native run references', async () => {
   const f = await fixture()

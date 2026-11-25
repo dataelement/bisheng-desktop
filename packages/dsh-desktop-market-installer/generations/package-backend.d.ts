@@ -12,19 +12,38 @@ export interface ProfileBundleInstallRequest {
   expectedName?: string
   registry?: string
   expectedVersion?: string
+  npmIntegrity?: string
   autoInstallPeers?: boolean
   minimumReleaseAge?: number
   signal?: AbortSignal
   onOutput?(text: string, stream: 'stdout' | 'stderr'): void
 }
 
+export interface GenerationInstallationDrift {
+  name: string
+  code: 'external-modification'
+  path: string
+  expectedPath: string
+  recovery: string
+}
+
 export interface ProfileBundlePackageBackend {
-  supportsVerifiedInstall: true
-  /** Resolves undefined for a shared-tree package (the market); pnpm installs it. */
+  readonly supportsVerifiedInstall: true
+  /** Only staged switches require restart; external changes to committed entries need explicit recovery. */
+  readRestartStatus(): Promise<{
+    restartRequired: boolean
+    packages: string[]
+    installationDrift?: GenerationInstallationDrift[]
+  }>
+  /** Installs every bundle, including the market, as an immutable generation. */
   install(request: ProfileBundleInstallRequest): Promise<{
     packageResult: PackageResult
     bundle?: string
+    /** Package root to validate; a deferred upgrade still has old bytes in the Profile. */
+    bundleDirectory?: string
     replaced?: boolean
+    /** Desired state was saved; the running Profile still exposes the old package. */
+    restartRequired?: boolean
     pendingBuilds?: string[]
     rollback?(): Promise<void>
     commit?(): void
@@ -35,18 +54,14 @@ export interface ProfileBundlePackageBackend {
     signal?: AbortSignal
     onOutput?(text: string, stream: 'stdout' | 'stderr'): void
   }): Promise<{ packageResult: PackageResult } | undefined>
+  /** Side-effect-free validation before Plugin Manager persists bundle selection. */
+  validateSwitch(request: { name: string; enabled: boolean; rowIds?: readonly string[] }): Promise<void>
   switched(request: { name: string; enabled: boolean; rowIds?: readonly string[] }): Promise<void>
   removed(request: { name: string }): Promise<void>
-  /** Reject a network enable before the profile manifest changes. Local and official bundles resolve. */
-  authorizeSwitch?(request: { name: string; enabled: boolean }): Promise<void>
-  /** Refuse a network spec before a registry lookup. Resolves undefined when inspection may continue. */
-  authorizeSpec?(parsed: { kind: string; path?: string; host?: string; spec?: string }): Promise<{
-    status: 'refused'
-    problem: string
-    reason: string
-    registries: string[]
-  } | undefined>
 }
+
+/** Caller must hold the registry lock. Throws before mutation if another package awaits projection. */
+export function assertNoPendingGenerationUpdates(dshHome: string, profile: string, requestedName?: string): Promise<void>
 
 export function createGenerationPackageBackend(options: {
   dshHome: string
@@ -56,4 +71,9 @@ export function createGenerationPackageBackend(options: {
   environment?: NodeJS.ProcessEnv
   spawnProcess?: unknown
   runInstall?: unknown
+  fetchImpl?: typeof fetch
+  /** Profile that receives the generation link. The old shell uses `web`. */
+  profile?: string
+  /** Defaults true. False requires immediate publication and refuses real-directory replacement. */
+  deferUpdates?: boolean
 }): ProfileBundlePackageBackend

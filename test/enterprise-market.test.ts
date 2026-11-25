@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { isolatePackage } from './helpers/isolated-package-tree.mjs'
+import { isolatePackage } from './enterprise-isolated-package-tree.mjs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { lstat, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -10,8 +10,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { applyEnterpriseMarket, createMarketController, hostDshEntryPath, isMarketVersionCompatible } from '../packages/dsh-desktop-enterprise/market.js'
 import { installOfflineBundle, readBundleZip, sha256, validateOfflineBundle, verifyInstalledBundle } from '../packages/dsh-desktop-enterprise/offline-bundle.js'
 import { acceptMarketSnapshot } from '../packages/dsh-desktop-enterprise/market-policy.js'
-import { sweepRegistry } from 'dsh-desktop-market-installer/generations/registry'
-import { zipEntries } from '../scripts/pack-enterprise-plugin.mjs'
+import { zipEntries } from './enterprise-bundle-fixture.mjs'
 
 const paths: string[] = [], controllers: Array<{ stop: () => Promise<void> }> = []
 async function removeTemporary(path: string) {
@@ -39,7 +38,7 @@ function bundle(version = '1.0.0', source = 'export function apply(ctx) { ctx.ef
   const bytes = zipEntries({ 'manifest.json': Buffer.from(JSON.stringify(manifest)), ...Object.fromEntries(Object.entries(files).map(([path, value]) => [`bundles/${target}/${path}`, value])) })
   return { bytes, manifest, expected: { name: 'company-demo', version, digest: sha256(bytes) } }
 }
-async function home() { const directory = await mkdtemp(join(tmpdir(), 'enterprise-market-')); paths.push(directory); await mkdir(join(directory, 'profiles/node_modules'), { recursive: true }); return directory }
+async function home() { const directory = await realpath(await mkdtemp(join(tmpdir(), 'enterprise-market-'))); paths.push(directory); await mkdir(join(directory, 'profiles/node_modules'), { recursive: true }); return directory }
 
 async function installHost(root: string) {
   const reactDom = join(root, 'node_modules/react-dom')
@@ -71,27 +70,9 @@ function namedBundle(name: string, fields: Record<string, unknown>) {
 }
 
 describe('offline bundles', () => {
-  it('resolves a real host peer from an enterprise generation retained by community cleanup', async () => {
-    const root = await home()
-    await mkdir(join(root, 'profiles/node_modules/@deepseek-ai'), { recursive: true })
-    await symlink(join(process.cwd(), 'node_modules/@deepseek-ai/dsh-tools'), join(root, 'profiles/node_modules/@deepseek-ai/dsh-tools'))
-    const files = {
-      'node_modules/company-peer/package.json': Buffer.from(JSON.stringify({ name: 'company-peer', version: '1.0.0', type: 'module', main: 'index.js', peerDependencies: { '@deepseek-ai/dsh-tools': '*' } })),
-      'node_modules/company-peer/index.js': Buffer.from('import * as tools from "@deepseek-ai/dsh-tools"; export function apply() { return tools }')
-    }
-    const manifest = { ...bundle().manifest, plugin: { ...bundle().manifest.plugin, name: 'company-peer' }, targets: { [target]: Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, sha256(bytes)])) } }
-    const bytes = zipEntries({ 'manifest.json': Buffer.from(JSON.stringify(manifest)), ...Object.fromEntries(Object.entries(files).map(([name, bytes]) => [`bundles/${target}/${name}`, bytes])) })
-    const expected = { name: 'company-peer', version: '1.0.0', digest: sha256(bytes) }
-    const generation = await installOfflineBundle(root, bytes, expected, target)
-    await sweepRegistry(root)
-    await expect(verifyInstalledBundle({ ...generation, ...expected }, target)).resolves.toHaveProperty('manifest')
-    const plugin = await import(pathToFileURL(join(generation.directory, 'node_modules', expected.name, 'index.js')).href)
-    expect(plugin.apply).toBeTypeOf('function')
-  })
-
   it('uses native root composition and ESM resolution with revocable instance credentials', async () => {
     const root = await home()
-    const { stdout } = await promisify(execFile)(process.execPath, ['--expose-internals', join(process.cwd(), 'test/helpers/enterprise-root-smoke.mjs'), root], {
+    const { stdout } = await promisify(execFile)(process.execPath, ['--expose-internals', join(process.cwd(), 'test/enterprise-root-smoke.mjs'), root], {
       cwd: root, env: { ...process.env, NODE_PATH: '', NODE_OPTIONS: '' }, timeout: 30000
     })
     expect(stdout.trim()).toBe('PASS')
@@ -189,13 +170,39 @@ describe('enterprise policy', () => {
     expect(() => acceptMarketSnapshot({ ...snapshot, policies: [{ plugin_id: pluginId, name: 'company-demo', disabled: false, revision: 1, current_version_id: versionId, versions: [{ id: versionId, digest: 'not-a-digest' }] }] }, account, 'device', now)).toThrow(/digest/)
   })
 
+  it.each([100, 101, 1001])('accepts all %i versions and still validates every entry', count => {
+    const now = Date.now()
+    const versions = Array.from({ length: count }, (_, index) => ({
+      id: index.toString(16).padStart(32, '0'), digest: 'd'.repeat(64)
+    }))
+    const policy = {
+      plugin_id: pluginId, name: 'company-demo', disabled: false, revision: 1,
+      current_version_id: versions[0]?.id, versions
+    }
+    const snapshot = { tenant_id: '2', user_id: '20', device_id: 'device', synced_at: Math.floor(now / 1000), policies: [policy] }
+    expect(acceptMarketSnapshot(snapshot, account, 'device', now)).toBe(snapshot)
+    expect(policy.versions).toHaveLength(count)
+    const last = versions[count - 1]
+    if (!last) throw new Error('Missing test version.')
+    last.digest = 'not-a-digest'
+    expect(() => acceptMarketSnapshot(snapshot, account, 'device', now)).toThrow(/digest/)
+    last.digest = 'd'.repeat(64)
+    last.id = versions[0]?.id ?? ''
+    expect(() => acceptMarketSnapshot(snapshot, account, 'device', now)).toThrow(/Duplicate market version/)
+  })
+
 })
 
-async function fixture() {
+async function fixture(options: { authorizationAvailable?: boolean; community?: boolean } = {}) {
   const root = await home(), ctx = new Context()
-  // `revoked` stands for an administrator withdrawing this employee's access (F022):
-  // the server then leaves the plugin out of both the catalog and the sync policies.
-  let current = bundle(), currentId = versionId, disabled = false, online = true, revision = 2, connected = true, revoked = false
+  let current = bundle(), currentId = versionId, disabled = false, online = true, revision = 2, connected = true
+  if (options.community) {
+    const bytes = zipEntries({
+      'package.json': Buffer.from(JSON.stringify({ name: 'company-demo', version: '1.0.0', type: 'module', main: 'index.js' })),
+      'index.js': Buffer.from('export function apply(ctx) { ctx.effect(() => () => {}, "community test") }')
+    })
+    current = { ...current, bytes, expected: { ...current.expected, digest: sha256(bytes) } }
+  }
   let identity = account
   const approved = new Map([[versionId, current.expected.digest]])
   const request = vi.fn(async (path: string, body?: { device_id: string }) => {
@@ -204,13 +211,13 @@ async function fixture() {
     let data: unknown
     if (path.endsWith('/capabilities')) data = { enabled: true, contract_version: 2, tenant_id: '2', sync_seconds: 60 }
     else if (path.endsWith('/sync')) data = { tenant_id: '2', user_id: '20', device_id: body!.device_id, synced_at: Math.floor(Date.now() / 1000),
-      policies: revoked ? [] : [{ plugin_id: pluginId, name: 'company-demo', disabled, revision, current_version_id: disabled ? null : currentId, versions: [...approved].map(([id, digest]) => ({ id, digest })) }] }
-    else data = { total: disabled || revoked ? 0 : 1, data: disabled || revoked ? [] : [{ id: pluginId, name: 'company-demo', display_name: 'Company Demo', current_version_id: currentId, revision,
+      policies: [{ plugin_id: pluginId, name: 'company-demo', disabled, revision, current_version_id: disabled ? null : currentId, versions: [...approved].map(([id, digest]) => ({ id, digest })) }] }
+    else data = { total: disabled ? 0 : 1, data: disabled ? [] : [{ id: pluginId, name: 'company-demo', display_name: 'Company Demo', current_version_id: currentId, revision,
       versions: [{ id: currentId, version: current.expected.version, digest: current.expected.digest, manifest: current.manifest }] }] }
     return { status_code: 200, data }
   })
   const active = new Set<string>()
-  const market = createMarketController(ctx, { state: () => ({ ...identity, connected }), marketRequest: request }, { home: root, target,
+  const market = createMarketController(ctx, { state: () => ({ ...identity, connected }), marketRequest: request }, { home: root, target, ...options,
     load: async (record: { directory: string; version: string; config?: Record<string, unknown> }) => {
       const module = await import(pathToFileURL(join(record.directory, 'node_modules/company-demo/index.js')).href)
       const fiber = ctx.plugin(module, record.config)
@@ -219,12 +226,32 @@ async function fixture() {
       return { dispose: async () => { active.delete(record.version); await fiber.dispose() } }
     } })
   controllers.push(market)
-  return { root, market, request, active, revoke: () => { revoked = true }, restore: () => { revoked = false }, setDesktopVersion: (value: string) => { identity = { ...identity, desktopVersion: value } }, swap: () => { identity = { ...account, user: { id: '21' } } }, disconnect: () => { connected = false }, offline: () => { online = false }, reconnect: () => { online = true }, disable: () => { disabled = true; revision++ }, update: (source?: string) => {
+  return { root, market, request, active, setDesktopVersion: (value: string) => { identity = { ...identity, desktopVersion: value } }, swap: () => { identity = { ...account, user: { id: '21' } } }, disconnect: () => { connected = false }, offline: () => { online = false }, reconnect: () => { online = true }, disable: () => { disabled = true; revision++ }, update: (source?: string) => {
     current = bundle('1.1.0', source); currentId = 'c'.repeat(32); approved.set(currentId, current.expected.digest); revision++
   } }
 }
 
 describe('account-bound lifecycle', () => {
+  it('installs and re-enables a community generation through the enterprise controller', async () => {
+    const { market, active } = await fixture({ community: true })
+    const state = await market.act({ action: 'install', plugin_id: pluginId })
+    expect(state.installed[0]?.status).toBe('enabled')
+    expect(active.has('1.0.0')).toBe(true)
+    await market.act({ action: 'disable', plugin_id: pluginId })
+    expect(active.size).toBe(0)
+    await market.act({ action: 'enable', plugin_id: pluginId })
+    expect(active.has('1.0.0')).toBe(true)
+  })
+
+  it('fails closed before catalog or activation without the desktop authorization service', async () => {
+    const { market, request, active } = await fixture({ authorizationAvailable: false })
+    await market.synchronize()
+    expect(market.state()).toMatchObject({ connected: true, online: true })
+    expect(await market.catalog()).toMatchObject({ total: 1, installReady: false, failureCode: 'authorization_unavailable', error: expect.stringContaining('desktop authorization service') })
+    await expect(market.act({ action: 'install', plugin_id: pluginId })).rejects.toMatchObject({ code: 'authorization_unavailable' })
+    expect(request.mock.calls.some(([path]) => path.endsWith('/artifact'))).toBe(false)
+    expect(active.size).toBe(0)
+  })
   it('installs from an unsigned enterprise market without a deployment signing key', async () => {
     const { market, active } = await fixture()
     expect(await market.catalog()).toMatchObject({ connected: true, installReady: true, total: 1, user: { id: '20' } })
@@ -317,40 +344,6 @@ describe('account-bound lifecycle', () => {
   })
 })
 
-describe('revoked access (F022)', () => {
-  it('stops and disables a plugin whose access was revoked, and re-enables it only after access returns', async () => {
-    const { market, active, revoke, restore } = await fixture()
-    await market.act({ action: 'install', plugin_id: pluginId })
-    revoke(); await market.synchronize()
-    expect(active.size).toBe(0)
-    expect(market.state().installed[0]).toMatchObject({ status: 'disabled', enabled: false, reason: 'revoked' })
-    await expect(market.act({ action: 'enable', plugin_id: pluginId })).rejects.toThrow(/authorization/)
-    expect(market.state().installed[0]).toMatchObject({ enabled: false, reason: 'revoked' })
-
-    restore(); await market.synchronize()
-    // Access is back, but the installation stays off until the employee turns it on again.
-    expect(active.size).toBe(0)
-    expect(market.state().installed[0]).toMatchObject({ status: 'disabled', enabled: false })
-    expect(market.state().installed[0]).not.toHaveProperty('reason')
-    await market.act({ action: 'enable', plugin_id: pluginId })
-    expect(active.has('1.0.0')).toBe(true)
-    expect(market.state().installed[0]).toMatchObject({ status: 'enabled', enabled: true })
-  })
-  it('tells an administrator-disabled plugin apart from a revoked one', async () => {
-    const { market, disable } = await fixture()
-    await market.act({ action: 'install', plugin_id: pluginId })
-    disable(); await market.synchronize()
-    expect(market.state().installed[0]).toMatchObject({ enabled: false, reason: 'disabled' })
-  })
-  it('never reports a revocation while the enterprise market is unreachable', async () => {
-    const { market, offline, revoke } = await fixture()
-    await market.act({ action: 'install', plugin_id: pluginId })
-    revoke(); offline(); await market.synchronize()
-    expect(market.state().installed[0]).toMatchObject({ enabled: true, status: 'failed' })
-    expect(market.state().installed[0]).not.toHaveProperty('reason')
-  })
-})
-
 describe('review regressions', () => {
   it('uses actual release and prerelease versions, and rejects missing version metadata', () => {
     expect(isMarketVersionCompatible('0.9.2', '0.9.2')).toBe(true)
@@ -360,6 +353,24 @@ describe('review regressions', () => {
     expect(isMarketVersionCompatible('0.9.2', '0.9.2-beta.1')).toBe(true)
     expect(isMarketVersionCompatible('', '0.9.2')).toBe(false)
     expect(isMarketVersionCompatible('0.9.2', 'invalid')).toBe(false)
+  })
+
+  it('keeps catalog browsing available but disables installation on an unpatched Manager', async () => {
+    const { root, request } = await fixture()
+    const ctx = new Context()
+    const registrations = new Map<string, (request: { url: string }) => Promise<Response>>()
+    ctx.provide('connection', { fetch: { register(config: { path: string; fetch: (request: { url: string }) => Promise<Response> }) { registrations.set(config.path, config.fetch); return () => undefined } } })
+    const manager = { managedBundleSourceContract: 0 }
+    ctx.provide('pluginManager', manager)
+    try {
+      applyEnterpriseMarket(ctx, { state: () => account, marketRequest: request }, { home: root, target })
+      const fetchCatalog = registrations.get('/api/enterprise.market.catalog')
+      if (!fetchCatalog) throw new Error('Catalog route was not registered.')
+      const browse = async () => (await fetchCatalog({ url: 'http://localhost/api/enterprise.market.catalog' })).json()
+      expect(await browse()).toMatchObject({ connected: true, total: 1, installReady: false })
+      manager.managedBundleSourceContract = 1
+      expect(await browse()).toMatchObject({ connected: true, total: 1, installReady: true })
+    } finally { await ctx.fiber.dispose() }
   })
 
   it('returns a market failure code to the settings page', async () => {
@@ -455,7 +466,7 @@ describe('review regressions', () => {
    const fixtureFile = join(root, 'fixtures.json')
    const shape = (value: ReturnType<typeof bundle>, id: string) => ({ ...value.expected, id, bytes: value.bytes.toString('base64'), manifest: value.manifest })
    await writeFile(fixtureFile, JSON.stringify({ pluginId, good: shape(good, versionId), bad: shape(bad, 'c'.repeat(32)) }))
-   const { stdout } = await promisify(execFile)(process.execPath, ['--expose-internals', join(process.cwd(), 'test/helpers/enterprise-profile-smoke.mjs'), isolated.entry, root, fixtureFile], {
+   const { stdout } = await promisify(execFile)(process.execPath, ['--expose-internals', join(process.cwd(), 'test/enterprise-profile-smoke.mjs'), isolated.entry, root, fixtureFile], {
      cwd: root, env: { ...process.env, NODE_PATH: '', NODE_OPTIONS: '' }, timeout: 90000
    })
    expect(JSON.parse(stdout)).toMatchObject({ isolatedImport: 'PASS', managerLifecycle: 'PASS', install: 'PASS', disableEnable: 'PASS', failedUpdateRollback: 'PASS', stop: 'PASS' })

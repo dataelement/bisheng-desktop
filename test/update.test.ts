@@ -56,7 +56,7 @@ describe('macOS update metadata', () => {
       writeFile(x64Path, stringify(metadata('x64', '2026-08-14T02:00:00.000Z')), 'utf8')
     ])
     await execFile(process.execPath, [
-      path.join(projectRoot, 'scripts', 'merge-mac-update-metadata.mjs'),
+      path.join(projectRoot, 'scripts', 'release', 'merge-mac-update-metadata.mjs'),
       armPath,
       x64Path,
       outputPath
@@ -70,10 +70,10 @@ describe('macOS update metadata', () => {
     }
     expect(merged.version).toBe('0.2.0')
     expect(merged.files.map((file) => file.url)).toEqual([
-      'bisheng-mac-arm64.zip',
-      'bisheng-mac-x64.zip'
+      'dsh-desktop-mac-arm64.zip',
+      'dsh-desktop-mac-x64.zip'
     ])
-    expect(merged.path).toBe('bisheng-mac-arm64.zip')
+    expect(merged.path).toBe('dsh-desktop-mac-arm64.zip')
     expect(merged.releaseDate).toBe('2026-08-14T02:00:00.000Z')
   })
 })
@@ -83,12 +83,12 @@ function metadata(architecture: 'arm64' | 'x64', releaseDate: string) {
     version: '0.2.0',
     files: [
       {
-        url: `bisheng-mac-${architecture}.zip`,
+        url: `dsh-desktop-mac-${architecture}.zip`,
         sha512: `zip-${architecture}`,
         size: 100
       },
       {
-        url: `bisheng-mac-${architecture}.dmg`,
+        url: `dsh-desktop-mac-${architecture}.dmg`,
         sha512: `dmg-${architecture}`,
         size: 200
       }

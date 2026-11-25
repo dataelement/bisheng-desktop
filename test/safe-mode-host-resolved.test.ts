@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import { Context } from '@deepseek-ai/cordis'
 import { mountRootInclude } from '@deepseek-ai/dsh-app-boot'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -19,15 +20,16 @@ describe('Safe Mode resolves plugins from the installation', () => {
       create: vi.fn(async () => 'include'),
       resolve: vi.fn(() => ({}))
     }
-    const ctx = { loader, provide: vi.fn(), get: (name: string) => name === 'loader' ? loader : undefined }
+    // A real Context supplies root ownership and effect lifetime; only the loader
+    // importer is isolated here so the original resolution assertions stay exact.
+    const ctx = new Context()
+    ctx.provide('loader', loader as never)
     return { ctx, loader, internalImport, configImport }
   }
 
   it('routes runtime-created entries to the host base, not the profile directory', async () => {
     const { ctx, loader, internalImport, configImport } = fakeContext()
     await mountRootInclude(ctx as never, '/home/profiles/desktop-safe-mode/cordis.yml', [], 'file:///app/dsh/package.json')
-
-    expect(ctx.provide).not.toHaveBeenCalled()
 
     // Runtime children inherit the host-resolved root Include's import policy.
     const HostResolvedRootInclude = loader.builtins.include as { prototype: { import(name: string, stack: () => string): Promise<unknown> } }

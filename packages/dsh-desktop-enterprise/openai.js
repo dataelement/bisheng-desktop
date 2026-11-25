@@ -288,7 +288,7 @@ function isChineseLocale(language) {
 }
 
 function readUiLanguage() {
-  return typeof navigator === 'object' && navigator && typeof navigator.language === 'string'
+  return typeof window === 'object' && typeof navigator === 'object' && typeof navigator.language === 'string'
     ? navigator.language
     : 'en'
 }
@@ -300,7 +300,6 @@ const CHAT_PLATFORM_CODES = new Set([
   'quota_unavailable',
   'usage_unavailable',
   'model_not_allowed',
-  // F016 (BiSheng 26176): the model has no price yet; older servers never send it.
   'model_pricing_missing',
   'invalid_request',
   'unsupported_parameter',
@@ -579,21 +578,40 @@ export class EnterpriseLlmAdapter extends LlmAdapter {
       provider,
       id: model.id,
       name: model.display_name,
+      ...(model.description ? { description: model.description } : {}),
       ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
-      inputModalities: model.input_modalities ?? (model.capabilities.vision ? ['text', 'image'] : ['text'])
+      inputModalities: model.input_modalities ?? (model.capabilities?.vision ? ['text', 'image'] : ['text'])
     })))
   }
 
   resolveModel(provider, id) {
     const model = this.options.models().find((candidate) => candidate.id === id)
     if (!model) throw new LlmError(`BiSheng provider has no authorized model "${id}".`, 'UNKNOWN_MODEL')
+    // Harness 0.2.2 compaction requires positive capacity. Keep unified's runtime
+    // fallback for older servers; the catalog itself never invents metadata.
+    const contextWindow = (
+      (typeof model.context_window === 'number' && model.context_window > 0)
+        ? model.context_window
+        : (typeof model.capabilities?.context_window === 'number' && model.capabilities.context_window > 0)
+          ? model.capabilities.context_window
+          : 128_000
+    )
+    const defaultMaxTokens = (
+      (typeof model.max_tokens === 'number' && model.max_tokens > 0)
+        ? model.max_tokens
+        : (typeof model.capabilities?.max_tokens === 'number' && model.capabilities.max_tokens > 0)
+          ? model.capabilities.max_tokens
+          : undefined
+    )
     return Promise.resolve({
       provider,
       id,
       name: model.display_name,
-      ...(model.context_window === undefined ? {} : { context: { contextWindow: model.context_window } }),
+      ...(model.description ? { description: model.description } : {}),
       ...(model.reasoning === undefined ? {} : { reasoning: model.reasoning }),
-      inputModalities: model.input_modalities ?? (model.capabilities.vision ? ['text', 'image'] : ['text'])
+      inputModalities: model.input_modalities ?? (model.capabilities?.vision ? ['text', 'image'] : ['text']),
+      ...(contextWindow === undefined ? {} : { context: { contextWindow } }),
+      ...(defaultMaxTokens !== undefined ? { defaultMaxTokens } : {})
     })
   }
 

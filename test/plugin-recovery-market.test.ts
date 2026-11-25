@@ -1,45 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { checkBlockingPluginUpdates, communityUpgradeBlocked, enterpriseRecoveryChecks, selectPluginRecoveryTarget, PluginRecoveryEvidence, runPluginRecoveryUpgrades, planPluginRecovery, runPluginRecoveryPlan } from '../src/main/plugin-recovery-market'
-import type { ProfileCompatibilityIssue } from '../src/main/state/profile-compatibility'
-import type { PluginHealthReport } from '../src/main/state/plugin-market-check'
+import { checkBlockingPluginUpdates, selectPluginRecoveryTarget, PluginRecoveryEvidence, runPluginRecoveryUpgrades, planPluginRecovery, runPluginRecoveryPlan } from '../src/main/plugin-recovery-market'
+import type { ProfileCompatibilityIssue } from '../src/main/profile/profile-compatibility'
+import type { PluginHealthReport } from '../src/main/recovery/plugin-market-check'
 
 describe('per-plugin recovery checks', () => {
-  it('turns community upgrade candidates into removals without calling the upgrade handler', async () => {
-    const raw = [
-      { packageName: 'a', hint: 'intermediate', upgradeCandidate: { packageName: 'a', targetVersion: '1.5.0' } },
-      { packageName: 'b', hint: 'latest', upgradeCandidate: { packageName: 'b', targetVersion: '2.0.0' } },
-      { packageName: 'c', hint: 'remove', removalRecommended: true }
-    ]
-    expect(planPluginRecovery(raw).upgrades.map((candidate) => candidate.packageName)).toEqual(['a', 'b'])
-    const effective = enterpriseRecoveryChecks(raw)
-    expect(enterpriseRecoveryChecks(effective)).toEqual(effective)
-    const plan = planPluginRecovery(effective)
-    expect(plan.upgrades).toEqual([])
-    expect(plan.removals).toEqual(['a', 'b', 'c'])
-    expect(plan.skipped).toEqual([])
-    const calls: string[] = []
-    await runPluginRecoveryPlan(plan, {
-      upgrade: async () => {
-        calls.push('upgrade')
-        return { ok: true }
-      },
-      remove: async (plugin) => {
-        calls.push(`remove:${plugin}`)
-        return { removed: true }
-      }
-    })
-    expect(calls).toEqual(['remove:a', 'remove:b', 'remove:c'])
-  })
-
-  it('refuses an explicit community upgrade instead of turning it into removal', () => {
-    expect(communityUpgradeBlocked('upgrade')).toBe(true)
-    expect(communityUpgradeBlocked('upgrade:a', 'upgrade')).toBe(true)
-    expect(communityUpgradeBlocked('market-upgrade')).toBe(true)
-    expect(communityUpgradeBlocked('uninstall', 'uninstall')).toBe(false)
-    expect(communityUpgradeBlocked('auto-process')).toBe(false)
-    expect(communityUpgradeBlocked('market-remove')).toBe(false)
-  })
-
   it('plans upgrades and removals together while leaving unknown checks untouched', async () => {
     const checks = await checkBlockingPluginUpdates({
       plugins: ['update', 'latest', 'unknown'], attemptedUpgrades: new Map(), locale: 'zh',

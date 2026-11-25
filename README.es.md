@@ -1,61 +1,97 @@
 <h1 align="center">
-  <img src="docs/images/readme-logo-black-v020.png" width="274" alt="BISHENG" valign="middle" />
+  <img src="docs/images/readme-logo-black-rounded.svg" width="64" alt="Logotipo de DSH Desktop" valign="middle" />
+  DSH Desktop
 </h1>
 
 <p align="center">
-  <strong>BISHENG Desktop es un Agent de escritorio que conecta el trabajo local con la IA empresarial.</strong><br />
-  Los empleados acceden con su cuenta empresarial a los modelos, bases de conocimiento, herramientas y habilidades autorizados. Chat ofrece consultas y tareas de varios pasos en la nube, mientras Work procesa materiales locales en directorios autorizados. La empresa administra recursos, permisos, créditos y uso de forma centralizada.<br />
-  <a href="https://dshdesktop.com/zh/enterprise/">Descargar BISHENG Desktop</a> · <a href="https://github.com/dataelement/bisheng">Repositorio del servidor BISHENG</a>
+  <strong>DSH Desktop by Dataelem</strong> es una aplicación Agent de escritorio desarrollada por el equipo de Dataelem sobre el framework DeepSeek Harness, disponible en ediciones de código abierto y <a href="https://www.dshdesktop.com/es/enterprise/">empresarial</a>.<br />
+  Sitio web oficial：<a href="https://www.dshdesktop.com/">www.dshdesktop.com</a>
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> · <a href="README.zh.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ru.md">Русский</a> · <a href="README.es.md">Español</a> · <a href="README.pt.md">Português</a>
+  <a href="README.md">简体中文</a> · <a href="README.en.md">English</a> · <a href="README.ja.md">日本語</a> · <a href="README.ru.md">Русский</a> · <a href="README.es.md">Español</a> · <a href="README.pt.md">Português</a>
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-171513.svg" /></a>
+  <a href="LICENSE"><img alt="Licencia: MIT" src="https://img.shields.io/badge/License-MIT-171513.svg" /></a>
   <img alt="macOS" src="https://img.shields.io/badge/macOS-Apple%20Silicon%20%7C%20Intel-171513.svg" />
   <img alt="Windows" src="https://img.shields.io/badge/Windows-x64-171513.svg" />
 </p>
 
-## Qué puede hacer BISHENG Desktop
+![DSH Desktop con Preset portátiles, proveedores de modelos, control desde el teléfono y generación de PPTX editables](docs/images/dsh-desktop-hero-v021.png)
 
-- **Chat: delega tareas en la nube empresarial.** Haz preguntas sobre tus materiales o usa el modo de tareas para ejecutar procesos de varios pasos, invocar habilidades y generar archivos, consultando el progreso y los resultados.
-- **Work: trabaja de forma continua con materiales locales.** Selecciona un directorio autorizado para organizar materiales, analizar datos y generar archivos editables de Word, Excel y PPT. Sigue modificándolos según tus indicaciones y guarda los resultados en el directorio permitido.
-- **Recursos empresariales según los permisos.** Usa tu cuenta empresarial para acceder a modelos, espacios de conocimiento, herramientas API/MCP y habilidades autorizados, y abre aplicaciones, asistentes y flujos de trabajo publicados en el centro de aplicaciones.
-- **Administración empresarial centralizada.** Los administradores configuran recursos y permisos, distribuyen plugins y espacios de trabajo especializados, y gestionan créditos mensuales y uso de las llamadas. Las llamadas a modelos empresariales de Chat y Work comparten el registro de créditos del usuario actual.
-- **Colaboración entre web y escritorio.** Cuando la misma cuenta empresarial abre la misma tarea del servidor en Chat web y de escritorio, puede consultar los eventos y el estado de finalización sincronizados. Las tareas locales de Work y sus resultados se gestionan en registros independientes.
+Basado en DeepSeek Harness, con mejoras en la integración de modelos, plantillas de Word / Excel / PPT, recuperación de inicio y aplicaciones Workbench.
 
-![Interfaces web, de escritorio y móvil de BISHENG](docs/images/bisheng-platform-overview.png)
+## Descarga
 
-> La aplicación móvil estará disponible próximamente; sus funciones y calendario dependen de la documentación de cada versión. Las capacidades de integración empresarial, los requisitos de despliegue y el alcance de las ediciones de código abierto y empresarial también dependen de dicha documentación.
+Descarga DSH Desktop desde el [sitio web oficial](https://www.dshdesktop.com/es/).
 
-## Plataforma BISHENG y proyectos relacionados
+DSH Desktop busca actualizaciones automáticamente. Las nuevas versiones se distribuyen primero a un grupo limitado de usuarios para probarlas y, una vez confirmada su estabilidad, se ofrecen a todos los usuarios.
 
-**BISHENG es una plataforma Agent empresarial integral y de código abierto**, centrada en la productividad de oficina y la adopción de IA empresarial. Proporciona al cliente modelos, conocimiento, herramientas, habilidades, aplicaciones y administración centralizada.
+## Comunidad
 
-- [Plataforma empresarial BISHENG](https://github.com/dataelement/bisheng): despliega servicios de IA empresarial y administra los recursos, permisos y uso de la organización de forma centralizada.
-- [DSH Desktop](https://github.com/dataelement/dsh-desktop): una base de Agent de escritorio de código abierto sobre DeepSeek Harness. BISHENG Desktop se apoya en ella para conectar servicios de IA empresarial.
+<p align="center">
+  Escanea el siguiente código QR con WeChat para unirte al grupo de DSH Desktop.<br />
+  <img src="docs/images/wechat-group-20260815.png" width="220" alt="Código QR del grupo de DSH Desktop en WeChat" /><br />
+  También puedes unirte a la <a href="https://discord.gg/7Xgf3qe3Qp">comunidad de DSH Desktop en Discord</a>.
+</p>
 
-## Descarga e instalación
+## Qué añade DSH Desktop
 
-Obtén el instalador en el [sitio de BISHENG Desktop](https://dshdesktop.com/zh/enterprise/) y úsalo con la plataforma BISHENG desplegada en tu empresa. Inicia sesión con tu cuenta empresarial para usar los recursos configurados y autorizados por el administrador.
+DeepSeek Harness proporciona el Agent Runtime, la Web UI y la conexión básica con modelos. DSH Desktop amplía estas bases con:
 
-Para usar la versión personal de forma independiente, visita el [sitio de DSH Desktop](https://dshdesktop.com/zh/).
+- **Integración de modelos**: configuración inicial mejorada, búsqueda de modelos, configuración de entrada de imágenes y razonamiento, y compatibilidad con modelos externos.
+- **Plantillas de Office**: edición de plantillas nativas de Word, libros de ejemplo de Excel y plantillas PPT editables, junto con habilidades de negocio para crear DOCX, XLSX y PPTX; Python y dependencias de Office incluidos.
+- **Recuperación de fallos**: diagnósticos de inicio e interfaz, recuperación guiada, Modo seguro y acceso a un Agent de reparación, priorizando la conservación de sesiones y ajustes.
+- **Workbench**: explorar, instalar desde el mercado o importar localmente y abrir aplicaciones que reutilizan las conversaciones de Harness.
+- **Preset portátiles**: importar y exportar [paquetes `.dshpreset`](docs/preset-packages.md), con comprobación de conflictos y advertencias de confianza.
+- **Acceso desde el teléfono**: vinculación por QR y continuación de sesiones por LAN o un túnel público opcional.
+- **Experiencia nativa**: gestión del inicio y cierre de Harness, selector de carpetas del sistema, menús y ventanas nativos, conservación de datos y búsqueda automática de actualizaciones.
 
-## Archivos de oficina y funciones de escritorio
+## Suite Office
 
-- **Entrega de archivos de oficina**: selecciona una plantilla en el modo PPT integrado, describe el contenido y genera un PPTX editable. El entorno de escritorio incluye Python y bibliotecas de Office para generar y comprobar DOCX, PPTX y XLSX. Consulta las plantillas y validaciones en la [guía de PPT](packages/ppt-runtime/README.md).
-- **Espacios locales y configuración**: administra los espacios de trabajo con el selector de directorios del sistema. Los Profile, plugins, sesiones y ajustes de modelos se guardan fuera del directorio de instalación y se conservan al actualizar. Para importar y exportar configuraciones, consulta el [formato de paquetes Preset](docs/preset-packages.md).
-- **Actualizaciones y recuperación**: las actualizaciones en línea aún no están habilitadas en las instalaciones actuales. Descarga un instalador nuevo en el [sitio oficial](https://dshdesktop.com/zh/enterprise/); la disponibilidad de las actualizaciones en línea depende de la documentación de la versión. Si falla un plugin, elige «Reiniciar en modo seguro…» en el menú `Harness` para desactivar temporalmente los plugins de terceros sin perder los datos del Profile normal. Los diagnósticos se escriben en `harness.log`. Consulta la [recuperación de plugins](docs/architecture.md#profiles-and-plugin-recovery) y las [actualizaciones](docs/architecture.md#updates).
+Elige un modo Word, Excel o PPT, una plantilla y los materiales para que el Agent cree archivos editables.
 
-## Conexión del teléfono y límites de los datos
+- **Word**: conserva el diseño y los estilos de plantillas nativas para avisos, actas e informes, con salida DOCX.
+- **Excel**: organiza datos, análisis y gráficos a partir de libros de ejemplo, con salida XLSX.
+- **PPT**: **16 plantillas integradas y 192 diseños**, salida PPTX editable e importación de plantillas personales. Las vistas previas integradas están en inglés; las presentaciones admiten inglés y chino. El idioma de la vista previa no determina el resultado.
 
-El entorno de escritorio mantiene el emparejamiento del teléfono mediante QR: elige «Conectar teléfono…» en el menú `Harness` y escanea el código por WiFi. Un túnel de Internet también requiere la contraseña mostrada en el ordenador. De forma predeterminada caduca a los 5 minutos; solo se crea una contraseña duradera con consentimiento explícito. Al desconectar desde el escritorio, la sesión del teléfono deja de ser válida. Si la conexión falla, usa «¿No se abre el enlace QR? Probar otra ruta».
+Python y las dependencias de Office vienen incluidos, sin instalar otro entorno de ejecución. Las instrucciones del modo de plantillas PPT solo se aplican cuando está activado en la sesión actual.
 
-Este emparejamiento por navegador es independiente de la próxima aplicación móvil. Harness se ejecuta en un puerto loopback local aleatorio; el teléfono accede mediante un Bridge de emparejamiento independiente. Esto no sincroniza automáticamente las tareas de Work local y de la nube empresarial. Consulta los [límites del acceso móvil](docs/architecture.md#mobile-access-boundary).
+## Workbench
 
-El Renderer no tiene permisos de Node.js y utiliza Context Isolation y Sandbox. Las páginas externas se abren en el navegador del sistema. Los Profile y las sesiones se almacenan en el directorio de datos de aplicación del usuario. Consulta la [seguridad de ventanas e IPC](docs/architecture.md#window-and-ipc-security).
+Workbench combina interfaces específicas de negocio con conversaciones del Agent para ofrecer algo más que un chat.
+
+Explora, marca como favoritas e instala aplicaciones del mercado, o importa un Workbench desarrollado localmente. Utiliza su interfaz junto con las conversaciones asociadas del Agent; después de instalar o actualizar, reinicia cuando se indique. Quitar un Workbench conserva las sesiones y los archivos del proyecto.
+
+## Acceso desde el teléfono
+
+Elige **Connect Phone…** en el menú `Harness` y escanea el QR. Por Wi-Fi la conexión es inmediata; por internet también debes introducir la contraseña de 6 dígitos del ordenador. Por defecto caduca en 5 minutos; solo se guarda una contraseña duradera si lo autorizas en la ventana de conexión.
+
+Puedes usar la LAN o un túnel público temporal. Si Cloudflare no está disponible se usa Pinggy; el servicio gratuito de Pinggy caduca tras unos 60 minutos.
+
+Si Cloudflare no se inicia, la aplicación intenta usar Pinggy. Si aparece el enlace de Cloudflare pero el teléfono no puede abrirlo, selecciona **Can’t open? Try another link** para cambiar a Pinggy.
+
+## Modo seguro y recuperación
+
+Si un plugin de terceros impide el inicio o la visualización, DSH Desktop relaciona la evidencia del Runtime y del frontend con los plugins instalados y abre una recuperación guiada.
+
+Elige **Restart as Safe Mode…** en el menú `Harness` para bloquear temporalmente plugins externos y conservar el Agent, las sesiones, los modelos y los espacios de trabajo. Desactiva el plugin problemático en la pantalla de gestión y reinicia normalmente para comprobar la recuperación. Desactivarlo no elimina el plugin ni los datos y puedes volver a activarlo después.
+
+La pantalla de recuperación busca actualizaciones compatibles de los plugins y permite instalarlas cuando están disponibles. El Modo seguro también permite actualizar varios plugins a la vez. Para pedir ayuda, pasa el cursor sobre **WeChat group** para mostrar el código QR, o haz clic en **Discord** para abrir la comunidad.
+
+Si no puedes abrir la interfaz normal, inicia la aplicación con `--safe-mode`. En macOS:
+
+```sh
+open -a "DSH Desktop" --args --safe-mode
+```
+
+## Datos locales y seguridad
+
+- Las sesiones y los ajustes se guardan localmente en los datos de usuario y se conservan al actualizar la aplicación.
+- El navegador lateral integrado está aislado de los privilegios de la aplicación; los enlaces externos habituales se abren en el navegador del sistema.
+- Vincula el teléfono escaneando el código; por internet también se requiere la contraseña mostrada en el ordenador.
+- Los archivos y comandos del Agent están sujetos a controles de permisos. Aprueba las acciones sensibles con cuidado e instala solo plugins de confianza.
 
 ## Plataformas compatibles
 
@@ -63,49 +99,33 @@ El Renderer no tiene permisos de Node.js y utiliza Context Isolation y Sandbox. 
 | --- | --- | --- |
 | macOS Apple Silicon | DMG/ZIP firmados y notarizados | Compatible |
 | macOS Intel | DMG/ZIP firmados y notarizados | Compatible |
-| Windows x64 | Instalador NSIS con firma de código | Compatible |
+| Windows x64 | Instalador NSIS firmado | Compatible |
 | Windows ARM64 | — | No compatible actualmente |
 | Linux | — | No compatible actualmente |
 
-Harness incluye dependencias nativas de cada plataforma, por lo que los instaladores oficiales se compilan en el sistema operativo y la arquitectura correspondientes.
+Harness incluye dependencias nativas, por lo que cada artefacto se compila en el sistema operativo y la arquitectura correspondientes.
 
 ## Desarrollo y arquitectura
 
-Las contribuciones son bienvenidas. La documentación técnica se organiza en:
-
-- [Guía de desarrollo](docs/development.md) — entorno local, validación, mantenimiento de parches y empaquetado nativo
-- [Arquitectura de ejecución](docs/architecture.md) — arranque, persistencia, seguridad, recuperación, teléfono y actualizaciones
-- [Guía de publicación](docs/release-runbook.md) — firma y control de versiones oficiales
+- [Guía de desarrollo](docs/development.md) — configuración, validación, mantenimiento de parches y empaquetado nativo
+- [Arquitectura](docs/architecture.md) — Runtime, datos, seguridad, recuperación, teléfono y actualizaciones
+- [Guía de publicación](docs/release-runbook.md) — firma y controles de publicación
 - [Formato de paquetes Preset](docs/preset-packages.md) — contrato de Agent Preset portátil
 
-Antes de enviar cambios, ejecuta `npm test`, `npm run typecheck` y `npm run build`, y prueba los flujos afectados de la aplicación. No incluyas claves API reales en incidencias, registros, capturas o datos de prueba.
+Antes de enviar cambios, ejecuta `npm test`, `npm run typecheck` y `npm run build`, y prueba en la aplicación real el flujo afectado. Nunca incluyas claves API reales en Issue, registros, capturas o datos de prueba.
 
-## Comunidad
+## Proyectos amigos
 
-Para hablar sobre la base de escritorio compartida, únete a la [comunidad DSH Desktop en Discord](https://discord.gg/7Xgf3qe3Qp) o escanea el QR del grupo de WeChat.
-
-<img src="docs/images/wechat-group-20260815.png" width="220" alt="Código QR del grupo de WeChat de la comunidad DSH Desktop" />
+[dsh-market](https://github.com/dsh-market/dsh-market) es el mercado comunitario de plugins para DeepSeek Harness. Desde Harness puedes buscar y previsualizar plugins, instalar o actualizar paquetes, activarlos o desactivarlos y cambiar temas.
 
 ## Licencia
 
-DSH Desktop es de código abierto bajo la [MIT License](LICENSE).
+DSH Desktop se publica bajo la [licencia MIT](LICENSE).
 
-DeepSeek Harness y sus dependencias siguen sujetos a sus respectivas licencias y normas de marcas del proyecto original. DSH Desktop es una aplicación de escritorio comunitaria independiente.
+DeepSeek Harness y sus dependencias siguen sujetos a sus licencias y políticas de marcas correspondientes. DSH Desktop es una aplicación de escritorio comunitaria independiente.
 
-## Empresas que usan BISHENG
+## Conoce la edición empresarial
 
-BISHENG presta servicio a empresas líderes de diversos sectores. Estos son algunos de nuestros clientes.
+La edición empresarial combina el cliente de escritorio BISHENG con el servidor de la plataforma empresarial BISHENG. El cliente, basado en DSH Desktop, permite trabajar con archivos locales y modelos, conocimiento, herramientas y habilidades autorizados mediante una cuenta empresarial. El servidor configura recursos y permisos de forma centralizada y gestiona créditos y uso. Tanto el cliente como el servidor BISHENG de la edición empresarial son de código abierto; su código fuente está disponible en los repositorios siguientes.
 
-![Administración Meteorológica de China, HSBC, Bosch, Watsons, China Mobile y COFCO](docs/images/bisheng-customer-logos-row-1.png)
-
-![Shougang Group, China Baowu, CICC, SINOSURE, PetroChina y ICBC](docs/images/bisheng-customer-logos-row-2.png)
-
-![Bank of Chongqing, PowerChina, Huatai Securities, Huaxia Bank, Liaoning Financial Holdings y China Minsheng Bank](docs/images/bisheng-customer-logos-row-3.png)
-
-![Longhua Capital, JSTI, China CITIC Bank, AVIVA-COFCO, BAIC Group y China Bond Rating](docs/images/bisheng-customer-logos-row-4.png)
-
-## Consultas empresariales
-
-Contacta con nosotros para conocer el despliegue empresarial de BISHENG, la integración del cliente de escritorio, demostraciones del producto o colaboraciones comerciales.
-
-[Contactar con el equipo BISHENG mediante el formulario de Feishu](https://dataelem.feishu.cn/share/base/form/shrcnVow7GQwwKYEBCD41Bu5qoh)
+[Código de la plataforma de gestión empresarial](https://github.com/dataelement/bisheng) · [Repositorio del cliente empresarial](https://github.com/dataelement/bisheng-desktop) · [Acerca de la edición empresarial](https://www.dshdesktop.com/es/enterprise/)

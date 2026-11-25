@@ -12,18 +12,15 @@ import { unzipSync, zipSync, strFromU8, strToU8 } from 'fflate';
 import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools';
 
 let apply, packageRoot, MAX_PERSONAL_TEMPLATE_HTTP_BODY_BYTES, PERSONAL_TEMPLATE_CONVERSION_VERSION, PERSONAL_TEMPLATE_PREVIEW_VERSION;
-// Native Office cases can convert, save, and reopen several real pages.
-// Match the existing multi-page conversion budget for these integration cases.
-const NATIVE_TEMPLATE_TIMEOUT_MS = 120000;
+// Each scenario can import, render and export through several native processes.
+const NATIVE_TEMPLATE_TEST_TIMEOUT_MS = 120_000;
 const cleanups = [];
-// Copy and load the shipped package before starting native conversion cases.
-// Its 21 MB fixture needs more than the default hook budget under CI contention.
 beforeAll(async () => {
   packageRoot = await mkdtemp(path.resolve('node_modules/.ppt-personal-'));
   await cp(path.resolve('.build/ppt-runtime/packages/dsh-ppt'), packageRoot, { recursive: true });
   ({ apply } = await import(pathToFileURL(path.join(packageRoot, 'lib/index.js'))));
   ({ MAX_PERSONAL_TEMPLATE_HTTP_BODY_BYTES, PERSONAL_TEMPLATE_CONVERSION_VERSION, PERSONAL_TEMPLATE_PREVIEW_VERSION } = await import(pathToFileURL(path.join(packageRoot, 'lib/personal-templates.js'))));
-}, 30000);
+});
 afterAll(async () => { if (packageRoot) await rm(packageRoot, { recursive: true, force: true }); });
 afterEach(async () => { for (const root of cleanups.splice(0)) await rm(root, { recursive: true, force: true }); });
 
@@ -168,7 +165,7 @@ describe('personal PPT templates in the shipped runtime', () => {
     expect((await f.request('template/import-progress',{requestId,after:3})).pages.map(item=>item.page)).toEqual([4]);
     await expect(f.request('template/import-progress',{requestId,after:-1})).rejects.toThrow();
     await f.request('template/cancel',{draftId:draft.draftId});
-  }, NATIVE_TEMPLATE_TIMEOUT_MS);
+  },120000);
 
   it('reads full-size saved previews through the authenticated host and validates page bounds', async () => {
     const f = await fixture();
@@ -194,7 +191,7 @@ describe('personal PPT templates in the shipped runtime', () => {
     const saved = await f.httpRequest('template/save', { draftId: message.result.value.data.draftId, name: 'HTTP template' }, { channel: '/kimi-ppt' });
     expect(saved.status).toBe(200);
     expect(JSON.parse(saved.body).result.value.data).toMatchObject({ name: 'HTTP template' });
-  }, 30_000);
+  }, NATIVE_TEMPLATE_TEST_TIMEOUT_MS);
 
   it('uploads, imports and reuses a PPTX above 64 MB with its real image assets intact', async () => {
     const f = await fixture();
@@ -235,7 +232,7 @@ describe('personal PPT templates in the shipped runtime', () => {
     const mediaHashes = Object.entries(exported).filter(([name]) => name.startsWith('ppt/media/')).map(([, data]) => createHash('sha256').update(data).digest('hex'));
     for (const image of images) expect(mediaHashes).toContain(createHash('sha256').update(image).digest('hex'));
     expect((await readFile(path.join(f.storage, 'personal-templates/saved', template.id, 'source.pptx'))).equals(bytes)).toBe(true);
-  }, NATIVE_TEMPLATE_TIMEOUT_MS);
+  }, 120000);
 
   it('imports mixed-size title and body text without inflating all text to the largest run', async () => {
     const f = await fixture();
@@ -264,7 +261,7 @@ describe('personal PPT templates in the shipped runtime', () => {
     expect(xml).not.toContain('world');
     expect(xml).toContain('项目方案');
     expect(xml).toMatch(/<a:rPr sz="1000"[^>]*b="1"[^>]*>[\s\S]*?<\/a:rPr><a:t>ine<\/a:t>/u);
-  }, NATIVE_TEMPLATE_TIMEOUT_MS);
+  }, NATIVE_TEMPLATE_TEST_TIMEOUT_MS);
 
   it('imports missing pictures as visible placeholders and persists source identity and page diagnostics', async () => {
     const f = await fixture();
@@ -297,7 +294,7 @@ describe('personal PPT templates in the shipped runtime', () => {
     expect(imported.status).toBe('warning'); expect(imported.placeholderCount).toBe(3); expect(imported.unsupportedCount).toBe(0);
     expect(imported.diagnostics.filter(item => item.level === 'placeholder')).toHaveLength(3);
     await expect(f.tool('pptd_import', { pptx_path: 'missing.pptx', output_directory: 'strict', strict: true })).rejects.toThrow('3 placeholder');
-  }, NATIVE_TEMPLATE_TIMEOUT_MS);
+  }, NATIVE_TEMPLATE_TEST_TIMEOUT_MS);
 
   it('reports structural conversion issues with their pages and objects and accepts a retry', async () => {
     const f = await fixture();
@@ -332,7 +329,7 @@ describe('personal PPT templates in the shipped runtime', () => {
     const saved=await f.request('template/save',{draftId:draft.draftId,name:'Unknown shape'});
     expect((await f.request('template/preview-saved-page',{templateId:saved.id,page:1})).preview).toContain('data:image/png;base64,');
     expect(await readFile(path.join(f.storage,'personal-templates','saved',saved.id,'source.pptx'))).toEqual(bytes);
-  }, NATIVE_TEMPLATE_TIMEOUT_MS);
+  },NATIVE_TEMPLATE_TEST_TIMEOUT_MS);
 
   it('previews before registration and persists across sessions/restarts with profile isolation', async () => {
     const f = await fixture(); const bytes = await source(2);
@@ -362,7 +359,7 @@ describe('personal PPT templates in the shipped runtime', () => {
     const duplicate = await restored.request('template/prepare', { input: { fileName: 'Renamed.pptx', base64: bytes.toString('base64') } });
     expect(duplicate.duplicate).toBe(true);
     expect(duplicate.template.id).toBe(template.id);
-  }, NATIVE_TEMPLATE_TIMEOUT_MS);
+  }, NATIVE_TEMPLATE_TEST_TIMEOUT_MS);
 
   it('copies the selected source into independent projects, exports editable PPTX, and preserves saved source', async () => {
     const f = await fixture(); const { bytes, template } = await save(f);
@@ -399,7 +396,7 @@ describe('personal PPT templates in the shipped runtime', () => {
     expect(audit).toContain('copy-personal-template');
     await expect(f.tool('ppt_template_create_project', { template_id: template.id, output_directory: 'new-year' })).rejects.toThrow();
     await expect(f.tool('ppt_template_create_project', { template_id: template.id, output_directory: '../escape' })).rejects.toThrow();
-  }, NATIVE_TEMPLATE_TIMEOUT_MS);
+  }, NATIVE_TEMPLATE_TEST_TIMEOUT_MS);
 
   it('reuses template page images through saving and enforces ownership, bounds and file confinement',async()=>{
     const f=await fixture(),bytes=await source(2);
@@ -425,7 +422,7 @@ describe('personal PPT templates in the shipped runtime', () => {
     const cached=path.join(savedDirectory,'preview/pages/page-1.png');
     await rm(cached);await symlink(path.join(f.root,'private.png'),cached);
     await expect(f.request('template/preview-saved-page',{templateId:saved.id,page:1})).rejects.toThrow('模板文件应为普通本地文件');
-  }, NATIVE_TEMPLATE_TIMEOUT_MS);
+  },NATIVE_TEMPLATE_TEST_TIMEOUT_MS);
 
   it('enriches a current cached conversion from its editable model while reusing every rendered page',async()=>{
     const f=await fixture(),{bytes,template}=await save(f);
@@ -443,7 +440,7 @@ describe('personal PPT templates in the shipped runtime', () => {
     expect(await readFile(path.join(directory,'preview/pages/page-1.png'))).toEqual(imageBefore);
     expect((await f.request('state')).templates.find(t=>t.id===template.id).templateProfile).toEqual(enriched.template.templateProfile);
     expect(await readFile(path.join(directory,'source.pptx'))).toEqual(bytes);
-  }, NATIVE_TEMPLATE_TIMEOUT_MS);
+  },NATIVE_TEMPLATE_TEST_TIMEOUT_MS);
 
   it('renames globally, deletes from selection, and retains existing task copies', async () => {
     const f = await fixture(); const { template } = await save(f, 1);
@@ -457,7 +454,7 @@ describe('personal PPT templates in the shipped runtime', () => {
     expect(next.templateMigration.reason).toBe('personal-template-deleted');
     expect(next.templates.some(t => t.id === template.id)).toBe(false);
     expect(await readFile(path.join(f.workspace, 'kept/deck.pptd'), 'utf8')).toContain('version: v2');
-  }, NATIVE_TEMPLATE_TIMEOUT_MS);
+  }, NATIVE_TEMPLATE_TEST_TIMEOUT_MS);
 
   it('persists edited name and description atomically while preserving selection and source', async () => {
     const f = await fixture(); const { bytes, template } = await save(f, 1);
@@ -478,7 +475,7 @@ describe('personal PPT templates in the shipped runtime', () => {
     expect((await f.request('state')).templates.find(t => t.id === template.id).description).toBe('');
     expect((await readFile(path.join(f.storage, 'personal-templates', 'saved', template.id, 'source.pptx'))).equals(bytes)).toBe(true);
     expect(await readFile(path.join(f.storage, 'audit.ndjson'), 'utf8')).toContain('update-personal-template');
-  }, NATIVE_TEMPLATE_TIMEOUT_MS);
+  }, NATIVE_TEMPLATE_TEST_TIMEOUT_MS);
 
   it('validates chunk ordering, total integrity and upload session ownership',async()=>{
     const f=await fixture(),bytes=await source(1);
@@ -517,7 +514,7 @@ describe('personal PPT templates in the shipped runtime', () => {
     expect(await readdir(path.join(f.storage,'personal-templates/uploads'))).toEqual([]);
   });
 
-  it('rejects invalid uploads and oversized HTTP bodies', async () => {
+  it('rejects invalid uploads, cancels drafts, and prevents library path escapes', async () => {
     const f = await fixture();
     await expect(f.request('template/prepare', { input: { fileName: 'legacy.ppt', base64: 'UEsDBA==' } })).rejects.toThrow('PPTX');
     for (const base64 of ['UEsD?A==', 'UEsDBA=', 'UEsDBB=='])
@@ -529,22 +526,14 @@ describe('personal PPT templates in the shipped runtime', () => {
       body: 'payload too large'
     });
     expect((await f.request('state')).templates.filter(t => t.origin === 'personal')).toEqual([]);
-  }, 30000);
-
-  it('cancels a prepared draft without allowing it to be saved', async () => {
-    const f = await fixture();
     const bytes = await source(1);
     const draft = await f.request('template/prepare', { input: { fileName: 'cancel.pptx', base64: bytes.toString('base64') } });
     await f.request('template/cancel', { draftId: draft.draftId });
     await expect(f.request('template/save', { draftId: draft.draftId, name: 'Cancelled' })).rejects.toThrow();
-  }, NATIVE_TEMPLATE_TIMEOUT_MS);
-
-  it('rejects a saved-library symlink escaping its storage root', async () => {
-    const f = await fixture();
     await mkdir(path.join(f.storage, 'personal-templates/saved'), { recursive: true });
     await symlink(f.workspace, path.join(f.storage, 'personal-templates/saved', `personal-${'a'.repeat(64)}`));
     await expect(f.request('state')).rejects.toThrow();
-  }, 30000);
+  }, NATIVE_TEMPLATE_TEST_TIMEOUT_MS);
   it.each(['legacy', 'previous'])('reconverts %s uploads after preview acceptance while preserving identity, metadata and backup', async revision => {
     const f = await fixture(); const { bytes, template } = await save(f, 1);
     await f.request('template/select', {templateId:template.id,mode:'ppt'}, 'session-b');
@@ -564,6 +553,6 @@ describe('personal PPT templates in the shipped runtime', () => {
     const backups=await readdir(path.join(f.storage,'personal-templates','backups',template.id));
     expect(backups).toHaveLength(1);
     expect(JSON.parse(await readFile(path.join(f.storage,'personal-templates','backups',template.id,backups[0],'template.json'),'utf8')).conversionVersion).toBe(old.conversionVersion);
-  }, NATIVE_TEMPLATE_TIMEOUT_MS);
+  }, 120000);
 
 });

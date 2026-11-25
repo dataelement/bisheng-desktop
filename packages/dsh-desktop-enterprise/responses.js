@@ -175,11 +175,8 @@ export async function* streamEnterpriseResponses(options, model, hooks, connecti
   }
   const piModel = {
     id: model.id, name: model.display_name, api: 'openai-responses', provider: 'openai',
-    baseUrl: 'https://enterprise.invalid/v1', reasoning: !!model.reasoning,
-    input: model.input_modalities ?? (model.capabilities.vision ? ['text', 'image'] : ['text']),
-    // This stream entry does not need SDK capacity defaults; only publish disclosed context.
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    ...(model.context_window === undefined ? {} : { contextWindow: model.context_window })
+    baseUrl: 'https://enterprise.invalid/v1', reasoning: !!model.reasoning, input: model.capabilities.vision ? ['text', 'image'] : ['text'],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 262144, maxTokens: 32768
   }
   // The SDK requires an API-key value; this public sentinel never leaves the injected transport.
   const events = streamResponses(piModel, { messages: [] }, {

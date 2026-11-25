@@ -1,3 +1,5 @@
+import type { DesktopLocale } from '../shared/desktop-locale'
+import { updateText } from '../shared/desktop-update-messages'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -32,11 +34,8 @@ export function bundledHarnessVersion(appPath: string): string | undefined {
 export function aboutDetail(
   desktopVersion: string,
   harnessVersion: string | undefined,
-  locale: 'en' | 'zh'
+  locale: DesktopLocale
 ): string {
-  const harness = harnessVersion ?? (locale === 'zh' ? '未知' : 'Unknown')
-  if (locale === 'zh') {
-    return `BISHENG 版本：${desktopVersion}\n内置 Harness 版本：${harness}\n\nHarness 随 BISHENG 更新。`
-  }
-  return `BISHENG version: ${desktopVersion}\nBundled Harness version: ${harness}\n\nHarness is updated with BISHENG.`
+  const harness = harnessVersion ?? updateText(locale, 'unknown')
+  return `${updateText(locale, 'desktopVersion', { version: desktopVersion })}\n${updateText(locale, 'harnessVersion', { version: harness })}\n\n${updateText(locale, 'harnessUpdated')}`
 }

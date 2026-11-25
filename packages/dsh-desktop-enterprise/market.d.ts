@@ -3,7 +3,7 @@ import type { MarketRuntimeFiber } from './market-runtime.js'
 import type { EnterpriseAuthHost } from './enterprise-auth.js'
 export interface InstalledMarketPlugin {
   name: string; version: string; digest: string; directory: string; generation_id: string; plugin_id: string;
-  version_id: string; revision: number; enabled: boolean; status: string; display_name: string; error?: string; reason?: 'revoked' | 'disabled' | 'version'; config?: Record<string, unknown>; description?: string; integrity?: string
+  version_id: string; revision: number; enabled: boolean; status: string; display_name: string; error?: string; config?: Record<string, unknown>; description?: string; integrity?: string
 }
 export interface MarketAccount {
   connected: boolean; desktopVersion?: string; base?: string; user?: { id: string }; tenant?: { id: string; name?: string }; sessionExpiresAt?: string
@@ -22,7 +22,7 @@ export declare function hostDshEntryPath(): string
 export declare function createMarketController(ctx: Context, account: {
   state(): MarketAccount
   marketRequest(path: string, body?: unknown, binary?: boolean): Promise<unknown>
-}, options?: { home?: string; target?: string; desktopVersion?: string; dshEntryPath?: string;
+}, options?: { home?: string; target?: string; desktopVersion?: string; dshEntryPath?: string; authorizationAvailable?: boolean;
   auth?: EnterpriseAuthHost; load?: (record: InstalledMarketPlugin) => Promise<MarketRuntimeFiber> }): MarketController
 
 export declare function applyEnterpriseMarket(ctx: Context, account: {
@@ -30,6 +30,7 @@ export declare function applyEnterpriseMarket(ctx: Context, account: {
   refreshState?(): Promise<unknown>
   refreshProfile?(): Promise<unknown>
   marketRequest(path: string, body?: unknown, binary?: boolean): Promise<unknown>
-}, options?: { auth?: EnterpriseAuthHost }): MarketController
+}, options?: { home?: string; target?: string; desktopVersion?: string; dshEntryPath?: string; authorizationAvailable?: boolean;
+  auth?: EnterpriseAuthHost; load?: (record: InstalledMarketPlugin) => Promise<MarketRuntimeFiber> }): MarketController
 
 export declare function isMarketVersionCompatible(version: string, minimum: string): boolean

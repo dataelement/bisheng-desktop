@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createWorkbenchMarketController } from '../packages/dsh-desktop-enterprise/workbench-market.js'
-import { adoptEnterpriseInstalls, checkEnterpriseWorkbenchAccess, createEnterpriseInstallStore } from '../packages/dsh-desktop-workbenches/enterprise-access.mjs'
+import { applyEnterpriseWorkbenchAccess, adoptEnterpriseInstalls, checkEnterpriseWorkbenchAccess, createEnterpriseInstallStore } from '../packages/dsh-desktop-enterprise/workbench-access.js'
 
 const A = 'a'.repeat(32)
 const B = 'b'.repeat(32)
@@ -67,10 +67,12 @@ describe('enterprise install records', () => {
     expect(Object.keys(await fresh.read())).toEqual([A])
   })
 
-  it('ignores a damaged record file instead of failing the workbench page', async () => {
+  it('preserves a damaged record file and refuses destructive overwrite', async () => {
     const { root, installs } = await store()
     await writeFile(join(root, 'enterprise-installs.json'), '{ not json')
-    expect(await installs.read()).toEqual({})
+    await expect(installs.read()).rejects.toThrow()
+    await expect(installs.record({ id: A, pluginName: 'new', version: '1.0.0' })).rejects.toThrow()
+    expect(await readFile(join(root, 'enterprise-installs.json'), 'utf8')).toBe('{ not json')
     await writeFile(join(root, 'enterprise-installs.json'), JSON.stringify({ [A]: { id: B, pluginName: 'x' }, bad: 1 }))
     expect(await installs.read()).toEqual({})
   })
@@ -174,5 +176,57 @@ describe('adopting workbenches installed before the access records existed', () 
     const manager = installed('x')
     expect(await adoptEnterpriseInstalls({ installs, manager, items: [{ id: 'bad', pluginName: 'x', version: '1' }, null] })).toEqual({ adopted: [] })
     expect(manager.listBundles).not.toHaveBeenCalled()
+  })
+})
+
+
+describe('enterprise access service lifecycle', () => {
+  it('adopts catalog installs, retains external sources, disables revoked bundles and releases subscriptions', async () => {
+    const { root } = await store()
+    const plugins = manager(['enterprise', 'local', 'market'])
+    plugins.listBundles.mockResolvedValue([
+      { name: 'enterprise', installed: true, enabled: true, source: 'enterprise@1.0.0' },
+      { name: 'local', installed: true, enabled: true, source: 'link:/project' },
+      { name: 'market', installed: true, enabled: true, source: 'market@1.0.0' }
+    ])
+    await writeFile(join(root, 'market-installs.json'), JSON.stringify({ market: { pluginName: 'market' } }))
+    let dispose
+    const off = vi.fn()
+    const routes = new Map()
+    const market = {
+      catalog: async () => ({ data: [
+        { id: A, packageName: 'enterprise', currentVersion: { version: '1.0.0' } },
+        { id: B, packageName: 'local', currentVersion: { version: '1.0.0' } },
+        { id: 'c'.repeat(32), packageName: 'market', currentVersion: { version: '1.0.0' } }
+      ] }), checkAccess: vi.fn(async () => ({ [A]: false }))
+    }
+    const service = applyEnterpriseWorkbenchAccess({
+      inject: (_, activate) => { dispose = activate({ pluginManager: plugins, on: () => off }) },
+      connection: { fetch: { register: route => routes.set(route.path, route) } }
+    }, { root, market, account: { state: () => ({ connected: true, connectionKey: 'a' }) } })
+    try {
+      expect(await service.refresh()).toEqual({ status: 'checked', revoked: ['enterprise'] })
+      expect(market.checkAccess).toHaveBeenCalledExactlyOnceWith([A])
+      expect(plugins.setBundleEnabled).toHaveBeenCalledWith('enterprise', false)
+      // Someone re-enabled the package through another existing Manager entry point.
+      await service.refresh()
+      expect(plugins.setBundleEnabled).toHaveBeenCalledTimes(2)
+      expect(Object.keys(await createEnterpriseInstallStore(root).read())).toEqual([A])
+    } finally { dispose() }
+    expect(off).toHaveBeenCalledOnce()
+    expect(await service.refresh()).toEqual({ status: 'unknown', revoked: [] })
+  })
+
+  it('rejects a stale account response before changing activation', async () => {
+    const { root } = await store()
+    let key = 'a', dispose
+    const plugins = manager(['enterprise'])
+    const service = applyEnterpriseWorkbenchAccess({
+      inject: (_, activate) => { dispose = activate({ pluginManager: plugins }) },
+      connection: { fetch: { register() {} } }
+    }, { root, market: { catalog: async () => { key = 'b'; return { data: [] } } }, account: { state: () => ({ connected: true, connectionKey: key }) } })
+    try { await expect(service.refresh()).rejects.toThrow('account changed') }
+    finally { dispose() }
+    expect(plugins.setBundleEnabled).not.toHaveBeenCalled()
   })
 })

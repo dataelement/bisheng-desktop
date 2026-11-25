@@ -1,19 +1,17 @@
-import { createAboutPresentation } from './about-presentation'
-import { renderSafeModeBannerLocale, type SafeModeBannerElements } from './safe-mode-locale'
-import type { EnterpriseChatPresentation, EnterpriseChatViewState } from '../shared/enterprise-chat-view'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { createSidebarBrowserBridge } from './sidebar-browser'
+import { isHarnessBootPage } from '../shared/harness-boot'
+import { installHarnessBootBridge } from './harness-boot'
+import type { UpdateLocale } from './update-view'
 import { setupDesktopStoragePersistence } from './desktop-storage'
 import { setupDesktopNotificationBridge } from './desktop-notification'
-import { type UpdateLocale } from './update-view'
+import { mountDesktopUpdateUi } from './desktop-update-ui'
 import { isPluginLoadError } from './plugin-error-view'
-import { mountPluginErrorToast } from './plugin-error-toast'
 import { findBootFailureText } from './boot-failure'
+import { mountBootCover, shouldReleaseBootCover } from './boot-cover'
 import { markWindowsTitlebar, mountWindowsTitlebarLayout } from './windows-titlebar'
-import { mountMacosWindowTheme } from './macos-window-theme'
 import { mountMacosWindowChrome } from './macos-window-chrome'
 import { createHostPathsBridge, HOST_PATHS_BRIDGE } from './host-paths'
-import { createNativeLocaleBridge } from './native-locale'
-import { localeFromHtmlLang, NATIVE_LOCALE_BRIDGE, NATIVE_LOCALE_CHANGE, NATIVE_LOCALE_READ } from '../shared/native-locale'
 
 if (process.platform === 'darwin') {
   const dispose = mountMacosWindowChrome(document, listener => {
@@ -32,34 +30,23 @@ if (process.platform === 'win32') markWindowsTitlebar(document)
 setupDesktopStoragePersistence()
 setupDesktopNotificationBridge()
 
-const MOBILE_BUTTON_ID = 'dsh-desktop-mobile-button'
 const SAFE_MODE_BANNER_ID = 'dsh-desktop-safe-mode-banner'
+const locale: UpdateLocale = navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en'
+// Cover the Harness document before its own scripts paint the boot failure screen.
+const bootCover = mountBootCover(location.href, {
+  document,
+  locale
+})
 
-function navigatorLocale(): UpdateLocale {
-  return navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en'
-}
+const reportHarnessBootFailure = installHarnessBootBridge(() => {
+  bootFailureTriggered = true
+  bootCover?.holdForFailure()
+})
 
-let locale: UpdateLocale = localeFromHtmlLang(document.documentElement?.lang) ?? navigatorLocale()
-
-const ABOUT_ROOT_ID = 'dsh-desktop-about-root'
-interface AboutInfo {
-  desktopVersion: string
-  harnessVersion: string
-  locale: 'en' | 'zh'
-}
-let aboutHost: HTMLElement | null = null
-let aboutShadow: ShadowRoot | null = null
-const aboutPresentation = createAboutPresentation(document, window)
-window.addEventListener('unload', () => aboutPresentation.dispose(), { once: true })
-let aboutOpen = false
-let aboutInfo: AboutInfo | null = null
-let phoneConnected = false
 let sidebarSettingsArea: HTMLElement | undefined
 let sidebarRoot: HTMLElement | undefined
 /** The Safe Mode card; it lives in the sidebar just above the settings row. */
 let safeModeBannerHost: HTMLElement | undefined
-let safeModeBannerElements: SafeModeBannerElements | undefined
-let mobileButton: HTMLButtonElement | undefined
 let domSyncScheduled = false
 let bootScanSettled = false
 let bootFailureTriggered = false
@@ -70,14 +57,6 @@ const pendingBootFailureMessages: string[] = []
 
 const BOOT_FAILURE_SETTLE_MS = 400
 const RENDERER_HEALTH_HEARTBEAT_MS = 5_000
-const enterpriseLoginListeners = new Set<(url: string) => void>()
-let pendingEnterpriseLoginUrl: string | undefined
-
-ipcRenderer.on('enterprise:login-link', (_event, url: unknown) => {
-  if (typeof url !== 'string') return
-  pendingEnterpriseLoginUrl = url
-  for (const listener of enterpriseLoginListeners) listener(url)
-})
 
 function reportRendererHealthy(): void {
   if (rendererHealthReportInFlight || !sidebarRoot?.isConnected) return
@@ -113,6 +92,7 @@ function queueBootFailure(message?: string): void {
   addBootFailureMessage(currentBootFailureText())
   if (pendingBootFailureMessages.length === 0) return
 
+  bootCover?.holdForFailure()
   if (bootFailureTimer !== undefined) window.clearTimeout(bootFailureTimer)
   bootFailureTimer = window.setTimeout(() => {
     bootFailureTimer = undefined
@@ -126,7 +106,10 @@ function queueBootFailure(message?: string): void {
     if (!errorText) return
 
     bootFailureTriggered = true
-    void ipcRenderer.invoke('harness:open-recovery', errorText)
+    const report = reportHarnessBootFailure
+      ? reportHarnessBootFailure(errorText)
+      : ipcRenderer.invoke('harness:open-recovery', errorText)
+    void report.catch((error: unknown) => console.error('[desktop] could not report boot failure', error))
   }, BOOT_FAILURE_SETTLE_MS)
 }
 
@@ -143,7 +126,6 @@ function checkBootFailureInDom(): void {
  * the work at 60Hz instead of per-mutation, and stops it entirely while the
  * window is hidden, since the browser withholds frames from background pages.
  */
-const pluginErrorToast = mountPluginErrorToast(document, locale)
 const domObserver = new MutationObserver(scheduleDomSync)
 
 function scheduleDomSync(): void {
@@ -152,22 +134,54 @@ function scheduleDomSync(): void {
   window.requestAnimationFrame(runDomSync)
 }
 
+function syncBootCover(): void {
+  if (bootScanSettled) return
+  sidebarRoot = liveElement(sidebarRoot, '[data-dsh-sidebar-root]')
+  // Read the boot screen before trusting the sidebar. Harness can briefly
+  // expose both while a client module is still failing.
+  checkBootFailureInDom()
+  const bootFailurePending = bootFailureTriggered || bootFailureTimer !== undefined
+  if (!shouldReleaseBootCover({
+    bootFailurePending,
+    clientReady: sidebarRoot?.isConnected === true
+  })) {
+    if (bootFailurePending) bootCover?.holdForFailure()
+    return
+  }
+  // Drop the main-process hide before the preload cover, so the shell is not
+  // uncovered while its document is still forced invisible.
+  if (rendererHealthReportInFlight) return
+  rendererHealthReportInFlight = true
+  void ipcRenderer.invoke('harness:reveal-boot-cover').then(() => {
+    if (bootFailureTriggered || bootFailureTimer !== undefined) return
+    bootScanSettled = true
+    bootCover?.releaseWhenReady()
+    startRendererHealthHeartbeat()
+  }).catch((error: unknown) => {
+    console.warn('[desktop] could not reveal the startup page', error)
+  }).finally(() => { rendererHealthReportInFlight = false })
+}
+
 function runDomSync(): void {
   domSyncScheduled = false
   positionSafeModeFrame()
   placeSafeModeBanner()
-  mountMobileButton()
-  pluginErrorToast.relocate(document)
   if (bootScanSettled) return
   // The boot screen only exists until Harness renders its own UI, and the
   // sidebar appearing is that moment. Past it the selector can never match
   // again, so scanning on would walk the conversation tree every frame for a
   // guaranteed miss. The window error handlers stay as the real backstop.
-  if (sidebarRoot?.isConnected) {
-    bootScanSettled = true
-    startRendererHealthHeartbeat()
-  } else checkBootFailureInDom()
+  syncBootCover()
 }
+
+// Harness reads this before its client mounts and reports the language the
+// user picks in Desktop settings. The shell menu follows that report.
+contextBridge.exposeInMainWorld('__DSH_LOCALE__', {
+  read: (): Promise<unknown> => ipcRenderer.invoke('desktop:locale-bootstrap'),
+  onChange: (locale: unknown): void => {
+    if (typeof locale === 'string') ipcRenderer.send('desktop:locale-changed', locale)
+  }
+})
 
 contextBridge.exposeInMainWorld('__DSH_DIRECTORY_PICKER__', {
   pick: (): Promise<string | null> => ipcRenderer.invoke('directory-picker:open')
@@ -178,39 +192,6 @@ contextBridge.exposeInMainWorld(
   createHostPathsBridge(file => webUtils.getPathForFile(file))
 )
 
-function publishLocale(next: UpdateLocale): void {
-  void ipcRenderer.invoke(NATIVE_LOCALE_CHANGE, next).catch((error: unknown) => {
-    console.error('[desktop-locale] unable to synchronize language', error)
-  })
-}
-
-/** Refresh chrome that follows the in-app language. Publishing is for the document language, which the bridge reports on its own. */
-function applyLiveLocale(next: UpdateLocale, publish: boolean): void {
-  if (next === locale) return
-  locale = next
-  if (safeModeBannerElements) renderSafeModeBannerLocale(safeModeBannerElements, locale)
-  const frame = safeModeFrameHost?.querySelector('iframe')
-  if (frame) frame.title = locale === 'zh' ? '安全模式' : 'Safe Mode'
-  renderMobileButton()
-  renderAbout()
-  if (publish) publishLocale(next)
-}
-
-function syncLocaleFromDocument(): void {
-  const next = localeFromHtmlLang(document.documentElement?.lang)
-  if (!next) return
-  applyLiveLocale(next, true)
-}
-
-contextBridge.exposeInMainWorld(NATIVE_LOCALE_BRIDGE, createNativeLocaleBridge({
-  read: () => ipcRenderer.invoke(NATIVE_LOCALE_READ),
-  publish: active => ipcRenderer.invoke(NATIVE_LOCALE_CHANGE, active),
-  changed: active => {
-    applyLiveLocale(active, false)
-  },
-  failed: error => console.error('[desktop-locale] unable to synchronize language', error)
-}))
-
 /**
  * `[data-dsh-*]` lookups are attribute selectors with no index behind them, so
  * a miss costs a full tree walk. Caching the nodes turns the steady state into
@@ -219,63 +200,6 @@ contextBridge.exposeInMainWorld(NATIVE_LOCALE_BRIDGE, createNativeLocaleBridge({
 function liveElement<T extends Element>(cached: T | undefined, selector: string): T | undefined {
   if (cached?.isConnected) return cached
   return document.querySelector<T>(selector) ?? undefined
-}
-
-function mountMobileButton(): void {
-  sidebarSettingsArea = liveElement(sidebarSettingsArea, '[data-dsh-sidebar-settings]')
-  const settingsArea = sidebarSettingsArea
-  if (!settingsArea) return
-  // The optional account launcher owns this action in normal mode. Keep the
-  // legacy button only for Safe Mode or compositions without that launcher.
-  if (settingsArea.querySelector('[data-dsh-account-launcher]')) {
-    mobileButton?.remove()
-    document.getElementById(`${MOBILE_BUTTON_ID}-style`)?.remove()
-    return
-  }
-  if (!document.getElementById(`${MOBILE_BUTTON_ID}-style`)) {
-    const style = document.createElement('style')
-    style.id = `${MOBILE_BUTTON_ID}-style`
-    style.textContent = mobileButtonStyles
-    document.head.appendChild(style)
-  }
-  if (!mobileButton?.isConnected) {
-    mobileButton =
-      (document.getElementById(MOBILE_BUTTON_ID) as HTMLButtonElement | null) ?? undefined
-  }
-  if (!mobileButton) {
-    const created = document.createElement('button')
-    created.id = MOBILE_BUTTON_ID
-    created.type = 'button'
-    created.innerHTML = `${phoneIcon}<span aria-hidden="true"></span>`
-    created.addEventListener('click', () => {
-      void ipcRenderer.invoke('mobile:open-pairing').catch((error: unknown) => {
-        console.error('[mobile] unable to open pairing window', error)
-      })
-    })
-    mobileButton = created
-  }
-  if (mobileButton.parentElement !== settingsArea) settingsArea.appendChild(mobileButton)
-  renderMobileButton()
-}
-
-function renderMobileButton(): void {
-  const button = mobileButton
-  sidebarRoot = liveElement(sidebarRoot, '[data-dsh-sidebar-root]')
-  const root = sidebarRoot
-  if (!button || !root) return
-  const wide = root.dataset.dshSidebarWide === 'true'
-  const hidden = !wide && !phoneConnected
-  const label = phoneConnected
-    ? locale === 'zh' ? '管理手机连接' : 'Manage phone connection'
-    : locale === 'zh' ? '连接手机' : 'Connect phone'
-  if (button.hidden !== hidden) button.hidden = hidden
-  if (button.classList.contains('is-connected') !== phoneConnected) {
-    button.classList.toggle('is-connected', phoneConnected)
-  }
-  if (button.title !== label) {
-    button.setAttribute('aria-label', label)
-    button.title = label
-  }
 }
 
 /**
@@ -313,8 +237,10 @@ async function mountSafeModeBanner(): Promise<void> {
   try {
     const status = (await ipcRenderer.invoke('safe-mode:status')) as {
       active?: boolean
+      locale?: 'en' | 'zh'
     }
     if (status.active !== true) return
+    const safeModeLocale = status.locale === 'zh' ? 'zh' : 'en'
 
     const host = document.createElement('div')
     host.id = SAFE_MODE_BANNER_ID
@@ -340,9 +266,8 @@ async function mountSafeModeBanner(): Promise<void> {
       .actions button { flex:1 1 auto; min-height:26px; padding:3px 8px; border:1px solid var(--dsw-alias-border-l2, rgba(120,120,125,.35)); border-radius:8px; color:var(--dsw-alias-label-primary, #3f3f46); background:transparent; cursor:pointer; font:inherit; font-size:11px; font-weight:600; white-space:nowrap; }
       .actions button:hover { background:var(--dsw-alias-interactive-bg-hover, rgba(32,33,36,.08)); }
       .actions button:disabled { opacity:.55; cursor:default; }
-      .compact { display:none; width:32px; height:32px; padding:0; border:1px solid var(--dsw-alias-border-l2, rgba(120,120,125,.35)); border-radius:9px; background:transparent; cursor:pointer; place-items:center; }
+      .compact { display:none; width:32px; height:32px; padding:0; border:1px solid var(--dsw-alias-border-l2, rgba(120,120,125,.35)); border-radius:9px; background:transparent; place-items:center; }
       :host([data-compact="true"]) .compact { display:grid; }
-      .compact:hover { background:var(--dsw-alias-interactive-bg-hover, rgba(32,33,36,.08)); }
     `
     const bar = document.createElement('div')
     bar.className = 'bar'
@@ -352,43 +277,38 @@ async function mountSafeModeBanner(): Promise<void> {
     dot.className = 'dot'
     const label = document.createElement('span')
     label.className = 'title'
+    label.textContent = safeModeLocale === 'zh' ? '安全模式' : 'Safe Mode'
     const description = document.createElement('span')
     description.className = 'description'
+    description.textContent = safeModeLocale === 'zh'
+      ? '已暂时停用所有第三方插件，维修完成后可退出安全模式并重启。'
+      : 'All third-party plugins are temporarily disabled. Exit Safe Mode and restart after repairs.'
     const actions = document.createElement('span')
     actions.className = 'actions'
-    const manage = document.createElement('button')
-    manage.type = 'button'
-    manage.addEventListener('click', () => {
-      void ipcRenderer.invoke('safe-mode:manage')
-    })
     const exit = document.createElement('button')
     exit.type = 'button'
+    exit.textContent = safeModeLocale === 'zh' ? '退出安全模式' : 'Exit Safe Mode'
+    exit.setAttribute('aria-label', safeModeLocale === 'zh' ? '退出安全模式并重启' : 'Exit Safe Mode and restart')
     exit.addEventListener('click', () => {
-      manage.disabled = true
       exit.disabled = true
       void ipcRenderer.invoke('safe-mode:exit').then((result) => {
         if (result?.blocked) {
-          manage.disabled = false
           exit.disabled = false
         }
       }).catch(() => {
-        manage.disabled = false
         exit.disabled = false
       })
     })
-    actions.append(manage, exit)
+    actions.append(exit)
     head.append(dot, label)
     bar.append(head, description, actions)
-    const compact = document.createElement('button')
-    compact.type = 'button'
+    const compact = document.createElement('span')
     compact.className = 'compact'
+    compact.title = safeModeLocale === 'zh' ? '安全模式：第三方插件已停用' : 'Safe Mode: third-party plugins disabled'
+    compact.setAttribute('role', 'img')
+    compact.setAttribute('aria-label', compact.title)
     compact.appendChild(dot.cloneNode(true))
-    compact.addEventListener('click', () => {
-      void ipcRenderer.invoke('safe-mode:manage')
-    })
     shadow.append(style, bar, compact)
-    safeModeBannerElements = { label, description, manage, exit, compact }
-    renderSafeModeBannerLocale(safeModeBannerElements, locale)
     safeModeBannerHost = host
     placeSafeModeBanner()
   } catch (error) {
@@ -396,50 +316,16 @@ async function mountSafeModeBanner(): Promise<void> {
   }
 }
 
-function applyMobileStatus(connected: boolean): void {
-  if (phoneConnected === connected) return
-  phoneConnected = connected
-  mountMobileButton()
-}
-
-async function refreshMobileStatus(): Promise<void> {
-  try {
-    const status = (await ipcRenderer.invoke('mobile:status')) as { connected?: boolean }
-    applyMobileStatus(status.connected === true)
-  } catch (error) {
-    console.warn('[mobile] unable to read connection status', error)
-  }
-}
-
-ipcRenderer.on('mobile:status-changed', (_event, status: { connected?: boolean }) => {
-  applyMobileStatus(status?.connected === true)
-})
-
 function initializeUi(): void {
-  if (process.platform === 'darwin') {
-    const dispose = mountMacosWindowTheme(document, ipcRenderer)
-    window.addEventListener('unload', dispose, { once: true })
-  }
   if (process.platform === 'win32') {
     mountWindowsTitlebarLayout({ document, ipcRenderer })
   }
-  mountAbout()
-  mountMobileButton()
-  checkBootFailureInDom()
+  mountDesktopUpdateUi()
+  syncBootCover()
   domObserver.observe(document.documentElement, {
     childList: true,
     subtree: true
   })
-  const localeObserver = new MutationObserver(() => syncLocaleFromDocument())
-  localeObserver.observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: ['lang']
-  })
-  window.addEventListener('unload', () => localeObserver.disconnect(), { once: true })
-  syncLocaleFromDocument()
-  watchUpdateCardTheme()
-  publishUpdateCardHostState()
-  void refreshMobileStatus()
   void mountSafeModeBanner()
   positionSafeModeFrame()
 }
@@ -611,103 +497,32 @@ window.addEventListener('unhandledrejection', (event) => {
 window.addEventListener('pagehide', () => {
   if (rendererHealthHeartbeat !== undefined) window.clearInterval(rendererHealthHeartbeat)
   rendererHealthHeartbeat = undefined
-  pluginErrorToast.dispose()
 })
-
-ipcRenderer.on('enterprise-chat:close-settings', () => {
-  window.dispatchEvent(new CustomEvent('dsh-desktop:close-settings'))
-})
-ipcRenderer.on('enterprise-chat:settings-focus', (_event, detail) => {
-  window.dispatchEvent(new CustomEvent('dsh-desktop:settings-focus', { detail }))
-})
-
-contextBridge.exposeInMainWorld('dshEnterpriseChat', Object.freeze({
-  projectsState: (): Promise<import('../shared/chat-projects').ChatProjectsState | undefined> => ipcRenderer.invoke('enterprise-chat:projects-state'),
-  projectAction: (action: import('../shared/chat-projects').ProjectAction, epoch: number) => ipcRenderer.invoke('enterprise-chat:project-action', action, epoch),
-  projectConversations: (page: import('../shared/chat-projects').ProjectPageInput, epoch: number) => ipcRenderer.invoke('enterprise-chat:project-conversations', page, epoch),
-  onProjectsChanged: (listener: (state: import('../shared/chat-projects').ChatProjectsState) => void): (() => void) => {
-    if (typeof listener !== 'function') throw new TypeError('Project listener must be a function.')
-    const receive = (_event: Electron.IpcRendererEvent, state: import('../shared/chat-projects').ChatProjectsState): void => listener(state)
-    ipcRenderer.on('enterprise-chat:projects-changed', receive)
-    return () => ipcRenderer.removeListener('enterprise-chat:projects-changed', receive)
-  },
-  onToolsChanged: (listener: () => void): (() => void) => {
-    if (typeof listener !== 'function') throw new TypeError('Tool change listener must be a function.')
-    const receive = (): void => listener()
-    ipcRenderer.on('enterprise-chat:tools-changed', receive)
-    return () => ipcRenderer.removeListener('enterprise-chat:tools-changed', receive)
-  },
-  focusSettings: (): Promise<void> => ipcRenderer.invoke('enterprise-chat:focus-settings'),
-  present: (value: EnterpriseChatPresentation): Promise<EnterpriseChatViewState> => ipcRenderer.invoke('enterprise-chat:present', value),
-  capture: (): Promise<import('../shared/enterprise-chat-view').EnterpriseChatFrame | undefined> => ipcRenderer.invoke('enterprise-chat:capture'),
-  landingGeometry: (): Promise<import('../shared/enterprise-chat-view').EnterpriseChatLandingGeometry | undefined> => ipcRenderer.invoke('enterprise-chat:landing-geometry'),
-  landingTextMotion: (phase: 'out' | 'in'): Promise<void> => ipcRenderer.invoke('enterprise-chat:landing-text-motion', phase),
-  state: (): Promise<EnterpriseChatViewState> => ipcRenderer.invoke('enterprise-chat:state'),
-  retry: (): Promise<void> => ipcRenderer.invoke('enterprise-chat:retry'),
-  usage: (): Promise<import('../shared/enterprise-usage').EnterpriseUsage> => ipcRenderer.invoke('enterprise-chat:usage'),
-  history: (page: number) => ipcRenderer.invoke('enterprise-chat:history', page),
-  openPage: (id: string): Promise<void> => ipcRenderer.invoke('enterprise-chat:open-page', id),
-  open: (id: string, projectId?: string): Promise<void> => ipcRenderer.invoke('enterprise-chat:open', id, projectId),
-  remove: (id: string, epoch: number): Promise<{ epoch: number }> => ipcRenderer.invoke('enterprise-chat:remove', id, epoch),
-  rename: (id: string, name: string, epoch: number): Promise<{ epoch: number }> => ipcRenderer.invoke('enterprise-chat:rename', id, name, epoch),
-  subscribe: (listener: (state: EnterpriseChatViewState) => void): (() => void) => {
-    const receive = (_event: Electron.IpcRendererEvent, state: EnterpriseChatViewState): void => listener(state)
-    ipcRenderer.on('enterprise-chat:changed', receive)
-    return () => ipcRenderer.removeListener('enterprise-chat:changed', receive)
-  }
-}))
-
-contextBridge.exposeInMainWorld(
-  'dshDesktopEnterprise',
-  Object.freeze({
-    onCloudAccessRequired: (listener: (value: { owner: string; appId: string }) => void): (() => void) => {
-      if (typeof listener !== 'function') throw new TypeError('A cloud access listener is required.')
-      const handler = (_event: Electron.IpcRendererEvent, value: unknown) => {
-        if (value && typeof value === 'object' && typeof (value as { owner?: unknown }).owner === 'string' && typeof (value as { appId?: unknown }).appId === 'string') listener(value as { owner: string; appId: string })
-      }
-      ipcRenderer.on('enterprise-cloud:access-required', handler)
-      return () => ipcRenderer.removeListener('enterprise-cloud:access-required', handler)
-    },
-    // Host-only presentation signal; hosted application renderers never receive this bridge.
-    setCloudHostOccluded: (occluded: boolean): Promise<void> => ipcRenderer.invoke('enterprise-cloud:host-occluded', occluded),
-    captureCloudWorkbench: (): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:capture'),
-    cloudRequest: (input: unknown): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:request', input),
-    openCloudWorkbench: (appId: string, bounds: unknown, connectionKey: string, owner: string): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:open', appId, bounds, connectionKey, owner),
-    resizeCloudWorkbench: (bounds: unknown, owner: string): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:bounds', bounds, owner),
-    releaseCloudWorkbench: (appId: string, connectionKey: string): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:release', appId, connectionKey),
-    closeCloudWorkbench: (owner: string): Promise<unknown> => ipcRenderer.invoke('enterprise-cloud:close', owner),
-    onLoginLink: (listener: (url: string) => void): (() => void) => {
-      if (typeof listener !== 'function') {
-        throw new TypeError('Enterprise login listener must be a function.')
-      }
-      enterpriseLoginListeners.add(listener)
-      if (pendingEnterpriseLoginUrl) listener(pendingEnterpriseLoginUrl)
-      return () => {
-        enterpriseLoginListeners.delete(listener)
-      }
-    },
-    consumeLoginLink: (): string | undefined => {
-      const url = pendingEnterpriseLoginUrl
-      pendingEnterpriseLoginUrl = undefined
-      return url
-    }
-  })
-)
 
 contextBridge.exposeInMainWorld(
   'dshDesktop',
   Object.freeze({
+    protocolVersion: 1,
+    browser: process.isMainFrame && isHarnessBootPage(location.href) ? createSidebarBrowserBridge() : undefined,
+    openMobilePairing: (): Promise<void> => ipcRenderer.invoke('mobile:open-pairing'),
+    getMobileStatus: (): Promise<{ connected?: boolean }> => ipcRenderer.invoke('mobile:status'),
+    onMobileStatus: (listener: (status: { connected: boolean }) => void): (() => void) => {
+      const receive = (_event: Electron.IpcRendererEvent, status: unknown): void => {
+        if (typeof status === 'object' && status !== null && 'connected' in status) {
+          listener({ connected: status.connected === true })
+        }
+      }
+      ipcRenderer.on('mobile:status-changed', receive)
+      return () => ipcRenderer.removeListener('mobile:status-changed', receive)
+    },
+    getRepairDraft: (sessionId: string): Promise<{ text?: string; token?: string }> => ipcRenderer.invoke('repair-agent:draft/get', sessionId),
+    acknowledgeRepairDraft: (sessionId: string, token: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('repair-agent:draft/ack', sessionId, token),
+    openRepairAgent: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('repair-agent:open'),
     restartHarness: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('harness:restart'),
-    openPhonePairing: (): Promise<void> => ipcRenderer.invoke('mobile:open-pairing'),
-    settingsInfo: (): Promise<AboutInfo> => ipcRenderer.invoke('desktop:about-info'),
-    settingsAction: (action: 'check-for-updates' | 'show-harness-log' | 'safe-mode'): Promise<void> => ipcRenderer.invoke('desktop:settings-action', action),
     getBuiltInImageGenerationStatus: (): Promise<{ enabled: boolean; marketActive: boolean }> =>
       ipcRenderer.invoke('desktop-host-plugin:status'),
     setBuiltInImageGenerationEnabled: (enabled: boolean): Promise<{ ok: boolean; enabled?: boolean; restartRequired?: boolean; reason?: string }> =>
       ipcRenderer.invoke('desktop-host-plugin:set-enabled', enabled),
-    uninstallMarket: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('market:uninstall'),
-    installLocalWorkbench: (): Promise<{ ok: boolean, cancelled?: boolean, restartRequired?: boolean }> =>
-      ipcRenderer.invoke('workbench:install-local'),
     openInFinder: (path: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('harness:open-in-finder', path)
   })
 )
@@ -720,297 +535,21 @@ contextBridge.exposeInMainWorld(
 )
 
 contextBridge.exposeInMainWorld(
+  'dshRollback',
+  Object.freeze({
+    action: (action: unknown): Promise<{ ok: boolean }> => {
+      if (action !== 'confirm' && action !== 'cancel' && action !== 'continue') return Promise.resolve({ ok: false })
+      return ipcRenderer.invoke('application-rollback:action', action)
+    }
+  })
+)
+
+contextBridge.exposeInMainWorld(
   'dshWebImport',
   Object.freeze({
     action: (action: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('web-import:action', action)
   })
 )
-
-
-
-function element<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  className: string
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag)
-  node.className = className
-  return node
-}
-
-function button(label: string, className: string): HTMLButtonElement {
-  const node = element('button', className)
-  node.type = 'button'
-  node.textContent = label
-  return node
-}
-
-function updateCardTheme(): 'dark' | 'light' {
-  return document.body?.hasAttribute('data-ds-dark-theme') ? 'dark' : 'light'
-}
-
-function publishUpdateCardHostState(): void {
-  ipcRenderer.send('updates:card-host-state', { held: aboutOpen, locale, theme: updateCardTheme() })
-}
-
-function watchUpdateCardTheme(): void {
-  const body = document.body
-  if (!body) return
-  const observer = new MutationObserver(() => publishUpdateCardHostState())
-  observer.observe(body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] })
-  window.addEventListener('unload', () => observer.disconnect(), { once: true })
-}
-
-function mountAbout(): void {
-  if (document.getElementById(ABOUT_ROOT_ID)) return
-
-  aboutHost = document.createElement('div')
-  aboutHost.id = ABOUT_ROOT_ID
-  aboutHost.style.cssText = [
-    'position:fixed',
-    'inset:0',
-    'z-index:2147483647',
-    'display:none',
-    'align-items:center',
-    'justify-content:center',
-    'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif'
-  ].join(';')
-
-  aboutShadow = aboutHost.attachShadow({ mode: 'closed' })
-  const style = document.createElement('style')
-  style.textContent = aboutStyles
-  aboutShadow.appendChild(style)
-  document.documentElement.appendChild(aboutHost)
-  renderAbout()
-}
-
-function renderAbout(): void {
-  if (!aboutHost || !aboutShadow) return
-  if (!aboutOpen || !aboutInfo) {
-    aboutHost.style.display = 'none'
-    aboutPresentation.close()
-    const existing = aboutShadow.querySelector('.about-overlay')
-    if (existing) existing.remove()
-    publishUpdateCardHostState()
-    return
-  }
-
-  aboutHost.style.display = 'flex'
-  const info = aboutInfo
-  const zh = locale === 'zh'
-
-  let overlay = aboutShadow.querySelector('.about-overlay') as HTMLElement | null
-  if (!overlay) {
-    overlay = element('div', 'about-overlay')
-    overlay.addEventListener('click', (event) => {
-      if (event.target === overlay) {
-        aboutOpen = false
-        renderAbout()
-      }
-    })
-    aboutShadow.appendChild(overlay)
-  }
-
-  const card = element('div', 'about-card')
-  card.setAttribute('role', 'dialog')
-  card.setAttribute('aria-modal', 'true')
-  card.setAttribute('aria-label', zh ? '关于 BISHENG' : 'About BISHENG')
-
-  const header = element('div', 'about-header')
-  const title = element('h2', 'about-title')
-  title.textContent = zh ? '关于 BISHENG' : 'About BISHENG'
-  header.appendChild(title)
-
-  const closeBtn = button('×', 'about-close')
-  closeBtn.setAttribute('aria-label', zh ? '关闭' : 'Close')
-  closeBtn.addEventListener('click', () => {
-    aboutOpen = false
-    renderAbout()
-  })
-  header.appendChild(closeBtn)
-  card.appendChild(header)
-
-  const body = element('div', 'about-body')
-  const line1 = element('p', 'about-line')
-  line1.textContent = `${zh ? 'BISHENG 版本： ' : 'BISHENG version: '}${info.desktopVersion}`
-  body.appendChild(line1)
-
-  const line2 = element('p', 'about-line')
-  line2.textContent = `${zh ? '内置 Harness 版本： ' : 'Bundled Harness version: '}${info.harnessVersion}`
-  body.appendChild(line2)
-
-  const hint = element('p', 'about-hint')
-  hint.textContent = zh ? 'Harness 随 BISHENG 更新。' : 'Harness is updated with BISHENG.'
-  body.appendChild(hint)
-  card.appendChild(body)
-
-  overlay.replaceChildren(card)
-  aboutPresentation.show(closeBtn)
-  publishUpdateCardHostState()
-}
-
-
-const phoneIcon = `<svg viewBox="0 0 24 24" width="19" height="19" fill="none" aria-hidden="true"><rect x="7" y="2.75" width="10" height="18.5" rx="2.25" stroke="currentColor" stroke-width="1.7"/><path d="M10.2 5.5h3.6M10.5 18.35h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>`
-
-/**
- * The wide-sidebar button mirrors the settings trigger next to it: the same
- * 42px height (as a 42px square), the same 12px corner radius, and the same
- * 2px overhang past the settings area's content edge, with a 4px gap between
- * the two. The collapsed rail mirrors the trigger's 36px
- * circle instead. Both trigger sizes come from Harness's settings plugin.
- */
-const mobileButtonStyles = `
-  [data-dsh-sidebar-settings] { position:relative; box-sizing:border-box; }
-  [data-dsh-sidebar-root][data-dsh-sidebar-wide="true"] [data-dsh-sidebar-settings] { padding-right:46px; }
-  #${MOBILE_BUTTON_ID} { appearance:none; position:relative; width:42px; height:42px; padding:0; color:var(--dsw-alias-label-secondary,#73777f); background:transparent; border:0; border-radius:12px; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; }
-  [data-dsh-sidebar-root][data-dsh-sidebar-wide="true"] #${MOBILE_BUTTON_ID} { position:absolute; right:-2px; top:50%; transform:translateY(-50%); }
-  [data-dsh-sidebar-root][data-dsh-sidebar-wide="false"] [data-dsh-sidebar-settings] { flex-direction:column; align-items:center; }
-  [data-dsh-sidebar-root][data-dsh-sidebar-wide="false"] #${MOBILE_BUTTON_ID} { flex:none; width:36px; height:36px; border-radius:50%; margin-top:2px; }
-  #${MOBILE_BUTTON_ID}:hover { color:var(--dsw-alias-label-primary,#202124); background:var(--dsw-alias-interactive-bg-hover,rgba(32,33,36,.08)); }
-  #${MOBILE_BUTTON_ID}:focus-visible { outline:2px solid #4d6bfe; outline-offset:1px; }
-  #${MOBILE_BUTTON_ID}[hidden] { display:none; }
-  #${MOBILE_BUTTON_ID} > span { position:absolute; top:9px; right:9px; width:7px; height:7px; border:1.5px solid var(--dsw-specific-sidebar-fill,#fff); border-radius:50%; background:#4da66d; opacity:0; }
-  [data-dsh-sidebar-root][data-dsh-sidebar-wide="false"] #${MOBILE_BUTTON_ID} > span { top:6px; right:6px; }
-  #${MOBILE_BUTTON_ID}.is-connected > span { opacity:1; }
-`
-
-const aboutStyles = `
-  :host { color-scheme: light dark; }
-  * { box-sizing: border-box; }
-  .about-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 2147483647;
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
-  }
-  .about-card {
-    position: relative;
-    width: min(380px, calc(100vw - 40px));
-    max-height: min(560px, calc(100vh - 60px));
-    overflow-y: auto;
-    color: var(--dsw-alias-label-primary, #202124);
-    background: var(--dsw-alias-bg-layer-1, rgba(255, 255, 255, 0.98));
-    border: 1px solid var(--dsw-alias-border-l2, rgba(32, 33, 36, 0.14));
-    border-radius: 14px;
-    padding: 18px 20px 20px;
-    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.08);
-  }
-  .about-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 14px;
-  }
-  .about-title {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 650;
-    line-height: 20px;
-    letter-spacing: -0.1px;
-    color: var(--dsw-alias-label-primary, #202124);
-  }
-  .about-close {
-    width: 26px;
-    height: 26px;
-    margin: -4px -6px 0 0;
-    flex: none;
-    color: var(--dsw-alias-label-secondary, #73777f);
-    background: transparent;
-    border: 0;
-    border-radius: 7px;
-    font-size: 20px;
-    line-height: 20px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .about-close:hover {
-    color: var(--dsw-alias-label-primary, #202124);
-    background: rgba(127, 127, 127, 0.12);
-  }
-  .about-body {
-    font-size: 13px;
-    line-height: 21px;
-    margin-bottom: 18px;
-    color: var(--dsw-alias-label-primary, #202124);
-  }
-  .about-line {
-    margin: 2px 0;
-  }
-  .about-hint {
-    margin: 12px 0 0;
-    color: var(--dsw-alias-label-secondary, #666b73);
-    font-size: 12.5px;
-  }
-  .about-actions {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  button {
-    appearance: none;
-    border: 0;
-    font: inherit;
-    cursor: pointer;
-  }
-  button:focus-visible { outline: 2px solid #4d6bfe; outline-offset: 2px; }
-  button:disabled { cursor: default; opacity: 0.55; }
-  .btn-action {
-    flex: 1;
-    min-height: 34px;
-    padding: 6px 14px;
-    border-radius: 999px;
-    font-size: 13px;
-    font-weight: 600;
-    text-align: center;
-    color: var(--dsw-alias-label-primary, #202124);
-    background: var(--dsw-alias-interactive-bg, rgba(32, 33, 36, 0.06));
-    border: 1px solid var(--dsw-alias-border-l2, rgba(32, 33, 36, 0.14));
-  }
-  .btn-action:hover:not(:disabled) {
-    background: var(--dsw-alias-interactive-bg-hover, rgba(32, 33, 36, 0.1));
-  }
-  @media (prefers-color-scheme: dark) {
-    .about-card {
-      color: var(--dsw-alias-label-primary, #f3f4f6);
-      background: var(--dsw-alias-bg-layer-1, rgba(31, 32, 35, 0.98));
-      border-color: var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.14));
-      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5), 0 2px 10px rgba(0, 0, 0, 0.25);
-    }
-    .about-title, .about-body { color: var(--dsw-alias-label-primary, #f3f4f6); }
-    .about-hint, .about-close { color: var(--dsw-alias-label-secondary, #a9adb5); }
-    .about-close:hover { color: var(--dsw-alias-label-primary, #f3f4f6); background: rgba(255, 255, 255, 0.1); }
-    .btn-action {
-      color: var(--dsw-alias-label-primary, #f3f4f6);
-      background: rgba(255, 255, 255, 0.08);
-      border-color: var(--dsw-alias-border-l2, rgba(255, 255, 255, 0.18));
-    }
-    .btn-action:hover:not(:disabled) { background: rgba(255, 255, 255, 0.13); }
-  }
-`
-
-
-ipcRenderer.on('desktop:show-about', (_event, info: AboutInfo) => {
-  aboutInfo = info
-  aboutOpen = true
-  const live = localeFromHtmlLang(document.documentElement?.lang)
-  if (live) applyLiveLocale(live, true)
-  else if (info.locale === 'en' || info.locale === 'zh') applyLiveLocale(info.locale, false)
-  renderAbout()
-})
-
-window.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && aboutOpen) {
-    aboutOpen = false
-    renderAbout()
-  }
-})
-
 
 if (document.readyState === 'loading') {
   window.addEventListener('DOMContentLoaded', initializeUi, { once: true })

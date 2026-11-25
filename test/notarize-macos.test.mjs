@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
-import afterSign, { notarizeWithStapleRetry } from '../scripts/notarize-macos.mjs'
+import { join } from 'node:path'
+import afterSign, { notarizeWithStapleRetry } from '../scripts/release/notarize-macos.mjs'
+import { verifyMacOSMicrophonePermissions } from '../scripts/verify/verify-macos-permissions.mjs'
+
+vi.mock('../scripts/verify/verify-macos-permissions.mjs', () => ({ verifyMacOSMicrophonePermissions: vi.fn() }))
 
 const options = { appPath: '/fixture/DSH Desktop.app' }
 const stapleError = new Error('Failed to staple your application with code: 68\nThe network connection was lost.')
@@ -30,6 +34,16 @@ describe('macOS app notarization', () => {
     expect(deps.run).toHaveBeenCalledExactlyOnceWith('xcrun', ['stapler', 'validate', options.appPath], { timeout: 60_000 })
   })
 
+  it('retries transient validation failures with bounded backoff', async () => {
+    const deps = dependencies()
+    deps.run.mockRejectedValueOnce(commandError(68))
+      .mockResolvedValue({})
+    await notarizeWithStapleRetry(options, deps)
+    expect(deps.submit).toHaveBeenCalledTimes(1)
+    expect(deps.wait).toHaveBeenCalledExactlyOnceWith(10_000)
+    expect(deps.run).toHaveBeenCalledTimes(2)
+  })
+
   it('fails after the bounded number of transient retries', async () => {
     const deps = dependencies()
     deps.submit.mockRejectedValue(stapleError)
@@ -37,7 +51,7 @@ describe('macOS app notarization', () => {
     deps.run.mockRejectedValue(error)
     await expect(notarizeWithStapleRetry(options, deps)).rejects.toBe(error)
     expect(deps.submit).toHaveBeenCalledTimes(1)
-    expect(deps.run).toHaveBeenCalledTimes(5)
+    expect(deps.run).toHaveBeenCalledTimes(6)
   })
 
   it('never retries rejected notarization, permanent stapling errors or failed validation', async () => {
@@ -58,6 +72,58 @@ describe('macOS app notarization', () => {
     }
   })
 
+  it('resumes a network timeout using the existing submission without uploading again', async () => {
+    const id = '7b346e97-577f-4a45-94f5-8bbac285e775'
+    const deps = dependencies()
+    deps.submit.mockRejectedValue(new Error(`NSURLErrorDomain Code=-1001 The request timed out. LocalDataTask <00000000-0000-0000-0000-000000000000> /submissions/${id}?`))
+    deps.run.mockRejectedValueOnce(new Error('ECONNRESET'))
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ id, status: 'Accepted' }) })
+      .mockResolvedValue({})
+    await notarizeWithStapleRetry({ ...options, appleApiKey: '/fixture/key.p8', appleApiKeyId: 'key-id', appleApiIssuer: 'issuer' }, deps)
+    expect(deps.submit).toHaveBeenCalledTimes(1)
+    expect(deps.run.mock.calls.slice(0, 2).every(call => call[1][1] === 'wait' && call[1][2] === id)).toBe(true)
+    expect(deps.run.mock.calls.slice(2).map(call => call[1].slice(0, 2))).toEqual([['stapler', 'staple'], ['stapler', 'validate']])
+  })
+
+  it('bounds network retries and fails closed for rejection or missing submission ID', async () => {
+    const id = '7b346e97-577f-4a45-94f5-8bbac285e775'
+    const credentials = { ...options, appleApiKey: '/fixture/key.p8', appleApiKeyId: 'key-id', appleApiIssuer: 'issuer' }
+    for (const status of ['Invalid', 'Rejected']) {
+      const deps = dependencies()
+      deps.submit.mockRejectedValue(new Error(`The request timed out /submissions/${id}`))
+      deps.run.mockResolvedValue({ stdout: JSON.stringify({ id, status }) })
+      await expect(notarizeWithStapleRetry(credentials, deps)).rejects.toThrow(status)
+      expect(deps.run).toHaveBeenCalledTimes(1)
+    }
+    const deps = dependencies()
+    deps.submit.mockRejectedValue(new Error(`The request timed out /submissions/${id}`))
+    deps.run.mockRejectedValue(new Error('ECONNRESET'))
+    await expect(notarizeWithStapleRetry(credentials, deps)).rejects.toThrow('ECONNRESET')
+    expect(deps.run).toHaveBeenCalledTimes(6)
+    const missing = dependencies()
+    missing.submit.mockRejectedValue(new Error('The request timed out'))
+    await expect(notarizeWithStapleRetry(credentials, missing)).rejects.toThrow('timed out')
+    expect(missing.run).not.toHaveBeenCalled()
+  })
+
+  it('does not retry authentication failures or staple an unverified response', async () => {
+    const id = '7b346e97-577f-4a45-94f5-8bbac285e775'
+    const credentials = { ...options, appleApiKey: '/fixture/key.p8', appleApiKeyId: 'key-id', appleApiIssuer: 'issuer' }
+    for (const reply of ['not json', JSON.stringify({ id: 'different-id', status: 'Accepted' })]) {
+      const deps = dependencies()
+      deps.submit.mockRejectedValue(new Error(`The request timed out /submissions/${id}`))
+      deps.run.mockResolvedValue({ stdout: reply })
+      await expect(notarizeWithStapleRetry(credentials, deps)).rejects.toThrow()
+      expect(deps.run).toHaveBeenCalledTimes(1)
+    }
+    const deps = dependencies()
+    deps.submit.mockRejectedValue(new Error(`The request timed out /submissions/${id}`))
+    const error = new Error('HTTP 401 Unauthorized')
+    deps.run.mockRejectedValue(error)
+    await expect(notarizeWithStapleRetry(credentials, deps)).rejects.toBe(error)
+    expect(deps.run).toHaveBeenCalledTimes(1)
+  })
+
   it('skips non-macOS and unsigned development builds and rejects partial credentials', async () => {
     await afterSign({ electronPlatformName: 'win32' })
     const saved = { ...process.env }
@@ -73,10 +139,25 @@ describe('macOS app notarization', () => {
     }
   })
 
+  it('rejects a signed bundle missing microphone permissions before Apple submission', async () => {
+    const saved = { ...process.env }
+    try {
+      process.env.APPLE_API_KEY = '/fixture/key.p8'
+      process.env.APPLE_API_KEY_ID = 'fixture-key'
+      process.env.APPLE_API_ISSUER = 'fixture-issuer'
+      vi.mocked(verifyMacOSMicrophonePermissions).mockRejectedValueOnce(new Error('missing audio-input'))
+      await expect(afterSign({
+        electronPlatformName: 'darwin', appOutDir: '/fixture',
+        packager: { appInfo: { productFilename: 'DSH Desktop' } }
+      })).rejects.toThrow('missing audio-input')
+      expect(verifyMacOSMicrophonePermissions).toHaveBeenCalledWith(join('/fixture', 'DSH Desktop.app'))
+    } finally { process.env = saved }
+  })
+
   it('uses the explicit hook with built-in notarization disabled to avoid duplicate submissions', async () => {
     const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
     expect(pkg.build.mac.notarize).toBe(false)
-    expect(pkg.build.afterSign).toBe('scripts/notarize-macos.mjs')
+    expect(pkg.build.afterSign).toBe('scripts/release/notarize-macos.mjs')
     expect(pkg.devDependencies['@electron/notarize']).toBe('2.5.0')
   })
 })

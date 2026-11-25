@@ -1,5 +1,13 @@
 # BISHENG Work 企业知识库 Connect 方案
 
+## 2026-10-19 架构调整（优先于下文早期提案）
+
+整体架构以 [Gateway 商业版整体架构](gateway-commercial-architecture.zh.md) 为准，[Gateway 评审页](design/bisheng-work-gateway-1.6.0.html) 保留概览：Gateway 按明确路由策略区分普通 API、DSH 和原有商业能力。所有 DSH 业务在网关转发前统一验证 token、session、授权、席位与对应功能 bit；历史 `/api/v1/dsh/**` 也必须纳入，不能落入普通透传。登录、刷新、注销与内部调用各有独立认证策略。
+
+普通 v2 保留自身 Bearer / scope / ACL，不增加 Work 席位要求。DSH 知识入口完成网关准入后，以服务端专用服务账号及受控 `X-On-Behalf-Of` 委托复用当前 Bisheng v2；无需新建知识业务接口或为 v2 额外增加 HMAC。Bisheng 当前已实现统一 OpenAPI 身份与委托校验，下文关于默认操作员、user_id 代理缺口的描述属于旧源码观察，不再作为现状。
+
+Gateway 原有 SSO、组织、治理等商业能力保留各自 License 与调用认证，不默认绑定 DSH 席位。共享授权读取与路由策略设施，不混同各功能权利。源站 DSH 接口必须验证可信网关调用；封堵旁路后才迁移业务端重复 introspect。以上仍为设计，未实现或部署。
+
 修订：2026-10-15。状态：已明确产品方向，尚未实现、部署或安装包验收。
 
 本文替代 2026-10-09 草案中按共享容量、解析包和调用包收费的设计。[HTML 评审文档](design/bisheng-work-gateway-1.6.0.html) 聚焦加密、签名与认证主线；本文保留详细技术背景。

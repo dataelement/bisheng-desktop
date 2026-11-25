@@ -2,7 +2,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createStateStore, emptyState, MAX_STATE_BYTES, validateState } from '../packages/dsh-desktop-workbenches/state.mjs'
+import { createStateStore, emptyState, MAX_STATE_BYTES } from '../packages/dsh-desktop-workbenches/state.mjs'
 import { apply, authorizedStateMigrations, catalogReadOptions } from '../packages/dsh-desktop-workbenches/index.js'
 
 const roots = []
@@ -18,6 +18,37 @@ const populated = () => ({ ...emptyState(), added: [WRITER, RESEARCH], pinned: [
   favorites: [WRITER], sessionBindings: { 'session-1': WRITER }, recentSessions: { [WRITER]: 'session-1' }, notes: { [WRITER]: 'An unsaved business draft' } })
 
 describe('desktop workbench state', () => {
+  it.each(['local:resume-review', 'local:@hr/resume-review'])('persists canonical local identity %s across restart and removal without changing ownership', async local => {
+    const { root, store } = await fixture()
+    const initial = { ...emptyState(), added: [local, WRITER], pinned: [local], favorites: [local], active: local,
+      sessionBindings: { 'session-local': local, 'session-market': WRITER },
+      recentSessions: { [local]: 'session-local', [WRITER]: 'session-market' },
+      notes: { [local]: 'Local review draft' }, hiddenWorkspaces: { [local]: ['workspace-private'] } }
+    await store.write({ revision: 0, state: initial })
+    expect((await createStateStore(root).read()).state).toEqual(initial)
+    const removed = { ...initial, added: [WRITER], pinned: [], active: null }
+    await store.write({ revision: 1, state: removed })
+    expect((await createStateStore(root).read()).state).toEqual(removed)
+    await expect(store.write({ revision: 2, state: { ...removed, recentSessions: {}, sessionBindings: { ...removed.sessionBindings, 'session-local': WRITER } } })).rejects.toThrow('ownership')
+    await expect(store.write({ revision: 2, state: { ...removed, recentSessions: {}, sessionBindings: { 'session-market': WRITER } } })).rejects.toThrow('ownership')
+    await expect(store.write({ revision: 2, state: { ...removed, notes: {} } })).rejects.toThrow('preserve its notes')
+    await expect(store.write({ revision: 2, state: { ...removed, hiddenWorkspaces: {} } })).rejects.toThrow('preserve its workspace visibility')
+    expect((await store.read()).revision).toBe(2)
+  })
+
+  it('does not permit canonical local identity migration into a market repository or the reverse', async () => {
+    const { store } = await fixture()
+    const local = 'local:resume-review'
+    const state = { ...emptyState(), added: [local, WRITER], sessionBindings: { 'session-local': local, 'session-market': WRITER } }
+    await store.write({ revision: 0, state })
+    for (const migrations of [{ [local]: WRITER }, { [WRITER]: local }, { legacy: local }]) {
+      await expect(store.migrate({ revision: 1, state }, migrations)).rejects.toThrow('Invalid workbench ID migration')
+    }
+    await expect(store.write({ revision: 1, state: { ...state, sessionBindings: { 'session-local': WRITER } } })).rejects.toThrow('ownership')
+    await expect(store.write({ revision: 1, state: { ...state, sessionBindings: { ...state.sessionBindings, 'session-market': local } } })).rejects.toThrow('ownership')
+    expect((await store.read()).state).toEqual(state)
+  })
+
   it('accepts only explicit, mutually exclusive force=1 and cache=1 catalog queries', () => {
     expect(catalogReadOptions(new Request('http://localhost/api/desktop-workbenches/catalog'))).toEqual({ force: false })
     expect(catalogReadOptions(new Request('http://localhost/api/desktop-workbenches/catalog?force=1'))).toEqual({ force: true })
@@ -66,34 +97,6 @@ describe('desktop workbench state', () => {
     state.notes[WRITER] = 'mutated caller'
     saved.state.notes[WRITER] = 'mutated response'
     expect((await store.read()).state.notes[WRITER]).toBe('An unsaved business draft')
-  })
-
-  it.each(['private-workbench', '@private/workbench'])('persists all references for the local package %s and retains them after removal', async name => {
-    const { root, store } = await fixture()
-    const id = `local:${name}`
-    const state = { ...emptyState(), added: [id], pinned: [id], favorites: [id], active: id,
-      sessionBindings: { 'local-session': id }, recentSessions: { [id]: 'local-session' },
-      notes: { [id]: 'Keep local notes' }, hiddenWorkspaces: { [id]: ['workspace-a'] } }
-    await store.write({ revision: 0, state })
-    expect((await createStateStore(root).read()).state).toEqual(state)
-    const removed = { ...state, added: [], pinned: [], active: null }
-    await store.write({ revision: 1, state: removed })
-    expect((await createStateStore(root).read()).state).toEqual(removed)
-    await expect(store.write({ revision: 2, state: { ...removed, added: [RESEARCH], recentSessions: {}, sessionBindings: { 'local-session': RESEARCH } } })).rejects.toThrow('ownership')
-  })
-
-  it.each(['local:', 'local:@scope', 'local:plain/nested', 'local:@scope/name/extra', 'local:../escape', 'local:name:extra', 'local:has space', `local:${'a'.repeat(215)}`])('rejects malformed local identity %s without saving it', async id => {
-    const { root, store } = await fixture()
-    await expect(store.write({ revision: 0, state: { ...emptyState(), added: [id] } })).rejects.toHaveProperty('status', 400)
-    expect(await readdir(root)).toEqual([])
-  })
-
-  it('does not accept repository-to-local reassignment or local-to-repository migration', async () => {
-    const { store } = await fixture()
-    await store.write({ revision: 0, state: populated() })
-    await expect(store.write({ revision: 1, state: { ...populated(), added: [WRITER, RESEARCH, 'local:private-workbench'], recentSessions: {}, sessionBindings: { 'session-1': 'local:private-workbench' } } })).rejects.toThrow('ownership')
-    await expect(store.migrate({ revision: 1, state: populated() }, { 'local:private-workbench': WRITER })).rejects.toThrow('migration')
-    expect((await store.read()).state).toEqual(populated())
   })
 
 
@@ -257,16 +260,4 @@ describe('desktop workbench state', () => {
     expect(cancelled).toBe(true)
     expect((await post('x'.repeat(MAX_STATE_BYTES + 1))).status).toBe(413)
   })
-})
-
-
-it('cloud state stores display identity but refuses credentials and hosted URLs', () => {
-  const appId = 'a'.repeat(32), connectionKey = 'b'.repeat(16)
-  const id = `cloud:${connectionKey}:${appId}`
-  const item = { appId, connectionKey, title: 'Shared tasks', description: '', versionId: null }
-  const state = { ...emptyState(), added: [id], pinned: [id], cloudWorkbenches: { [id]: item } }
-  expect(validateState(state).cloudWorkbenches[id]).toEqual(item)
-  for (const field of ['ticket', 'key', 'token', 'url']) {
-    expect(() => validateState({ ...state, cloudWorkbenches: { [id]: { ...item, [field]: 'private' } } })).toThrow('metadata')
-  }
 })

@@ -87,10 +87,6 @@ window.__ModuleLoader__.load({
 		const TEMPLATE_DOCK_BOTTOM_PX = 12;
 		const TEMPLATE_PANEL_MIN_HEIGHT_PX = 200;
 		const STAGED_MODE_KEY = "\0dsh-ppt-unbound";
-		function pptTemplateId(templates, templateId) {
-			const template = (Array.isArray(templates) ? templates : []).find((item) => item.id === templateId && (item.supportedModes?.includes("ppt") ?? true));
-			return template?.id ?? null;
-		}
 		function modeKey(sessionId) {
 			return typeof sessionId === "string" && sessionId.trim().length > 0 ? sessionId : STAGED_MODE_KEY;
 		}
@@ -144,7 +140,10 @@ window.__ModuleLoader__.load({
 					error: loading ? "" : current.error
 				}));
 			}
-			setError(sessionId, error) {
+			setNotice(sessionId, notice) {
+                this.update(sessionId, current => ({ ...current, notice }));
+            }
+            setError(sessionId, error) {
 				this.update(sessionId, (current) => ({
 					...current,
 					loading: false,
@@ -152,34 +151,26 @@ window.__ModuleLoader__.load({
 				}));
 			}
 			setTemplateState(sessionId, next) {
-				this.update(sessionId, (current) => {
-					const templates = Array.isArray(next.templates) ? next.templates : current.templates;
-					const away = next.documentMode === "word" || next.documentMode === "excel";
-					const remoteId = pptTemplateId(templates, next.selectedTemplateId);
-					const keptId = pptTemplateId(templates, current.selectedId);
-					const selectedId = away ? null : remoteId !== null ? remoteId : typeof next.selectedTemplateId === "string" ? keptId : next.presentationMode === "ppt" ? null : keptId;
-					return {
-						...current,
-						templates,
-						selectedId,
-						activeMode: away ? null : next.presentationMode ?? current.activeMode,
-						notice: next.templateMigration?.reason ?? null,
-						loading: false,
-						error: ""
-					};
-				});
-			}
+                this.update(sessionId, current => ({
+                    ...current,
+                    templates: next.templates,
+                    selectedId: next.templates.some(template => template.id === next.selectedTemplateId) ? next.selectedTemplateId : null,
+                    activeMode: next.presentationMode ?? current.activeMode,
+                    notice: next.templateMigration?.reason ?? null,
+                    loading: false,
+                    error: ""
+                }));
+            }
 			setTemplates(sessionId, templates) {
 				this.update(sessionId, (current) => ({
 					...current,
 					loading: false,
 					templates,
-					selectedId: pptTemplateId(templates, current.selectedId),
+					selectedId: templates.some((template) => template.id === current.selectedId) ? current.selectedId : null,
 					error: ""
 				}));
 			}
 			select(sessionId, template, activeMode) {
-				if (activeMode !== "ppt" || pptTemplateId([template], template?.id) === null) return;
 				this.bump(sessionId);
 				this.update(sessionId, (current) => ({
 					...current,
@@ -215,59 +206,7 @@ window.__ModuleLoader__.load({
 				this.states.delete(STAGED_MODE_KEY);
 				this.notify(STAGED_MODE_KEY);
 			}
-			/** Read a selection made outside this composer, such as from the phone. */
-			readRemote(sessionId, client, force = false, timeoutMessage = en["templates.loadTimeout"]) {
-				this.inflight ??= /* @__PURE__ */ new Map();
-				this.adopted ??= /* @__PURE__ */ new Set();
-				this.remoteEpoch ??= /* @__PURE__ */ new Map();
-				this.remoteReady ??= /* @__PURE__ */ new Set();
-				this.remoteReadyRevision ??= /* @__PURE__ */ new Map();
-				this.remoteInflight ??= /* @__PURE__ */ new Map();
-				if (!client?.bound || typeof sessionId !== "string" || sessionId.trim().length === 0) return Promise.resolve("idle");
-				if (!force && this.remoteReady.has(sessionId) && this.remoteReadyRevision.get(sessionId) === this.revision(sessionId)) return Promise.resolve("ready");
-				const pending = this.inflight.get(sessionId);
-				// A forced read may replace a remote read, but must not interrupt staged adoption.
-				if (pending && (!force || this.remoteInflight.get(sessionId) !== pending)) return pending;
-				// Local chooser actions invalidate both success and failure from this hydration.
-				const seenRevision = this.revision(sessionId);
-				const epoch = force ? (this.remoteEpoch.get(sessionId) ?? 0) + 1 : this.remoteEpoch.get(sessionId) ?? 0;
-				if (force) {
-					this.remoteReady.delete(sessionId);
-					this.remoteEpoch.set(sessionId, epoch);
-				}
-				// Reuse the bounded loader so a stalled hydration releases singleflight and can retry.
-				this.setLoading(sessionId, true);
-				const work = loadTemplateState(client, timeoutMessage).then((next) => {
-					if ((this.remoteEpoch.get(sessionId) ?? 0) !== epoch || this.revision(sessionId) !== seenRevision) return "stale";
-					if (!force && this.snapshot(sessionId).engaged) this.applyLoadedTemplates(sessionId, client, seenRevision, next);
-					else this.setTemplateState(sessionId, next);
-					this.remoteReady.add(sessionId);
-					this.remoteReadyRevision.set(sessionId, seenRevision);
-					this.adopted.add(sessionId);
-					return "applied";
-				}).catch((reason) => {
-					if ((this.remoteEpoch.get(sessionId) ?? 0) !== epoch || this.revision(sessionId) !== seenRevision) return "stale";
-					this.setError(sessionId, reason instanceof Error ? reason.message : String(reason));
-					return "failed";
-				}).finally(() => {
-					if (this.inflight.get(sessionId) === work) this.inflight.delete(sessionId);
-					if (this.remoteInflight.get(sessionId) === work) this.remoteInflight.delete(sessionId);
-				});
-				this.inflight.set(sessionId, work);
-				this.remoteInflight.set(sessionId, work);
-				return work;
-			}
-			/** Bound chooser/footer reads share adoption, request ownership and application. */
-			loadTemplates(sessionId, client, timeoutMessage = en["templates.loadTimeout"]) {
-				const work = this.adopted?.has(sessionId) ? this.readRemote(sessionId, client, false, timeoutMessage) : this.adopt(sessionId, client, timeoutMessage);
-				return work.then((result) => {
-					// A mode click may join an older request. Once it settles, reload at the
-					// current revision; cancelling staged mode also still needs a catalog.
-					if ((result === "stale" || result === "idle") && client?.bound && this.snapshot(sessionId).error === "") return this.readRemote(sessionId, client, false, timeoutMessage);
-					return result;
-				});
-			}
-			adopt(sessionId, client, timeoutMessage = en["templates.loadTimeout"]) {
+			adopt(sessionId, client) {
 				this.inflight ??= /* @__PURE__ */ new Map();
 				this.adopted ??= /* @__PURE__ */ new Set();
 				if (!client?.bound || typeof sessionId !== "string" || sessionId.trim().length === 0) return Promise.resolve("idle");
@@ -275,7 +214,10 @@ window.__ModuleLoader__.load({
 				if (pending) return pending;
 				if (this.adopted.has(sessionId)) return Promise.resolve("done");
 				const staged = this.states.get(STAGED_MODE_KEY);
-				if (!staged?.engaged) return this.readRemote(sessionId, client, false, timeoutMessage);
+				if (!staged?.engaged) {
+					this.adopted.add(sessionId);
+					return Promise.resolve("idle");
+				}
 				const work = this.applyStaged(sessionId, client, staged).finally(() => {
 					if (this.inflight.get(sessionId) === work) this.inflight.delete(sessionId);
 				});
@@ -292,17 +234,14 @@ window.__ModuleLoader__.load({
 				this.update(sessionId, () => ({ ...staged, loading: true, error: "" }));
 				try {
 					const remote = await client.call("state");
-					const templates = Array.isArray(remote?.templates) ? remote.templates : [];
-					const away = remote?.documentMode === "word" || remote?.documentMode === "excel";
-					const matchId = pptTemplateId(templates, remote?.selectedTemplateId);
-					const occupied = away || remote?.presentationMode === "ppt" || matchId !== null;
+					const occupied = remote?.presentationMode === "ppt" || remote?.documentMode === "word" || remote?.documentMode === "excel" || typeof remote?.selectedTemplateId === "string";
 					if (occupied) {
 						this.clearStaged();
 						this.update(sessionId, (current) => ({
 							...current,
-							templates: templates.length > 0 ? templates : current.templates,
-							selectedId: away ? null : matchId,
-							activeMode: away ? null : remote?.presentationMode === "ppt" ? "ppt" : null,
+							templates: Array.isArray(remote?.templates) ? remote.templates : current.templates,
+							selectedId: typeof remote?.selectedTemplateId === "string" ? remote.selectedTemplateId : null,
+							activeMode: remote?.presentationMode === "ppt" ? "ppt" : null,
 							loading: false,
 							engaged: false,
 							error: ""
@@ -311,22 +250,6 @@ window.__ModuleLoader__.load({
 						return "kept";
 					}
 					if (staged.selectedId) {
-						const catalog = Array.isArray(staged.templates) ? staged.templates : [];
-						const stagedMatch = pptTemplateId(catalog, staged.selectedId);
-						if (catalog.length > 0 && stagedMatch === null) {
-							await client.call("presentation/mode", { mode: "ppt" });
-							this.update(sessionId, (current) => ({
-								...current,
-								activeMode: "ppt",
-								selectedId: null,
-								loading: false,
-								engaged: true,
-								error: ""
-							}));
-							this.clearStaged();
-							this.adopted.add(sessionId);
-							return "partial";
-						}
 						try {
 							await client.call("template/select", { templateId: staged.selectedId, mode: "ppt" });
 						} catch (reason) {
@@ -366,30 +289,17 @@ window.__ModuleLoader__.load({
 			applyLoadedTemplates(sessionId, client, seenRevision, next, request) {
 				if (request != null && (request.client !== client || modeKey(request.sessionId) !== modeKey(sessionId))) return false;
 				if (this.revision(sessionId) !== seenRevision) return false;
-				const away = next?.documentMode === "word" || next?.documentMode === "excel";
-				const activeMode = away ? null : this.snapshot(sessionId).activeMode ?? (next?.presentationMode === "ppt" ? "ppt" : null);
+				const activeMode = this.snapshot(sessionId).activeMode ?? (next?.presentationMode === "ppt" ? "ppt" : null);
 				this.setTemplates(sessionId, next?.templates ?? []);
-				if (away) {
-					this.update(sessionId, (current) => ({ ...current, activeMode: null, selectedId: null, loading: false, error: "" }));
+				if (!client?.bound || activeMode === null) return true;
+				this.setMode(sessionId, activeMode);
+				this.setNotice(sessionId, next?.templateMigration?.reason ?? null);
+				const selected = (next?.templates ?? []).find((template) => template.id === next.selectedTemplateId && (template.supportedModes?.includes("ppt") ?? true));
+				if (selected === void 0) {
+					this.deselect(sessionId, activeMode);
 					return true;
 				}
-				if (!client?.bound || activeMode === null) return true;
-				// Hydration retains compatible selections without advancing the user-action
-				// revision, which would restart loads for a legitimately empty catalog.
-				const templates = next?.templates ?? [];
-				this.update(sessionId, (current) => {
-					const remoteId = pptTemplateId(templates, next?.selectedTemplateId);
-					const selectedId = remoteId ?? (typeof next?.selectedTemplateId === "string" ? current.selectedId : null);
-					return {
-						...current,
-						activeMode,
-						selectedId,
-						engaged: true,
-						notice: selectedId === null ? next?.templateMigration?.reason ?? null : false,
-						loading: false,
-						error: ""
-					};
-				});
+				this.select(sessionId, selected, activeMode);
 				return true;
 			}
 		};
@@ -714,9 +624,9 @@ window.__ModuleLoader__.load({
 				})
 			});
 		}
-		/** Selected-template thumbnail. After the first message the template is pinned under that bubble. */
+		/** Selected-template reference shown only while the standard Session is blank. */
 		function OfficePptStandardInputAccessory(props) {
-			if (props.session == null || props.session.blank !== true) return null;
+			if (props.session == null || !props.session.blank) return null;
 			return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(OfficePptInputAccessory, { ...props });
 		}
 		/** PPT option and template chooser shared by both Composer layouts. */
@@ -732,10 +642,6 @@ window.__ModuleLoader__.load({
 			const catalogRevision = mode.revision(sessionId);
 			(0, react.useEffect)(() => {
 				if (!loadTemplates || state.templates.length > 0 || state.error !== "") return;
-				if (client?.bound) {
-					void mode.loadTemplates(sessionId, client, t("templates.loadTimeout"));
-					return;
-				}
 				const request = { client, sessionId };
 				const seenRevision = catalogRevision;
 				mode.setLoading(sessionId, true);
@@ -937,13 +843,13 @@ window.__ModuleLoader__.load({
 				loadTemplates: false
 			});
 		}
-		/** PPT mode control beside the blank-session agent preset. */
+		/** PPT mode control in the native session-scoped hero options. */
 		function OfficePptStandardModeAction(props) {
             const state = useMode(props.mode, props.sessionId);
             (0, react.useEffect)(() => {
                 if (!props.client?.bound) return;
-                props.mode.adopt(props.sessionId, props.client, props.t("templates.loadTimeout"));
-            }, [props.client, props.mode, props.sessionId, props.t]);
+                props.mode.adopt(props.sessionId, props.client);
+            }, [props.client, props.mode, props.sessionId]);
             return (0, react_jsx_runtime.jsxs)(react.Fragment, { children: [
                 (0, react_jsx_runtime.jsx)(OfficePptChooser, { ...props, placement: "trigger" }),
                 state.notice && state.activeMode !== null ? (0, react_jsx_runtime.jsx)("span", {
@@ -1212,8 +1118,8 @@ window.__ModuleLoader__.load({
 		*/
 		function applyStandard(ctx) {
 			const injectHero = officePptHeroInjection(ctx);
-			ctx.slots.inject("conversation.hero.modeActions", () => ctx.slots.register({
-				name: "conversation.hero.modeActions",
+			ctx.slots.inject("conversation.hero.options", () => ctx.slots.register({
+				name: "conversation.hero.options",
 				id: "dsh-ppt",
 				order: 20,
 				locale: NS,

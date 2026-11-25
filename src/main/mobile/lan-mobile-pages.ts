@@ -1,10 +1,5 @@
 export interface MobilePageOptions {
   locale: 'en' | 'zh'
-  product?: string | null
-}
-
-export function isBishengProduct(product: string | null | undefined): boolean {
-  return product === 'bisheng'
 }
 
 export interface PendingCreatedSession {
@@ -49,13 +44,8 @@ export function applyPendingCreatedSessions(
   return stillPending
 }
 
-export function renderMobilePage({ locale, product }: MobilePageOptions): string {
+export function renderMobilePage({ locale }: MobilePageOptions): string {
   const zh = locale === 'zh'
-  const bisheng = isBishengProduct(product)
-  const disconnectedPath = bisheng ? '/disconnected?product=bisheng' : '/disconnected'
-  const header = bisheng
-    ? ''
-    : `<header><div class="brand"><img class="light-logo" src="/brand-logo/light" alt="BISHENG"><img class="dark-logo" src="/brand-logo/dark" alt="BISHENG"><span>BISHENG</span></div><div id="status" class="status connecting" role="status" aria-label="${zh ? '正在连接' : 'Connecting'}"></div></header>`
   return `<!doctype html>
 <html lang="${zh ? 'zh-CN' : 'en'}">
 <head>
@@ -64,16 +54,16 @@ export function renderMobilePage({ locale, product }: MobilePageOptions): string
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme:light)">
   <meta name="theme-color" content="#141416" media="(prefers-color-scheme:dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="BISHENG">
+  <meta name="apple-mobile-web-app-title" content="DSH Mobile">
   <link rel="icon" href="/app-icon">
   <link rel="apple-touch-icon" href="/app-icon">
-  <title>BISHENG</title>
+  <title>DSH Mobile</title>
   <style>
-    :root{color-scheme:light;--paper:#fff;--sidebar:#f7f8fa;--ink:#18191c;--muted:#81858c;--line:#e5e7eb;--card:#fff;--hover:#f2f3f5;--surface:#f7f7f5;--brand:#034FE5;--tunnel-warn-h:0px}
-    @media(prefers-color-scheme:dark){:root{color-scheme:dark;--paper:#141416;--sidebar:#19191b;--ink:#f5f5f6;--muted:#95979d;--line:#303034;--card:#1d1d20;--hover:#29292d;--surface:#202023;--brand:#034FE5}}
+    :root{color-scheme:light;--paper:#fff;--sidebar:#f7f8fa;--ink:#18191c;--muted:#81858c;--line:#e5e7eb;--card:#fff;--hover:#f2f3f5;--surface:#f7f7f5;--brand:#4d6bfe;--tunnel-warn-h:0px}
+    @media(prefers-color-scheme:dark){:root{color-scheme:dark;--paper:#141416;--sidebar:#19191b;--ink:#f5f5f6;--muted:#95979d;--line:#303034;--card:#1d1d20;--hover:#29292d;--surface:#202023;--brand:#6f86ff}}
     *{box-sizing:border-box}html,body{height:100%;overflow:hidden}body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
     button,input,textarea,select{font:inherit}.shell{max-width:760px;height:var(--app-height,100dvh);margin:auto;padding:calc(6px + env(safe-area-inset-top)) 14px calc(8px + env(safe-area-inset-bottom));display:flex;flex-direction:column}
-    header{height:48px;display:flex;flex:none;align-items:center;justify-content:space-between;padding:0 3px}.brand{font-size:15px;font-weight:600;letter-spacing:-.01em;display:flex;align-items:center;gap:8px}.brand img{width:28px;height:28px;object-fit:contain}.brand .dark-logo{display:none}@media(prefers-color-scheme:dark){.brand .light-logo{display:none}.brand .dark-logo{display:block}}.status{width:8px;height:8px;border-radius:50%;margin-right:4px;background:#35a867;box-shadow:0 0 0 0 rgba(53,168,103,.42);animation:connectedPulse 1.8s ease-out infinite}.status.connecting{background:var(--muted);animation:none}.status.error-state{background:#e34d59;animation:none}@keyframes connectedPulse{70%{box-shadow:0 0 0 7px rgba(53,168,103,0)}100%{box-shadow:0 0 0 0 rgba(53,168,103,0)}}
+    header{height:48px;display:flex;flex:none;align-items:center;justify-content:space-between;padding:0 3px}.brand{font-size:15px;font-weight:600;letter-spacing:-.01em;display:flex;align-items:center;gap:8px}.brand img{width:35px;height:20px;object-fit:contain}.brand .dark-logo{display:none}@media(prefers-color-scheme:dark){.brand .light-logo{display:none}.brand .dark-logo{display:block}}.status{width:8px;height:8px;border-radius:50%;margin-right:4px;background:#35a867;box-shadow:0 0 0 0 rgba(53,168,103,.42);animation:connectedPulse 1.8s ease-out infinite}.status.connecting{background:var(--muted);animation:none}.status.error-state{background:#e34d59;animation:none}@keyframes connectedPulse{70%{box-shadow:0 0 0 7px rgba(53,168,103,0)}100%{box-shadow:0 0 0 0 rgba(53,168,103,0)}}
     .view{display:none;min-height:0}.view.active{display:flex;flex:1;flex-direction:column}.toolbar{display:flex;flex:none;gap:8px;align-items:center;padding:12px 0}.toolbar select{flex:1;min-width:0}#sessionsView{padding-top:2px}.session-hero{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 2px 11px}.session-heading{min-width:0}.session-heading h1{margin:0;font-size:24px;line-height:1.15;letter-spacing:-.035em;font-weight:650}.session-heading p{margin:0 0 1px;color:var(--muted);font-size:10.5px}.workspace-panel{flex:none;border:1px solid var(--line);border-radius:14px;background:var(--surface);padding:9px}.workspace-label{display:block;margin:0 2px 4px;color:var(--muted);font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}.session-actions{display:flex;gap:7px}.session-actions select{flex:1;min-width:0;height:39px;background:var(--card);font-weight:500}.icon-button{display:grid;place-items:center;width:39px;height:39px;padding:0;background:var(--card)}.icon-button.refreshing svg{animation:spin .65s linear infinite}.new-session{display:flex;align-items:center;gap:5px;height:36px;flex:none;border-color:var(--ink);border-radius:11px;padding:6px 11px;background:var(--ink);color:var(--paper);font-weight:600}.new-session:hover{background:var(--ink);opacity:.86}.new-session:disabled{cursor:default;opacity:.35}.new-session svg{display:block}.workspace-hint{color:var(--muted);font-size:12px;line-height:1.4;padding:7px 2px 1px}.workspace-hint[hidden]{display:none}.list-heading{display:flex;align-items:center;justify-content:space-between;padding:14px 2px 6px}.list-heading strong{font-size:13px;font-weight:650}.session-count{display:grid;place-items:center;min-width:24px;height:20px;border-radius:999px;background:var(--surface);color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}body.chat-open header{display:none}body.chat-open .shell{padding:env(safe-area-inset-top) 14px 0}#chatView{position:relative}.chat-toolbar{position:absolute;inset:0 0 auto;z-index:2;min-height:40px;padding:0;background:transparent;pointer-events:none}.back{display:grid;place-items:center;flex:none;width:40px;height:40px;border:1px solid var(--line)!important;border-radius:50%;padding:0!important;background:var(--card)!important;box-shadow:0 2px 8px rgba(0,0,0,.06);pointer-events:auto}.back:hover{background:var(--hover)!important}.back svg{display:block}
     select,button,textarea{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;padding:10px 12px}button{cursor:pointer}button:hover{background:var(--hover)}button.primary{display:flex;align-items:center;justify-content:center;gap:6px;flex:none;min-width:68px;height:40px;border:1px solid var(--ink);border-radius:13px;padding:0 11px 0 13px;background:var(--ink);color:var(--paper);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--paper) 10%,transparent),0 2px 5px rgba(0,0,0,.14);transition:transform .14s ease,opacity .14s ease,box-shadow .14s ease}.primary svg{display:block;flex:none}.primary:hover:not(:disabled){background:var(--ink);opacity:.88;transform:translateY(-1px)}.primary:active:not(:disabled){transform:translateY(0);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--paper) 8%,transparent),0 1px 2px rgba(0,0,0,.12)}.primary:disabled{cursor:default;border-color:var(--line);background:var(--surface);color:var(--muted);box-shadow:none}button.quiet{background:transparent}
     .list{display:grid;grid-template-columns:minmax(0,1fr);min-width:0;align-content:start;gap:8px;overflow-y:auto;padding:0 0 12px}.row{width:100%;min-width:0;display:flex;align-items:center;gap:11px;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:15px;padding:12px;transition:background .16s ease,transform .16s ease}.row:hover,.row:active{background:var(--surface);transform:translateY(-1px)}.session-mark{display:grid;place-items:center;flex:none;width:34px;height:34px;border-radius:11px;background:var(--surface);color:var(--ink)}.row-copy{min-width:0;flex:1}.row strong{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.row time{display:block;margin-top:2px;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}.row-chevron{flex:none;color:var(--muted);opacity:.7}.empty{display:flex;min-height:190px;align-items:center;justify-content:center;flex-direction:column;padding:42px 18px;text-align:center;color:var(--muted)}.empty-mark{display:grid;place-items:center;width:44px;height:44px;margin-bottom:12px;border-radius:14px;background:var(--surface);color:var(--ink)}.empty strong{color:var(--ink);font-size:14px}.empty span:last-child{max-width:220px;margin-top:4px;font-size:12px}.messages{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:0;padding:18px 4px}.chat-open .messages{padding-top:4px;padding-bottom:calc(84px + var(--tunnel-warn-h))}.message{max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink);line-height:1.65}.message.user{align-self:flex-end;max-width:82%;background:var(--hover);border-radius:22px;padding:9px 15px;margin:8px 0 14px}.message.assistant{align-self:stretch;padding:0 4px;margin:0}.message .role{display:none}
@@ -88,7 +78,7 @@ export function renderMobilePage({ locale, product }: MobilePageOptions): string
 </head>
 <body><main class="shell">
   <div id="toast" class="toast" role="status"></div>
-  ${header}
+  <header><div class="brand"><img class="light-logo" src="/brand-logo/light" alt=""><img class="dark-logo" src="/brand-logo/dark" alt=""><span>DSH Desktop</span></div><div id="status" class="status connecting" role="status" aria-label="${zh ? '正在连接' : 'Connecting'}"></div></header>
   <section id="sessionsView" class="view active">
     <div class="session-hero"><div class="session-heading"><p>${zh ? '移动工作台' : 'Mobile workspace'}</p><h1>${zh ? '继续对话' : 'Continue working'}</h1></div><button id="newSession" class="new-session" disabled><svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3.5V12.5M3.5 8H12.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>${zh ? '新会话' : 'New session'}</button></div>
     <div class="workspace-panel"><label class="workspace-label" for="workspace">${zh ? '当前工作区' : 'Current workspace'}</label><div class="session-actions"><select id="workspace" aria-label="${zh ? '当前工作区' : 'Current workspace'}"></select><button id="refresh" class="icon-button" aria-label="${zh ? '刷新' : 'Refresh'}"><svg width="17" height="17" viewBox="0 0 20 20" fill="none"><path d="M16 7.5A6.5 6.5 0 1 0 16 13M16 7.5V3.5M16 7.5H12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div><div id="workspaceHint" class="workspace-hint"></div></div>
@@ -115,7 +105,7 @@ const L=${JSON.stringify({
     toolFailed: zh ? '失败' : 'Failed',
     input: zh ? '输入' : 'Input',
     output: zh ? '输出' : 'Output'
-    ,noWorkspaces: zh ? '暂无工作区，请先在 BISHENG 中创建第一个工作区。' : 'No workspaces yet. Create your first workspace in BISHENG.'
+    ,noWorkspaces: zh ? '暂无工作区，请先在 DSH Desktop 中创建第一个工作区。' : 'No workspaces yet. Create your first workspace in DSH Desktop.'
     ,refreshed: zh ? '已刷新' : 'Updated'
     ,justNow: zh ? '刚刚' : 'Now'
     ,minute: zh ? ' 分钟前' : 'm ago'
@@ -244,7 +234,7 @@ let unreachableStreak=0,tunnelExpiryTimer=null;
 function showUnreachableOverlay(){let host=$('unreachable');if(!host){host=document.createElement('div');host.id='unreachable';host.style.cssText='position:fixed;inset:0;z-index:9;display:grid;place-items:center;padding:24px;background:color-mix(in srgb,var(--paper) 88%,transparent)';host.innerHTML='<div style="max-width:320px;text-align:center"><strong style="font-size:20px">'+${JSON.stringify(zh ? '连接已断开' : 'Connection lost')}+'</strong><p style="color:var(--muted);line-height:1.6">'+unreachableCopy+'</p></div>';document.body.appendChild(host)}host.hidden=false}
 function hideUnreachableOverlay(){const host=$('unreachable');if(host)host.hidden=true}
 function renderTunnelWarning(expiresAt){const host=$('tunnelWarn');if(!host)return;if(!expiresAt){host.hidden=true;document.body.classList.remove('tunnel-warn-open');return}const minutes=Math.max(0,Math.ceil((expiresAt-Date.now())/60000));host.textContent=tunnelWarnCopy.replace('{n}',String(minutes));const show=minutes>0;host.hidden=!show;document.body.classList.toggle('tunnel-warn-open',show)}
-async function checkConnection(){if(document.hidden)return;const status=$('status');try{const response=await fetch('/api/status',{cache:'no-store'});if(status)status.classList.remove('connecting','error-state');if(response.ok){unreachableStreak=0;hideUnreachableOverlay();if(status)status.setAttribute('aria-label',${JSON.stringify(zh ? '已连接' : 'Connected')});let body={};try{body=await response.json()}catch{}renderTunnelWarning(typeof body.tunnelExpiresAt==='number'?body.tunnelExpiresAt:undefined)}else{if(response.status===401){location.replace('${disconnectedPath}');return}if(status){status.classList.add('error-state');status.setAttribute('aria-label',${JSON.stringify(zh ? '已断开' : 'Disconnected')})}$('listError').textContent='';$('chatError').textContent=''}}catch{if(status){status.classList.remove('connecting');status.classList.add('error-state');status.setAttribute('aria-label',${JSON.stringify(zh ? '已断开' : 'Disconnected')})}$('listError').textContent='';$('chatError').textContent='';unreachableStreak+=1;if(unreachableStreak>=3)showUnreachableOverlay()}}
+async function checkConnection(){if(document.hidden)return;const status=$('status');try{const response=await fetch('/api/status',{cache:'no-store'});status.classList.remove('connecting','error-state');if(response.ok){unreachableStreak=0;hideUnreachableOverlay();status.setAttribute('aria-label',${JSON.stringify(zh ? '已连接' : 'Connected')});let body={};try{body=await response.json()}catch{}renderTunnelWarning(typeof body.tunnelExpiresAt==='number'?body.tunnelExpiresAt:undefined)}else{if(response.status===401){location.replace('/disconnected');return}status.classList.add('error-state');$('listError').textContent='';$('chatError').textContent='';status.setAttribute('aria-label',${JSON.stringify(zh ? '已断开' : 'Disconnected')})}}catch{status.classList.remove('connecting');status.classList.add('error-state');$('listError').textContent='';$('chatError').textContent='';status.setAttribute('aria-label',${JSON.stringify(zh ? '已断开' : 'Disconnected')});unreachableStreak+=1;if(unreachableStreak>=3)showUnreachableOverlay()}}
 setInterval(checkConnection,1500);checkConnection();
 (async()=>{try{await loadWorkspaces();syncWorkspaceUi();await loadSessions();await openRecentSession()}catch(e){showError('listError',e)}})();
 </script></body></html>`
@@ -253,21 +243,13 @@ setInterval(checkConnection,1500);checkConnection();
 export function renderMobileReconnectPage(
   locale: 'en' | 'zh',
   connectionMode: 'lan' | 'tunnel' = 'lan',
-  options: { expired?: boolean; resumeUnavailable?: boolean; product?: string | null } = {}
+  options: { expired?: boolean; resumeUnavailable?: boolean } = {}
 ): string {
   const zh = locale === 'zh'
   const expired = options.expired === true
   const resumeUnavailable = options.resumeUnavailable === true
-  const bisheng = isBishengProduct(options.product)
-  const reconnectHref = bisheng ? '/reconnect?product=bisheng' : '/reconnect'
   const text = {
-    title: bisheng
-      ? zh
-        ? '重新连接'
-        : 'Reconnect'
-      : zh
-        ? '重新连接 BISHENG'
-        : 'Reconnect BISHENG',
+    title: zh ? '重新连接 DSH' : 'Reconnect DSH',
     heading: zh ? '连接已断开' : 'Connection lost',
     action:
       connectionMode === 'tunnel' && !expired
@@ -294,15 +276,9 @@ export function renderMobileReconnectPage(
           : 'Stay on the same Wi-Fi, then tap the button below to reconnect.'
   }
   const action = resumeUnavailable
-  ? ''
-  : `<a class="primary" href="${reconnectHref}">${text.action}<svg width="17" height="17" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 3.5 4.5 4.5L6 12.5" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"/></svg></a>`
-const brandCss = bisheng
-  ? ''
-  : `.brand{display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:22px;font-size:13px;font-weight:600}.brand img{width:28px;height:28px;object-fit:contain}.brand .dark-logo{display:none}@media(prefers-color-scheme:dark){.brand .light-logo{display:none}.brand .dark-logo{display:block}}`
-const brand = bisheng
-  ? ''
-  : `<div class="brand"><img class="light-logo" src="/brand-logo/light" alt=""><img class="dark-logo" src="/brand-logo/dark" alt=""><span>BISHENG</span></div>`
-return `<!doctype html><html lang="${zh ? 'zh-CN' : 'en'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover"><meta name="theme-color" content="#ffffff" media="(prefers-color-scheme:light)"><meta name="theme-color" content="#141416" media="(prefers-color-scheme:dark)"><title>${text.title}</title><style>:root{color-scheme:light;--bg:#fff;--ink:#18191c;--muted:#81858c}@media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#141416;--ink:#f5f5f6;--muted:#95979d}}*{box-sizing:border-box}body{margin:0;min-height:100dvh;display:grid;place-items:center;padding:24px;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.card{width:100%;max-width:340px;text-align:center}${brandCss}h1{margin:0;font-size:28px;line-height:1.18;letter-spacing:-.03em}.guidance{margin:13px auto 0;max-width:310px;color:var(--muted);font-size:14px;line-height:1.65}.primary{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;height:50px;margin-top:26px;border-radius:15px;background:var(--ink);color:var(--bg);font-weight:650;text-decoration:none}</style></head><body><main class="card">${brand}<h1>${text.heading}</h1><p class="guidance">${text.guidance}</p>${action}</main></body></html>`
+    ? ''
+    : `<a class="primary" href="/reconnect">${text.action}<svg width="17" height="17" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 3.5 4.5 4.5L6 12.5" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"/></svg></a>`
+  return `<!doctype html><html lang="${zh ? 'zh-CN' : 'en'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover"><meta name="theme-color" content="#ffffff" media="(prefers-color-scheme:light)"><meta name="theme-color" content="#141416" media="(prefers-color-scheme:dark)"><title>${text.title}</title><style>:root{color-scheme:light;--bg:#fff;--ink:#18191c;--muted:#81858c}@media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#141416;--ink:#f5f5f6;--muted:#95979d}}*{box-sizing:border-box}body{margin:0;min-height:100dvh;display:grid;place-items:center;padding:24px;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.card{width:100%;max-width:340px;text-align:center}.brand{display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:22px;font-size:13px;font-weight:600}.brand img{width:35px;height:20px;object-fit:contain}.brand .dark-logo{display:none}@media(prefers-color-scheme:dark){.brand .light-logo{display:none}.brand .dark-logo{display:block}}h1{margin:0;font-size:28px;line-height:1.18;letter-spacing:-.03em}.guidance{margin:13px auto 0;max-width:310px;color:var(--muted);font-size:14px;line-height:1.65}.primary{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;height:50px;margin-top:26px;border-radius:15px;background:var(--ink);color:var(--bg);font-weight:650;text-decoration:none}</style></head><body><main class="card"><div class="brand"><img class="light-logo" src="/brand-logo/light" alt=""><img class="dark-logo" src="/brand-logo/dark" alt=""><span>DSH Desktop</span></div><h1>${text.heading}</h1><p class="guidance">${text.guidance}</p>${action}</main></body></html>`
 }
 
 export function renderDesktopPairingPage(options: {
@@ -313,6 +289,8 @@ export function renderDesktopPairingPage(options: {
   connected: boolean
   tunnelActive?: boolean
   tunnelLoading?: boolean
+  internetSelected?: boolean
+  pinRevealed?: boolean
   tunnelProvider?: 'cloudflare' | 'pinggy'
   tunnelUrl?: string
   tunnelError?: string
@@ -326,102 +304,276 @@ export function renderDesktopPairingPage(options: {
   const text = {
     title: zh ? '连接移动设备' : 'Connect Mobile Device',
     heading: zh ? '连接移动设备' : 'Connect a mobile device',
-    hint: zh ? '扫码即可连接。' : 'Scan the QR code to connect.',
     lanHint: zh
       ? '扫码即可连接。移动设备与电脑需连接至同一 WiFi，同步实时性高。'
       : 'Scan to connect. Keep the phone and computer on the same WiFi.',
     tunnelHint: zh
-      ? '移动设备通过互联网（如 4G/5G 或其他WiFi网络等）均可远程操控，同步实时性中等'
-      : 'Control remotely over the internet, including 4G/5G or other WiFi networks, with moderate real-time responsiveness.',
+      ? '请确认移动设备已联网。打开相机扫描下方二维码，或在移动设备上打开链接。'
+      : 'Connect your phone to the internet, then scan the QR code or open the link on your phone.',
     tunnelLoading: zh ? '正在创建全球网络链接' : 'Creating a global network link',
+    tunnelPendingUrl: zh ? '公网链接生成后会显示在这里' : 'The public link will appear here',
     lanLoading: zh ? '正在切换至 WiFi 连接模式' : 'Switching to WiFi connection mode',
     modeLan: zh ? 'WiFi连接模式' : 'WiFi Connection Mode',
     modeTunnel: zh ? '互联网连接模式' : 'Internet Connection Mode',
     manageHeading: zh ? '管理手机连接' : 'Manage phone connection',
-    manageHint: zh ? '这台手机当前已连接到 BISHENG。' : 'Your phone is currently connected to BISHENG.',
     connected: zh ? '手机已连接' : 'Phone connected',
     closeHint: zh ? '连接会在后台保持，现在可以关闭此窗口。' : 'The connection stays active in the background. You can close this window now.',
     done: zh ? '完成' : 'Done',
     disconnect: zh ? '断开连接' : 'Disconnect',
     copy: zh ? '复制' : 'Copy',
     copied: zh ? '已复制' : 'Copied',
-    pinLabel: zh ? '连接密码' : 'Pairing password',
-    pinHintTemp: zh ? '5 分钟内有效，过期后需重新扫码。' : 'Valid for 5 minutes. Scan again after it expires.',
-    pinHintDurable: zh ? '长效密码保存在本机，可随时重置或取消。' : 'Kept on this computer. Reset or cancel anytime.',
-    pinConsent: zh ? '生成长期有效的连接密码' : 'Remember a durable pairing password',
+    enterPin: zh ? '扫码后，请在移动端输入下方密码完成连接。' : 'Enter this password on your phone to finish connecting.',
+    enterDurablePin: zh ? '请在移动端输入下方长期密码完成连接。' : 'Enter this long-term password on your phone to connect.',
+    rescan: zh ? '重新扫码' : 'Scan again',
+    retry: zh ? '重试互联网连接' : 'Retry internet connection',
+    noLink: zh ? '暂时无法生成连接链接，请检查网络后重试。' : 'No connection link is available. Check your network and try again.',
+    actionError: zh ? '操作未完成，请重试。' : 'Could not complete the action. Please try again.',
+    pinExpired: zh ? '密码已过期，请重新扫码。' : 'The password expired. Scan again.',
+    pinCountdown: zh ? ' 秒后失效' : 's until expiry',
+    pinConsent: zh ? '生成长期密码' : 'Generate long-term password',
     pinPrivacy: zh
       ? '长效密码只保存在本机，不上云、不写入二维码，可随时重置或取消。'
       : 'The durable password stays on this computer. It is not uploaded or added to the QR code.',
-    pinReset: zh ? '重置密码' : 'Reset password',
-    pinCancel: zh ? '取消长效密码' : 'Turn off durable password',
+    pinReset: zh ? '重置长期密码' : 'Reset long-term password',
+    pinCancel: zh ? '取消长期密码' : 'Cancel long-term password',
     pinClosed: zh ? '远程连接已断开，请重新开启。' : 'The remote connection dropped. Turn it back on.',
-    refresh: zh ? '二维码将在 ' : 'QR refreshes in ',
+    refresh: zh ? '' : 'QR refreshes in ',
     seconds: zh ? ' 秒后刷新' : 's',
     expired: zh ? '二维码已过期，正在自动刷新…' : 'QR expired. Refreshing automatically…',
     tunnelError: zh ? '隧道建立失败：' : 'Tunnel failed: ',
     fallbackLink: zh ? '扫码打不开？换一条线路' : "Can't open? Try another link",
     fallbackLoading: zh ? '正在切换备用线路' : 'Switching to a backup link'
   }
+  const internetSelected = options.internetSelected ?? Boolean(options.tunnelActive)
+  const showPin = Boolean(options.tunnelActive && options.pinRevealed)
+  const showQr = Boolean(options.pairingUrl && (!internetSelected || options.tunnelActive))
   const showFallback = Boolean(
     options.tunnelActive && options.tunnelProvider === 'cloudflare' && !options.connected
   )
-  const pinHintRemaining =
-    !options.pinConsent && options.pinExpiresAt
-      ? Math.max(0, Math.ceil((options.pinExpiresAt - Date.now()) / 1000))
-      : 0
+  const pinSeconds = Math.max(0, Math.ceil(((options.pinExpiresAt ?? 0) - Date.now()) / 1000))
   const initialPinHint = options.pinConsent
-    ? text.pinHintDurable
-    : text.pinHintTemp + (pinHintRemaining ? ` (${pinHintRemaining}s)` : '')
+    ? ''
+    : pinSeconds ? pinSeconds + text.pinCountdown : text.pinExpired
+  const hidden = (visible: boolean): string => visible ? '' : ' hidden'
   return `<!doctype html><html lang="${zh ? 'zh-CN' : 'en'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${text.title}</title><style>
-  :root{color-scheme:light;--bg:#fff;--surface:#fff;--panel:#f7f8fa;--ink:#18191c;--muted:#81858c;--line:#e5e7eb;--brand:#034FE5;--success-bg:#f2f8f4;--success-ink:#277347;--success-muted:#557565}@media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#141416;--surface:#1d1d20;--panel:#202023;--ink:#f5f5f6;--muted:#95979d;--line:#303034;--brand:#034FE5;--success-bg:#17261d;--success-ink:#75c991;--success-muted:#8ab99a}}*{box-sizing:border-box}html,body{min-height:100%;background:var(--bg)}body{margin:0;color:var(--ink);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.wrap{max-width:520px;margin:auto;padding:26px 32px 30px;text-align:center}h1{font-size:24px;line-height:1.25;font-weight:600;margin:0}p{margin:0;color:var(--muted)}
-  .mode-panel{max-width:410px;margin:18px auto 0;padding:5px 8px 10px;border:1px solid var(--line);border-radius:15px;background:var(--panel)}
+  :root{color-scheme:light;--bg:#fff;--surface:#fff;--panel:#f7f8fa;--ink:#18191c;--muted:#81858c;--line:#e5e7eb;--brand:#4d6bfe;--success-bg:#f2f8f4;--success-ink:#277347;--success-muted:#557565}@media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#141416;--surface:#1d1d20;--panel:#202023;--ink:#f5f5f6;--muted:#95979d;--line:#303034;--brand:#6f86ff;--success-bg:#17261d;--success-ink:#75c991;--success-muted:#8ab99a}}*{box-sizing:border-box}html,body{min-height:100%;background:var(--bg)}body{margin:0;color:var(--ink);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.wrap{max-width:476px;margin:auto;padding:24px 24px 30px;text-align:center}.brand{display:flex;align-items:center;justify-content:center;gap:7px;font-size:12px;font-weight:600;margin-bottom:8px}.brand img{width:28px;height:17px;object-fit:contain}.brand .dark-logo{display:none}@media(prefers-color-scheme:dark){.brand .light-logo{display:none}.brand .dark-logo{display:block}}h1{font-size:22px;line-height:1.25;font-weight:650;margin:0}p{margin:0;color:var(--muted)}[hidden]{display:none!important}button:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+  .mode-panel{max-width:374px;margin:24px auto 0;padding:6px 8px 17px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}
+  body:not(.phone-connected) .mode-panel{min-height:416px}
   .mode-switch{display:grid;grid-template-columns:1fr 1fr;width:100%;padding:3px;border-radius:11px;gap:3px}
-  .mode-btn{min-width:0;height:34px;border:0;background:transparent;color:var(--muted);padding:0 10px;border-radius:9px;font-size:13px;font-weight:550;cursor:pointer;transition:background .15s,color .15s}
+  .mode-btn{min-width:0;min-height:36px;border:0;background:transparent;color:var(--muted);padding:4px 8px;border-radius:9px;font-size:12px;font-weight:550;cursor:pointer;transition:background .15s,color .15s}
   .mode-btn.active{background:var(--surface);color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.08)}
   .mode-btn:disabled{cursor:not-allowed;opacity:.5}.mode-btn.active:disabled{opacity:.72}
-  .connection{display:none;flex-direction:column;align-items:center;margin:24px auto 0;max-width:390px;padding:22px;border-radius:14px;background:var(--success-bg);color:var(--success-ink)}.connection.show{display:flex}.connection-title{font-size:16px;font-weight:600}.connection-title:before{content:'✓';display:inline-grid;place-items:center;width:24px;height:24px;margin-right:9px;border-radius:50%;background:#35a867;color:white}.connection-hint{max-width:310px;margin-top:8px;color:var(--success-muted);font-size:13px}.connection-actions{display:flex;gap:8px;margin-top:18px}.connection-actions button{min-width:94px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink);padding:8px 14px;cursor:pointer}.connection-actions .done{background:var(--ink);color:var(--bg);border-color:var(--ink)}.phone-connected .pairing-content{display:none}.manage-connected .connection-hint,.manage-connected .done{display:none}.manage-connected .connection-actions{margin-top:16px}
-  .pairing-content{margin-top:16px}.qr{display:inline-flex;background:#fff;padding:12px;border:1px solid var(--line);border-radius:16px;margin:0 0 10px;min-width:244px;min-height:244px;align-items:center;justify-content:center;position:relative}
-  .qr svg{width:220px;height:220px;display:block}
-  .qr-loading{position:absolute;inset:0;background:rgba(255,255,255,.94);border-radius:16px;display:none;flex-direction:column;align-items:center;justify-content:center;gap:10px;font-size:13px;color:#18191c;font-weight:550}
+  .connection{display:none;flex-direction:column;align-items:center;margin:14px auto 0;max-width:390px;padding:22px;border-radius:14px;background:var(--success-bg);color:var(--success-ink)}.connection.show{display:flex}.connection-title{font-size:16px;font-weight:600}.connection-title:before{content:'✓';display:inline-grid;place-items:center;width:24px;height:24px;margin-right:9px;border-radius:50%;background:#35a867;color:white}.connection-hint{max-width:310px;margin-top:8px;color:var(--success-muted);font-size:13px}.connection-actions{display:flex;gap:8px;margin-top:18px}.connection-actions button{min-width:94px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink);padding:8px 14px;cursor:pointer}.connection-actions .done{background:var(--ink);color:var(--bg);border-color:var(--ink)}.phone-connected .pairing-content{display:none}.manage-connected .connection-hint,.manage-connected .done{display:none}.manage-connected .connection-actions{margin-top:16px}
+  .pairing-content{margin-top:14px;padding:0 8px}.qr{display:inline-flex;background:#fff;padding:4px;margin:0 auto;min-width:184px;min-height:184px;align-items:center;justify-content:center;position:relative}
+  .qr svg{width:184px;height:184px;display:block}
+  .qr-loading{position:absolute;inset:0;background:rgba(255,255,255,.94);border-radius:9px;display:none;flex-direction:column;align-items:center;justify-content:center;gap:10px;font-size:13px;color:#18191c;font-weight:550}
   .qr-loading.show{display:flex}
   .loading-copy{display:flex;width:176px;align-items:center;justify-content:space-between;gap:12px}.loading-copy span:first-child{text-align:left}.loading-value{min-width:32px;text-align:right;color:#62666d;font-variant-numeric:tabular-nums}.tunnel-progress{width:176px;height:5px;overflow:hidden;border-radius:999px;background:#e5e7eb}.tunnel-progress span{display:block;width:0;height:100%;border-radius:inherit;background:var(--brand);transition:width .08s linear}@media(prefers-reduced-motion:reduce){.tunnel-progress span{transition:none}}
-  .hint{min-height:38px;display:flex;align-items:center;justify-content:center;font-size:12.5px;line-height:1.55;max-width:370px;margin:7px auto 0;padding:0 5px}
-  .url-row{display:flex;align-items:center;gap:8px;margin:10px auto 0;max-width:410px}.url{min-width:0;flex:1;font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:var(--panel);border-radius:9px;padding:9px 11px;text-align:left}.copy{position:relative;display:grid;place-items:center;width:28px;height:28px;flex:none;border:0;background:transparent;color:var(--muted);padding:0;cursor:pointer}.copy:hover{color:var(--ink)}.copy-icon{display:block}.copy-done{display:none;place-items:center;width:16px;height:16px;border-radius:50%;background:#35a867;color:#fff}.copy.copied .copy-icon{display:none}.copy.copied .copy-done{display:grid}.copy-done svg{display:block}.copy-tip{position:absolute;left:50%;bottom:calc(100% + 8px);transform:translateX(-50%);background:#fff;color:#18191c;border-radius:6px;padding:5px 8px;font-size:12px;line-height:1.2;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.12);opacity:0;pointer-events:none}.copy-tip:after{content:'';position:absolute;left:50%;top:100%;transform:translateX(-50%);border:5px solid transparent;border-top-color:#fff}.copy:hover .copy-tip,.copy.copied .copy-tip{opacity:1}  .fallback-link{display:inline-block;margin:8px auto 0;border:0;background:transparent;color:var(--muted);font-size:12.5px;text-decoration:underline;text-underline-offset:2px;cursor:pointer}.fallback-link.hide{display:none}.expires{font-size:12px;margin-top:8px}
-  .pin-panel{display:none;max-width:410px;margin:16px auto 0;padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}.pin-panel.show{display:block}.pin-label{color:var(--muted);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}.pin-value{margin:8px 0 6px;font:40px/1.1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.18em}.pin-hint{color:var(--muted);font-size:12px}.pin-consent{display:flex;gap:8px;align-items:flex-start;margin-top:12px;text-align:left;font-size:13px}.pin-actions{display:flex;justify-content:center;gap:8px;margin-top:12px}.pin-actions[hidden]{display:none}.pin-actions button{border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink);padding:7px 12px;cursor:pointer}
+  .hint{font-size:12px;line-height:1.55;max-width:318px;margin:0 auto 14px;padding:0 5px;color:var(--ink)}
+  .url-row{display:flex;align-items:center;gap:8px;margin:9px auto 0;max-width:330px}.url{min-width:0;flex:1;font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:var(--panel);border-radius:9px;padding:7px 2px;text-align:left}.copy{position:relative;display:grid;place-items:center;width:28px;height:28px;flex:none;border:0;background:transparent;color:var(--muted);padding:0;cursor:pointer}.copy:hover{color:var(--ink)}.copy-icon{display:block}.copy-done{display:none;place-items:center;width:16px;height:16px;border-radius:50%;background:#35a867;color:#fff}.copy.copied .copy-icon{display:none}.copy.copied .copy-done{display:grid}.copy-done svg{display:block}.copy-tip{position:absolute;left:50%;bottom:calc(100% + 8px);transform:translateX(-50%);background:#fff;color:#18191c;border-radius:6px;padding:5px 8px;font-size:12px;line-height:1.2;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.12);opacity:0;pointer-events:none}.copy-tip:after{content:'';position:absolute;left:50%;top:100%;transform:translateX(-50%);border:5px solid transparent;border-top-color:#fff}.copy:hover .copy-tip,.copy.copied .copy-tip{opacity:1}  .fallback-link{display:inline-block;margin:11px auto 0;border:0;background:transparent;color:var(--brand);font-size:12.5px;text-decoration:underline;text-underline-offset:2px;cursor:pointer}.fallback-link.hide{display:none}.expires{font-size:11px;margin:0 0 4px}
+  .pin-panel{display:flex;flex-direction:column;align-items:center;min-height:334px;padding:12px 0 0}.pin-hint{font-size:12px;min-height:18px;margin:24px 0 9px}.pin-hint[hidden]+.pin-value{margin-top:28px}
+  .pin-value{margin:0 auto 32px;font:600 clamp(30px,9vw,48px)/1.12 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.16em;padding-left:.16em}
+  .pin-actions{display:grid;justify-content:center;gap:9px}.pin-actions button,.retry{min-width:150px;min-height:34px;border:1px solid var(--line);border-radius:7px;background:var(--surface);color:var(--ink);padding:6px 12px;cursor:pointer;font:inherit;font-size:12px}
+  .pin-actions button:hover:not(:disabled),.retry:hover:not(:disabled){border-color:var(--muted)}
+  .pin-actions button:disabled{opacity:.55;cursor:wait}.pin-foot{margin:13px auto 0;max-width:310px;font-size:11px}
+  .pin-reset{margin:12px auto 0;padding:4px 8px;border:0;background:transparent;color:var(--muted);font:inherit;font-size:11px;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+  .pin-foot,.pin-reset{margin-top:auto;padding-top:12px}
+  .retry{margin-top:10px}.action-error{margin:10px auto 0;color:var(--brand);font-size:12px}
   .tunnel-err{display:none;color:#e34d59;font-size:12px;margin:5px 7px 0}.tunnel-err.show{display:block}
-  </style></head><body class="${options.connected ? 'phone-connected manage-connected' : ''}"><div class="wrap"><h1>${options.connected ? text.manageHeading : text.heading}</h1>
-  <div class="mode-panel"><div class="mode-switch"><button id="btnLan" class="mode-btn${!options.tunnelActive ? ' active' : ''}" onclick="switchMode(false)"${options.connected ? ' disabled' : ''}>${text.modeLan}</button><button id="btnTunnel" class="mode-btn${options.tunnelActive ? ' active' : ''}" onclick="switchMode(true)"${options.connected ? ' disabled' : ''}>${text.modeTunnel}</button></div><p class="hint" id="modeHint">${options.tunnelActive ? text.tunnelHint : text.lanHint}</p><div id="tunnelError" class="tunnel-err${options.tunnelActive && options.tunnelError ? ' show' : ''}">${options.tunnelActive && options.tunnelError ? text.tunnelError + options.tunnelError : ''}</div></div>
-  <div id="connection" class="connection${options.connected ? ' show' : ''}"><div class="connection-title">${text.connected}</div><p class="connection-hint">${text.closeHint}</p><div class="connection-actions"><button onclick="disconnectPhone()">${text.disconnect}</button><button class="done" onclick="window.close()">${text.done}</button></div></div>
-  <div class="pairing-content"><div id="qrContainer" class="qr"><div id="qrCode">${options.qrSvg}</div><div id="qrLoading" class="qr-loading${options.tunnelLoading ? ' show' : ''}"><div class="loading-copy"><span id="tunnelLoadingText">${text.tunnelLoading}</span><span id="tunnelProgressValue" class="loading-value">0%</span></div><div class="tunnel-progress" aria-hidden="true"><span id="tunnelProgressBar"></span></div></div></div><div class="url-row"><div class="url" id="url">${escapeHtml(options.pairingUrl)}</div><button type="button" id="copyBtn" class="copy" onclick="copyUrl()" aria-label="${text.copy}"><svg class="copy-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="5.25" y="5.25" width="7.5" height="7.5" rx="1.4" stroke="currentColor" stroke-width="1.3"/><path d="M3.75 10.25V3.75h6.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="copy-done" aria-hidden="true"><svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2.4 6.2 4.7 8.5 9.6 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="copy-tip" id="copyTip">${text.copy}</span></button></div><button type="button" id="fallbackLink" class="fallback-link${showFallback ? '' : ' hide'}" onclick="switchFallback()">${text.fallbackLink}</button><p id="expires" class="expires"></p><div id="pinPanel" class="pin-panel${options.tunnelActive && options.pairingPin ? ' show' : ''}"><div class="pin-label">${text.pinLabel}</div><div id="pinValue" class="pin-value">${escapeHtml(options.pairingPin ?? '')}</div><p id="pinHint" class="pin-hint">${initialPinHint}</p><label class="pin-consent"><input id="pinConsent" type="checkbox"${options.pinConsent ? ' checked' : ''} onchange="setPinConsent(this.checked)"><span>${text.pinConsent}<br><small>${text.pinPrivacy}</small></span></label><div id="pinActions" class="pin-actions"${options.pinConsent ? '' : ' hidden'}><button type="button" onclick="resetPin()">${text.pinReset}</button><button type="button" onclick="setPinConsent(false)">${text.pinCancel}</button></div></div></div></div>
-  <script>const pageLocale=${JSON.stringify(options.locale)};
-  let end=${options.expiresAt},pairingUrl=${JSON.stringify(options.pairingUrl)},T=${JSON.stringify(text)},tunnelActive=${Boolean(options.tunnelActive)},selectedTunnelTab=${Boolean(options.tunnelActive)},tunnelProvider=${JSON.stringify(options.tunnelProvider??null)},phoneConnected=${options.connected},modeSwitching=false,tunnelProgressTimer=null,tunnelProgressStartedAt=0,copyFeedbackTimer=null,pinConsent=${Boolean(options.pinConsent)},pinExpiresAt=${options.pinExpiresAt ?? 'null'},reopeningDeadPinggy=false;
-  async function copyUrl(){try{await navigator.clipboard.writeText(pairingUrl)}catch{return}const btn=document.getElementById('copyBtn'),tip=document.getElementById('copyTip');btn.classList.add('copied');tip.textContent=T.copied;clearTimeout(copyFeedbackTimer);copyFeedbackTimer=setTimeout(()=>{btn.classList.remove('copied');tip.textContent=T.copy},1800)}
-  function syncFallbackLink(){const link=document.getElementById('fallbackLink');if(!link)return;link.classList.toggle('hide',!(tunnelActive&&tunnelProvider==='cloudflare'&&!phoneConnected&&!modeSwitching))}
-  function syncModeControls(connected){phoneConnected=connected;const disabled=connected||modeSwitching;document.getElementById('btnLan').disabled=disabled;document.getElementById('btnTunnel').disabled=disabled;syncFallbackLink()}
-  function syncModeSelection(active){document.getElementById('btnLan').classList.toggle('active',!active);document.getElementById('btnTunnel').classList.toggle('active',active)}
+  </style></head><body class="${options.connected ? 'phone-connected manage-connected' : ''}"><div class="wrap"><div class="brand"><img class="light-logo" src="/brand-logo/light" alt=""><img class="dark-logo" src="/brand-logo/dark" alt=""><span>DSH Desktop</span></div><h1>${options.connected ? text.manageHeading : text.heading}</h1>
+  <div class="mode-panel">
+    <div class="mode-switch" role="group">
+      <button id="btnLan" type="button" class="mode-btn${!internetSelected ? ' active' : ''}" aria-pressed="${!internetSelected}" onclick="switchMode(false)"${options.connected ? ' disabled' : ''}>${text.modeLan}</button>
+      <button id="btnTunnel" type="button" class="mode-btn${internetSelected ? ' active' : ''}" aria-pressed="${internetSelected}" onclick="switchMode(true)"${options.connected ? ' disabled' : ''}>${text.modeTunnel}</button>
+    </div>
+    <div id="connection" class="connection${options.connected ? ' show' : ''}"><div class="connection-title">${text.connected}</div><p class="connection-hint">${text.closeHint}</p><div class="connection-actions"><button onclick="disconnectPhone()">${text.disconnect}</button><button class="done" onclick="window.close()">${text.done}</button></div></div>
+    <div class="pairing-content">
+      <div id="qrPanel"${hidden(!showPin)}>
+        <p class="hint" id="modeHint">${internetSelected ? text.tunnelHint : text.lanHint}</p>
+        <p id="expires" class="expires"${hidden(showQr && !options.tunnelLoading)}></p>
+        <div id="qrContainer" class="qr"${hidden(showQr || Boolean(options.tunnelLoading))}>
+          <div id="qrCode"${hidden(showQr && !options.tunnelLoading)}>${options.qrSvg}</div>
+          <div id="qrLoading" class="qr-loading${options.tunnelLoading ? ' show' : ''}" role="status">
+            <div class="loading-copy"><span id="tunnelLoadingText">${text.tunnelLoading}</span><span id="tunnelProgressValue" class="loading-value">0%</span></div>
+            <div class="tunnel-progress" aria-hidden="true"><span id="tunnelProgressBar"></span></div>
+          </div>
+        </div>
+        <div id="urlRow" class="url-row"${hidden(showQr && !options.tunnelLoading)}><div class="url" id="url">${escapeHtml(options.pairingUrl)}</div><button type="button" id="copyBtn" class="copy" onclick="copyUrl()" aria-label="${text.copy}"><svg class="copy-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="5.25" y="5.25" width="7.5" height="7.5" rx="1.4" stroke="currentColor" stroke-width="1.3"/><path d="M3.75 10.25V3.75h6.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="copy-done" aria-hidden="true"><svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2.4 6.2 4.7 8.5 9.6 3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="copy-tip" id="copyTip">${text.copy}</span></button></div>
+        <button type="button" id="fallbackLink" class="fallback-link${showFallback ? '' : ' hide'}" onclick="switchFallback()">${text.fallbackLink}</button>
+        <div id="tunnelError" class="tunnel-err${internetSelected && options.tunnelError ? ' show' : ''}" role="status">${internetSelected && options.tunnelError ? escapeHtml(text.tunnelError + options.tunnelError) : ''}</div>
+        <button type="button" id="retryTunnel" class="retry" onclick="switchMode(true)"${hidden(internetSelected && !options.tunnelActive && !options.tunnelLoading)}>${text.retry}</button>
+        <p id="noLink" class="hint"${hidden(!internetSelected && !showQr)}>${text.noLink}</p>
+      </div>
+      <div id="pinPanel" class="pin-panel"${hidden(showPin)}>
+        <p id="pinInstruction" class="hint">${options.pinConsent ? text.enterDurablePin : text.enterPin}</p>
+        <p id="pinHint" class="pin-hint"${hidden(!options.pinConsent)}>${initialPinHint}</p>
+        <div id="pinValue" class="pin-value">${showPin ? escapeHtml(options.pairingPin ?? '') : ''}</div>
+        <div id="pinActions" class="pin-actions">
+          <button id="rescan" type="button" onclick="rescan()">${text.rescan}</button>
+          <button id="pinConsent" type="button" onclick="setPinConsent(!pinConsent)">${options.pinConsent ? text.pinCancel : text.pinConsent}</button>
+        </div>
+        <p id="pinPrivacy" class="pin-foot"${hidden(!options.pinConsent)}>${text.pinPrivacy}</p>
+        <button id="pinReset" class="pin-reset" type="button" onclick="resetPin()"${hidden(Boolean(options.pinConsent))}>${text.pinReset}</button>
+      </div>
+    </div>
+    <p id="actionError" class="action-error" role="status" hidden></p>
+  </div></div>
+  <script>
+  let end=${options.expiresAt},pairingUrl=${JSON.stringify(options.pairingUrl)},T=${JSON.stringify(text)};
+  let tunnelActive=${Boolean(options.tunnelActive)},tunnelLoading=${Boolean(options.tunnelLoading)},selectedTunnelTab=${internetSelected},tunnelProvider=${JSON.stringify(options.tunnelProvider??null)};
+  let phoneConnected=${options.connected},modeSwitching=false,tunnelProgressTimer=null,tunnelProgressStartedAt=0,copyFeedbackTimer=null;
+  let pinConsent=${Boolean(options.pinConsent)},pinExpiresAt=${options.pinExpiresAt ?? 'null'},pinRevealed=${showPin},pinBusy=false,reopeningDeadPinggy=false;
+  let polling=false,mutation=0;
+  const byId=id=>document.getElementById(id);
+  function showPendingTunnelLink(){pairingUrl='';const url=document.getElementById('url');if(url)url.textContent=T.tunnelPendingUrl;const qr=document.getElementById('qrCode');if(qr)qr.innerHTML=''}
+  async function copyUrl(){if(!pairingUrl)return;try{await navigator.clipboard.writeText(pairingUrl)}catch{return}const btn=document.getElementById('copyBtn'),tip=document.getElementById('copyTip');btn.classList.add('copied');tip.textContent=T.copied;clearTimeout(copyFeedbackTimer);copyFeedbackTimer=setTimeout(()=>{btn.classList.remove('copied');tip.textContent=T.copy},1800)}
+  function syncFallbackLink(){const link=document.getElementById('fallbackLink');if(!link)return;link.classList.toggle('hide',!(tunnelActive&&tunnelProvider==='cloudflare'&&!phoneConnected&&!modeSwitching&&!tunnelLoading&&!pinRevealed))}
+  function syncModeControls(connected){phoneConnected=connected;const disabled=connected||modeSwitching||tunnelLoading||pinBusy;document.getElementById('btnLan').disabled=disabled;document.getElementById('btnTunnel').disabled=disabled;syncFallbackLink()}
+  function syncModeSelection(active){document.getElementById('btnLan').classList.toggle('active',!active);document.getElementById('btnTunnel').classList.toggle('active',active);byId('btnLan').setAttribute('aria-pressed',String(!active));byId('btnTunnel').setAttribute('aria-pressed',String(active))}
   function syncTunnelError(){const el=document.getElementById('tunnelError');el.classList.toggle('show',selectedTunnelTab&&!!el.textContent)}
   function setTunnelProgress(value){const progress=Math.max(0,Math.min(100,Math.round(value)));document.getElementById('tunnelProgressBar').style.width=progress+'%';document.getElementById('tunnelProgressValue').textContent=progress+'%'}
   function startTunnelProgress(enableTunnel){const loading=document.getElementById('qrLoading'),duration=enableTunnel?4500:800;clearInterval(tunnelProgressTimer);tunnelProgressStartedAt=Date.now();document.getElementById('tunnelLoadingText').textContent=enableTunnel?T.tunnelLoading:T.lanLoading;setTunnelProgress(0);loading.classList.add('show');tunnelProgressTimer=setInterval(()=>{setTunnelProgress(Math.min(99,(Date.now()-tunnelProgressStartedAt)/duration*100))},50);return duration}
   async function finishTunnelProgress(completed,duration){const loading=document.getElementById('qrLoading');if(completed){const remaining=Math.max(0,duration-(Date.now()-tunnelProgressStartedAt));if(remaining)await new Promise(resolve=>setTimeout(resolve,remaining));setTunnelProgress(100);await new Promise(resolve=>setTimeout(resolve,180))}clearInterval(tunnelProgressTimer);tunnelProgressTimer=null;loading.classList.remove('show');setTunnelProgress(0)}
-  async function switchMode(enableTunnel){if(phoneConnected||modeSwitching)return;if(selectedTunnelTab===enableTunnel&&tunnelActive===enableTunnel)return;const previous=tunnelActive;const previousProvider=tunnelProvider;let completed=false;modeSwitching=true;selectedTunnelTab=enableTunnel;syncModeControls(phoneConnected);syncModeSelection(enableTunnel);document.getElementById('modeHint').textContent=enableTunnel?T.tunnelHint:T.lanHint;syncTunnelError();const progressDuration=startTunnelProgress(enableTunnel);try{const r=await fetch('/desktop/tunnel/toggle',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({enable:enableTunnel})});const j=await r.json();if(j.ok){applyTunnelPayload(j);selectedTunnelTab=enableTunnel;syncModeSelection(enableTunnel);document.getElementById('modeHint').textContent=enableTunnel?T.tunnelHint:T.lanHint;if(j.active)document.getElementById('tunnelError').textContent='';syncTunnelError();completed=true}else{throw new Error(j.error||'Tunnel failed')}}catch(e){tunnelActive=previous;tunnelProvider=previousProvider;syncModeSelection(selectedTunnelTab);document.getElementById('modeHint').textContent=selectedTunnelTab?T.tunnelHint:T.lanHint;document.getElementById('tunnelError').textContent=T.tunnelError+(e.message||e);syncTunnelError()}finally{await finishTunnelProgress(completed,progressDuration);modeSwitching=false;syncModeControls(phoneConnected)}}
-  async function switchFallback(){if(phoneConnected||modeSwitching||!tunnelActive||tunnelProvider!=='cloudflare')return;let completed=false;modeSwitching=true;syncModeControls(phoneConnected);const progressDuration=startTunnelProgress(true);document.getElementById('tunnelLoadingText').textContent=T.fallbackLoading;try{const r=await fetch('/desktop/tunnel/fallback',{method:'POST'});const j=await r.json();        if(j.ok){applyTunnelPayload(j);selectedTunnelTab=true;document.getElementById('tunnelError').textContent='';syncTunnelError();completed=true}else{throw new Error(j.error||'Tunnel failed')}}catch(e){document.getElementById('tunnelError').textContent=T.tunnelError+(e.message||e);syncTunnelError()}finally{await finishTunnelProgress(completed,progressDuration);modeSwitching=false;syncModeControls(phoneConnected)}}
-  function applyTunnelPayload(j){tunnelActive=!!j.active;tunnelProvider=j.provider||null;if(j.pairingUrl){pairingUrl=j.pairingUrl;document.getElementById('url').textContent=pairingUrl}if(j.qrSvg)document.getElementById('qrCode').innerHTML=j.qrSvg;if(j.expiresAt)end=j.expiresAt;syncPin(j);if(j.unexpectedlyClosed&&!j.active){document.getElementById('tunnelError').textContent=T.pinClosed;syncTunnelError();if(j.provider==='pinggy'&&selectedTunnelTab&&!phoneConnected&&!modeSwitching&&!reopeningDeadPinggy){reopeningDeadPinggy=true;void switchMode(true).finally(()=>{reopeningDeadPinggy=false})}}}
-  function renderPinHint(){const hint=document.getElementById('pinHint');if(!hint)return;if(pinConsent){hint.textContent=T.pinHintDurable;return}if(!pinExpiresAt){hint.textContent=T.pinHintTemp;return}const left=Math.max(0,Math.ceil((pinExpiresAt-Date.now())/1000));hint.textContent=T.pinHintTemp+(left?' ('+left+'s)':'')}
-  function syncPin(j){const panel=document.getElementById('pinPanel'),value=document.getElementById('pinValue'),box=document.getElementById('pinConsent'),actions=document.getElementById('pinActions');pinConsent=!!j.pinConsent;if('pinExpiresAt' in j)pinExpiresAt=j.pinExpiresAt||null;if(value)value.textContent=j.pairingPin||'';if(box)box.checked=pinConsent;renderPinHint();if(actions)actions.hidden=!pinConsent;if(panel)panel.classList.toggle('show',!!(tunnelActive&&j.pairingPin))}
-  async function setPinConsent(consent){const r=await fetch('/desktop/pin/consent',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({consent})});const j=await r.json();if(j.ok)applyTunnelPayload(j);else{document.getElementById('pinConsent').checked=pinConsent;document.getElementById('tunnelError').textContent=j.error||T.tunnelError;syncTunnelError()}}
-  async function resetPin(){const r=await fetch('/desktop/pin/reset',{method:'POST'});const j=await r.json();if(j.ok)applyTunnelPayload(j)}
-  async function poll(){const [status,tunnel]=await Promise.all([fetch('/desktop/status'),fetch('/desktop/tunnel/status')]);if(status.ok){const j=await status.json();if((j.locale==='zh'||j.locale==='en')&&j.locale!==pageLocale&&!modeSwitching){location.reload();return}const connected=!!j.connected;document.getElementById('connection').classList.toggle('show',connected);document.body.classList.toggle('phone-connected',connected);syncModeControls(connected)}if(tunnel.ok){const j=await tunnel.json();if(!modeSwitching)applyTunnelPayload(j)}}
-  async function disconnectPhone(){await fetch('/desktop/disconnect',{method:'POST'});location.reload()}
-  setInterval(()=>{const n=Math.max(0,Math.ceil((end-Date.now())/1000));const expires=document.getElementById('expires');if(expires)expires.textContent=pairingUrl?(n?T.refresh+n+T.seconds:T.expired):'';if(!n&&pairingUrl&&!phoneConnected&&!modeSwitching)location.reload();renderPinHint()},1000);
-  setInterval(poll,800);poll()</script></body></html>`
+  async function switchMode(enableTunnel){if(phoneConnected||modeSwitching||tunnelLoading||pinBusy)return;if(selectedTunnelTab===enableTunnel&&tunnelActive===enableTunnel)return;const previous=tunnelActive;const previousProvider=tunnelProvider;let completed=false;modeSwitching=true;mutation++;selectedTunnelTab=enableTunnel;if(enableTunnel)showPendingTunnelLink();syncModeControls(phoneConnected);syncModeSelection(enableTunnel);document.getElementById('modeHint').textContent=enableTunnel?T.tunnelHint:T.lanHint;syncTunnelError();syncPairingView();const progressDuration=startTunnelProgress(enableTunnel);try{const r=await fetch('/desktop/tunnel/toggle',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({enable:enableTunnel})});const j=await r.json();if(j.ok){applyTunnelPayload(j);selectedTunnelTab=enableTunnel;syncModeSelection(enableTunnel);document.getElementById('modeHint').textContent=enableTunnel?T.tunnelHint:T.lanHint;if(j.active)document.getElementById('tunnelError').textContent='';syncTunnelError();completed=true}else{throw new Error(j.error||'Tunnel failed')}}catch(e){tunnelActive=previous;tunnelProvider=previousProvider;syncModeSelection(selectedTunnelTab);document.getElementById('modeHint').textContent=selectedTunnelTab?T.tunnelHint:T.lanHint;document.getElementById('tunnelError').textContent=T.tunnelError+(e.message||e);syncTunnelError()}finally{await finishTunnelProgress(completed,progressDuration);modeSwitching=false;syncPairingView();syncModeControls(phoneConnected)}}
+  async function switchFallback(){if(phoneConnected||modeSwitching||tunnelLoading||pinBusy||!tunnelActive||tunnelProvider!=='cloudflare')return;let completed=false;modeSwitching=true;mutation++;syncPairingView();syncModeControls(phoneConnected);const progressDuration=startTunnelProgress(true);document.getElementById('tunnelLoadingText').textContent=T.fallbackLoading;try{const r=await fetch('/desktop/tunnel/fallback',{method:'POST'});const j=await r.json();        if(j.ok){applyTunnelPayload(j);selectedTunnelTab=true;document.getElementById('tunnelError').textContent='';syncTunnelError();completed=true}else{throw new Error(j.error||'Tunnel failed')}}catch(e){document.getElementById('tunnelError').textContent=T.tunnelError+(e.message||e);syncTunnelError()}finally{await finishTunnelProgress(completed,progressDuration);modeSwitching=false;syncPairingView();syncModeControls(phoneConnected)}}
+  function syncPairingView(){
+    const loading=modeSwitching||tunnelLoading;
+    const showPin=selectedTunnelTab&&tunnelActive&&pinRevealed&&!loading;
+    const showCode=!!pairingUrl&&(!selectedTunnelTab||tunnelActive)&&!loading;
+    byId('qrPanel').hidden=showPin;
+    byId('pinPanel').hidden=!showPin;
+    byId('qrContainer').hidden=!showCode&&!loading;
+    byId('qrCode').hidden=!showCode;
+    byId('qrLoading').classList.toggle('show',loading);
+    byId('urlRow').hidden=!showCode;
+    byId('expires').hidden=!showCode;
+    byId('retryTunnel').hidden=!selectedTunnelTab||tunnelActive||loading;
+    byId('noLink').hidden=selectedTunnelTab||showCode||loading;
+    syncFallbackLink();
+  }
+  function applyTunnelPayload(j){
+    const wasLoading=tunnelLoading;
+    tunnelActive=!!j.active;
+    tunnelLoading=!!j.loading;
+    if(wasLoading&&!tunnelLoading&&!modeSwitching)void finishTunnelProgress(false,0);
+    tunnelProvider=j.provider||null;
+    const tunnelLink=selectedTunnelTab&&j.active&&j.pairingUrl;
+    const lanLink=!selectedTunnelTab&&j.pairingUrl;
+    if(tunnelLink||lanLink){
+      pairingUrl=j.pairingUrl;
+      byId('url').textContent=pairingUrl;
+      if(j.qrSvg)byId('qrCode').innerHTML=j.qrSvg;
+      if(j.expiresAt)end=j.expiresAt;
+    }else if(selectedTunnelTab)showPendingTunnelLink();
+    syncPin(j);
+    if(j.unexpectedlyClosed&&!j.active){
+      byId('tunnelError').textContent=T.pinClosed;
+      syncTunnelError();
+      if(j.provider==='pinggy'&&selectedTunnelTab&&!phoneConnected&&!modeSwitching&&!pinBusy&&!reopeningDeadPinggy){
+        reopeningDeadPinggy=true;
+        void switchMode(true).finally(()=>{reopeningDeadPinggy=false});
+      }
+    }else if(j.error&&selectedTunnelTab){
+      byId('tunnelError').textContent=T.tunnelError+j.error;
+      syncTunnelError();
+    }else if(j.active){
+      byId('tunnelError').textContent='';
+      syncTunnelError();
+    }
+    syncPairingView();
+    syncModeControls(phoneConnected);
+  }
+  function renderPinHint(){
+    const left=Math.max(0,Math.ceil(((pinExpiresAt||0)-Date.now())/1000));
+    byId('pinHint').textContent=left?left+T.pinCountdown:T.pinExpired;
+  }
+  function syncPin(j){
+    pinConsent=!!j.pinConsent;
+    pinRevealed=!!j.pinRevealed;
+    pinExpiresAt=j.pinExpiresAt||null;
+    byId('pinValue').textContent=pinRevealed?(j.pairingPin||''):'';
+    byId('pinInstruction').textContent=pinConsent?T.enterDurablePin:T.enterPin;
+    byId('pinHint').hidden=pinConsent;
+    byId('pinConsent').textContent=pinConsent?T.pinCancel:T.pinConsent;
+    byId('pinPrivacy').hidden=pinConsent;
+    byId('pinReset').hidden=!pinConsent;
+    renderPinHint();
+  }
+  function showActionError(message){
+    const error=byId('actionError');
+    error.textContent=message;
+    error.hidden=!message;
+  }
+  async function pinAction(path,body){
+    if(pinBusy||modeSwitching||phoneConnected)return;
+    pinBusy=true;
+    mutation++;
+    showActionError('');
+    const buttons=['rescan','pinConsent','pinReset'].map(byId);
+    for(const button of buttons)button.disabled=true;
+    syncModeControls(phoneConnected);
+    try{
+      const response=await fetch(path,{method:'POST',...(body?{headers:{'content-type':'application/json'},body:JSON.stringify(body)}:{})});
+      const data=await response.json();
+      if(!response.ok||!data.ok)throw new Error(data.error||T.actionError);
+      applyTunnelPayload(data);
+    }catch(error){
+      showActionError(error.message||T.actionError);
+    }finally{
+      pinBusy=false;
+      for(const button of buttons)button.disabled=false;
+      syncModeControls(phoneConnected);
+    }
+  }
+  function setPinConsent(consent){return pinAction('/desktop/pin/consent',{consent})}
+  function resetPin(){return pinAction('/desktop/pin/reset')}
+  function rescan(){return pinAction('/desktop/rescan')}
+  async function poll(){
+    if(polling||modeSwitching||pinBusy)return;
+    polling=true;
+    const revision=mutation;
+    try{
+      const [status,tunnel]=await Promise.all([fetch('/desktop/status'),fetch('/desktop/tunnel/status')]);
+      if(status.ok){
+        const data=await status.json();
+        const connected=!!data.connected;
+        byId('connection').classList.toggle('show',connected);
+        document.body.classList.toggle('phone-connected',connected);
+        syncModeControls(connected);
+      }
+      if(tunnel.ok){
+        const data=await tunnel.json();
+        if(revision===mutation&&!modeSwitching&&!pinBusy)applyTunnelPayload(data);
+      }
+    }catch{
+      // Keep the last working display on a transient status failure.
+    }finally{polling=false}
+  }
+  async function disconnectPhone(){
+    try{
+      const response=await fetch('/desktop/disconnect',{method:'POST'});
+      if(!response.ok)throw new Error(T.actionError);
+      location.reload();
+    }catch{showActionError(T.actionError)}
+  }
+  function updateCountdown(){
+    const n=Math.max(0,Math.ceil((end-Date.now())/1000));
+    byId('expires').textContent=pairingUrl?(n?T.refresh+n+T.seconds:T.expired):'';
+    if(!n&&pairingUrl&&(!selectedTunnelTab||tunnelActive)&&!phoneConnected&&!modeSwitching&&!pinBusy&&!tunnelLoading&&!pinRevealed)location.reload();
+    if(pinRevealed&&!pinConsent)renderPinHint();
+  }
+  updateCountdown();
+  if(tunnelLoading)startTunnelProgress(true);
+  setInterval(updateCountdown,1000);
+  setInterval(poll,800);
+  void poll();
+  </script></body></html>`
 }
 
-export function renderPairingPinPage(locale: 'en' | 'zh', product?: string | null): string {
+export function renderPairingPinPage(locale: 'en' | 'zh'): string {
   const zh = locale === 'zh'
-  const bisheng = isBishengProduct(product)
-  const homePath = bisheng ? '/?product=bisheng' : '/'
   const text = {
-    title: zh ? '连接 BISHENG' : 'Pairing BISHENG',
+    title: zh ? '连接 DSH' : 'Pairing DSH',
     heading: zh ? '输入连接密码' : 'Enter pairing password',
     hint: zh ? '在电脑「连接手机」窗口查看 6 位密码。' : 'Find the 6-digit password in Connect Phone on the computer.',
     submit: zh ? '连接' : 'Connect',
@@ -429,17 +581,11 @@ export function renderPairingPinPage(locale: 'en' | 'zh', product?: string | nul
     invalid: zh ? '连接密码不正确。' : 'That pairing password is incorrect.',
     expired: zh ? '密码已过期，请在电脑上扫描新二维码。' : 'This password expired. Scan the new QR code on the computer.',
     rateLimited: zh ? '尝试次数过多，请 {n} 分钟后再试。' : 'Too many attempts. Try again in {n} min.',
-    unavailable: zh ? '暂时无法连接桌面端，请先启动 BISHENG。' : 'Cannot reach the desktop. Start BISHENG and try again.',
+    unavailable: zh ? '暂时无法连接桌面端，请先启动 DSH Desktop。' : 'Cannot reach the desktop. Start DSH Desktop and try again.',
     connecting: zh ? '正在连接…' : 'Connecting…'
   }
-  const logoCss = bisheng
-    ? ''
-    : `.logo{width:54px;height:54px;display:grid;place-items:center;margin:0 auto 22px;border:1px solid var(--line);border-radius:16px;background:var(--card)}.logo img{width:36px;height:36px;object-fit:contain}.logo .dark-logo{display:none}@media(prefers-color-scheme:dark){.logo .light-logo{display:none}.logo .dark-logo{display:block}}`
-  const logo = bisheng
-    ? ''
-    : `<div class="logo"><img class="light-logo" src="/brand-logo/light" alt="BISHENG"><img class="dark-logo" src="/brand-logo/dark" alt="BISHENG"></div>`
-  return `<!doctype html><html lang="${zh ? 'zh-CN' : 'en'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#ffffff" media="(prefers-color-scheme:light)"><meta name="theme-color" content="#141416" media="(prefers-color-scheme:dark)"><title>${text.title}</title><style>:root{color-scheme:light;--bg:#fff;--card:#fff;--panel:#f7f8fa;--ink:#18191c;--muted:#81858c;--line:#e5e7eb;--brand:#034FE5}@media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#141416;--card:#1d1d20;--panel:#202023;--ink:#f5f5f6;--muted:#95979d;--line:#303034;--brand:#034FE5}}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:24px}.card{width:100%;max-width:340px;text-align:center}${logoCss}h1{font-size:24px;line-height:1.25;font-weight:600;margin:0 0 8px}p{margin:0;color:var(--muted)}input{width:100%;height:52px;margin-top:22px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);text-align:center;font:28px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.28em}button{width:100%;height:44px;margin-top:12px;border:1px solid var(--ink);border-radius:12px;background:var(--ink);color:var(--bg);font:inherit;font-weight:600;cursor:pointer}button.quiet{border-color:var(--line);background:transparent;color:var(--ink)}.note{min-height:20px;margin-top:14px;padding:10px 12px;border-radius:10px;background:var(--panel);color:#e34d59;font-size:13px}.note:empty{display:none}button:disabled{opacity:.55;cursor:default}</style></head><body><div class="card">${logo}<h1>${text.heading}</h1><p>${text.hint}</p><form onsubmit="return submitPin(event)"><input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="\\d{6}" required><button id="submit" type="submit">${text.submit}</button></form><button class="quiet" type="button" onclick="showPinOnDesktop()">${text.showPin}</button><div id="status" class="note"></div></div><script>const T=${JSON.stringify(text)};
-async function submitPin(event){event.preventDefault();const pin=document.getElementById('pin').value.trim(),status=document.getElementById('status'),submit=document.getElementById('submit');submit.disabled=true;status.textContent=T.connecting;try{const r=await fetch('/pair/verify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({pin})});const j=await r.json();if(r.status===429){const minutes=Math.max(1,Math.ceil(Number(j.retryAfter||r.headers.get('retry-after')||60)/60));status.textContent=T.rateLimited.replace('{n}',String(minutes));return false}if(j.ok){location.replace('${homePath}');return false}status.textContent=j.rescan||j.error==='expired'?T.expired:T.invalid}catch{status.textContent=T.unavailable}finally{submit.disabled=false}return false}
+  return `<!doctype html><html lang="${zh ? 'zh-CN' : 'en'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#ffffff" media="(prefers-color-scheme:light)"><meta name="theme-color" content="#141416" media="(prefers-color-scheme:dark)"><title>${text.title}</title><style>:root{color-scheme:light;--bg:#fff;--card:#fff;--panel:#f7f8fa;--ink:#18191c;--muted:#81858c;--line:#e5e7eb;--brand:#4d6bfe}@media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#141416;--card:#1d1d20;--panel:#202023;--ink:#f5f5f6;--muted:#95979d;--line:#303034;--brand:#6f86ff}}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:24px}.card{width:100%;max-width:340px;text-align:center}.logo{width:54px;height:54px;display:grid;place-items:center;margin:0 auto 22px;border:1px solid var(--line);border-radius:16px;background:var(--card)}.logo img{width:39px;height:22px;object-fit:contain}.logo .dark-logo{display:none}@media(prefers-color-scheme:dark){.logo .light-logo{display:none}.logo .dark-logo{display:block}}h1{font-size:24px;line-height:1.25;font-weight:600;margin:0 0 8px}p{margin:0;color:var(--muted)}input{width:100%;height:52px;margin-top:22px;border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink);text-align:center;font:28px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.28em}button{width:100%;height:44px;margin-top:12px;border:1px solid var(--ink);border-radius:12px;background:var(--ink);color:var(--bg);font:inherit;font-weight:600;cursor:pointer}button.quiet{border-color:var(--line);background:transparent;color:var(--ink)}.note{min-height:20px;margin-top:14px;padding:10px 12px;border-radius:10px;background:var(--panel);color:#e34d59;font-size:13px}button:disabled{opacity:.55;cursor:default}</style></head><body><div class="card"><div class="logo"><img class="light-logo" src="/brand-logo/light" alt="DSH"><img class="dark-logo" src="/brand-logo/dark" alt="DSH"></div><h1>${text.heading}</h1><p>${text.hint}</p><form onsubmit="return submitPin(event)"><input id="pin" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="\\d{6}" required><button id="submit" type="submit">${text.submit}</button></form><button class="quiet" type="button" onclick="showPinOnDesktop()">${text.showPin}</button><div id="status" class="note"></div></div><script>const T=${JSON.stringify(text)};
+async function submitPin(event){event.preventDefault();const pin=document.getElementById('pin').value.trim(),status=document.getElementById('status'),submit=document.getElementById('submit');submit.disabled=true;status.textContent=T.connecting;try{const r=await fetch('/pair/verify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({pin})});const j=await r.json();if(r.status===429){const minutes=Math.max(1,Math.ceil(Number(j.retryAfter||r.headers.get('retry-after')||60)/60));status.textContent=T.rateLimited.replace('{n}',String(minutes));return false}if(j.ok){location.replace('/');return false}status.textContent=j.rescan||j.error==='expired'?T.expired:T.invalid}catch{status.textContent=T.unavailable}finally{submit.disabled=false}return false}
 async function showPinOnDesktop(){try{await fetch('/pair/retry',{method:'POST',headers:{'content-type':'application/json'},body:'{}'})}catch{}}</script></body></html>`
 }
 

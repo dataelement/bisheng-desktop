@@ -8,7 +8,7 @@ This guide covers local development, validation, patch maintenance, and target-n
 - npm
 - macOS on Apple Silicon or Intel, or Windows x64
 
-This baseline pins `@deepseek-ai/dsh@0.2.1-rc.2`. Windows packages run Harness in Electron Node mode, while macOS uses an Electron UtilityProcess. Both are independent of the Node.js version used to run development commands.
+This baseline pins `@deepseek-ai/dsh@0.2.2-rc.5`. Windows packages run Harness in Electron Node mode, while macOS uses an Electron UtilityProcess. Both are independent of the Node.js version used to run development commands.
 
 ## Local setup
 
@@ -21,6 +21,8 @@ npm run dev
 
 `npm ci` runs the repository's `postinstall` hook. It reapplies the tracked `patch-package` patches, installs DSH brand assets into the pinned Harness frontend, and installs Electron.
 
+`npm run dev` prepares the Office runtime and templates, prepares PPT, then starts the Electron shell and Host. Unpackaged launches default to `<repository>/.build/office-runtime/primary-runtime`, the output of `office:prepare`; `DSH_DESKTOP_PRIMARY_RUNTIME_DIR` is optional and only needed to test a different runtime. Installed packages always use `Resources/office-runtime/primary-runtime` and ignore that development override.
+
 Development builds use the separate application name `DSH Desktop Dev` and the separate user-data directory `dsh-desktop-dev`, so they do not reuse production DSH Desktop data. Multiple development worktrees still share that development profile by default; avoid running them at the same time when testing profile, plugin, migration, or recovery changes.
 
 To run another worktree concurrently, set a distinct `DSH_DEV_PROFILE` directory name and unused loopback ports using `DSH_DEV_HARNESS_PORT` and `DSH_DEV_MOBILE_PORT`. For example, on macOS:
@@ -30,6 +32,27 @@ DSH_DEV_PROFILE=dsh-desktop-dev-workbench DSH_DEV_HARNESS_PORT=43132 DSH_DEV_MOB
 ```
 
 On PowerShell, set the same names through `$env:DSH_DEV_PROFILE`, `$env:DSH_DEV_HARNESS_PORT` and `$env:DSH_DEV_MOBILE_PORT` before `npm run dev`. The profile must be a directory name, separate from `dsh-desktop`; ports must be distinct integers from 1024 to 65535. These overrides are ignored by production builds. Defaults remain `dsh-desktop-dev`, Harness port 43130 and mobile port 43128.
+
+## Workbench package lifecycle
+
+Workbench Market resolves reviewed catalog targets, but delegates package installation,
+updates, selection switches, removal and runtime reconciliation to Plugin Manager.
+Its install records describe catalog provenance, not whether a plugin is running.
+The inventory endpoint returns Plugin Manager bundle and plugin snapshots; clients
+refresh them on `plugin-manager/changed` rather than treating saved sidebar entries
+or installed package files as proof of activation.
+
+Catalog installation requires the generation backend verified-install capability.
+The backend checks expected package name/version and registry integrity before
+publication; Release downloads retain SHA-256 validation. An unsupported backend
+refuses verified installation instead of falling back to unverified pnpm. Updates
+replace only the expected package and retain manager protections and rollback.
+
+Actual application results determine the next action: `applied`, `restart-required`,
+`failed`, `cancelled` or `overridden`. No static client/server package classifier
+drives these routes. The packaged HMR fallback reports `module-comparison` rather
+than claiming module replacement. This does not add unpublished local workbench
+identity support; registration and a mounted panel are separate acceptance stages.
 
 ## Validation
 
@@ -56,17 +79,20 @@ Automatic fallback still happens only when Cloudflare fails to start. If a Cloud
 ## Project map
 
 ```text
-src/main/                 Electron main process and application orchestration
-src/main/runtime/         Harness process lifecycle and diagnostics
-src/main/state/           Profile consistency, repair, recovery, and Safe Mode
+src/main/shell/           Official Electron main process
+src/host/                 Harness child process, spawned with ELECTRON_RUN_AS_NODE
+src/main/profile/         Profile copy, generation projection, and plugin maintenance
+src/main/recovery/        Fatal reports, Safe Mode profile, and repair state
 src/main/mobile/          Paired phone bridge and optional Cloudflare tunnel
 src/main/update/          Installed-build update state and lifecycle
-src/preload/              Narrow renderer-to-main IPC and desktop UI seams
+src/preload/app.ts        Packaged preload
 src/shared/               Shared contracts and desktop menu definitions
 packages/                 Bundled desktop support packages
 patches/                  Reproducible patches for the pinned Harness packages
-build/                    Packaged HTML, icons, loaders, and Harness entry files
-scripts/                  Build, signing, metadata, and target verification tools
+build/                    Packaged HTML, icons, Office CLI, and pnpm invocation
+scripts/release/          Packaging, signing, notarization, and release assets
+scripts/ppt/              PPT runtime and template generation
+scripts/verify/           Target, package, and smoke checks
 test/                     Unit and source-contract regression coverage
 .github/workflows/        Native CI, signing, release, and publication workflows
 ```
@@ -74,6 +100,8 @@ test/                     Unit and source-contract regression coverage
 ## Maintaining upstream patches
 
 The desktop product intentionally reuses the upstream Harness UI. Desktop-specific provider onboarding, preset transfer, model selection, workspace, branding, and layout changes are captured under `patches/` rather than stored as untracked edits in `node_modules`.
+
+The `@deepseek-ai/dsh-host-open-in-app@0.2.1-rc.3` patch carries forward the V0.12.2 adaptation of [PR #709](https://github.com/dataelement/dsh-desktop/pull/709) for [#686](https://github.com/dataelement/dsh-desktop/issues/686), originally targeting `0.2.0-rc.2`. Detached external app launches remove inherited `ELECTRON_RUN_AS_NODE` names case-insensitively before merging the adapter's explicit environment. GitHub Desktop's Windows CLI adapter keeps its explicit Node mode; the shared subprocess scrub and internal runners remain unchanged. `test/open-in-app-environment.test.ts` exercises the installed bundle, emitted resolver, and host route; set `DSH_TEST_OPEN_IN_ELECTRON=1` to include native Electron checks with disposable data directories and no application window. Run these tests with standalone Node, not Electron in Node mode, because their Node child fixtures use `process.execPath`. Remove the patch when the pinned upstream package provides equivalent behavior in both artifacts. Validate native Windows Open In when replaying or retiring it.
 
 When upgrading Harness:
 
@@ -83,6 +111,8 @@ When upgrading Harness:
 4. Regenerate the relevant `patch-package` patches.
 5. Run the full automated suite.
 6. Start the real app and exercise every affected user flow.
+
+The `node-pty@1.2.0-beta.15` helper-path patch retains the #615/#646 correction alongside the external-helper support: only complete `app.asar` and `node_modules.asar` path segments map to their unpacked siblings, and already-unpacked paths remain unchanged. Keep the resolution order (explicit `DSH_NODE_PTY_SPAWN_HELPER`, executable sibling, default module-relative helper). Remove this part of the patch only when the pinned upstream version preserves these behaviors and passes both `test/node-pty-helper-path.test.ts` (actual module evaluation with a recorded native call) and `test/node-pty-asar-layout.test.ts` (real macOS PTY in archived and already-unpacked layouts, with default and external helpers). The path tests do not replace the native or installed-application checks.
 
 ## Packaging
 
@@ -97,11 +127,22 @@ npm run package:mac:x64
 
 # Windows x64 NSIS installer, on a Windows x64 machine or runner
 npm run package:win
+
+# UOS V20 x86_64 / Linux x64 deb, on the target Linux machine
+npm run package:linux:x64
+# Separate development identity and profile
+npm run package:dev:linux:x64
 ```
 
 Do not invoke `electron-builder --win` from macOS or Linux for a distributable Windows package. The target verification scripts intentionally reject host/target mismatches.
 
-For local unsigned development packages, use the corresponding `package:dev:*` command. Packages run Harness and package commands through the packaged Electron runtime (a utility process and the Helper in Node mode on macOS, the executable in Node mode on Windows); no standalone `node_modules/node` may be present under `app.asar.unpacked`. Verify the packaged native-module, pnpm and Harness smokes, then the final signed installer's separate installed-app smoke before handoff. Office preparation is included in dev, build and test: it fetches hash-locked native Python and wheels into `.build/office-runtime`, outside ASAR, and ships no second Node runtime. See [Office runtime](office-runtime.md). The locked Electron 43.0.0 must remain compatible with the native loader: `scripts/verify-target.mjs` fails packaging when Electron in Node mode cannot load it, and changing Electron still requires a new Windows package qualification. Before packaging, `node scripts/probe-electron-node-runtime.mjs` boots Harness from the repository through Electron Node mode with a disposable `DSH_HOME` and checks an authenticated HTTP response; the Windows CI job runs it on every build.
+For local unsigned development packages, use the corresponding `package:dev:*` command. Packages run Host and package commands through the packaged Electron runtime (the Helper in Node mode on macOS, the executable in Node mode on Windows); no standalone `node_modules/node` may be present under `app.asar.unpacked`. Verify the packaged native-module, pnpm and Harness smokes, then the final signed installer's separate installed-app smoke before handoff. Office preparation is included in dev, build and test: it fetches hash-locked native Python and wheels into `.build/office-runtime`, outside ASAR, and ships no second Node runtime. See [Office runtime](office-runtime.md). The locked Electron 44.7.0 must remain compatible with the native loader: `scripts/verify/verify-target.mjs` fails packaging when Electron in Node mode cannot load it, and changing Electron still requires a new Windows package qualification. Before packaging, `node scripts/verify/probe-electron-node-runtime.mjs` boots Harness from the repository through Electron Node mode with a disposable `DSH_HOME` and checks an authenticated HTTP response; the Windows CI job runs it on every build.
+
+Linux packaging is currently a local, target-native qualification path, not part of the macOS/Windows release workflow. UOS V20 must allow the downloaded build tools and locally built ELF files to execute under its application policy. Keep Chromium sandboxing enabled; do not use `--no-sandbox` or disable system-wide security to get a passing build. If a verified tool exits before initialization, collect read-only mapping evidence with `python3 scripts/verify/probe-linux-exec-policy.py /path/to/tool /bin/ls`. A successful read mapping paired with an executable mapping returning `EPERM`, while a trusted system ELF succeeds, indicates an execution-policy boundary; it does not identify the rejecting policy by itself. Ask the administrator to approve the toolchain using the organization's supported process and retain the audit evidence. Do not copy integrity attributes from trusted programs or alter ELF verification settings.
+
+For a VM without a working GLES context, run the opt-in navigation qualification with `DISPLAY=:0 DSH_NAVIGATION_SOFTWARE_RENDERING=1 node scripts/verify/verify-desktop-navigation.mjs` under the desktop session authority. This adds only `--disable-gpu`, retains renderer sandboxing, and qualifies software rendering rather than the default GPU path. A failed default GPU probe must still be reported.
+
+Linux uses the same 40 DIP caption, native window-control overlay and 应用 / 编辑 menus as Windows, with manual deb upgrades; automatic update/application rollback remains unsupported. The locked LibreOfficeKit uses its bundled WASM engine on Linux when no compatible native engine is installed. Qualification must execute the same packaged Harness, terminal, PPT and Office afterPack gates, then install and launch the deb in a disposable test environment. A generated deb alone is not evidence of successful UI activation or model requests.
 
 Formal release artifacts are built, signed, and published by the tag workflow. A local build or pull-request check is not formal release evidence.
 
@@ -111,3 +152,7 @@ Formal release artifacts are built, signed, and published by the tag workflow. A
 - Preserve unrelated worktree changes.
 - Keep temporary research, local reports, and internal working documents under the ignored `doc/` directory.
 - Update all localized README files when changing user-visible facts.
+
+### Optional workbench shell audit
+
+The `@deepseek-ai/dsh-web-frontend@0.2.1-rc.3` patch carries forward #762: the shell audit exempts only manifest-declared optional workbench entries present in the recorded failure snapshot. Required and unknown entries remain fatal, and failure diagnostics remain available. The rc.3 shell still performs the conflicting audit, so the rc.2 patch is ported to its current asset rather than retired. `test/client-shell-failure-isolation.test.ts` executes the pinned shell boot, audit and mount functions with their real Cordis dependency closure. Remove this patch when upstream provides equivalent isolation and required-entry handling.

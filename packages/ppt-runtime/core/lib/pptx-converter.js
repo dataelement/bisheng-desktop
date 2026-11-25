@@ -205,12 +205,7 @@ function inheritedTextBody(presentation, slideIndex, shape) {
   function merge(elements, name) {
     const target = source.ownerDocument.createElementNS('http://schemas.openxmlformats.org/drawingml/2006/main', `a:${name}`);
     for (const element of elements.filter(Boolean)) {
-      // Rebuild local declarations from the merged nodes' namespace identities.
-      // Property attributes retain their namespaces across master/layout inheritance.
-      for (const attr of element.attributes) {
-        if (attr.namespaceURI === 'http://www.w3.org/2000/xmlns/') continue;
-        target.setAttributeNS(attr.namespaceURI, attr.name, attr.value);
-      }
+      for (const attr of element.attributes) target.setAttribute(attr.name, attr.value);
       for (const child of element.children) {
         const fill = ['solidFill', 'noFill', 'gradFill'].includes(child.localName);
         const fit = ['noAutofit','normAutofit','spAutoFit'].includes(child.localName);

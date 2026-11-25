@@ -7,19 +7,20 @@ import { SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection'
 import { AgentRegistry, assembleContextFor } from '@deepseek-ai/dsh-agent'
 import { AgentLoop } from '@deepseek-ai/dsh-agent-loop'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { ToolRuntime } from '@deepseek-ai/dsh-tools'
 import { LlmRuntime, LlmAdapter, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { applyWorkCapabilities } from '../packages/dsh-desktop-enterprise/work-capabilities.js'
 
 const contexts = []
 afterEach(async () => { for (const ctx of contexts.splice(0)) await ctx.fiber.dispose() })
-const name = 'mcp__bisheng__weather_lookup'
-const tool = { name: 'weather_lookup', description: 'Weather fixture', inputSchema: { type: 'object', properties: {} } }
+const name = 'mcp__bisheng__bisheng_tool_38'
+const tool = { name: 'bisheng_tool_38', description: 'Weather fixture', inputSchema: { type: 'object', properties: {} } }
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 async function fixture() {
   const ctx = new Context()
   contexts.push(ctx)
-  for (const plugin of [SessionStore, SessionProjectionRegistry, AgentRegistry, SystemPrompt, ToolRuntime, LlmRuntime, AgentLoop]) await ctx.plugin(plugin)
+  for (const plugin of [SessionStore, SessionProjectionRegistry, AgentRegistry, SystemPrompt, ToolRuntime, NativeToolExecutor, LlmRuntime, AgentLoop]) await ctx.plugin(plugin)
   const requests = []
   class Model extends LlmAdapter {
     async *stream(request) {
@@ -92,7 +93,7 @@ it('uses the saved availability in the first actual model request of a new sessi
 it('refreshes immediately after save and waits past a pre-save catalog response', async () => {
   const f = await fixture()
   const hold = f.holdNext()
-  // A ready account skips sync() until an explicit refresh starts another catalog read.
+  // The restored V1.3 catalog cache only re-reads on an explicit refresh.
   const background = f.api.sync({ force: true })
   await hold.started.promise
   f.setEnabled(false)

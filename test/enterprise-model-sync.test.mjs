@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
+import { shippedFixture } from './enterprise-harness-fixture.mjs'
 import { afterEach, expect, it, vi } from 'vitest'
 
 const source = readFileSync(new URL('../packages/dsh-desktop-enterprise/client.js', import.meta.url), 'utf8')
 const start = source.indexOf('    function bindEnterpriseModelSync(')
 const end = source.indexOf('    async function api(', start)
-const accountChanged = 'test:account-changed'
+const accountChanged = 'dsh-desktop:enterprise-account-changed'
 let dispose
 
 afterEach(() => { dispose?.(); dispose = undefined; vi.useRealTimers() })
@@ -18,7 +19,7 @@ function fixture(realApi = false) {
   const warn = vi.fn()
   const fetch = vi.fn(async () => ({ ok: true, json: async () => ({ ok: true }) }))
   const apiEnd = source.indexOf('    function usageText(', end)
-  const bind = vm.runInNewContext(`${source.slice(start, realApi ? apiEnd : end)}; bindEnterpriseModelSync`, {
+  const bind = vm.runInNewContext(`${realApi ? shippedFixture(source).declarations('bindEnterpriseModelSync') : source.slice(start, end)}; bindEnterpriseModelSync`, {
     window, document, ...(realApi ? { fetch, CustomEvent: class extends Event {} } : { api }), AbortController, ACCOUNT_CHANGED_EVENT: accountChanged, console: { warn }
   })
   return { window, document, api, fetch, warn, start(onState) { dispose = bind(onState) } }

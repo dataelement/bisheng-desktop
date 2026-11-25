@@ -3,8 +3,6 @@ import type { Generation } from './registry'
 
 export interface GenerationInstallOptions {
   dshHome: string
-  /** Enterprise installs stay in the enterprise generation directories. */
-  namespace?: 'enterprise'
   profile?: string
   strictDepBuilds?: boolean
   /** Explicit market peer policy; otherwise inherit the Profile's explicit boolean. */
@@ -33,7 +31,8 @@ export interface GenerationInstallOptions {
   onTrace?: (line: string) => void
   onOutput?: (chunk: string) => void
   registerChild?: (child: ChildProcess) => void
-  runInstall?: (stagingDir: string) => Promise<{ code: number; output: string }>
+  /** A second phase fills providers from the staged manifest using the existing lock. */
+  runInstall?: (stagingDir: string, phase?: 'peers') => Promise<{ code: number; output: string }>
 }
 
 export interface GenerationInstallResult {
@@ -57,7 +56,7 @@ export function installPnpmArguments(
     | 'strictDepBuilds'
     | 'minimumReleaseAge'
     | 'environment'
-  >,
+  > & { installPhase?: 'peers' },
   env?: NodeJS.ProcessEnv,
   platform?: NodeJS.Platform
 ): string[]

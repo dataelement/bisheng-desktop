@@ -1,7 +1,8 @@
+import { parseWorkbenchScreenshots, validScreenshotIdentity, verifyScreenshotBytes } from './workbench-screenshots.js'
+
 const PREFIX = '/api/v1/dsh/market'
-const MAX_PAGES = 100
-// Mirrors the server's bound on one installed-workbench access check (F022).
 export const MAX_ACCESS_IDS = 500
+const MAX_PAGES = 100
 const PAGE_SIZE = 20
 export const WORKBENCH_ARTIFACT_LIMIT = 512 * 1024 * 1024
 const HEX_ID = /^[a-f0-9]{32}$/u
@@ -40,6 +41,7 @@ export function parseWorkbenchListItem(value) {
     description: text(source.description),
     verificationLevel: text(source.verification_level),
     updatedAt: text(source.updated_at),
+    screenshots: parseWorkbenchScreenshots(source.screenshots, source.id, version.id),
     currentVersion: { id: version.id, version: version.version }
   }
 }
@@ -93,6 +95,7 @@ function parsePage(value) {
 
 export function createWorkbenchMarketController(accountController) {
   let epoch = 0
+  const imageRequests = new Set()
   const identity = () => {
     const state = accountController.state()
     if (!state?.connected || !state.connectionKey) return ''
@@ -114,7 +117,7 @@ export function createWorkbenchMarketController(accountController) {
       throw error
     }
     if (started !== epoch || identity() !== key) throw changed()
-    if (!data || data.status_code !== 200) throw invalid(data?.status_message || 'Enterprise workbench request failed.')
+    if (!data || data.status_code !== 200) throw invalid(data?.status_message || 'Enterprise workbench request failed.', Number(data?.status_code) || 400)
     return data.data
   }
   const unavailableResult = () => ({
@@ -122,7 +125,7 @@ export function createWorkbenchMarketController(accountController) {
   })
 
   return {
-    stop() { epoch += 1 },
+    stop() { epoch += 1; for (const controller of imageRequests) controller.abort(); imageRequests.clear() },
     async catalog() {
       const started = epoch
       const key = identity()
@@ -169,13 +172,33 @@ export function createWorkbenchMarketController(accountController) {
         throw error
       }
     },
-    /**
-     * Ask which installed enterprise workbenches the account may still use.
-     * Missing, foreign and hidden ids all answer false; any failure throws so
-     * callers keep the last confirmed state (F022 AC-14).
-     * @param {string[]} ids
-     * @returns {Promise<Record<string, boolean>>}
-     */
+    async screenshot(id, versionId, imageId, signal, accountKey) {
+      if (!validScreenshotIdentity(id, versionId, imageId)) throw invalid('Invalid screenshot identifier.')
+      const started = epoch
+      const key = identity()
+      if (!key || accountKey !== key) throw changed()
+      const controller = new AbortController()
+      const abort = () => controller.abort()
+      signal?.throwIfAborted()
+      signal?.addEventListener('abort', abort, { once: true })
+      imageRequests.add(controller)
+      try {
+        const loaded = await this.detail(id)
+        controller.signal.throwIfAborted()
+        if (started !== epoch || identity() !== key) throw changed()
+        const image = loaded.detail?.currentVersion.id === versionId
+          ? loaded.detail.screenshots.find(entry => entry.id === imageId) : null
+        if (!image) throw invalid('Workbench screenshot not found.', 404)
+        if (typeof accountController.workbenchScreenshotRequest !== 'function') throw invalid('Workbench screenshots are unavailable.', 503)
+        const bytes = await accountController.workbenchScreenshotRequest(image.url, controller.signal, image)
+        controller.signal.throwIfAborted()
+        if (started !== epoch || identity() !== key) throw changed()
+        return { bytes: verifyScreenshotBytes(bytes, image), image }
+      } finally {
+        signal?.removeEventListener('abort', abort)
+        imageRequests.delete(controller)
+      }
+    },
     async checkAccess(ids) {
       if (!Array.isArray(ids) || ids.some(id => !HEX_ID.test(id ?? ''))) throw invalid('Invalid workbench identifier.')
       const unique = [...new Set(ids)]
@@ -250,6 +273,20 @@ export function applyEnterpriseWorkbenchMarket(ctx, accountController) {
       } catch (error) {
         const status = Number(error?.status) || 400
         return Response.json({ ok: false, status: 'error', error: error.message }, { status, headers: { 'cache-control': 'no-store' } })
+      }
+    }
+  })
+  ctx.connection.fetch.register({
+    path: '/api/enterprise.workbenches/screenshot', methods: ['GET'], requestBody: 'buffered',
+    fetch: async request => {
+      const headers = { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }
+      try {
+        await accountController.refreshState?.()
+        const params = new URL(request.url).searchParams
+        const { bytes, image } = await market.screenshot(params.get('id'), params.get('versionId'), params.get('imageId'), request.signal, request.headers.get('x-enterprise-account'))
+        return new Response(bytes, { headers: { ...headers, 'content-type': image.media_type, 'content-length': String(bytes.length) } })
+      } catch (error) {
+        return Response.json({ error: error.message }, { status: Number(error?.status) || 400, headers })
       }
     }
   })

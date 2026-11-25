@@ -1,0 +1,29 @@
+# Web runtime profile defaults. Keep Models enabled for manual configuration.
+- id: ui-brand-official
+  disabled: true
+- id: ui-settings-models
+  name: '@deepseek-ai/dsh-client-ui-settings-models'
+  config:
+    credentialOnboarding: false
+
+- insert:
+    - id: dsh-desktop-client-ui
+      name: dsh-desktop-client-ui
+
+    - id: dsh-desktop-enterprise
+      name: dsh-desktop-enterprise
+
+    - id: dsh-desktop-workbenches
+      name: dsh-desktop-workbenches
+      config:
+        root: !!js dshHomePath('desktop-workbenches')
+
+    - id: dsh-desktop-office
+      name: dsh-desktop-office
+      config:
+        root: !!js dshHomePath('office-web')
+
+    - id: dsh-ppt-composer
+      name: 'dsh-ppt-composer'
+      config:
+        root: !!js dshHomePath('kimi-ppt')

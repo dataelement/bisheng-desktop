@@ -4,56 +4,58 @@ on:
   push:
     tags:
       - 'v*'
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
-      target:
-        description: Platform to build
-        required: false
-        default: macos
-        type: choice
-        options:
-          - all
-          - windows
-          - macos
       mode:
-        description: development=unsigned Dev; signed=ModelScope test channel; resign=sign existing unsigned Windows; prerelease=GitHub and ModelScope
-        required: false
+        description: 操作（development 开发包 / signed 测试包 / prerelease 预发布 / publish 继续正式发布 / resign 重签）
+        required: true
         default: development
         type: choice
         options:
           - development
           - signed
-          - resign
           - prerelease
-      prerelease_tag:
-        description: Non-v semver tag for prerelease mode (e.g. 2.1.0-rc.1)
+          - publish
+          - resign
+      target:
+        description: 平台（继续正式发布选 all，重签选 windows）
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - windows
+          - macos
+      version:
+        description: 版本（开发包留空；测试包如 0.13.0-test.4；继续正式发布如 v0.13.0）
         required: false
         type: string
-      windows_full_tests:
-        description: Run the complete test suite on Windows instead of focused platform regressions
-        required: false
-        default: false
-        type: boolean
-      windows_recovery_ui:
-        description: Check Windows recovery UI at 100%, 125%, and 150% display scales
-        required: false
-        default: false
-        type: boolean
-      signed_version:
-        description: Non-v semver used only by signed mode (e.g. 0.9.2-test.1)
+      source_run_id:
+        description: 来源任务 ID（仅继续正式发布或重签需要）
         required: false
         type: string
+      checks:
+        description: 验证级别（standard 常规 / extended 增加 Windows 全量测试、恢复界面、启动与归档检查）
+        required: true
+        default: standard
+        type: choice
+        options:
+          - standard
+          - extended
 
 permissions:
   contents: write
 
 env:
   RELEASE_NOTES_MODEL: gpt-6-luna
-  DEV_RELEASE_TAG: dev-${{ github.run_id }}-${{ github.run_attempt }}
 
 concurrency:
-  group: desktop-release-${{ github.ref }}
-  cancel-in-progress: false
+  # Platform-only retries have independent artifacts and never publish.
+  group: desktop-release-${{ github.ref }}-${{ inputs.target || 'all' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   validate-dispatch:
@@ -65,237 +67,151 @@ jobs:
         env:
           MODE: ${{ inputs.mode }}
           TARGET: ${{ inputs.target }}
-          PRERELEASE_TAG: ${{ inputs.prerelease_tag }}
-          SIGNED_VERSION: ${{ inputs.signed_version }}
+          VERSION: ${{ inputs.version }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          CHECKS: ${{ inputs.checks }}
         run: |
           set -euo pipefail
           semver_re='^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'
+          if ! [[ "$TARGET" =~ ^(all|windows|macos)$ ]] || ! [[ "$CHECKS" =~ ^(standard|extended)$ ]]; then
+            echo "::error::Choose a valid platform and validation level"
+            exit 1
+          fi
           case "$MODE" in
-            prerelease)
-              if [ -z "${PRERELEASE_TAG:-}" ]; then
-                echo "::error::prerelease mode requires prerelease_tag"
+            publish)
+              if [ "$TARGET" != 'all' ] || ! [[ "$VERSION" =~ ^v[0-9]+[.][0-9]+[.][0-9]+$ ]] || ! [[ "$SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
+                echo "::error::publish requires target=all, version=vX.Y.Z and a positive source_run_id"
                 exit 1
               fi
-              if [[ "$PRERELEASE_TAG" == v* ]] || ! [[ "$PRERELEASE_TAG" =~ $semver_re ]]; then
-                echo "::error::prerelease_tag must be a non-v semver (e.g. 2.1.0-rc.1)"
+              ;;
+            signed|prerelease|resign)
+              if ! [[ "$VERSION" =~ $semver_re ]]; then
+                echo "::error::$MODE requires a non-v semver version (e.g. 0.13.0-test.4)"
                 exit 1
               fi
-              if [ "$TARGET" != "all" ]; then
+              if [ "$MODE" = 'resign' ]; then
+                if [ "$TARGET" != 'windows' ] || ! [[ "$SOURCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
+                  echo "::error::resign requires target=windows and a positive source_run_id"
+                  exit 1
+                fi
+              elif [ -n "$SOURCE_RUN_ID" ]; then
+                echo "::error::source_run_id is only used by publish or resign"
+                exit 1
+              fi
+              if [ "$MODE" = 'prerelease' ] && [ "$TARGET" != 'all' ]; then
                 echo "::notice::target=$TARGET with prerelease mode will sign only and skip GitHub/ModelScope publish"
               fi
               ;;
-            signed|resign)
-              if [ -z "${SIGNED_VERSION:-}" ]; then
-                echo "::error::signed mode requires signed_version"
+            development)
+              if [ -n "$VERSION$SOURCE_RUN_ID" ]; then
+                echo "::error::development uses the checked-out version; leave version and source_run_id empty"
                 exit 1
               fi
-              if [[ "$SIGNED_VERSION" == v* ]] || ! [[ "$SIGNED_VERSION" =~ $semver_re ]]; then
-                echo "::error::signed_version must be a non-v semver (e.g. 0.9.2-test.1)"
-                exit 1
-              fi
-              if [ "$TARGET" = "all" ]; then
-                echo "::notice::signed mode publishes to ModelScope releases/test/$SIGNED_VERSION/ and releases/test/latest/; the GitHub Release stays a draft"
-              else
-                echo "::notice::target=$TARGET signed mode publishes to ModelScope releases/test/$SIGNED_VERSION/; the GitHub Release stays a draft"
-              fi
-              ;;
-            development|'')
               ;;
             *)
               echo "::error::Unknown mode: $MODE"
               exit 1
               ;;
           esac
-      - name: Skip validation for tag
+      - name: Skip validation for tag and pull_request
         if: github.event_name != 'workflow_dispatch'
         run: echo "No dispatch inputs to validate."
-      - name: Require ModelScope token for published releases
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || (inputs.mode == 'prerelease' && inputs.target == 'all')))
-        env:
-          MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-              echo "::error::Formal release tags must be stable vX.Y.Z versions"
-              exit 1
-            }
-          fi
-          test -n "$MODELSCOPE_TOKEN" || { echo "::error::Missing secret MODELSCOPE_TOKEN"; exit 1; }
-      - name: Require Feishu webhook for signed test builds
+      - name: Validate signed test upload and notification secrets
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'signed'
         env:
+          MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
           FEISHU_RELEASE_WEBHOOK: ${{ secrets.FEISHU_RELEASE_WEBHOOK }}
         run: |
+          test -n "$MODELSCOPE_TOKEN" || { echo "::error::Missing secret MODELSCOPE_TOKEN"; exit 1; }
           test -n "$FEISHU_RELEASE_WEBHOOK" || { echo "::error::Missing secret FEISHU_RELEASE_WEBHOOK"; exit 1; }
-      - name: Prepare draft release for verified publication
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          MODE: ${{ inputs.mode }}
-          PRERELEASE_TAG: ${{ inputs.prerelease_tag }}
-          SIGNED_VERSION: ${{ inputs.signed_version }}
-        run: |
-          set -euo pipefail
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            release_tag="$GITHUB_REF_NAME"
-            tag_args=(--verify-tag)
-            note_args=(--notes 'Release build in progress.')
-          elif [ "${MODE:-}" = "signed" ]; then
-            release_tag="$SIGNED_VERSION"
-            tag_args=(--target "$GITHUB_SHA")
-            note_args=(--notes 'Signed test build in progress.')
-          elif [ "${MODE:-}" = "development" ]; then
-            release_tag="$DEV_RELEASE_TAG"
-            tag_args=(--target "$GITHUB_SHA")
-            note_args=(--notes "Development build and diagnostics: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Draft assets are retained until this draft is deleted.")
-          else
-            release_tag="$PRERELEASE_TAG"
-            tag_args=(--target "$GITHUB_SHA")
-            note_args=(--generate-notes)
-          fi
-          if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            test "$(gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" = true || {
-              echo "::error::Refusing to replace an already published release"
-              exit 1
-            }
-          else
-            gh release create "$release_tag" --draft "${tag_args[@]}" \
-              --title "BISHENG $release_tag" \
-              "${note_args[@]}" \
-              --repo "$GITHUB_REPOSITORY"
-          fi
-          release_url="$(gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" --json url --jq .url)"
-          echo "Draft assets: [$release_tag]($release_url)" >> "$GITHUB_STEP_SUMMARY"
 
-  prepare-shared-runtime-assets:
-    name: Prepare shared runtime assets
-    needs: validate-dispatch
-    if: >-
-      startsWith(github.ref, 'refs/tags/v') ||
-      github.event_name == 'pull_request' ||
-      (github.event_name == 'workflow_dispatch' &&
-        inputs.mode != 'resign' &&
-        (inputs.target == 'all' || inputs.target == 'macos' || inputs.target == 'windows'))
-    runs-on: [self-hosted, macOS, ARM64]
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        timeout-minutes: 5
-        with:
-          node-version: 22
-          architecture: arm64
-      - run: npm ci --prefer-offline
-      - name: Cache shared runtime assets
-        id: shared-cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            .build/office-downloads
-            .build/office-template-cache
-            .build/ppt-runtime
-          # v3 busts the immutable v2 entry, which was saved before the Intel Python archive was prefetched.
-          key: shared-runtime-assets-v3-${{ hashFiles('scripts/office-runtime/**', 'packages/dsh-desktop-office/**', 'packages/ppt-runtime/**', 'scripts/ppt/**', 'package-lock.json') }}
-          restore-keys: |
-            shared-runtime-assets-
-      - name: Build PPT runtime
-        run: npm run ppt:build
-      - name: Build Office templates
-        run: npm run office:prepare
-      - name: Download Intel Office runtime inputs
-        run: node scripts/office-runtime/prepare.mjs --download-only mac-x64
-      # A run-scoped key is immutable, so a repeated attempt restores the archives already stored for this run.
-      - name: Check this run's Office download cache
-        id: office-run-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ runner.temp }}/office-runtime-downloads-probe
-          key: office-runtime-downloads-${{ github.run_id }}
-      - name: Save this run's Office downloads
-        if: steps.office-run-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: .build/office-downloads
-          key: office-runtime-downloads-${{ github.run_id }}
   macos:
     name: macOS ${{ matrix.label }}
-    needs: [validate-dispatch, prepare-shared-runtime-assets]
+    needs: validate-dispatch
     if: >-
-      startsWith(github.ref, 'refs/tags/v') ||
-      (github.event_name == 'workflow_dispatch' && (inputs.target == 'all' || inputs.target == 'macos'))
+      inputs.mode != 'publish' && (startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.target == 'all' || inputs.target == 'macos')))
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: arm64
             label: Apple Silicon
-            runner: [self-hosted, macOS, ARM64]
+            runner: macos-15
             app-directory: mac-arm64
+            artifact: macos-apple-silicon
           - arch: x64
             label: Intel
-            runner: [self-hosted, macOS, bisheng-intel]
+            runner: macos-15-intel
             app-directory: mac
+            artifact: macos-intel
     runs-on: ${{ matrix.runner }}
-    env:
-      # arch keeps Electron on the target binary under Rosetta. cpu selects optional
-      # native packages such as Koffi; a host cpu=arm64 setting would install the
-      # arm64 prebuild, which the x64 Node cannot load and then tries to compile.
-      npm_config_arch: ${{ matrix.arch }}
-      npm_config_cpu: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Configure isolated macOS output
-        run: echo "MACOS_OUTPUT_DIR=$RUNNER_TEMP/bisheng-macos-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-${{ matrix.arch }}" >> "$GITHUB_ENV"
-      - name: Require Rosetta for Intel packaging
-        if: matrix.arch == 'x64'
-        run: arch -x86_64 /usr/bin/true
       - uses: actions/setup-node@v4
-        if: matrix.arch == 'arm64'
-        timeout-minutes: 5
         with:
-          node-version: 22
-      - uses: actions/setup-node@v4
-        if: matrix.arch == 'x64'
-        timeout-minutes: 5
-        with:
-          node-version: 22
-          architecture: x64
-      - name: Verify Intel Node runtime
-        if: matrix.arch == 'x64'
-        run: test "$(node -p 'process.arch')" = x64
+          node-version: '24.15.0'
+          cache: npm
       - name: Set app version from release tag
         if: startsWith(github.ref, 'refs/tags/v')
         run: npm version --no-git-tag-version --allow-same-version "${{ github.ref_name }}"
       - name: Set app version from pre-release tag
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'prerelease' && inputs.prerelease_tag != ''
-        run: npm version --no-git-tag-version --allow-same-version "${{ inputs.prerelease_tag }}"
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'prerelease' && inputs.version != ''
+        run: npm version --no-git-tag-version --allow-same-version "${{ inputs.version }}"
       - name: Set app version from signed version
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'signed' && inputs.signed_version != ''
-        run: npm version --no-git-tag-version --allow-same-version "${{ inputs.signed_version }}"
-      - run: npm ci --prefer-offline
-      - name: Restore shared runtime assets
-        if: needs.prepare-shared-runtime-assets.result == 'success'
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'signed' && inputs.version != ''
+        run: npm version --no-git-tag-version --allow-same-version "${{ inputs.version }}"
+      - name: Configure native download caches before dependency installation
+        shell: bash
+        run: |
+          # Electron 43 install.js reads the lowercase setting; builder uses uppercase.
+          echo "electron_config_cache=$RUNNER_TEMP/electron-cache" >> "$GITHUB_ENV"
+          echo "ELECTRON_CACHE=$RUNNER_TEMP/electron-cache" >> "$GITHUB_ENV"
+          echo "ELECTRON_BUILDER_CACHE=$RUNNER_TEMP/electron-builder-cache" >> "$GITHUB_ENV"
+      - name: Cache Electron downloads before dependency installation
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ELECTRON_CACHE }}
+          key: electron-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-downloads-v1-${{ runner.os }}-${{ runner.arch }}-
+      - name: Install dependencies with timings
+        run: npm ci --prefer-offline --no-audit --no-fund --timing --logs-dir "${{ runner.temp }}/npm-timings"
+      - name: Upload dependency installation timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-timings-${{ github.job }}-${{ runner.arch }}
+          path: ${{ runner.temp }}/npm-timings/*-timing.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Cache Office runtime downloads
         uses: actions/cache@v4
         with:
           path: |
             .build/office-downloads
+          key: office-runtime-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('scripts/office-runtime/**', 'packages/office-runtime/**', 'package-lock.json') }}
+          restore-keys: |
+            office-runtime-${{ runner.os }}-${{ matrix.arch }}-
+      - name: Cache generated Office and PPT assets
+        uses: actions/cache@v4
+        with:
+          enableCrossOsArchive: true
+          path: |
             .build/office-template-cache
             .build/ppt-runtime
-          key: shared-runtime-assets-v3-${{ hashFiles('scripts/office-runtime/**', 'packages/dsh-desktop-office/**', 'packages/ppt-runtime/**', 'scripts/ppt/**', 'package-lock.json') }}
-      # A miss leaves office:prepare to download on this packaging machine.
-      - name: Restore this run's Office downloads
-        uses: actions/cache/restore@v4
-        with:
-          path: .build/office-downloads
-          key: office-runtime-downloads-${{ github.run_id }}
-      - run: npm run typecheck
+          key: desktop-generated-assets-v1-${{ hashFiles('scripts/office-runtime/**', 'packages/dsh-desktop-office/**', 'scripts/*ppt*.mjs', 'scripts/ppt/**', 'packages/ppt-runtime/**', 'package-lock.json') }}
+          restore-keys: desktop-generated-assets-v1-
       - run: npm run build
-      - name: Run complete macOS test suite on prepared inputs
+      - name: Typecheck shared code on macOS
         if: matrix.arch == 'arm64'
-        run: npx --no-install vitest run
+        run: npm run typecheck
+      - name: Run shared tests on macOS
+        if: matrix.arch == 'arm64'
+        run: npx --no-install vitest run --exclude '**/test/docx-template-fidelity*' --exclude '**/test/ppt-personal-templates*' --exclude '**/test/ppt-import-memory*' --exclude '**/test/ppt-personal-template-ui*' --exclude '**/test/ppt-windows-font-layout*'
+      - name: Verify PPT generation leaves tracked sources clean
+        run: git diff --exit-code -- packages/ppt-runtime scripts/ppt
       - name: Validate Apple release secrets
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         env:
@@ -325,48 +241,46 @@ jobs:
           echo "APPLE_API_KEY_ID=$APPLE_API_KEY_ID" >> "$GITHUB_ENV"
           echo "APPLE_API_ISSUER=$APPLE_API_ISSUER" >> "$GITHUB_ENV"
           echo "APPLE_TEAM_ID=$APPLE_TEAM_ID" >> "$GITHUB_ENV"
-          if [ "${{ matrix.arch }}" = "x64" ]; then
-            xcrun_bridge="$RUNNER_TEMP/bisheng-arm64-xcrun"
-            mkdir -p "$xcrun_bridge"
-            cat > "$xcrun_bridge/xcrun" <<'EOF'
-          #!/bin/sh
-          exec /usr/bin/arch -arm64 /usr/bin/xcrun "$@"
-          EOF
-            chmod 755 "$xcrun_bridge/xcrun"
-            "$xcrun_bridge/xcrun" --find notarytool
-            echo "$xcrun_bridge" >> "$GITHUB_PATH"
-          else
-            /usr/bin/xcrun --find notarytool
-          fi
       - name: Prepare macOS signing keychain
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         id: signing_keychain
         env:
           CSC_LINK: ${{ secrets.DESKTOP_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.DESKTOP_CSC_KEY_PASSWORD }}
-        run: node scripts/prepare-macos-signing-keychain.mjs
+        run: node scripts/release/prepare-macos-signing-keychain.mjs
       - name: Build signed ${{ matrix.label }} package
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         env:
           CSC_KEYCHAIN: ${{ steps.signing_keychain.outputs.keychain }}
-        run: node scripts/verify-target.mjs darwin ${{ matrix.arch }} && npx --no-install electron-builder --mac --${{ matrix.arch }} --publish never --config.directories.output="$MACOS_OUTPUT_DIR"
+        run: node scripts/verify/verify-target.mjs darwin ${{ matrix.arch }} && npx --no-install electron-builder --mac --${{ matrix.arch }} --publish never
       - name: Build isolated ${{ matrix.label }} development package
         if: ${{ !startsWith(github.ref, 'refs/tags/v') && (github.event_name != 'workflow_dispatch' || inputs.mode == 'development') }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: node scripts/verify-target.mjs darwin ${{ matrix.arch }} && npx --no-install electron-builder --mac --${{ matrix.arch }} --publish never --config electron-builder.dev.cjs --config.directories.output="$MACOS_OUTPUT_DIR"
+        run: node scripts/verify/verify-target.mjs darwin ${{ matrix.arch }} && npx --no-install electron-builder --mac --${{ matrix.arch }} --publish never --config electron-builder.dev.cjs
       - name: Preserve ${{ matrix.label }} update metadata
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
-        run: mv "$MACOS_OUTPUT_DIR/latest-mac.yml" "$MACOS_OUTPUT_DIR/latest-mac-${{ matrix.arch }}.yml"
-      - name: Sign ${{ matrix.label }} DMG
+        run: mv dist/latest-mac.yml dist/latest-mac-${{ matrix.arch }}.yml
+      - name: Sign, notarize, and staple ${{ matrix.label }} DMG
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         env:
           CSC_KEYCHAIN: ${{ steps.signing_keychain.outputs.keychain }}
         run: |
-          dmg_path="$MACOS_OUTPUT_DIR/bisheng-mac-${{ matrix.arch }}.dmg"
+          dmg_path="dist/bisheng-mac-${{ matrix.arch }}.dmg"
           identity="$(security find-identity -v -p codesigning "$CSC_KEYCHAIN" | awk '/Developer ID Application/ { print $2; exit }')"
           test -n "$identity" || { echo "::error::Developer ID Application identity not found"; exit 1; }
           codesign --keychain "$CSC_KEYCHAIN" --sign "$identity" --timestamp --force "$dmg_path"
+          xcrun notarytool submit "$dmg_path" \
+            --key "$APPLE_API_KEY" \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+          for attempt in 1 2 3 4 5 6; do
+            if xcrun stapler staple "$dmg_path"; then break; fi
+            if [ "$attempt" -eq 6 ]; then exit 1; fi
+            echo "stapler staple failed, waiting for Apple ticket propagation in $((attempt * 15))s (attempt $attempt/6)..."
+            sleep $((attempt * 15))
+          done
       - name: Remove temporary signing keychain
         if: always() && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease')))
         env:
@@ -384,172 +298,169 @@ jobs:
           fi
           test -z "$SIGNING_KEYCHAIN" || security delete-keychain "$SIGNING_KEYCHAIN" || rm -f "$SIGNING_KEYCHAIN"
           test -z "$SIGNING_CERTIFICATE" || rm -f "$SIGNING_CERTIFICATE"
-      - name: Notarize and staple ${{ matrix.label }} DMG
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
-        run: |
-          dmg_path="$MACOS_OUTPUT_DIR/bisheng-mac-${{ matrix.arch }}.dmg"
-          app_path="$MACOS_OUTPUT_DIR/${{ matrix.app-directory }}/BISHENG.app"
-          arch -arm64 /usr/bin/xcrun notarytool submit "$dmg_path" \
-            --key "$APPLE_API_KEY" \
-            --key-id "$APPLE_API_KEY_ID" \
-            --issuer "$APPLE_API_ISSUER" \
-            --wait
-          for attempt in 1 2 3 4 5; do
-            if arch -arm64 /usr/bin/xcrun stapler staple "$app_path" && arch -arm64 /usr/bin/xcrun stapler staple "$dmg_path"; then break; fi
-            if [ "$attempt" -eq 5 ]; then exit 1; fi
-            echo "stapler staple failed, waiting for Apple ticket propagation in 10s (attempt $attempt/5)..."
-            sleep 10
-          done
-      - name: Clean up Apple notarization key
-        if: always()
-        run: test -z "$APPLE_API_KEY" || rm -f "$APPLE_API_KEY"
+          test -z "$APPLE_API_KEY" || rm -f "$APPLE_API_KEY"
       - name: Verify signed and notarized ${{ matrix.label }} app
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         run: |
-          app_path="$MACOS_OUTPUT_DIR/${{ matrix.app-directory }}/BISHENG.app"
-          dmg_path="$MACOS_OUTPUT_DIR/bisheng-mac-${{ matrix.arch }}.dmg"
+          app_path="dist/${{ matrix.app-directory }}/BISHENG.app"
           codesign --verify --deep --strict --verbose=2 "$app_path"
           spctl --assess --type execute --verbose=4 "$app_path"
-          for attempt in 1 2 3 4 5; do
-            if arch -arm64 /usr/bin/xcrun stapler validate "$app_path"; then break; fi
-            if [ "$attempt" -eq 5 ]; then exit 1; fi
-            echo "stapler validate failed on app_path, retrying in $((attempt * 5))s (attempt $attempt/5)..."
-            sleep $((attempt * 5))
+          for attempt in 1 2 3 4 5 6; do
+            if xcrun stapler validate "$app_path"; then break; fi
+            if [ "$attempt" -eq 6 ]; then exit 1; fi
+            echo "stapler validate failed on app_path, retrying in $((attempt * 10))s (attempt $attempt/6)..."
+            sleep $((attempt * 10))
           done
-          codesign --verify --verbose=2 "$dmg_path"
-          spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg_path"
-          for attempt in 1 2 3 4 5; do
-            if arch -arm64 /usr/bin/xcrun stapler validate "$dmg_path"; then break; fi
-            if [ "$attempt" -eq 5 ]; then exit 1; fi
-            echo "stapler validate failed on dmg, retrying in $((attempt * 5))s (attempt $attempt/5)..."
-            sleep $((attempt * 5))
+          codesign --verify --verbose=2 dist/bisheng-mac-${{ matrix.arch }}.dmg
+          spctl --assess --type open --context context:primary-signature --verbose=4 dist/bisheng-mac-${{ matrix.arch }}.dmg
+          for attempt in 1 2 3 4 5 6; do
+            if xcrun stapler validate dist/bisheng-mac-${{ matrix.arch }}.dmg; then break; fi
+            if [ "$attempt" -eq 6 ]; then exit 1; fi
+            echo "stapler validate failed on dmg, retrying in $((attempt * 10))s (attempt $attempt/6)..."
+            sleep $((attempt * 10))
           done
-      - name: Stage signed ${{ matrix.label }} assets in draft release
+      - name: Verify all desktop build outputs
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name != 'workflow_dispatch' || inputs.mode == 'development' || inputs.mode == 'signed' || inputs.mode == 'prerelease')
+        env:
+          BUILD_CHANNEL: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || (inputs.mode == 'signed' || inputs.mode == 'prerelease') && 'release' || 'development' }}
+        run: node ops/ci/desktop-artifacts.mjs "$BUILD_CHANNEL" mac ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (inputs.mode == 'signed' && inputs.signed_version || inputs.prerelease_tag) }}
-        run: |
-          gh release upload "$RELEASE_TAG" \
-            "$MACOS_OUTPUT_DIR/bisheng-mac-${{ matrix.arch }}.dmg" \
-            "$MACOS_OUTPUT_DIR/bisheng-mac-${{ matrix.arch }}.zip" \
-            "$MACOS_OUTPUT_DIR/bisheng-mac-${{ matrix.arch }}.zip.blockmap" \
-            "$MACOS_OUTPUT_DIR/latest-mac-${{ matrix.arch }}.yml" \
-            --clobber --repo "$GITHUB_REPOSITORY"
-      - name: Store macos-${{ matrix.arch }}-dev in draft release
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') && (github.event_name != 'workflow_dispatch' || inputs.mode == 'development') }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: node scripts/stage-development-assets.mjs ${{ matrix.arch }} "$MACOS_OUTPUT_DIR"
-  windows-preflight:
-    name: Windows shared checks on self-hosted Mac
-    needs: validate-dispatch
-    if: >-
-      startsWith(github.ref, 'refs/tags/v') ||
-      (github.event_name == 'workflow_dispatch' &&
-        inputs.mode != 'resign' &&
-        (inputs.target == 'all' || inputs.target == 'windows'))
-    runs-on: [self-hosted, macOS, bisheng-windows]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        timeout-minutes: 5
         with:
-          node-version: 22
-          architecture: arm64
-      - run: npm ci --prefer-offline
-      - run: npm run typecheck
-      - name: Check Windows release tooling
-        run: >-
-          npx --no-install vitest run
-          test/release.test.ts
-          test/formal-release-handoff.test.mjs
-          test/sign-windows-unpacked.test.ts
-          test/finalize-windows-release.test.ts
-          test/release-stage-split.test.mjs
+          name: ${{ matrix.artifact }}
+          retention-days: 7
+          path: |
+            dist/bisheng-mac-${{ matrix.arch }}.dmg
+            dist/bisheng-mac-${{ matrix.arch }}.zip
+            dist/bisheng-mac-${{ matrix.arch }}.zip.blockmap
+            dist/latest-mac-${{ matrix.arch }}.yml
+          compression-level: 0
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') && (github.event_name != 'workflow_dispatch' || inputs.mode == 'development') }}
+        with:
+          name: ${{ matrix.artifact }}-dev
+          retention-days: 3
+          path: |
+            dist-dev/bisheng-dev-mac-${{ matrix.arch }}.dmg
+            dist-dev/bisheng-dev-mac-${{ matrix.arch }}.zip
+            dist-dev/bisheng-dev-mac-${{ matrix.arch }}.zip.blockmap
+          compression-level: 0
+          if-no-files-found: error
 
   windows-x64:
     name: Windows x64
-    needs: windows-preflight
+    needs: validate-dispatch
     if: >-
-      startsWith(github.ref, 'refs/tags/v') ||
+      inputs.mode != 'publish' && (startsWith(github.ref, 'refs/tags/v') ||
+      github.event_name == 'pull_request' ||
       (github.event_name == 'workflow_dispatch' &&
         inputs.mode != 'resign' &&
-        (inputs.target == 'all' || inputs.target == 'windows'))
+        (inputs.target == 'all' || inputs.target == 'windows')))
     runs-on: windows-2022
     steps:
+      - name: Preserve shared asset fingerprints during checkout
+        shell: bash
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '24.15.0'
           cache: npm
-          cache-dependency-path: package-lock.json
-      - name: Configure Windows packaging cache
-        shell: pwsh
-        run: |
-          "ELECTRON_CACHE=$env:RUNNER_TEMP/electron-cache" >> $env:GITHUB_ENV
-          "ELECTRON_BUILDER_CACHE=$env:RUNNER_TEMP/electron-builder-cache" >> $env:GITHUB_ENV
-      - name: Cache Windows packaging downloads
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.ELECTRON_CACHE }}
-            ${{ env.ELECTRON_BUILDER_CACHE }}
-            .build/office-downloads
-          key: windows-x64-packaging-v1-${{ hashFiles('package-lock.json', 'scripts/office-runtime/lock.json') }}
-          restore-keys: |
-            windows-x64-packaging-v1-
       - name: Set app version from release tag
         if: startsWith(github.ref, 'refs/tags/v')
         run: npm version --no-git-tag-version --allow-same-version "${{ github.ref_name }}"
       - name: Set app version from pre-release tag
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'prerelease' && inputs.prerelease_tag != ''
-        run: npm version --no-git-tag-version --allow-same-version "${{ inputs.prerelease_tag }}"
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'prerelease' && inputs.version != ''
+        run: npm version --no-git-tag-version --allow-same-version "${{ inputs.version }}"
       - name: Set app version from signed version
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'signed' && inputs.signed_version != ''
-        run: npm version --no-git-tag-version --allow-same-version "${{ inputs.signed_version }}"
-      - run: npm ci --prefer-offline
-      - name: Build Windows application once
-        run: node scripts/verify-target.mjs win32 x64 && npm run build
-      - name: Run focused Windows regressions
-        if: inputs.windows_full_tests != true
-        run: npx --no-install vitest run --config vitest.windows.config.ts
-      - name: Run complete Windows test suite
-        if: inputs.windows_full_tests == true
-        run: npx --no-install vitest run
-      - name: Check recovery UI on native Windows at three display scales
-        if: github.event_name == 'workflow_dispatch' && inputs.windows_recovery_ui == true
-        run: node scripts/check-recovery-ui.mjs
-      - name: Store Windows recovery diagnostics in draft release
-        if: always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'development' && inputs.windows_recovery_ui == true
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'signed' && inputs.version != ''
+        run: npm version --no-git-tag-version --allow-same-version "${{ inputs.version }}"
+      - name: Configure native download caches before dependency installation
+        shell: bash
         run: |
-          if (-not (Test-Path artifacts/recovery-ui)) {
-            Write-Output '::warning::No recovery UI diagnostics were produced.'
-            exit 0
-          }
-          $archive = Join-Path $env:RUNNER_TEMP 'windows-recovery-ui.tar.gz'
-          tar -czf "$archive" -C artifacts recovery-ui
+          # Electron 43 install.js reads the lowercase setting; builder uses uppercase.
+          echo "electron_config_cache=$RUNNER_TEMP/electron-cache" >> "$GITHUB_ENV"
+          echo "ELECTRON_CACHE=$RUNNER_TEMP/electron-cache" >> "$GITHUB_ENV"
+          echo "ELECTRON_BUILDER_CACHE=$RUNNER_TEMP/electron-builder-cache" >> "$GITHUB_ENV"
+      - name: Cache Office runtime downloads and packaging tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build/office-downloads
+            ${{ env.ELECTRON_CACHE }}
+            ${{ env.ELECTRON_BUILDER_CACHE }}
+          key: windows-packaging-v1-${{ hashFiles('scripts/office-runtime/**', 'packages/office-runtime/**', 'package-lock.json') }}
+          restore-keys: |
+            windows-packaging-v1-
+      - name: Install dependencies with timings
+        run: npm ci --prefer-offline --no-audit --no-fund --timing --logs-dir "${{ runner.temp }}/npm-timings"
+      - name: Upload dependency installation timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-timings-${{ github.job }}-${{ runner.arch }}
+          path: ${{ runner.temp }}/npm-timings/*-timing.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Cache generated Office and PPT assets
+        uses: actions/cache@v4
+        with:
+          enableCrossOsArchive: true
+          path: |
+            .build/office-template-cache
+            .build/ppt-runtime
+          key: desktop-generated-assets-v1-${{ hashFiles('scripts/office-runtime/**', 'packages/dsh-desktop-office/**', 'scripts/*ppt*.mjs', 'scripts/ppt/**', 'packages/ppt-runtime/**', 'package-lock.json') }}
+          restore-keys: desktop-generated-assets-v1-
+      - run: npm run build
+      - name: Typecheck shared code on Windows
+        if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.target == 'windows')
+        run: npm run typecheck
+      - name: Run focused Windows regressions
+        if: inputs.checks != 'extended' && github.event_name != 'pull_request' && !(github.event_name == 'workflow_dispatch' && inputs.target == 'windows')
+        run: npx --no-install vitest run --config vitest.windows.config.ts
+        timeout-minutes: 15
+      - name: Run complete Windows test suite
+        if: inputs.checks == 'extended' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.target == 'windows')
+        run: |
+          npx --no-install vitest run --mode windows-parallel --reporter=verbose
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          gh release upload "$env:DEV_RELEASE_TAG" "$archive" --clobber --repo "$env:GITHUB_REPOSITORY"
+          npx --no-install vitest run --mode windows-serial --reporter=verbose
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        timeout-minutes: 15
+      - name: Verify PPT generation leaves tracked sources clean
+        run: git diff --exit-code -- packages/ppt-runtime scripts/ppt
+      - name: Check recovery UI on native Windows at three display scales
+        if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.checks == 'extended')
+        run: node scripts/verify/check-recovery-ui.mjs
+      - uses: actions/upload-artifact@v4
+        if: always() && (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.checks == 'extended'))
+        with:
+          name: windows-recovery-ui
+          retention-days: 7
+          path: |
+            artifacts/recovery-ui/scale-*/*.png
+            artifacts/recovery-ui/scale-*/results.json
+          if-no-files-found: warn
       - name: Build Windows release package
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
-        run: node scripts/electron-builder-windows.mjs --win --x64 --dir --publish never
+        run: node scripts/verify/verify-target.mjs win32 x64 && node scripts/release/electron-builder-windows.mjs --win --x64 --publish never
       - name: Build isolated Windows development package
         if: ${{ !startsWith(github.ref, 'refs/tags/v') && (github.event_name != 'workflow_dispatch' || inputs.mode == 'development') }}
-        run: node scripts/electron-builder-windows.mjs --win --x64 --publish never --config electron-builder.dev.cjs
+        run: node scripts/verify/verify-target.mjs win32 x64 && node scripts/release/electron-builder-windows.mjs --win --x64 --publish never --config electron-builder.dev.cjs
+      - name: Test installer failure cancellation on Windows
+        env:
+          DSH_TEST_NSIS: '1'
+        run: npx --no-install vitest run test/windows-installer-errors.test.ts
       - name: Smoke test packaged Windows Harness
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.checks == 'extended')
         shell: pwsh
         env:
           SMOKE_EXE: ${{ (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))) && 'dist\win-unpacked\BISHENG.exe' || 'dist-dev\win-unpacked\BISHENG Dev.exe' }}
           SMOKE_USERDATA: ${{ (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))) && 'bisheng' || 'bisheng-dev' }}
         run: |
-          $userData = Join-Path $env:APPDATA $env:SMOKE_USERDATA
-          $logPath = Join-Path $userData 'logs\harness.log'
           # Run outside the checkout: otherwise Node can silently resolve a
           # missing packaged dependency from the repository's node_modules.
           $sourceExecutable = Get-Item $env:SMOKE_EXE
@@ -557,8 +468,6 @@ jobs:
           New-Item -ItemType Directory -Path $isolatedApp | Out-Null
           Copy-Item -Path (Join-Path $sourceExecutable.Directory.FullName '*') -Destination $isolatedApp -Recurse
           $executable = Join-Path $isolatedApp $sourceExecutable.Name
-          $desktopStdout = Join-Path $env:RUNNER_TEMP 'dsh-packaged-desktop.stdout.log'
-          $desktopStderr = Join-Path $env:RUNNER_TEMP 'dsh-packaged-desktop.stderr.log'
           $packagedNode = Join-Path $isolatedApp 'resources\app.asar.unpacked\node_modules\node\bin\node.exe'
           if (Test-Path $packagedNode) { throw 'Standalone Windows node.exe must not be packaged.' }
           # Exercise the actual native binding too; the best-effort fallback
@@ -588,142 +497,96 @@ jobs:
           $pnpmEntry = Join-Path $isolatedApp 'resources\app.asar\node_modules\pnpm\bin\pnpm.cjs'
           $pnpmExitCode = Invoke-ElectronNode @($pnpmEntry, '--version')
           if ($pnpmExitCode -ne 0) { throw "Packaged pnpm failed under Electron Node mode (exit code $pnpmExitCode)." }
-          if (Test-Path $userData) { Remove-Item -Recurse -Force $userData }
-          $desktop = Start-Process -FilePath $executable -WorkingDirectory $isolatedApp -PassThru
           try {
-            $deadline = (Get-Date).AddSeconds(75)
-            $ready = $false
-            $endpoint = $null
-            while ((Get-Date) -lt $deadline) {
-              if ($desktop.HasExited) {
-                throw "BISHENG Dev exited before Harness was ready (exit code $($desktop.ExitCode))."
-              }
-              if (Test-Path $logPath) {
-                $log = Get-Content -Raw $logPath
-                if (-not [string]::IsNullOrEmpty($log)) {
-                  $match = [regex]::Match($log, 'dsh web: (http://127\.0\.0\.1:\d+/\?token=[^\s]+)')
-                  if ($match.Success) {
-                    try {
-                      $authenticatedUrl = $match.Groups[1].Value
-                      $response = Invoke-WebRequest `
-                        -UseBasicParsing `
-                        -Uri $authenticatedUrl `
-                        -SessionVariable harnessSession `
-                        -TimeoutSec 2
-                      if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500) {
-                        $endpoint = ([uri]$authenticatedUrl).GetLeftPart([System.UriPartial]::Authority)
-                        $ready = $true
-                        break
-                      }
-                    } catch { }
+            node scripts/verify/check-workbench-install.mjs "$executable" "artifacts/workbench-install"
+            if ($LASTEXITCODE -ne 0) { throw 'Packaged Windows workbench installation acceptance failed.' }
+          } finally {
+            # The driver owns a unique Profile and closes its desktop process.
+            # Also clean descendants from this isolated executable if it failed.
+            $smokeRoot = [System.IO.Path]::GetFullPath($isolatedApp).TrimEnd('\') + '\'
+            $cleanupDeadline = (Get-Date).AddSeconds(10)
+            do {
+              $remaining = @(Get-CimInstance Win32_Process | Where-Object {
+                $_.ExecutablePath -and $_.ExecutablePath.StartsWith($smokeRoot, [System.StringComparison]::OrdinalIgnoreCase)
+              })
+              foreach ($entry in $remaining) {
+                $process = Get-Process -Id $entry.ProcessId -ErrorAction SilentlyContinue
+                if ($process -and -not $process.HasExited) {
+                  try { $process.Kill($true) } catch {
+                    if (-not $process.HasExited) { throw }
                   }
                 }
               }
-              Start-Sleep -Milliseconds 500
-            }
-            if (-not $ready) { throw 'Packaged Harness did not become ready within 75 seconds.' }
-
-            function Invoke-HarnessRpc([string]$endpointName, [hashtable]$request) {
-              $rpcId = [guid]::NewGuid().ToString()
-              $body = @{
-                type = 'client-request'
-                rpcId = $rpcId
-                method = $endpointName
-                payload = @{ args = @{ request = $request } }
-              } | ConvertTo-Json -Depth 8 -Compress
-              $response = Invoke-RestMethod `
-                -Method Post `
-                -Uri "$endpoint/api/$endpointName" `
-                -ContentType 'application/json; charset=utf-8' `
-                -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) `
-                -WebSession $harnessSession `
-                -TimeoutSec 30
-              if ($response.rpcId -ne $rpcId) { throw "Harness RPC id mismatch for $endpointName." }
-              if (-not $response.result.ok) {
-                throw "Harness RPC $endpointName failed: $($response.result.error.code): $($response.result.error.message)"
-              }
-              return $response.result.value
-            }
-
-            $logBeforeWorkspace = (Get-Content -Raw $logPath).Length
-            $workspacePath = Join-Path $env:RUNNER_TEMP '数据项素-工作区'
-            New-Item -ItemType Directory -Force -Path $workspacePath | Out-Null
-            $workspace = Invoke-HarnessRpc 'workspace/create' @{ path = $workspacePath }
-            $session = Invoke-HarnessRpc 'session/create' @{ workspaceId = $workspace.workspace.workspaceId }
-            if ([string]::IsNullOrWhiteSpace($session.sessionId)) {
-              throw 'Harness did not return a session id for the selected workspace.'
-            }
-
-            Start-Sleep -Seconds 20
-            $stableLog = Get-Content -Raw $logPath
-            if ($stableLog.Length -lt $logBeforeWorkspace) {
-              throw 'Harness log was truncated during workspace and session creation.'
-            }
-            if ($stableLog.Substring($logBeforeWorkspace) -match '\[stderr\]') {
-              throw 'Harness reported stderr after workspace and session creation.'
-            }
-            if ($stableLog -match '\[node\] Harness process exited') {
-              throw 'Harness process exited after workspace and session creation.'
-            }
-            if ($desktop.HasExited) {
-              throw "BISHENG Dev exited after workspace and session creation (exit code $($desktop.ExitCode))."
-            }
-            Write-Host 'Packaged Windows Harness smoke test passed.'
-          } finally {
-            if (Test-Path $logPath) {
-              Write-Host '--- harness.log ---'
-              Get-Content $logPath
-            }
-            if (-not $desktop.HasExited) {
-              & taskkill.exe /PID $desktop.Id /T /F
-              $desktop.Refresh()
-              if ($LASTEXITCODE -ne 0 -and -not $desktop.HasExited) {
-                throw "Failed to stop packaged Windows process tree $($desktop.Id)."
-              }
-              [void]$desktop.WaitForExit(10000)
-            }
-            for ($attempt = 1; $attempt -le 5 -and (Test-Path $isolatedApp); $attempt++) {
-              Remove-Item -Recurse -Force $isolatedApp -ErrorAction SilentlyContinue
-              if (Test-Path $isolatedApp) { Start-Sleep -Seconds $attempt }
-            }
-            if (Test-Path $isolatedApp) {
-              throw "Failed to remove packaged Windows smoke copy: $isolatedApp"
-            }
+              if ($remaining.Count -eq 0) { break }
+              Start-Sleep -Milliseconds 200
+            } while ((Get-Date) -lt $cleanupDeadline)
+            if ($remaining.Count -gt 0) { throw 'Processes from the isolated packaged smoke did not exit.' }
           }
-      - name: Archive unpacked Windows release for inner binary signing
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
-        run: node scripts/archive-windows-unpacked.mjs
-      - name: Stage unsigned Windows assets in draft release
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
+      - name: Upload Windows workbench installation evidence
+        if: always() && (github.event_name == 'pull_request' || inputs.checks == 'extended')
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-workbench-installation
+          retention-days: 7
+          if-no-files-found: warn
+          path: |
+            artifacts/workbench-install/*.png
+            artifacts/workbench-install/results.json
+      - name: Archive and verify unpacked Windows payload
+        if: github.event_name == 'pull_request' || startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease' || inputs.checks == 'extended'))
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (inputs.mode == 'signed' && inputs.signed_version || inputs.prerelease_tag) }}
+          ARCHIVE_DIST: ${{ (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))) && 'dist' || 'dist-dev' }}
         run: |
-          gh release upload "$env:RELEASE_TAG" `
-            dist/win-unpacked.tar.gz `
-            --clobber --repo "$env:GITHUB_REPOSITORY"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Store windows-x64-dev in draft release
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'development'
-        shell: pwsh
+          node scripts/release/archive-windows-release.mjs "$env:ARCHIVE_DIST"
+      - name: Verify all desktop build outputs
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name != 'workflow_dispatch' || inputs.mode == 'development' || inputs.mode == 'signed' || inputs.mode == 'prerelease')
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: node scripts/stage-development-assets.mjs windows
+          BUILD_CHANNEL: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || (inputs.mode == 'signed' || inputs.mode == 'prerelease') && 'release' || 'development' }}
+        run: node ops/ci/desktop-artifacts.mjs "$BUILD_CHANNEL" win x64
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
+        with:
+          name: windows-x64-unsigned
+          path: |
+            dist/bisheng-windows-x64-setup.exe
+            dist/win-unpacked.tar.gz
+            dist/bisheng-windows-x64-setup.exe.blockmap
+            dist/latest.yml
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') && (github.event_name != 'workflow_dispatch' || inputs.mode == 'development') }}
+        with:
+          name: windows-x64-dev
+          retention-days: 3
+          path: |
+            dist-dev/bisheng-dev-windows-x64-setup.exe
+            dist-dev/bisheng-dev-windows-x64-setup.exe.blockmap
+          compression-level: 0
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'pull_request' || inputs.checks == 'extended') }}
+        with:
+          name: windows-x64-dev-unpacked
+          retention-days: 3
+          path: dist-dev/win-unpacked.tar.gz
+          compression-level: 0
+          if-no-files-found: error
 
   sign-windows:
     name: Sign Windows package locally with UKey
-    needs:
-      - validate-dispatch
-      - windows-x64
+    needs: [validate-dispatch, windows-x64]
+    permissions:
+      actions: read
+      contents: read
     if: >-
       always() &&
-      needs.validate-dispatch.result == 'success' &&
-      (
-        ((startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))) && needs.windows-x64.result == 'success') ||
-        (github.event_name == 'workflow_dispatch' && inputs.mode == 'resign' && needs.windows-x64.result == 'skipped')
-      )
-    runs-on: [self-hosted, macOS, bisheng-windows]
+      needs.validate-dispatch.result == 'success' && inputs.mode != 'publish' &&
+      ((startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))) && needs.windows-x64.result == 'success' ||
+       (github.event_name == 'workflow_dispatch' && inputs.mode == 'resign' && needs.windows-x64.result == 'skipped'))
+    runs-on: [self-hosted, macOS, ARM64]
     env:
       CI: 'true'
       JSIGN_VERSION: '7.5'
@@ -731,52 +594,65 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # Persistent runners retain npm downloads locally; restoring the remote
-      # cache duplicates disk usage and can stall release setup for 20 minutes.
+      # cache duplicates disk usage and can stall release setup for minutes.
       - uses: actions/setup-node@v4
         timeout-minutes: 5
         with:
-          node-version: 22
+          node-version: '24.15.0'
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
       - name: Install release tooling
-        run: npm ci --ignore-scripts --prefer-offline
+        run: npm ci --ignore-scripts
       - name: Set app version from release tag
         if: startsWith(github.ref, 'refs/tags/v')
         run: npm version --no-git-tag-version --allow-same-version "${{ github.ref_name }}"
       - name: Set app version from pre-release tag
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'prerelease' && inputs.prerelease_tag != ''
-        run: npm version --no-git-tag-version --allow-same-version "${{ inputs.prerelease_tag }}"
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'prerelease' && inputs.version != ''
+        run: npm version --no-git-tag-version --allow-same-version "${{ inputs.version }}"
       - name: Set app version from signed version
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'signed' && inputs.signed_version != ''
-        run: npm version --no-git-tag-version --allow-same-version "${{ inputs.signed_version }}"
+        if: github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'resign') && inputs.version != ''
+        run: npm version --no-git-tag-version --allow-same-version "${{ inputs.version }}"
       - name: Prepare unsigned Windows package
         run: |
           work_dir="$RUNNER_TEMP/dsh-windows-${{ github.run_id }}"
           mkdir -p "$work_dir/release"
           echo "WINDOWS_SIGNING_WORK_DIR=$work_dir" >> "$GITHUB_ENV"
-      - name: Download unsigned Windows assets from draft release
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
+      - name: Bypass runner proxy for artifact transfer
+        run: |
+          # The runner exports lowercase proxy variables separately on macOS.
+          # A step env map cannot specify both cases in GitHub workflow YAML.
+          printf 'http_proxy=\nhttps_proxy=\nall_proxy=\nno_proxy=*\n' >> "$GITHUB_ENV"
+      - name: Download verified Windows signing inputs in parallel
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (inputs.mode == 'signed' && inputs.signed_version || inputs.prerelease_tag) }}
+          SOURCE_RUN_ID: ${{ inputs.mode == 'resign' && inputs.source_run_id || github.run_id }}
+          HTTP_PROXY: ''
+          HTTPS_PROXY: ''
+          ALL_PROXY: ''
         run: |
-          set -euo pipefail
-          gh release download "$RELEASE_TAG" \
-            --pattern 'win-unpacked.tar.gz' \
-            --dir "$WINDOWS_SIGNING_WORK_DIR/release" \
-            --repo "$GITHUB_REPOSITORY"
-          node scripts/verify-release-staging.mjs "$RELEASE_TAG" "$WINDOWS_SIGNING_WORK_DIR/release" \
-            win-unpacked.tar.gz
+          node scripts/release/download-artifact-ranges.mjs "$GITHUB_REPOSITORY" "$SOURCE_RUN_ID" \
+            windows-x64-unsigned "$WINDOWS_SIGNING_WORK_DIR/unsigned.zip"
+          unzip -q "$WINDOWS_SIGNING_WORK_DIR/unsigned.zip" -d "$WINDOWS_SIGNING_WORK_DIR/release"
+          rm "$WINDOWS_SIGNING_WORK_DIR/unsigned.zip"
+      - name: Check reused unsigned package version
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'resign'
+        run: |
+          actual_version="$(node -e 'const fs = require("node:fs"); const yaml = require("js-yaml"); console.log(yaml.load(fs.readFileSync(process.argv[1], "utf8")).version)' "$WINDOWS_SIGNING_WORK_DIR/release/latest.yml")"
+          test "$actual_version" = "${{ inputs.version }}" || {
+            echo "::error::Unsigned artifact version $actual_version does not match signed_version"
+            exit 1
+          }
       - name: Download and verify Jsign
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           jsign_jar="$WINDOWS_SIGNING_WORK_DIR/jsign-${JSIGN_VERSION}.jar"
-          curl --fail-with-body --location --retry 3 --retry-all-errors \
-            --connect-timeout 15 --max-time 180 \
-            --output "$jsign_jar" \
-            "https://github.com/ebourg/jsign/releases/download/${JSIGN_VERSION}/jsign-${JSIGN_VERSION}.jar"
+          gh release download "$JSIGN_VERSION" --repo ebourg/jsign \
+            --pattern "jsign-${JSIGN_VERSION}.jar" --dir "$WINDOWS_SIGNING_WORK_DIR" --clobber
           test -s "$jsign_jar"
           printf '%s  %s\n' "$JSIGN_SHA256" "$jsign_jar" | shasum -a 256 --check
           java -jar "$jsign_jar" --version
@@ -785,6 +661,7 @@ jobs:
         env:
           WINDOWS_SIGNING_PIN: ${{ secrets.DESKTOP_WINDOWS_SIGNING_PIN }}
         run: |
+          set -euo pipefail
           test -r /usr/local/lib/libeTPkcs11.dylib
           test -n "$WINDOWS_SIGNING_PIN" || { echo "::error::Missing required secret: DESKTOP_WINDOWS_SIGNING_PIN"; exit 1; }
           pin_file="$(mktemp "$WINDOWS_SIGNING_WORK_DIR/jsign-pin.XXXXXX")"
@@ -793,42 +670,50 @@ jobs:
           printf '%s' "$WINDOWS_SIGNING_PIN" > "$pin_file"
           unset WINDOWS_SIGNING_PIN
 
-          # Require the signed inner binaries in the final installer. Never
-          # restore the unsigned original when extraction or repackaging fails.
-          archive="$WINDOWS_SIGNING_WORK_DIR/release/win-unpacked.tar.gz"
-          test -s "$archive"
-          tar -xzf "$archive" -C "$WINDOWS_SIGNING_WORK_DIR/release"
+          # A missing archive or any failed signing/repackaging step blocks publication.
+          test -s "$WINDOWS_SIGNING_WORK_DIR/release/win-unpacked.tar.gz"
+          tar -xzf "$WINDOWS_SIGNING_WORK_DIR/release/win-unpacked.tar.gz" -C "$WINDOWS_SIGNING_WORK_DIR/release"
           JSIGN_JAR="$JSIGN_JAR" JSIGN_PIN_FILE="$pin_file" \
-            node scripts/sign-windows-unpacked.mjs "$WINDOWS_SIGNING_WORK_DIR/release/win-unpacked"
+            node scripts/release/sign-windows-unpacked.mjs "$WINDOWS_SIGNING_WORK_DIR/release/win-unpacked"
           rm -f "$WINDOWS_SIGNING_WORK_DIR/release"/*.exe "$WINDOWS_SIGNING_WORK_DIR/release"/*.blockmap
           JSIGN_JAR="$JSIGN_JAR" JSIGN_PIN_FILE="$pin_file" \
-            node scripts/electron-builder-windows.mjs --win --x64 --publish never \
-              --prepackaged "$WINDOWS_SIGNING_WORK_DIR/release/win-unpacked" \
-              --config.directories.output="$WINDOWS_SIGNING_WORK_DIR/release"
-          rm -rf "$WINDOWS_SIGNING_WORK_DIR/release/win-unpacked" "$archive"
+            node scripts/release/electron-builder-windows.mjs --win --x64 --publish never \
+            --prepackaged "$WINDOWS_SIGNING_WORK_DIR/release/win-unpacked" \
+            --config.directories.output="$WINDOWS_SIGNING_WORK_DIR/release"
+          rm -rf "$WINDOWS_SIGNING_WORK_DIR/release/win-unpacked" "$WINDOWS_SIGNING_WORK_DIR/release/win-unpacked.tar.gz"
 
           installer_count="$(find "$WINDOWS_SIGNING_WORK_DIR/release" -maxdepth 1 -type f -name '*.exe' | wc -l | tr -d ' ')"
           test "$installer_count" = '1'
           installer="$(find "$WINDOWS_SIGNING_WORK_DIR/release" -maxdepth 1 -type f -name '*.exe' -print -quit)"
-          java -jar "$JSIGN_JAR" \
-            --storetype ETOKEN \
-            --storepass "file:$pin_file" \
-            --alg SHA-256 \
-            --tsaurl http://timestamp.digicert.com \
-            --tsmode RFC3161 \
-            --tsretries 3 \
-            --tsretrywait 10 \
-            --name 'BISHENG' \
-            --url https://www.dshdesktop.com \
-            --verbose \
-            "$installer"
+          for attempt in 1 2 3 4 5 6; do
+            if java -jar "$JSIGN_JAR" \
+              --storetype ETOKEN \
+              --storepass "file:$pin_file" \
+              --alg SHA-256 \
+              --tsaurl http://timestamp.digicert.com \
+              --tsmode RFC3161 \
+              --tsretries 3 \
+              --tsretrywait 10 \
+              --name 'BISHENG' \
+              --url https://www.dshdesktop.com \
+              --verbose \
+              "$installer"; then
+              break
+            fi
+            if [ "$attempt" -eq 6 ]; then
+              echo "::error::Signing final installer failed after 6 attempts"
+              exit 1
+            fi
+            echo "Signing final installer failed, retrying in $((attempt * 10))s (attempt $attempt/6)..."
+            sleep $((attempt * 10))
+          done
           java -jar "$JSIGN_JAR" extract --format DER "$installer"
           test -s "$installer.sig"
           rm -f "$installer.sig"
       - name: Rebuild Windows update metadata
         env:
-          PRERELEASE_TAG: ${{ inputs.prerelease_tag }}
-          SIGNED_VERSION: ${{ inputs.signed_version }}
+          PRERELEASE_TAG: ${{ inputs.version }}
+          SIGNED_VERSION: ${{ inputs.version }}
           DISPATCH_MODE: ${{ inputs.mode }}
         run: |
           # Tag pushes use the git tag. Dispatch must not fall back to the
@@ -840,22 +725,21 @@ jobs:
           else
             version="${SIGNED_VERSION#v}"
           fi
-          node scripts/finalize-windows-release.mjs \
+          node scripts/release/finalize-windows-release.mjs \
             "$WINDOWS_SIGNING_WORK_DIR/release" \
             "$version"
           test -f "$WINDOWS_SIGNING_WORK_DIR/release/latest.yml"
           test -f "$WINDOWS_SIGNING_WORK_DIR"/release/*.exe.blockmap
-      - name: Stage signed Windows assets in draft release
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || (inputs.mode == 'signed' && inputs.signed_version || inputs.prerelease_tag) }}
-        run: |
-          gh release upload "$RELEASE_TAG" \
-            "$WINDOWS_SIGNING_WORK_DIR/release/bisheng-windows-x64-setup.exe" \
-            "$WINDOWS_SIGNING_WORK_DIR/release/bisheng-windows-x64-setup.exe.blockmap" \
-            "$WINDOWS_SIGNING_WORK_DIR/release/latest.yml" \
-            --clobber --repo "$GITHUB_REPOSITORY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/dsh-windows-${{ github.run_id }}/release/bisheng-windows-x64-setup.exe
+            ${{ runner.temp }}/dsh-windows-${{ github.run_id }}/release/bisheng-windows-x64-setup.exe.blockmap
+            ${{ runner.temp }}/dsh-windows-${{ github.run_id }}/release/latest.yml
+          compression-level: 0
+          if-no-files-found: error
       - name: Remove local signing files
         if: always()
         run: |
@@ -865,49 +749,126 @@ jobs:
             *) echo "Refusing to remove unexpected signing path: $WINDOWS_SIGNING_WORK_DIR"; exit 1 ;;
           esac
 
-  publish:
-    name: Publish formal release to ModelScope and GitHub
+  publish-signed-test:
+    name: Upload signed test installers and notify
+    needs: [macos, sign-windows]
     if: >-
-      always() &&
-      startsWith(github.ref, 'refs/tags/v') &&
-      inputs.prerelease_tag == '' &&
-      needs.macos.result == 'success' &&
-      needs.sign-windows.result == 'success'
-    needs:
-      - macos
-      - sign-windows
+      always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'signed' &&
+      (inputs.target == 'windows' || needs.macos.result == 'success') &&
+      (inputs.target == 'macos' || needs.sign-windows.result == 'success')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        if: inputs.target == 'all' || inputs.target == 'macos'
+        with:
+          pattern: macos-*
+          path: test-assets
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        if: inputs.target == 'all' || inputs.target == 'windows'
+        with:
+          name: windows-x64
+          path: test-assets
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci --ignore-scripts
-      - name: Download verified platform assets from draft release
+          node-version: '24.15.0'
+      - name: Install release summary CLI
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.MODELS_TOKEN }}
+        run: |
+          if [ -n "${COPILOT_GITHUB_TOKEN:-}" ]; then
+            npm install -g @github/copilot@latest || echo "::warning::Copilot installation failed; test notification will use a short fallback."
+          fi
+      - name: Upload test installers, verify downloads, and send Feishu notification
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.MODELS_TOKEN }}
+          MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
+          MODELSCOPE_REPO_ID: alexyaojin/bisheng-work
+          FEISHU_RELEASE_WEBHOOK: ${{ secrets.FEISHU_RELEASE_WEBHOOK }}
+          SIGNED_VERSION: ${{ inputs.version }}
+          TEST_TARGET: ${{ inputs.target }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/test-upload-env"
+          "$RUNNER_TEMP/test-upload-env/bin/pip" install -q modelscope
+          "$RUNNER_TEMP/test-upload-env/bin/python3" .github/scripts/signed_test_build.py \
+            --directory test-assets --target "$TEST_TARGET" \
+            --version "$SIGNED_VERSION" --run-id "$GITHUB_RUN_ID" \
+            --artifact-prefix bisheng --product-name BISHENG
+
+  publish:
+    name: Publish GitHub Release
+    concurrency:
+      group: desktop-modelscope-release-history
+      cancel-in-progress: false
+    if: >-
+      always() && needs.validate-dispatch.result == 'success' &&
+      ((github.event_name == 'workflow_dispatch' && inputs.mode == 'publish') ||
+       (inputs.mode != 'publish' && startsWith(github.ref, 'refs/tags/v') &&
+        inputs.version == '' && needs.macos.result == 'success' &&
+        needs.sign-windows.result == 'success'))
+    needs:
+      - validate-dispatch
+      - macos
+      - sign-windows
+    permissions:
+      actions: read
+      contents: write
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_TAG: ${{ inputs.mode == 'publish' && inputs.version || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate original signed release source
+        if: inputs.mode == 'publish'
+        id: source
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: python3 .github/scripts/validate_publish_source.py
+      - name: Bind release identity
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha || github.sha }}
         run: |
           set -euo pipefail
-          mkdir -p release-assets
-          gh release download "$GITHUB_REF_NAME" \
-            --pattern 'bisheng-*' \
-            --pattern 'latest*.yml' \
-            --dir release-assets \
-            --repo "$GITHUB_REPOSITORY"
-          node scripts/verify-release-staging.mjs "$GITHUB_REF_NAME" release-assets \
-            bisheng-mac-arm64.dmg bisheng-mac-arm64.zip \
-            bisheng-mac-arm64.zip.blockmap latest-mac-arm64.yml \
-            bisheng-mac-x64.dmg bisheng-mac-x64.zip \
-            bisheng-mac-x64.zip.blockmap latest-mac-x64.yml \
-            bisheng-windows-x64-setup.exe \
-            bisheng-windows-x64-setup.exe.blockmap latest.yml
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$SOURCE_SHA"
+          echo "RELEASE_SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@v4
+        if: inputs.mode != 'publish'
+        with:
+          pattern: macos-*
+          path: release-assets
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        if: inputs.mode != 'publish'
+        with:
+          name: windows-x64
+          path: release-assets
+      - name: Download verified signed artifacts from original run
+        if: inputs.mode == 'publish'
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.source_run_id }}
+          artifact-ids: ${{ steps.source.outputs.artifact_ids }}
+          path: release-assets
+          merge-multiple: true
       - name: Merge macOS update metadata
         run: |
           set -euo pipefail
-          node scripts/merge-mac-update-metadata.mjs \
+          node scripts/release/merge-mac-update-metadata.mjs \
             release-assets/latest-mac-arm64.yml \
             release-assets/latest-mac-x64.yml \
             release-assets/latest-mac.yml
@@ -917,20 +878,18 @@ jobs:
       - name: Verify release assets before publication
         run: |
           set -euo pipefail
-          node scripts/verify-release-assets.mjs release-assets "${GITHUB_REF_NAME#v}"
+          node scripts/verify/verify-release-assets.mjs release-assets "${RELEASE_TAG#v}" --artifact-prefix bisheng
       - name: Build GitHub release note prompt
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           mkdir -p .github/release-artifacts
+          git fetch --force --tags
           python3 .github/scripts/github_release_notes.py build-prompt \
             --tag "$RELEASE_TAG" \
             --output .github/release-artifacts/github-release-prompt.txt
       - name: Generate GitHub release note
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.MODELS_TOKEN }}
-          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           out=.github/release-artifacts/github-release-notes.md
@@ -956,69 +915,125 @@ jobs:
             echo "MODELS_TOKEN not set; using the deterministic GitHub release note."
             python3 .github/scripts/github_release_notes.py generate-fallback --tag "$RELEASE_TAG" --output "$out"
           fi
-      - name: Mirror formal release to ModelScope
+      - name: Generate concise bilingual popup notes
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.MODELS_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$COPILOT_GITHUB_TOKEN" || { echo "::error::Missing MODELS_TOKEN; popup notes cannot be generated"; exit 1; }
+          python3 .github/scripts/update_popup_notes.py prompt --tag "$RELEASE_TAG" --file .github/release-artifacts/popup-prompt.txt
+          copilot -p "$(cat .github/release-artifacts/popup-prompt.txt)" -s --model "$RELEASE_NOTES_MODEL" --no-ask-user --available-tools= --disable-builtin-mcps > .github/release-artifacts/popup-notes.json
+          python3 .github/scripts/update_popup_notes.py validate --file .github/release-artifacts/popup-notes.json
+      - name: Install Feishu card callback transport
+        run: |
+          python3 -m venv "$RUNNER_TEMP/release-review-env"
+          "$RUNNER_TEMP/release-review-env/bin/pip" install -r .github/scripts/release-review-requirements.txt
+          "$RUNNER_TEMP/release-review-env/bin/python" test/feishu-card-sdk.py
+      - name: Wait for Feishu release confirmation
+        timeout-minutes: 65
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_RELEASE_CHAT_ID: ${{ vars.FEISHU_RELEASE_CHAT_ID }}
+          FEISHU_RELEASE_REVIEWER_ID: ${{ vars.FEISHU_RELEASE_REVIEWER_ID }}
+          COPILOT_GITHUB_TOKEN: ${{ secrets.MODELS_TOKEN }}
+        run: 'env GITHUB_SHA="$RELEASE_SOURCE_SHA" "$RUNNER_TEMP/release-review-env/bin/python" .github/scripts/confirm_popup_release.py'
+      - name: Inject approved popup notes into update feeds
+        run: env GITHUB_SHA="$RELEASE_SOURCE_SHA" node scripts/release/inject-popup-notes.mjs
+      - name: Preserve release review evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-review-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .github/release-artifacts/
+          retention-days: 30
+      - name: Recheck immutable source after human approval
+        if: inputs.mode == 'publish'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/validate_publish_source.py > "$RUNNER_TEMP/rechecked-source.json"
+          python3 -c 'import json, os; assert json.load(open(os.environ["RUNNER_TEMP"] + "/rechecked-source.json"))["sha"] == os.environ["RELEASE_SOURCE_SHA"], "Release tag changed during approval"'
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes=.github/release-artifacts/github-release-notes.md
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit "$RELEASE_TAG" --notes-file "$notes" --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$RELEASE_TAG" release-assets/* \
+              --verify-tag \
+              --notes-file "$notes" \
+              --title "BISHENG $RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY"
+          fi
+      - name: Mirror release assets to ModelScope
         env:
           MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
           MODELSCOPE_REPO_ID: alexyaojin/bisheng-work
         run: |
           set -euo pipefail
+          test -n "$MODELSCOPE_TOKEN" || { echo "::error::Missing secret MODELSCOPE_TOKEN"; exit 1; }
           python3 -m venv "$RUNNER_TEMP/ms-env"
           "$RUNNER_TEMP/ms-env/bin/pip" install -q modelscope
           "$RUNNER_TEMP/ms-env/bin/python3" <<'PY'
-          import os
+          import os, pathlib
           from modelscope.hub.api import HubApi
 
-          tag = os.environ["GITHUB_REF_NAME"]
-          version = tag[1:]
-          repo_id = os.environ["MODELSCOPE_REPO_ID"]
-          token = os.environ["MODELSCOPE_TOKEN"]
           api = HubApi()
-          for destination in (f"releases/archive/{version}", "releases/latest"):
-              api.upload_folder(
-                  repo_id=repo_id,
-                  folder_path="release-assets",
-                  path_in_repo=destination,
-                  commit_message=f"Release {tag}",
-                  token=token,
-              )
-              print(f"Uploaded {tag} to {repo_id}/{destination}")
+          token = os.environ["MODELSCOPE_TOKEN"]
+          repo_id = os.environ["MODELSCOPE_REPO_ID"]
+          tag = os.environ["RELEASE_TAG"]
+          src = pathlib.Path("release-assets")
+
+          version = tag[1:] if tag.startswith("v") else tag
+
+          api.upload_folder(
+              repo_id=repo_id,
+              folder_path=str(src),
+              path_in_repo="releases/latest",
+              commit_message=f"Release {tag}",
+              token=token,
+          )
+          print(f"✅ Uploaded {src} -> {repo_id}/releases/latest")
+
+          # Immutable per-version archive so the desktop client can roll back.
+          api.upload_folder(
+              repo_id=repo_id,
+              folder_path=str(src),
+              path_in_repo=f"releases/archive/{version}",
+              commit_message=f"Archive {tag}",
+              token=token,
+          )
+          print(f"✅ Archived {src} -> {repo_id}/releases/archive/{version}")
+
+          import sys
+          sys.path.insert(0, ".github/scripts")
+          from append_version_index import append_version_index
+          append_version_index(api, repo_id, token, version)
+          print("✅ Appended release to releases/versions.json")
           PY
-      - name: Verify public ModelScope update metadata
-        run: |
-          set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          base='https://dshdesktop.com/work/updates/latest'
-          for metadata in latest.yml latest-mac.yml; do
-            verified=false
-            for attempt in 1 2 3 4 5 6; do
-              if curl --fail --location --silent --show-error \
-                "$base/$metadata" --output "$RUNNER_TEMP/$metadata" && \
-                grep -Fqx "version: $version" "$RUNNER_TEMP/$metadata"; then
-                verified=true
-                break
-              fi
-              sleep 10
-            done
-            if [ "$verified" != true ]; then
-              echo "::error::ModelScope $metadata is not publicly serving version $version"
-              exit 1
-            fi
-          done
-      - name: Publish verified GitHub release
+
+      - name: Configure initial 5% rollout on crash service
         env:
-          GH_TOKEN: ${{ github.token }}
+          CRASH_ADMIN_TOKEN: ${{ secrets.CRASH_ADMIN_TOKEN }}
         run: |
           set -euo pipefail
-          node scripts/prune-github-release-assets.mjs "$GITHUB_REF_NAME"
-          gh release edit "$GITHUB_REF_NAME" --draft=false \
-            --notes-file .github/release-artifacts/github-release-notes.md \
-            --repo "$GITHUB_REPOSITORY"
+          if [ -z "${CRASH_ADMIN_TOKEN:-}" ]; then
+            echo "⚠️ CRASH_ADMIN_TOKEN secret not set; skipping rollout configuration."
+            exit 0
+          fi
+          node scripts/release/configure-rollout.mjs "${RELEASE_TAG#v}" 5
+
       - name: Build Feishu release note prompt
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           mkdir -p .github/release-artifacts
+          git fetch --force --tags
           python3 .github/scripts/feishu_release_notes.py build-prompt \
             --tag "$RELEASE_TAG" \
             --output .github/release-artifacts/feishu-release-prompt.txt
@@ -1026,11 +1041,11 @@ jobs:
       - name: Generate bilingual Feishu release note
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.MODELS_TOKEN }}
-          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           if [ -n "${COPILOT_GITHUB_TOKEN:-}" ]; then
             echo "Generating release notes via Copilot CLI with $RELEASE_NOTES_MODEL..."
+            npm install -g @github/copilot@latest || true
             prompt="$(cat .github/release-artifacts/feishu-release-prompt.txt)"
             out=.github/release-artifacts/feishu-release-notes.md
             error_log="$(mktemp)"
@@ -1062,7 +1077,6 @@ jobs:
         if: success()
         env:
           FEISHU_RELEASE_WEBHOOK: ${{ secrets.FEISHU_RELEASE_WEBHOOK }}
-          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           if [ -z "${FEISHU_RELEASE_WEBHOOK:-}" ]; then
@@ -1075,18 +1089,20 @@ jobs:
             --webhook "$FEISHU_RELEASE_WEBHOOK"
 
   publish-prerelease:
-    name: Publish pre-release to ModelScope and GitHub
+    name: Publish GitHub Pre-release
     if: >-
       always() &&
       github.event_name == 'workflow_dispatch' &&
       inputs.mode == 'prerelease' &&
       inputs.target == 'all' &&
-      inputs.prerelease_tag != '' &&
+      inputs.version != '' &&
       needs.macos.result == 'success' &&
       needs.sign-windows.result == 'success'
     needs:
       - macos
       - sign-windows
+    permissions:
+      contents: write
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -1094,32 +1110,22 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '24.15.0'
           cache: npm
       - run: npm ci --ignore-scripts
-      - name: Download verified pre-release assets from draft release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.prerelease_tag }}
-        run: |
-          set -euo pipefail
-          mkdir -p release-assets
-          gh release download "$RELEASE_TAG" \
-            --pattern 'bisheng-*' \
-            --pattern 'latest*.yml' \
-            --dir release-assets \
-            --repo "$GITHUB_REPOSITORY"
-          node scripts/verify-release-staging.mjs "$RELEASE_TAG" release-assets \
-            bisheng-mac-arm64.dmg bisheng-mac-arm64.zip \
-            bisheng-mac-arm64.zip.blockmap latest-mac-arm64.yml \
-            bisheng-mac-x64.dmg bisheng-mac-x64.zip \
-            bisheng-mac-x64.zip.blockmap latest-mac-x64.yml \
-            bisheng-windows-x64-setup.exe \
-            bisheng-windows-x64-setup.exe.blockmap latest.yml
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: macos-*
+          path: release-assets
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-x64
+          path: release-assets
       - name: Merge macOS update metadata
         run: |
           set -euo pipefail
-          node scripts/merge-mac-update-metadata.mjs \
+          node scripts/release/merge-mac-update-metadata.mjs \
             release-assets/latest-mac-arm64.yml \
             release-assets/latest-mac-x64.yml \
             release-assets/latest-mac.yml
@@ -1127,78 +1133,60 @@ jobs:
             \( -name latest-mac-arm64.yml -o -name latest-mac-x64.yml \) \
             -delete
       - name: Verify release assets before publication
-        run: node scripts/verify-release-assets.mjs release-assets "${{ inputs.prerelease_tag }}"
+        run: node scripts/verify/verify-release-assets.mjs release-assets "${{ inputs.version }}" --artifact-prefix bisheng
+      - name: Create or update pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.version }}
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$RELEASE_TAG" release-assets/* \
+              --prerelease \
+              --target "$GITHUB_SHA" \
+              --generate-notes \
+              --title "BISHENG $RELEASE_TAG（预发布）" \
+              --repo "$GITHUB_REPOSITORY"
+          fi
       - name: Mirror pre-release assets to ModelScope
         env:
           MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
           MODELSCOPE_REPO_ID: alexyaojin/bisheng-work
-          RELEASE_TAG: ${{ inputs.prerelease_tag }}
+          PRERELEASE_TAG: ${{ inputs.version }}
         run: |
           set -euo pipefail
           test -n "$MODELSCOPE_TOKEN" || { echo "::error::Missing secret MODELSCOPE_TOKEN"; exit 1; }
           python3 -m venv "$RUNNER_TEMP/ms-env"
           "$RUNNER_TEMP/ms-env/bin/pip" install -q modelscope
           "$RUNNER_TEMP/ms-env/bin/python3" <<'PY'
-          import os
+          import os, pathlib
           from modelscope.hub.api import HubApi
 
-          tag = os.environ["RELEASE_TAG"]
-          repo_id = os.environ["MODELSCOPE_REPO_ID"]
-          token = os.environ["MODELSCOPE_TOKEN"]
           api = HubApi()
-          for destination in (f"releases/prerelease/{tag}", "releases/prerelease/latest"):
+          token = os.environ["MODELSCOPE_TOKEN"]
+          repo_id = os.environ["MODELSCOPE_REPO_ID"]
+          tag = os.environ["PRERELEASE_TAG"]
+          src = pathlib.Path("release-assets")
+
+          for path_in_repo in (f"releases/prerelease/{tag}", "releases/prerelease/latest"):
               api.upload_folder(
                   repo_id=repo_id,
-                  folder_path="release-assets",
-                  path_in_repo=destination,
+                  folder_path=str(src),
+                  path_in_repo=path_in_repo,
                   commit_message=f"Pre-release {tag}",
                   token=token,
               )
-              print(f"Uploaded {tag} to {repo_id}/{destination}")
+              print(f"✅ Uploaded {src} -> {repo_id}/{path_in_repo}")
           PY
-      - name: Verify public ModelScope pre-release metadata
-        env:
-          RELEASE_TAG: ${{ inputs.prerelease_tag }}
-        run: |
-          set -euo pipefail
-          base='https://modelscope.cn/models/alexyaojin/bisheng-work/resolve/master/releases/prerelease'
-          for destination in "$RELEASE_TAG" latest; do
-            for metadata in latest.yml latest-mac.yml; do
-              verified=false
-              for attempt in 1 2 3 4 5 6; do
-                if curl --fail --location --silent --show-error \
-                  "$base/$destination/$metadata" --output "$RUNNER_TEMP/$metadata" && \
-                  grep -Fqx "version: $RELEASE_TAG" "$RUNNER_TEMP/$metadata"; then
-                  verified=true
-                  break
-                fi
-                sleep 10
-              done
-              if [ "$verified" != true ]; then
-                echo "::error::ModelScope $destination/$metadata is not publicly serving $RELEASE_TAG"
-                exit 1
-              fi
-            done
-          done
-      - name: Publish verified GitHub pre-release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.prerelease_tag }}
-        run: |
-          set -euo pipefail
-          node scripts/prune-github-release-assets.mjs "$RELEASE_TAG"
-          gh release edit "$RELEASE_TAG" --draft=false --prerelease \
-            --title "BISHENG $RELEASE_TAG（预发布）" \
-            --repo "$GITHUB_REPOSITORY"
-          base="https://modelscope.cn/models/alexyaojin/bisheng-work/resolve/master/releases/prerelease/$RELEASE_TAG"
-          echo "## Pre-release downloads" >> "$GITHUB_STEP_SUMMARY"
-          echo "[Windows x64 installer]($base/bisheng-windows-x64-setup.exe) · [macOS Apple Silicon DMG]($base/bisheng-mac-arm64.dmg) · [macOS Intel DMG]($base/bisheng-mac-x64.dmg)" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Build Feishu prerelease note prompt
         env:
-          RELEASE_TAG: ${{ inputs.prerelease_tag }}
+          RELEASE_TAG: ${{ inputs.version }}
         run: |
           set -euo pipefail
           mkdir -p .github/release-artifacts
+          git fetch --force --tags
           python3 .github/scripts/feishu_release_notes.py build-prompt \
             --tag "$RELEASE_TAG" \
             --prerelease \
@@ -1207,7 +1195,7 @@ jobs:
       - name: Generate bilingual Feishu prerelease note
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.MODELS_TOKEN }}
-          RELEASE_TAG: ${{ inputs.prerelease_tag }}
+          RELEASE_TAG: ${{ inputs.version }}
         run: |
           set -euo pipefail
           if [ -n "${COPILOT_GITHUB_TOKEN:-}" ]; then
@@ -1247,7 +1235,7 @@ jobs:
         if: success()
         env:
           FEISHU_RELEASE_WEBHOOK: ${{ secrets.FEISHU_RELEASE_WEBHOOK }}
-          RELEASE_TAG: ${{ inputs.prerelease_tag }}
+          RELEASE_TAG: ${{ inputs.version }}
         run: |
           set -euo pipefail
           if [ -z "${FEISHU_RELEASE_WEBHOOK:-}" ]; then
@@ -1259,186 +1247,3 @@ jobs:
             --prerelease \
             --notes .github/release-artifacts/feishu-release-notes.md \
             --webhook "$FEISHU_RELEASE_WEBHOOK"
-
-  publish-signed:
-    name: Publish signed test build to ModelScope
-    if: >-
-      always() &&
-      github.event_name == 'workflow_dispatch' &&
-      inputs.mode == 'signed' &&
-      inputs.signed_version != '' &&
-      (
-        (inputs.target == 'all' && needs.macos.result == 'success' && needs.sign-windows.result == 'success') ||
-        (inputs.target == 'macos' && needs.macos.result == 'success') ||
-        (inputs.target == 'windows' && needs.sign-windows.result == 'success')
-      )
-    needs:
-      - macos
-      - sign-windows
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci --ignore-scripts
-      - name: Download verified signed test assets from draft release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.signed_version }}
-          TARGET: ${{ inputs.target }}
-        run: |
-          set -euo pipefail
-          mkdir -p release-assets
-          assets=()
-          if [ "$TARGET" = "all" ] || [ "$TARGET" = "macos" ]; then
-            assets+=(
-              bisheng-mac-arm64.dmg
-              bisheng-mac-arm64.zip
-              bisheng-mac-arm64.zip.blockmap
-              latest-mac-arm64.yml
-              bisheng-mac-x64.dmg
-              bisheng-mac-x64.zip
-              bisheng-mac-x64.zip.blockmap
-              latest-mac-x64.yml
-            )
-          fi
-          if [ "$TARGET" = "all" ] || [ "$TARGET" = "windows" ]; then
-            assets+=(
-              bisheng-windows-x64-setup.exe
-              bisheng-windows-x64-setup.exe.blockmap
-              latest.yml
-            )
-          fi
-          patterns=()
-          for asset in "${assets[@]}"; do
-            patterns+=(--pattern "$asset")
-          done
-          gh release download "$RELEASE_TAG" \
-            "${patterns[@]}" \
-            --dir release-assets \
-            --repo "$GITHUB_REPOSITORY"
-          node scripts/verify-release-staging.mjs "$RELEASE_TAG" release-assets "${assets[@]}"
-      - name: Merge macOS update metadata
-        if: inputs.target == 'all' || inputs.target == 'macos'
-        run: |
-          set -euo pipefail
-          node scripts/merge-mac-update-metadata.mjs \
-            release-assets/latest-mac-arm64.yml \
-            release-assets/latest-mac-x64.yml \
-            release-assets/latest-mac.yml
-          find release-assets -maxdepth 1 \
-            \( -name latest-mac-arm64.yml -o -name latest-mac-x64.yml \) \
-            -delete
-      - name: Verify signed test assets before publication
-        if: inputs.target == 'all'
-        run: node scripts/verify-release-assets.mjs release-assets "${{ inputs.signed_version }}"
-      - name: Mirror signed test assets to ModelScope
-        env:
-          MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
-          MODELSCOPE_REPO_ID: alexyaojin/bisheng-work
-          RELEASE_TAG: ${{ inputs.signed_version }}
-          TARGET: ${{ inputs.target }}
-        run: |
-          set -euo pipefail
-          test -n "$MODELSCOPE_TOKEN" || { echo "::error::Missing secret MODELSCOPE_TOKEN"; exit 1; }
-          python3 -m venv "$RUNNER_TEMP/ms-env"
-          "$RUNNER_TEMP/ms-env/bin/pip" install -q modelscope
-          "$RUNNER_TEMP/ms-env/bin/python3" <<'PY'
-          import os
-          from modelscope.hub.api import HubApi
-
-          tag = os.environ["RELEASE_TAG"]
-          repo_id = os.environ["MODELSCOPE_REPO_ID"]
-          token = os.environ["MODELSCOPE_TOKEN"]
-          destinations = [f"releases/test/{tag}"]
-          if os.environ["TARGET"] == "all":
-              destinations.append("releases/test/latest")
-          api = HubApi()
-          for destination in destinations:
-              api.upload_folder(
-                  repo_id=repo_id,
-                  folder_path="release-assets",
-                  path_in_repo=destination,
-                  commit_message=f"Signed test {tag}",
-                  token=token,
-              )
-              print(f"Uploaded {tag} to {repo_id}/{destination}")
-          PY
-      - name: Verify public ModelScope signed test metadata
-        env:
-          RELEASE_TAG: ${{ inputs.signed_version }}
-          TARGET: ${{ inputs.target }}
-        run: |
-          set -euo pipefail
-          base='https://modelscope.cn/models/alexyaojin/bisheng-work/resolve/master/releases/test'
-          destinations=("$RELEASE_TAG")
-          metadata_files=()
-          if [ "$TARGET" = "all" ]; then
-            destinations+=(latest)
-          fi
-          if [ "$TARGET" = "all" ] || [ "$TARGET" = "windows" ]; then
-            metadata_files+=(latest.yml)
-          fi
-          if [ "$TARGET" = "all" ] || [ "$TARGET" = "macos" ]; then
-            metadata_files+=(latest-mac.yml)
-          fi
-          for destination in "${destinations[@]}"; do
-            for metadata in "${metadata_files[@]}"; do
-              verified=false
-              for attempt in 1 2 3 4 5 6; do
-                if curl --fail --location --silent --show-error \
-                  "$base/$destination/$metadata" --output "$RUNNER_TEMP/$metadata" && \
-                  grep -Fqx "version: $RELEASE_TAG" "$RUNNER_TEMP/$metadata"; then
-                  verified=true
-                  break
-                fi
-                sleep 10
-              done
-              if [ "$verified" != true ]; then
-                echo "::error::ModelScope $destination/$metadata is not publicly serving $RELEASE_TAG"
-                exit 1
-              fi
-            done
-          done
-      - name: Record signed test downloads
-        env:
-          RELEASE_TAG: ${{ inputs.signed_version }}
-          TARGET: ${{ inputs.target }}
-        run: |
-          set -euo pipefail
-          base="https://modelscope.cn/models/alexyaojin/bisheng-work/resolve/master/releases/test/$RELEASE_TAG"
-          echo "## Signed test downloads" >> "$GITHUB_STEP_SUMMARY"
-          case "$TARGET" in
-            all)
-              echo "[Windows x64 installer]($base/bisheng-windows-x64-setup.exe) · [macOS Apple Silicon DMG]($base/bisheng-mac-arm64.dmg) · [macOS Intel DMG]($base/bisheng-mac-x64.dmg)" >> "$GITHUB_STEP_SUMMARY"
-              ;;
-            macos)
-              echo "[macOS Apple Silicon DMG]($base/bisheng-mac-arm64.dmg) · [macOS Intel DMG]($base/bisheng-mac-x64.dmg)" >> "$GITHUB_STEP_SUMMARY"
-              ;;
-            windows)
-              echo "[Windows x64 installer]($base/bisheng-windows-x64-setup.exe)" >> "$GITHUB_STEP_SUMMARY"
-              ;;
-          esac
-      - name: Prepare Chinese test summary tooling
-        env:
-          COPILOT_GITHUB_TOKEN: ${{ secrets.MODELS_TOKEN }}
-        run: |
-          if [ -n "${COPILOT_GITHUB_TOKEN:-}" ]; then
-            npm install -g @github/copilot@latest || echo "::warning::提测总结工具安装失败，将发送明确的降级说明。"
-          fi
-      - name: Verify signed test downloads and send Feishu notification
-        if: success()
-        env:
-          FEISHU_RELEASE_WEBHOOK: ${{ secrets.FEISHU_RELEASE_WEBHOOK }}
-          COPILOT_GITHUB_TOKEN: ${{ secrets.MODELS_TOKEN }}
-          MODELSCOPE_REPO_ID: alexyaojin/bisheng-work
-          RELEASE_TAG: ${{ inputs.signed_version }}
-          TARGET: ${{ inputs.target }}
-        run: |
-          set -euo pipefail
-          python3 .github/scripts/signed_test_notification.py \
-            --directory release-assets --target "$TARGET" --version "$RELEASE_TAG"

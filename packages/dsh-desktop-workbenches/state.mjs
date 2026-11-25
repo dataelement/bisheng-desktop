@@ -1,7 +1,7 @@
-import { validCloudId, validCloudRecord } from './cloud-record.mjs'
 import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { isLocalWorkbenchId, isRepositoryWorkbenchId } from './identity.mjs'
 
 export const MAX_STATE_BYTES = 1024 * 1024
 export class StateError extends Error {
@@ -11,13 +11,9 @@ const fail = (message) => { throw new StateError(message) }
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
 const validId = (value) => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/.test(value)
   && !['__proto__', 'prototype', 'constructor'].includes(value)
-const validRepositoryWorkbenchId = value => typeof value === 'string'
-  && /^[a-z0-9][a-z0-9_.-]*\/[a-z0-9][a-z0-9_.-]*$/.test(value) && value.length <= 255
-const validLocalWorkbenchId = value => typeof value === 'string' && value.startsWith('local:') && value.length <= 220
-  && /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i.test(value.slice(6))
-const validWorkbenchId = value => validRepositoryWorkbenchId(value) || validLocalWorkbenchId(value)
+const validWorkbenchId = value => isRepositoryWorkbenchId(value) || isLocalWorkbenchId(value)
 const validLegacyWorkbenchId = value => typeof value === 'string' && /^[a-z][a-z0-9-]{0,79}$/.test(value)
-const validStoredWorkbenchId = value => validWorkbenchId(value) || validLegacyWorkbenchId(value) || validCloudId(value)
+const validStoredWorkbenchId = value => validWorkbenchId(value) || validLegacyWorkbenchId(value)
 const legacyReferences = state => new Set([
   ...state.added, ...state.pinned, ...state.favorites,
   ...(state.active === null ? [] : [state.active]),
@@ -25,7 +21,7 @@ const legacyReferences = state => new Set([
   ...Object.keys(state.recentSessions),
   ...Object.keys(state.notes),
   ...Object.keys(state.hiddenWorkspaces)
-].filter(id => !validWorkbenchId(id) && !validCloudId(id)))
+].filter(id => !validWorkbenchId(id)))
 
 export function emptyState() {
   return { version: 1, added: [], pinned: [], favorites: [], active: null, sessionBindings: {}, recentSessions: {}, notes: {}, hiddenWorkspaces: {} }
@@ -33,9 +29,7 @@ export function emptyState() {
 
 export function validateState(value, previous, migrations = {}) {
   if (!isObject(value) || value.version !== 1) fail('Unsupported workbench state version.')
-  if (Object.keys(value).some(key => !Object.hasOwn(emptyState(), key) && !['cloudWorkbenches', 'cloudDevelopmentSessions'].includes(key))) fail('Unknown workbench state field.')
-  if (value.cloudDevelopmentSessions !== undefined && (!isObject(value.cloudDevelopmentSessions) || !Object.entries(value.cloudDevelopmentSessions).every(([session, project]) => validId(session) && typeof project === 'string' && /^[a-f0-9-]{36}$/.test(project)))) fail('Invalid cloud development context.')
-  if (value.cloudWorkbenches !== undefined && (!isObject(value.cloudWorkbenches) || !Object.entries(value.cloudWorkbenches).every(([id, item]) => validCloudRecord(id, item)))) fail('Invalid cloud workbench metadata.')
+  if (Object.keys(value).some(key => !Object.hasOwn(emptyState(), key))) fail('Unknown workbench state field.')
   for (const key of ['added', 'pinned', 'favorites']) {
     if (!Array.isArray(value[key]) || !value[key].every(validStoredWorkbenchId)
       || new Set(value[key]).size !== value[key].length) fail(`Invalid ${key} workbench IDs.`)
@@ -52,11 +46,8 @@ export function validateState(value, previous, migrations = {}) {
     if (value.sessionBindings[session] !== workbench) fail('Recent session must belong to its workbench.')
   }
   if (previous) {
-    for (const [id, item] of Object.entries(previous.cloudWorkbenches || {})) {
-      if (!value.cloudWorkbenches?.[id] || value.cloudWorkbenches[id].appId !== item.appId || value.cloudWorkbenches[id].connectionKey !== item.connectionKey) fail('Removing an entry must preserve its cloud identity.')
-    }
     for (const [session, owner] of Object.entries(previous.sessionBindings)) {
-      if (value.sessionBindings[session] !== owner && value.sessionBindings[session] !== migrations[owner]) fail('Existing session ownership cannot be changed or removed.')
+      if (value.sessionBindings[session] !== owner && !(Object.hasOwn(migrations, owner) && value.sessionBindings[session] === migrations[owner])) fail('Existing session ownership cannot be changed or removed.')
     }
     for (const [session, owner] of Object.entries(value.sessionBindings)) {
       if (!Object.hasOwn(previous.sessionBindings, session) && !value.added.includes(owner)) fail('New session bindings require an added workbench.')
@@ -69,7 +60,7 @@ export function validateState(value, previous, migrations = {}) {
     }
     const previousLegacy = legacyReferences(previous)
     for (const id of legacyReferences(value)) {
-      if (!previousLegacy.has(id)) fail('New workbench references require repository identities or package-derived local identities.')
+      if (!previousLegacy.has(id)) fail('New workbench references require repository identities or canonical local identities.')
     }
   }
   if (Buffer.byteLength(JSON.stringify(value)) > MAX_STATE_BYTES - 100) fail('Workbench state is too large.')
@@ -110,7 +101,7 @@ export function createStateStore(root) {
     const allowed = migrations === undefined ? {} : structuredClone(migrations)
     return queue(async () => {
       if (!isObject(payload) || !Number.isSafeInteger(payload.revision) || payload.revision < 0) fail('A valid revision is required.')
-      if (migrations !== undefined && (!isObject(allowed) || !Object.entries(allowed).every(([from, to]) => validLegacyWorkbenchId(from) && validRepositoryWorkbenchId(to) && from !== to))) fail('Invalid workbench ID migration.')
+      if (migrations !== undefined && (!isObject(allowed) || !Object.entries(allowed).every(([from, to]) => validLegacyWorkbenchId(from) && isRepositoryWorkbenchId(to) && from !== to))) fail('Invalid workbench ID migration.')
       const current = await read()
       if (payload.revision !== current.revision) throw new StateError('Workbench state changed. Reload before saving.', 409)
       if (current.revision === Number.MAX_SAFE_INTEGER) throw new StateError('Workbench state revision exhausted.', 500)

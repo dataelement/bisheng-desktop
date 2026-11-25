@@ -25,7 +25,7 @@ export function acceptMarketSnapshot(snapshot, account, device, now = Date.now()
     pluginIds.add(policy.plugin_id)
     if (typeof policy.disabled !== 'boolean' || !Number.isSafeInteger(policy.revision) || policy.revision < 0) throw invalid('Invalid market policy.')
     if (policy.current_version_id != null && !PLUGIN_ID.test(policy.current_version_id)) throw invalid('Invalid market policy.')
-    if (!Array.isArray(policy.versions) || policy.versions.length > 100) throw invalid('Invalid market policy.')
+    if (!Array.isArray(policy.versions)) throw invalid('Invalid market policy.')
     const versionIds = new Set()
     for (const version of policy.versions) {
       if (!version || typeof version !== 'object' || !PLUGIN_ID.test(version.id) || !DIGEST.test(version.digest)) throw invalid('Invalid market policy digest.')

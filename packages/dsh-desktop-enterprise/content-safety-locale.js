@@ -38,7 +38,7 @@ export function createContentSafetyLocaleScope(ctx, requestLocale) {
     pending.delete(sessionId)
     active.delete(sessionId)
   }
-  const disposers = [
+  const disposers = typeof ctx.on === 'function' ? [
     ctx.on('agent/inbox/inserted', ({ agent, message }) => {
       const sessionId = idOf(agent), messageId = idOf(message)
       if (disposed || !sessionId || !messageId) return
@@ -71,7 +71,7 @@ export function createContentSafetyLocaleScope(ctx, requestLocale) {
     }),
     ctx.on('agent/disposed', ({ agent }) => clearSession(idOf(agent))),
     ctx.on('session/disposed', session => clearSession(idOf(session)))
-  ]
+  ] : []
   return {
     formatterFor({ sessionId, purpose = 'chat' } = {}) {
       if (disposed) return undefined

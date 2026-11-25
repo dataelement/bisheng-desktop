@@ -1,6 +1,5 @@
-import { isProtectedProfileBundle } from './state/community-plugin-policy'
-import type { ProfileCompatibilityIssue } from './state/profile-compatibility'
-import type { PluginHealthReport, PluginHealthStatus } from './state/plugin-market-check'
+import type { ProfileCompatibilityIssue } from './profile/profile-compatibility'
+import type { PluginHealthReport, PluginHealthStatus } from './recovery/plugin-market-check'
 
 export type SafeModeLocale = 'en' | 'zh'
 
@@ -57,9 +56,6 @@ export interface SafeModeBackupViewModel {
   deleteLabel: string
   deleteConfirm: string
 }
-
-/** Localize user-facing recovery guidance when rendering; retain original diagnostics. */
-export type SafeModeNotice = string | { zh: string; en: string; detail: string }
 
 export interface SafeModeViewModel {
   locale: SafeModeLocale
@@ -121,6 +117,16 @@ export function shouldStartInSafeMode(argv: readonly string[]): boolean {
   return argv.includes('--safe-mode')
 }
 
+/** Arguments for a new process that starts in Safe Mode and keeps the current launch flags. */
+export function relaunchArguments(argv: readonly string[]): string[] {
+  return [...argv.slice(1).filter(arg => arg !== '--safe-mode'), '--safe-mode']
+}
+
+/** Arguments for leaving Safe Mode. The current launch flags stay; `--safe-mode` does not. */
+export function normalRelaunchArguments(argv: readonly string[]): string[] {
+  return argv.slice(1).filter(arg => arg !== '--safe-mode')
+}
+
 function summarizeLongNotice(notice: string | undefined, locale: SafeModeLocale): string | undefined {
   if (notice === undefined || notice.length <= 220) return undefined
   const sentencePattern = locale === 'zh' ? /^(.+?[。！？])/s : /^(.+?[.!?])(?=\s|$)/s
@@ -156,15 +162,9 @@ export function buildSafeModeViewModel(options: {
   recoveryLocked?: boolean
   backupRestoreLocked?: boolean
   allowedRestoreId?: string
-  notice?: SafeModeNotice
+  notice?: string
   noticeTone?: 'success' | 'error'
 }): SafeModeViewModel {
-  const notice = typeof options.notice === 'object'
-    ? `${options.notice[options.locale]}\n${options.notice.detail}`
-    : options.notice
-  const noticeSummary = typeof options.notice === 'object'
-    ? options.notice[options.locale]
-    : summarizeLongNotice(notice, options.locale)
   const issues = (options.issues ?? []).map((issue): SafeModeIssueViewModel => {
     const zh = options.locale === 'zh'
     const kindLabel = issue.kind === 'unverified-module-reference'
@@ -244,6 +244,12 @@ export function buildSafeModeViewModel(options: {
         : report?.upgradeReady
           ? 'success'
           : undefined
+    const upgradeButtonLabel = report?.upgradeReady && report.upgradeVersion
+      ? options.locale === 'zh'
+        ? `升级至 v${report.upgradeVersion}`
+        : `Upgrade to v${report.upgradeVersion}`
+      : undefined
+
     return {
       name,
       statusLabel: labels.length > 0
@@ -258,15 +264,14 @@ export function buildSafeModeViewModel(options: {
       incompatible,
       suspected,
       disabled,
-      ...(disabled && isProtectedProfileBundle(name)
-        ? { enableButtonLabel: options.locale === 'zh' ? '重新启用' : 'Re-enable' }
-        : {}),
+      ...(disabled ? { enableButtonLabel: options.locale === 'zh' ? '重新启用' : 'Re-enable' } : {}),
       ...(report?.healthStatus !== undefined ? { healthStatus: report.healthStatus } : {}),
       ...(report?.healthLabel !== undefined ? { healthLabel: report.healthLabel } : {}),
       ...(report?.installedVersion !== undefined ? { installedVersion: report.installedVersion } : {}),
       ...(report?.latestVersion !== undefined ? { latestVersion: report.latestVersion } : {}),
       ...(report?.upgradeReady !== undefined ? { upgradeReady: report.upgradeReady } : {}),
-      ...(report?.upgradeVersion !== undefined ? { upgradeVersion: report.upgradeVersion } : {})
+      ...(report?.upgradeVersion !== undefined ? { upgradeVersion: report.upgradeVersion } : {}),
+      ...(upgradeButtonLabel !== undefined ? { upgradeButtonLabel } : {})
     }
   })
   const upgradeReadyCount = pluginItems.filter((item) => item.upgradeReady).length
@@ -369,10 +374,10 @@ export function buildSafeModeViewModel(options: {
   if (options.locale === 'zh') {
     return {
       locale: 'zh',
-      brand: 'BISHENG',
+      brand: 'DSH Desktop',
       badge: '安全模式',
       heading: '',
-      summary: '安全模式暂时跳过第三方插件。停用有问题的插件后重启；插件和数据都会保留。',
+      summary: '当前处于安全模式，尚未恢复正常启动。可能由插件导致，可在此停用后重启验证；插件和数据都会保留。',
       plugins,
       pluginItems,
       issueGroups,
@@ -387,20 +392,22 @@ export function buildSafeModeViewModel(options: {
       recoveryOpenLabel: '打开恢复材料目录',
       emptyMessage: '当前 Profile 中没有第三方插件。',
       selectionHint: '选择要停用的插件',
-      safetyNote: '停用不会删除任何内容：插件、工作区、会话和模型配置都会保留。需要继续使用时，请联系管理员从企业插件市场安装。',
+      safetyNote: '停用不会删除任何内容：插件、工作区、会话和模型配置都会保留，可在这里或插件市场中重新启用。',
       applyLabel: '停用所选插件',
       applyBusyLabel: '正在停用…',
       selectAllLabel: '全选',
       agentLabel: '关闭',
       agentBusyLabel: '正在关闭…',
-      restartLabel: '退出安全模式并重启',
+      restartLabel: '重启并验证',
       restartBusyLabel: '正在重启…',
       restartConfirm: safeModeExitConfirmation(blockingGroups, 'zh'),
-      quitLabel: '退出 BISHENG',
-      notice,
-      noticeSummary,
+      quitLabel: '退出 DSH Desktop',
+      notice: options.notice,
+      noticeSummary: summarizeLongNotice(options.notice, 'zh'),
       noticeTone: options.noticeTone,
-      upgradeAllLabel: undefined,
+      upgradeAllLabel: upgradeReadyCount > 0
+        ? `一键升级 ${upgradeReadyCount} 个有更新的插件`
+        : undefined,
       upgradeAllBusyLabel: '正在批量升级…',
       upgradeReadyCount,
       enableBusyLabel: '正在启用…'
@@ -409,10 +416,10 @@ export function buildSafeModeViewModel(options: {
 
   return {
     locale: 'en',
-    brand: 'BISHENG',
+    brand: 'DSH Desktop',
     badge: 'Safe Mode',
     heading: '',
-    summary: 'Safe Mode temporarily skips third-party plugins. Disable the faulty plugin and restart; your plugins and data stay intact.',
+    summary: 'You are in Safe Mode; normal startup has not recovered. A plugin may be responsible. Disable it here, then restart to verify; plugin files and data are kept.',
     plugins,
     pluginItems,
     issueGroups,
@@ -427,20 +434,22 @@ export function buildSafeModeViewModel(options: {
     recoveryOpenLabel: 'Open recovery material folder',
     emptyMessage: 'There are no third-party plugins in this profile.',
     selectionHint: 'Select plugins to disable',
-    safetyNote: 'Disabling deletes nothing: plugins, workspaces, sessions, and model settings are kept. To keep using a plugin, ask an administrator to install it from the enterprise market.',
+    safetyNote: 'Disabling deletes nothing: plugins, workspaces, sessions, and model settings are kept, and you can re-enable them here or in the plugin market.',
     applyLabel: 'Disable selected plugins',
     applyBusyLabel: 'Disabling…',
     selectAllLabel: 'Select all',
     agentLabel: 'Close',
     agentBusyLabel: 'Closing…',
-    restartLabel: 'Exit Safe Mode and restart',
+    restartLabel: 'Restart and verify',
     restartBusyLabel: 'Restarting…',
     restartConfirm: safeModeExitConfirmation(blockingGroups, 'en'),
-    quitLabel: 'Quit BISHENG',
-    notice,
-    noticeSummary,
+    quitLabel: 'Quit DSH Desktop',
+    notice: options.notice,
+    noticeSummary: summarizeLongNotice(options.notice, 'en'),
     noticeTone: options.noticeTone,
-    upgradeAllLabel: undefined,
+    upgradeAllLabel: upgradeReadyCount > 0
+      ? `Upgrade ${upgradeReadyCount} plugin${upgradeReadyCount === 1 ? '' : 's'} with updates`
+      : undefined,
     upgradeAllBusyLabel: 'Upgrading plugins…',
     upgradeReadyCount,
     enableBusyLabel: 'Enabling…'

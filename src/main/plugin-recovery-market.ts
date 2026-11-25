@@ -1,5 +1,5 @@
-import type { PluginHealthReport, PluginUpgradeCandidate } from './state/plugin-market-check'
-import type { ProfileCompatibilityIssue } from './state/profile-compatibility'
+import type { PluginHealthReport, PluginUpgradeCandidate } from './recovery/plugin-market-check'
+import type { ProfileCompatibilityIssue } from './profile/profile-compatibility'
 
 /** Successful installs invalidate the old failure evidence for that plugin.
  * A fresh launch or a current blocking inspection can establish a new failure.
@@ -38,29 +38,6 @@ export interface PluginRecoveryCheck {
   hint: string
   upgradeCandidate?: PluginUpgradeCandidate
   removalRecommended?: boolean
-}
-
-/**
- * Enterprise edition: a community upgrade is not a recovery action. Drop the
- * candidate and recommend removal so the screen and the executor share one plan.
- * Calling this twice yields the same checks.
- */
-export function enterpriseRecoveryChecks(checks: readonly PluginRecoveryCheck[], communityUpgradeAllowed = false): PluginRecoveryCheck[] {
-  if (communityUpgradeAllowed) return [...checks]
-  return checks.map((check) => {
-    if (check.upgradeCandidate === undefined) return check
-    return {
-      packageName: check.packageName,
-      hint: check.hint,
-      removalRecommended: true
-    }
-  })
-}
-
-/** Explicit upgrade actions stay upgrades. The enterprise edition refuses them instead of uninstalling. */
-export function communityUpgradeBlocked(action: string, targetType?: 'upgrade' | 'uninstall', communityUpgradeAllowed = false): boolean {
-  if (communityUpgradeAllowed) return false
-  return action === 'market-upgrade' || action === 'upgrade' || targetType === 'upgrade'
 }
 
 export function planPluginRecovery(checks: readonly PluginRecoveryCheck[]): {

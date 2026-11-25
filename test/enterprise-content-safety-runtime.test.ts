@@ -10,6 +10,7 @@ import { SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection'
 import { LlmRuntime, createUserMessage, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { ToolRuntime, defineTool } from '@deepseek-ai/dsh-tools'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { EnterpriseLlmAdapter } from '../packages/dsh-desktop-enterprise/openai.js'
 
 // Coverage AC: AC-23, AC-24, AC-29, AC-30, AC-31.
@@ -74,6 +75,7 @@ async function runAgent(protocol: Protocol, terminal: Terminal) {
     await context.plugin(AgentRegistry)
     await context.plugin(SystemPrompt)
     await context.plugin(ToolRuntime)
+    await context.plugin(NativeToolExecutor)
     await context.plugin(LlmRuntime)
     await context.plugin(AgentLoop)
     context.on('session/event', (_session, event) => { events.push(event) })

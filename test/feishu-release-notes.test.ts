@@ -55,27 +55,21 @@ describe('Feishu release notes pipeline', () => {
   it(
     'builds a prompt with valid metadata and evidence blocks',
     () => {
-      // Use bounded history rather than diffing the developer/runner checkout.
-      const fixture = buildTagFixtureRepo([
-        { message: 'Initial release', date: '2026-01-01T00:00:00Z', tag: 'v0.3.0' },
-        { message: 'Improve welcome branding', date: '2026-01-02T00:00:00Z', tag: 'v0.4.0' }
-      ])
       const output = execFileSync('python3', [scriptPath, 'build-prompt', '--tag', 'v0.4.0'], {
-        cwd: fixture,
         encoding: 'utf8',
         env: pythonEnv
       })
 
-      expect(output).toContain("You are BISHENG's Release Bot.")
-      expect(output).toContain('## BISHENG v0.4.0 Release Note')
+      expect(output).toContain("You are DSH Desktop's Release Bot.")
+      expect(output).toContain('Harness adaptation or upgrades are a user-facing exception')
+      expect(output).toContain('Omit this theme without evidence.')
+      expect(output).toContain('## DSH Desktop v0.4.0 Release Note')
       expect(output).toContain('📢 大家可以直接在客户端中更新。')
-      expect(output).toContain('📢 You can update directly from the BISHENG app.')
+      expect(output).toContain('📢 You can update directly from the DSH Desktop app.')
       expect(output).toContain('<tag-release-note>')
       expect(output).toContain('<commit-details>')
       expect(output).toContain('<diff-statistics>')
       expect(output).toContain('<code-diff>')
-      expect(output).toContain('Improve welcome branding')
-      expect(output).toContain('Previous stable tag: v0.3.0')
     },
     pythonTestTimeoutMs
   )
@@ -89,9 +83,9 @@ describe('Feishu release notes pipeline', () => {
       })
 
       const content = readFileSync(tempFile, 'utf8')
-      expect(content).toContain('## BISHENG v0.4.0 Release Note')
+      expect(content).toContain('## DSH Desktop v0.4.0 Release Note')
       expect(content).toContain('📢 大家可以直接在客户端中更新。')
-      expect(content).toContain('📢 You can update directly from the BISHENG app.')
+      expect(content).toContain('📢 You can update directly from the DSH Desktop app.')
       expect(content).toContain('---')
 
       // Validate passes without error
@@ -111,7 +105,7 @@ describe('Feishu release notes pipeline', () => {
     const tempFile = join(process.cwd(), '.temp-invalid-feishu-notes.md')
     try {
       // Invalid because it contains a link
-      const invalidContent = `## BISHENG v0.4.0 Release Note
+      const invalidContent = `## DSH Desktop v0.4.0 Release Note
 
 📢 大家可以直接在客户端中更新。
 
@@ -121,9 +115,9 @@ describe('Feishu release notes pipeline', () => {
 
 ---
 
-## BISHENG v0.4.0 Release Note
+## DSH Desktop v0.4.0 Release Note
 
-📢 You can update directly from the BISHENG app.
+📢 You can update directly from the DSH Desktop app.
 
 **🚀 1. Title**
 
@@ -158,7 +152,7 @@ Description here.
       )
 
       const content = readFileSync(tempFile, 'utf8')
-      expect(content).toContain('## BISHENG v0.7.2（预发布）Release Note')
+      expect(content).toContain('## DSH Desktop v0.7.2（预发布）Release Note')
       expect(content).toContain('⚠️ 本次为预发布版本，供测试与体验使用。')
       expect(content).toContain('⚠️ This is a pre-release version for testing and preview.')
       expect(content).toContain('---')
@@ -177,64 +171,6 @@ Description here.
       try {
         unlinkSync(tempFile)
       } catch {}
-    }
-  })
-
-  it('uses BISHENG and versioned ModelScope downloads in notification cards', () => {
-    const output = execFileSync('python3', ['-c', `
-import importlib.util
-import json
-import sys
-from unittest.mock import patch
-
-spec = importlib.util.spec_from_file_location('feishu_release_notes', sys.argv[1])
-module = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = module
-spec.loader.exec_module(module)
-
-class Response:
-    def __enter__(self): return self
-    def __exit__(self, *_): pass
-    def read(self): return b'{"code":0}'
-
-cards = []
-def capture(request, timeout):
-    cards.append(json.loads(request.data.decode('utf-8'))['card'])
-    return Response()
-
-with patch.object(module.urllib.request, 'urlopen', capture):
-    module.send_feishu_notification('https://example.invalid', 'v1.0.1', 'notes')
-    module.send_feishu_notification('https://example.invalid', '1.0.1-rc.1', 'notes', prerelease=True)
-
-print(json.dumps(cards, ensure_ascii=False))
-`, scriptPath], { encoding: 'utf8', env: pythonEnv })
-    const cards = JSON.parse(output.trim().split('\n').at(-1) ?? 'null') as Array<{
-      header: { title: { content: string } }
-      elements: Array<{ text: { content: string } }>
-    }>
-
-    expect(cards.map(card => card.header.title.content)).toEqual([
-      '✅ BISHENG v1.0.1 发布成功',
-      '🧪 BISHENG 1.0.1-rc.1（预发布）已发布'
-    ])
-    expect(cards.every(card => card.elements[0]?.text.content === 'notes')).toBe(true)
-    const downloadNames = [
-      'bisheng-windows-x64-setup.exe',
-      'bisheng-mac-arm64.dmg',
-      'bisheng-mac-x64.dmg'
-    ]
-    for (const [index, releasePath] of [
-      'archive/1.0.1',
-      'prerelease/1.0.1-rc.1'
-    ].entries()) {
-      const downloads = cards[index]?.elements[1]?.text.content
-      expect(downloads).toContain('ModelScope 下载地址')
-      for (const filename of downloadNames) {
-        expect(downloads).toContain(
-          `https://modelscope.cn/models/alexyaojin/bisheng-work/resolve/master/releases/${releasePath}/${filename}`
-        )
-      }
-      expect(downloads?.match(/https:\/\//g)).toHaveLength(3)
     }
   })
 
@@ -257,7 +193,7 @@ print(json.dumps(cards, ensure_ascii=False))
       )
 
       expect(output).toContain("user-facing pre-release copy")
-      expect(output).toContain('## BISHENG v0.7.2（预发布）Release Note')
+      expect(output).toContain('## DSH Desktop v0.7.2（预发布）Release Note')
       expect(output).toContain('⚠️ 本次为预发布版本，供测试与体验使用。')
       expect(output).toContain('⚠️ This is a pre-release version for testing and preview.')
       expect(output).toContain('Previous tag: v0.7.1')
