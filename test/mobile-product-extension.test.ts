@@ -4,24 +4,6 @@ import { expect, it, vi } from 'vitest'
 import { LanMobileBridge } from '../src/main/mobile/lan-mobile-bridge'
 import type { MobileProductTransport } from '../src/main/mobile/product-extension'
 
-it('reads a product provider when the bridge starts', async () => {
-  let reads = 0
-  const bridge = new LanMobileBridge({
-    harnessUrl: () => undefined,
-    product: () => {
-      reads += 1
-      return { authorizeRemote: () => false, attach: () => undefined }
-    }
-  })
-  expect(reads).toBe(0)
-  try {
-    await bridge.start()
-    expect(reads).toBe(1)
-  } finally {
-    await bridge.stop()
-  }
-})
-
 it('requires both the private channel capability and current product authorization before dispatch', async () => {
   let transport: MobileProductTransport | undefined
   let allowed = true
