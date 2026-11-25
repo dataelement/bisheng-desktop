@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { expect, it } from 'vitest'
 
-const workflows = ['verify-boundary', 'bisheng-ci', 'build-web-runtime']
+const workflows = ['verify-boundary', 'bisheng-ci', 'build-web-runtime', 'release']
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 
 it.each(workflows)('%s fetches the reviewed commit even when the remote branch advances', name => {
