@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { MobileProductTransport, MobileRpcResult } from '../../../../src/main/mobile/product-extension'
 import { isWorkRpcMethod, MobileWorkUploads, parseWorkDispatch, readUploadResult, readWorkEnvelope, readWorkJson } from './mobile-work-rpc'
-import { projectMobileOfficeCatalog, projectMobilePpt, projectSessionList, projectSessionRow, projectLiveAssistantFrame, projectTranscriptFrame, projectTranscriptHistory } from './mobile-phone-view'
+import { projectChangesSummary, projectMobileOfficeCatalog, projectMobilePpt, projectSessionList, projectSessionRow, projectLiveAssistantFrame, projectTranscriptFrame, projectTranscriptHistory } from './mobile-phone-view'
 const PERMISSION_PRESET_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
 /** Enterprise gateway protocol adapter. Host auth, mux and native pairing remain upstream-owned. */
@@ -15,10 +15,38 @@ export class EnterpriseMobileRpc {
     if (this.stopped) return { ok: false, error: 'Mobile connection closed.' }
     if (typeof input.method !== 'string' || input.method.startsWith('interaction.')) return undefined
     if (isWorkRpcMethod(input.method)) return this.forwardWork(input.method, input.payload ?? {})
+    if (input.method === 'session.changes') return this.forwardChanges(input.payload ?? {})
     if (['workspace.list','session.listPage','session.history','permission.current','permission.select','permission.catalog','session.list'].includes(input.method)) return this.forwardRpc(input.method, input.payload ?? {}, true)
     return undefined
   }
   private invokeHarness(endpoint: string, args: Record<string, unknown>): Promise<MobileRpcResult> { return this.transport.invoke(endpoint, args) }
+  private async forwardChanges(payload: unknown): Promise<MobileRpcResult> {
+    const fields = typeof payload === 'object' && payload !== null ? payload as Record<string, unknown> : {}
+    const sessionId = typeof fields.sessionId === 'string' ? fields.sessionId.trim() : ''
+    const rawSeq = typeof fields.seq === 'number' ? fields.seq : typeof fields.seq === 'string' ? Number(fields.seq) : Number.NaN
+    if (sessionId.length === 0 || !Number.isSafeInteger(rawSeq) || rawSeq < 0) {
+      return { ok: false, error: 'Missing change coordinates.' }
+    }
+    let response: Response
+    try {
+      response = await this.transport.request(
+        `/api/changes.summary?${new URLSearchParams({ sessionId, seq: String(rawSeq) })}`,
+        { method: 'GET', signal: AbortSignal.timeout(30_000) }
+      )
+    } catch {
+      return { ok: false, error: 'Change summary was not available.' }
+    }
+    if (!response.ok) return { ok: false, error: `Change summary returned HTTP ${response.status}.` }
+    let body: unknown
+    try {
+      body = await response.json()
+    } catch {
+      return { ok: false, error: 'Change summary was not JSON.' }
+    }
+    const projected = projectChangesSummary(body)
+    if (projected === undefined) return { ok: false, error: 'Change summary was unreadable.' }
+    return { ok: true, value: projected }
+  }
   private requestHost(url: URL, init: RequestInit, _base: string): Promise<Response> {
     return this.transport.request(url.pathname + url.search, init)
   }
