@@ -220,7 +220,7 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
   loginListeners.add(onLogin)
   return {
     hostEnvironment: () => disposed ? {} : { ...enterpriseDesktop.harnessEnvironment(), DSH_ENTERPRISE_LEGACY_CLOUD_PROJECTS: join(context.userDataPath, 'cloud-development') },
-    mobileExtension: () => createEnterpriseMobileExtension(enterpriseDesktop, context.userDataPath),
+    mobileExtension: () => createEnterpriseMobileExtension(enterpriseDesktop, context.userDataPath, app.getName()),
     attachWindow(window: BrowserWindow, services: EnterpriseHostActions): void {
       if (disposed) throw new Error('Enterprise desktop is stopping.')
       actions = services

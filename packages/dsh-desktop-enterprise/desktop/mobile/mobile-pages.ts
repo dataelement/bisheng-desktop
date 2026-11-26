@@ -1,6 +1,7 @@
 export interface MobilePageOptions {
   locale: 'en' | 'zh'
   product?: string | null
+  productName?: string
 }
 
 export function isBishengProduct(product: string | null | undefined): boolean {
@@ -49,13 +50,14 @@ export function applyPendingCreatedSessions(
   return stillPending
 }
 
-export function renderMobilePage({ locale, product }: MobilePageOptions): string {
+export function renderMobilePage({ locale, product, productName = 'BISHENG' }: MobilePageOptions): string {
   const zh = locale === 'zh'
+  const safeName = productName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
   const bisheng = isBishengProduct(product)
   const disconnectedPath = bisheng ? '/disconnected?product=bisheng' : '/disconnected'
   const header = bisheng
     ? ''
-    : `<header><div class="brand"><img class="light-logo" src="/brand-logo/light" alt="BISHENG"><img class="dark-logo" src="/brand-logo/dark" alt="BISHENG"><span>BISHENG</span></div><div id="status" class="status connecting" role="status" aria-label="${zh ? '正在连接' : 'Connecting'}"></div></header>`
+    : `<header><div class="brand"><img class="light-logo" src="/brand-logo/light" alt="${safeName}"><img class="dark-logo" src="/brand-logo/dark" alt="${safeName}"><span>${safeName}</span></div><div id="status" class="status connecting" role="status" aria-label="${zh ? '正在连接' : 'Connecting'}"></div></header>`
   return `<!doctype html>
 <html lang="${zh ? 'zh-CN' : 'en'}">
 <head>
@@ -64,10 +66,10 @@ export function renderMobilePage({ locale, product }: MobilePageOptions): string
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme:light)">
   <meta name="theme-color" content="#141416" media="(prefers-color-scheme:dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="BISHENG">
+  <meta name="apple-mobile-web-app-title" content="${safeName}">
   <link rel="icon" href="/app-icon">
   <link rel="apple-touch-icon" href="/app-icon">
-  <title>BISHENG</title>
+  <title>${safeName}</title>
   <style>
     :root{color-scheme:light;--paper:#fff;--sidebar:#f7f8fa;--ink:#18191c;--muted:#81858c;--line:#e5e7eb;--card:#fff;--hover:#f2f3f5;--surface:#f7f7f5;--brand:#034FE5;--tunnel-warn-h:0px}
     @media(prefers-color-scheme:dark){:root{color-scheme:dark;--paper:#141416;--sidebar:#19191b;--ink:#f5f5f6;--muted:#95979d;--line:#303034;--card:#1d1d20;--hover:#29292d;--surface:#202023;--brand:#034FE5}}
@@ -115,7 +117,7 @@ const L=${JSON.stringify({
     toolFailed: zh ? '失败' : 'Failed',
     input: zh ? '输入' : 'Input',
     output: zh ? '输出' : 'Output'
-    ,noWorkspaces: zh ? '暂无工作区，请先在 BISHENG 中创建第一个工作区。' : 'No workspaces yet. Create your first workspace in BISHENG.'
+    ,noWorkspaces: zh ? `暂无工作区，请先在 ${productName} 中创建第一个工作区。` : `No workspaces yet. Create your first workspace in ${productName}.`
     ,refreshed: zh ? '已刷新' : 'Updated'
     ,justNow: zh ? '刚刚' : 'Now'
     ,minute: zh ? ' 分钟前' : 'm ago'
@@ -152,7 +154,7 @@ const L=${JSON.stringify({
     ,todoDone: zh ? '已完成' : 'completed'
     ,todoActive: zh ? '进行中' : 'in progress'
     ,todoPending: zh ? '待处理' : 'pending'
-  })};
+  }).replace(/</g, '\\u003c')};
   const HISTORY_POLL_ACTIVE_MS=250,HISTORY_POLL_IDLE_MS=750,HISTORY_POLL_IDLE_CAP_MS=5000,PENDING_SYNC_DEBOUNCE_MS=150;
   let idlePollMs=HISTORY_POLL_IDLE_MS;
   let activeSession=null,poll=null,sessionStream=null,streamConnected=false,streamEvents=[],streamProjections=null,streamRenderFrame=null,streamNeedsFullPaint=false,streamRevision=0,pendingSyncTimer=null,workspaces=[],presets=[],sessionSummaries=[],archivedSessionIds=[],pendingCreatedSessions=[],historyBusy=false,lastHistoryKey='',lastDurableMessages=[],optimisticPrompts=[],latestUserTextCounts=new Map(),agentRunning=false,awaitingTurnStartedAt=0,pendingQuestion=null,questionIndex=0,questionDrafts={},questionBusy=false,sessionBlank=true,currentPreset=null,modelCatalog=null,settingsBusy=false,currentTodos=[],todoExpanded=false;
@@ -205,7 +207,7 @@ function renderMessage(message){const blocks=message.blocks.filter(Boolean);retu
   function advanceQuestion(skip=false){if(!pendingQuestion||questionBusy)return;const question=pendingQuestion.questions[questionIndex],draft=questionDraft(question);draft.custom=String($('questionCustom')?.value||'').trim();if(skip){draft.selected=[];draft.custom='';draft.skipped=true}else{draft.skipped=false;if(!draft.selected.length&&!draft.custom){$('questionError').textContent=L.chooseAnswer;return}}if(questionIndex<pendingQuestion.questions.length-1){questionIndex+=1;renderQuestionComposer()}else submitQuestionAnswers()}
   async function submitQuestionAnswers(){if(!pendingQuestion||questionBusy)return;questionBusy=true;renderQuestionComposer();const current=pendingQuestion;const answers=current.questions.map(question=>{const draft=questionDraft(question);return{id:question.id,selected:!question.multiSelect&&draft.custom?[]:draft.selected,...(draft.custom?{custom:draft.custom}:{})}});try{await rpc('interaction.answer',{rpcId:current.rpcId,sessionId:current.sessionId,answers});lastHistoryKey='';await loadHistory(false)}catch(e){questionBusy=false;renderQuestionComposer();showError('questionError',e)}}
   async function cancelQuestionRequest(){if(!pendingQuestion||questionBusy)return;questionBusy=true;renderQuestionComposer();const current=pendingQuestion;try{await rpc('interaction.cancel',{rpcId:current.rpcId,sessionId:current.sessionId});lastHistoryKey='';await loadHistory(false)}catch(e){questionBusy=false;renderQuestionComposer();showError('questionError',e)}}
-async function loadWorkspaces(){const previous=$('workspace').value,value=await rpc('workspace.list'),serverItems=value.items||[],archivedIds=value.archivedSessionIds||[];workspaces=serverItems.map(w=>({...w,sessionIds:[...(Array.isArray(w.sessionIds)?w.sessionIds:[])]}));pendingCreatedSessions=${applyPendingCreatedSessions.name}(workspaces,pendingCreatedSessions,serverItems,archivedIds);archivedSessionIds=archivedIds;if(workspaces.length){$('workspace').innerHTML=workspaces.map(w=>'<option value="'+esc(w.workspaceId)+'">'+esc(w.title||w.path)+'</option>').join('');$('workspace').value=workspaces.some(w=>w.workspaceId===previous)?previous:workspaces[0].workspaceId}else $('workspace').innerHTML='<option value="">'+L.noWorkspaces+'</option>'}
+async function loadWorkspaces(){const previous=$('workspace').value,value=await rpc('workspace.list'),serverItems=value.items||[],archivedIds=value.archivedSessionIds||[];workspaces=serverItems.map(w=>({...w,sessionIds:[...(Array.isArray(w.sessionIds)?w.sessionIds:[])]}));pendingCreatedSessions=${applyPendingCreatedSessions.name}(workspaces,pendingCreatedSessions,serverItems,archivedIds);archivedSessionIds=archivedIds;if(workspaces.length){$('workspace').innerHTML=workspaces.map(w=>'<option value="'+esc(w.workspaceId)+'">'+esc(w.title||w.path)+'</option>').join('');$('workspace').value=workspaces.some(w=>w.workspaceId===previous)?previous:workspaces[0].workspaceId}else $('workspace').innerHTML='<option value="">'+esc(L.noWorkspaces)+'</option>'}
   function syncWorkspaceUi(){const selected=!!$('workspace').value;$('newSession').disabled=!selected;$('workspaceHint').hidden=selected;$('workspaceHint').textContent=selected?'':L.noWorkspaces;if(selected)$('listError').textContent=''}
 function relativeTime(value){const parsed=typeof value==='number'?value:Date.parse(value),elapsed=Math.max(0,Date.now()-(Number.isFinite(parsed)?parsed:Date.now())),minutes=Math.floor(elapsed/60000);if(minutes<1)return L.justNow;if(minutes<60)return minutes+L.minute;const hours=Math.floor(minutes/60);if(hours<24)return hours+L.hour;return Math.floor(hours/24)+L.day}
 async function loadSessions(){try{const value=await rpc('session.list',{}),wid=$('workspace').value,w=workspaces.find(x=>x.workspaceId===wid),allowed=w?new Set(w.sessionIds):new Set(),archived=new Set(archivedSessionIds);sessionSummaries=value.items||[];const items=sessionSummaries.filter(s=>allowed.has(s.sessionId)&&!archived.has(s.sessionId)).sort((a,b)=>b.updatedAt-a.updatedAt);$('sessionCount').textContent=String(items.length);$('sessions').innerHTML=!wid?'':items.length?items.map(s=>{const title=titleFor(s);return'<button class="row" data-id="'+esc(s.sessionId)+'" data-title="'+esc(title)+'"><span class="session-mark"><svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 5.75C4 4.78 4.78 4 5.75 4h8.5C15.22 4 16 4.78 16 5.75v5.5c0 .97-.78 1.75-1.75 1.75H9l-3.5 2.5V13A1.5 1.5 0 0 1 4 11.5V5.75Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg></span><span class="row-copy"><strong>'+esc(title)+'</strong><time>'+esc(relativeTime(s.updatedAt))+'</time></span><svg class="row-chevron" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m6 3.5 4.5 4.5L6 12.5" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/></svg></button>'}).join(''):'<div class="empty"><span class="empty-mark"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 5.75C4 4.78 4.78 4 5.75 4h8.5C15.22 4 16 4.78 16 5.75v5.5c0 .97-.78 1.75-1.75 1.75H9l-3.5 2.5V13A1.5 1.5 0 0 1 4 11.5V5.75Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg></span><strong>'+L.noSessions+'</strong><span>'+L.emptyHint+'</span></div>';document.querySelectorAll('.row').forEach(b=>b.onclick=()=>openSession(b.dataset.id,b.dataset.title));$('listError').textContent=''}catch(e){showError('listError',e)}}
