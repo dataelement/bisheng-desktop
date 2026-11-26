@@ -24,6 +24,7 @@ describe('patch lock', () => {
       '@deepseek-ai+dsh-client-ui-input-trigger+0.2.2-rc.5.patch',
       '@deepseek-ai+dsh-client-ui-sidebar-browser+0.2.2-rc.5.patch',
       '@deepseek-ai+dsh-client-ui-skill+0.2.2-rc.5.patch',
+      '@deepseek-ai+dsh-subprocess-local+0.2.2-rc.5.patch',
       '@deepseek-ai+dsh-system-prompt+0.2.2-rc.5.patch',
       '@deepseek-ai+node-addon-system+0.1.2.patch',
       'sherpa-onnx-node+1.13.8.patch',
