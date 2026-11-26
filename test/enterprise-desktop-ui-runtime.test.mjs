@@ -43,15 +43,43 @@ async function runElectron(executable, fixture, environment) {
   const append = chunk => { output = (output + chunk.toString()).slice(-256_000) }
   child.stdout.on('data', append)
   child.stderr.on('data', append)
+  child.stdout.on('error', () => {})
+  child.stderr.on('error', () => {})
   child.once('error', error => { spawnError = error })
-  const deadline = setTimeout(() => { timedOut = true; terminateOwnedTree(child) }, 95_000)
+  let exited = false
+  const deadline = setTimeout(() => {
+    if (exited) return
+    timedOut = true
+    terminateOwnedTree(child)
+  }, 95_000)
   try {
-    const result = await new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal })))
+    const result = await new Promise(resolve => {
+      let settled = false
+      const finish = (code, signal) => {
+        if (settled) return
+        settled = true
+        resolve({ code, signal })
+      }
+      // A Host or plugin child can inherit these pipes and keep `close` from
+      // firing after Electron has already exited. Lifetime ends at `exit`.
+      child.once('exit', (code, signal) => {
+        exited = true
+        const linger = setTimeout(() => {
+          child.stdout.destroy()
+          child.stderr.destroy()
+          terminateOwnedTree(child)
+          finish(code, signal)
+        }, 1_000)
+        child.once('close', () => {
+          clearTimeout(linger)
+          finish(code, signal)
+        })
+      })
+    })
     return { ...result, output, timedOut, spawnError }
   } finally {
     clearTimeout(deadline)
-    // Terminate only the process group this test created, including a surviving Host.
-    if (child.exitCode === null || child.signalCode !== null) terminateOwnedTree(child)
+    if (!exited) terminateOwnedTree(child)
   }
 }
 
@@ -144,9 +172,13 @@ function electronFixture() {
     clearTimeout(deadline)
     if (error) console.error('ENTERPRISE_DESKTOP_UI_FAILURE ' + JSON.stringify({ message: error.message }))
     else console.log('ENTERPRISE_DESKTOP_UI_SUCCESS ' + JSON.stringify(result))
-    process.exitCode = error ? 1 : 0
+    const code = error ? 1 : 0
+    process.exitCode = code
     app.quit()
-    setTimeout(() => app.exit(error ? 1 : 0), 5_000).unref()
+    // before-quit holds the process until Host shutdown finishes. Force the
+    // exit the assertion observes if that shutdown keeps the pipes open.
+    setTimeout(() => { app.exit(code) }, 5_000)
+    setTimeout(() => { process.exit(code) }, 6_000)
   }
   app.on('browser-window-created', (_event, window) => {
     window.webContents.on('did-finish-load', async () => {
