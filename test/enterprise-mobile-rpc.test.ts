@@ -41,6 +41,31 @@ it('builds deterministic bounded cursors for tied timestamps', () => {
 })
 
 
+it('reads one change summary and leaves the diff on the desktop', async () => {
+  const request = vi.fn(async (path: string) => {
+    if (path.startsWith('/api/changes.summary?')) {
+      return Response.json({
+        turn: 4,
+        total: 1,
+        files: [{ path: 'out/报告.docx', display: '报告.docx', added: 12, deleted: 3, hunks: ['secret'] }]
+      })
+    }
+    return new Response('missing', { status: 404 })
+  })
+  const adapter = new EnterpriseMobileRpc({ port: () => 0, channelToken: () => '', request, forward: vi.fn(), invoke: vi.fn() })
+  const result = await adapter.dispatch({ method: 'session.changes', payload: { sessionId: 'session-1', seq: 9 } })
+  expect(result).toEqual({
+    ok: true,
+    value: { files: [{ path: 'out/报告.docx', display: '报告.docx', added: 12, deleted: 3 }], turn: 4, total: 1 }
+  })
+  expect(request.mock.calls[0]?.[0]).toBe('/api/changes.summary?sessionId=session-1&seq=9')
+  expect(JSON.stringify(result)).not.toContain('secret')
+  expect((await adapter.dispatch({ method: 'session.changes', payload: { sessionId: 'session-1' } }))?.ok).toBe(false)
+  request.mockResolvedValueOnce(new Response('gone', { status: 404 }))
+  expect((await adapter.dispatch({ method: 'session.changes', payload: { sessionId: 'session-1', seq: 10 } }))?.ok).toBe(false)
+  adapter.dispose()
+})
+
 it('serves phone Work and Chat cases from the enterprise catalog without a session', async () => {
   const catalog = { work: [{ id: 'work' }], chat: [{ id: 'chat' }], batches: { work: [['work']], chat: [['chat']] } }
   const request = vi.fn(async (_path: string, _init?: RequestInit) => Response.json(catalog))

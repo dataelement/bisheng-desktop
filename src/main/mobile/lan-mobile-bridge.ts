@@ -91,7 +91,10 @@ const HARNESS_ENDPOINTS: Record<
 const RPC_ALLOWLIST = new Set([...Object.keys(HARNESS_ENDPOINTS), 'session.history', 'workspace.list'])
 
 export interface LanMobileBridgeOptions {
-  product?: MobileProductExtension
+  // A function is resolved once per start, before the bridge listens.
+  // That instance serves the run until stop.
+  product?: MobileProductExtension | (() => MobileProductExtension | undefined)
+  productName?: string
   harnessUrl(): string | undefined
   /**
    * Session cookie the shell already traded for the launch token.
@@ -175,6 +178,7 @@ interface MobileQuestionAnswer {
 export class LanMobileBridge {
   private readonly accessChannelToken = randomBytes(32).toString('base64url')
   private detachProduct?: () => void | Promise<void>
+  private activeProduct?: MobileProductExtension
   private remoteMuxUntil = 0
   private remoteMuxTimer?: ReturnType<typeof setTimeout>
   private server?: ReturnType<typeof createServer>
@@ -230,6 +234,8 @@ export class LanMobileBridge {
       this.syncConnected()
       return this.snapshot()
     }
+    const product = this.options.product
+    this.activeProduct = typeof product === 'function' ? product() : product
     this.rotatePairingToken()
     this.server = createServer((request, response) => {
       void this.handle(request, response)
@@ -254,7 +260,7 @@ export class LanMobileBridge {
       throw error
     }
     this.port = (this.server.address() as AddressInfo).port
-    try { this.detachProduct = this.options.product?.attach?.(this.productTransport()) || undefined }
+    try { this.detachProduct = this.activeProduct?.attach?.(this.productTransport()) || undefined }
     catch (error) { await this.stop(); throw error }
     this.syncConnected()
     return this.snapshot()
@@ -263,6 +269,7 @@ export class LanMobileBridge {
   async stop(): Promise<void> {
     const detach = this.detachProduct
     this.detachProduct = undefined
+    this.activeProduct = undefined
     if (this.remoteMuxTimer) clearTimeout(this.remoteMuxTimer)
     this.remoteMuxTimer = undefined
     this.remoteMuxUntil = 0
@@ -781,6 +788,7 @@ export class LanMobileBridge {
         response,
         renderDesktopPairingPage({
           qrSvg,
+          productName: this.options.productName,
           pairingUrl: snapshot.pairingUrl ?? '',
           expiresAt: snapshot.expiresAt ?? this.now(),
           locale: this.locale(),
@@ -981,7 +989,7 @@ export class LanMobileBridge {
     if (request.method === 'GET' && url.pathname === '/disconnected') {
       const migrationUrl = this.tunnelMigrationUrl(url, connectionMode)
       if (migrationUrl) return this.redirect(response, migrationUrl)
-      return this.html(response, renderMobileReconnectPage(this.locale(), connectionMode))
+      return this.html(response, renderMobileReconnectPage(this.locale(), connectionMode, { productName: this.options.productName }))
     }
 
     if (request.method === 'GET' && url.pathname === '/reconnect') {
@@ -989,9 +997,9 @@ export class LanMobileBridge {
       if (migrationUrl) return this.redirect(response, migrationUrl)
       if (connectionMode === 'tunnel') {
         if (this.tunnelPinAcceptsReconnect()) {
-          return this.html(response, renderPairingPinPage(this.locale()))
+          return this.html(response, renderPairingPinPage(this.locale(), this.options.productName))
         }
-        return this.html(response, renderMobileReconnectPage(this.locale(), 'tunnel', { expired: true }))
+        return this.html(response, renderMobileReconnectPage(this.locale(), 'tunnel', { expired: true, productName: this.options.productName }))
       }
       // The phone that was just disconnected still holds its cookie. Restoring
       // that one session does not admit a neighbor who only knows the port.
@@ -999,7 +1007,7 @@ export class LanMobileBridge {
         return this.redirect(response, '/')
       }
       this.options.onReconnectRequested?.()
-      return this.html(response, renderMobileReconnectPage(this.locale(), 'lan', { resumeUnavailable: true }))
+      return this.html(response, renderMobileReconnectPage(this.locale(), 'lan', { resumeUnavailable: true, productName: this.options.productName }))
     }
 
     if (request.method === 'POST' && url.pathname === '/pair/retry') {
@@ -1041,7 +1049,7 @@ export class LanMobileBridge {
         return
       }
       if (this.tunnelActive) this.pairingPinRevealed = true
-      return this.html(response, renderPairingPinPage(this.locale()))
+      return this.html(response, renderPairingPinPage(this.locale(), this.options.productName))
     }
 
     if (request.method === 'POST' && url.pathname === '/pair/verify') {
@@ -1085,7 +1093,7 @@ export class LanMobileBridge {
         if (request.method === 'GET' && url.pathname === '/') {
           const migrationUrl = this.tunnelMigrationUrl(url, connectionMode)
           if (migrationUrl) return this.redirect(response, migrationUrl)
-          return this.html(response, renderMobileReconnectPage(this.locale(), connectionMode))
+          return this.html(response, renderMobileReconnectPage(this.locale(), connectionMode, { productName: this.options.productName }))
         }
         return this.text(response, 401, 'Pair your phone again.')
       }
@@ -1098,7 +1106,7 @@ export class LanMobileBridge {
       })
     }
     if (request.method === 'GET' && url.pathname === '/') {
-      return this.html(response, this.options.product?.renderPage?.(this.locale()) ?? renderMobilePage({ locale: this.locale() }))
+      return this.html(response, this.activeProduct?.renderPage?.(this.locale()) ?? renderMobilePage({ locale: this.locale(), productName: this.options.productName }))
     }
     if (request.method === 'GET' && url.pathname === '/api/session/stream') {
       this.verifyTrustedOrigin(request)
@@ -1133,7 +1141,7 @@ export class LanMobileBridge {
 
   private productRemoteAuthorized(request: IncomingMessage): boolean {
     try {
-      return this.options.product?.authorizeRemote(request.headers) === true
+      return this.activeProduct?.authorizeRemote(request.headers) === true
     } catch {
       // Account lookup failures must deny access; do not log account headers or error secrets.
       console.warn('[mobile-product] Authorization check failed; remote access denied.')
@@ -1169,7 +1177,7 @@ export class LanMobileBridge {
 
   private async dispatchMobileRpc(input: { method?: unknown; payload?: unknown }): Promise<{ status: number; body: MobileRpcResult }> {
     if (!input || typeof input !== 'object') return { status: 400, body: { ok: false, error: 'Invalid mobile request.' } }
-    const custom = await this.options.product?.rpc?.(input, this.productTransport())
+    const custom = await this.activeProduct?.rpc?.(input, this.productTransport())
     if (custom) return { status: custom.ok ? 200 : 400, body: custom }
       if (input.method === 'interaction.pending') {
         const sessionId = requiredStringField(input.payload, 'sessionId')
@@ -1690,7 +1698,7 @@ export class LanMobileBridge {
     const abort = new AbortController()
     this.sessionStreamAborts.add(abort)
 
-    const projection = this.options.product?.sessionProjection?.(sessionId, new URL(request.url || '/', 'http://localhost').searchParams.get('view'))
+    const projection = this.activeProduct?.sessionProjection?.(sessionId, new URL(request.url || '/', 'http://localhost').searchParams.get('view'))
 
     response.statusCode = 200
     response.setHeader('content-type', 'text/event-stream; charset=utf-8')

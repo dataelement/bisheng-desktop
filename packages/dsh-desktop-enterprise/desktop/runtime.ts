@@ -4,7 +4,7 @@ import { adoptLegacyCloudState } from '../legacy-cloud-state.js'
 import { CloudWorkbenchView } from './cloud-workbench-view'
 import type { CloudLaunch } from './cloud-workbench'
 import { assertCloudRendererRequest, confirmCloudEffect } from './cloud-confirmation'
-import { app, ipcMain, net, safeStorage, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { app, ipcMain, net, safeStorage, screen, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { startEnterpriseDesktop } from './enterprise-desktop'
 import { EnterpriseChatView } from './chat-view'
 import { createElectronEnterpriseFetch } from './platform-fetch'
@@ -12,6 +12,7 @@ import { assertEnterpriseSender, isEnterpriseAppUrl } from './ipc-policy'
 import { parseDesktopSettingsAction } from './shared/desktop-settings'
 import { bundledHarnessVersion } from '../../../src/main/version-info'
 import { allowInsecureEnterpriseLoopback, enterpriseLoginFromArgv, parseEnterpriseLoginLink, registerEnterpriseLoginProtocol } from './login-link'
+import { appendWindowLayoutLog, startWindowLayoutProbe } from './window-layout-probe'
 
 export interface EnterpriseProductContext {
   userDataPath: string
@@ -32,6 +33,7 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
   adoptLegacyCloudState(join(context.dshHome, 'desktop-workbenches'))
   const cloudView = new CloudWorkbenchView()
   let mainWindow: BrowserWindow | undefined
+  let layoutProbe: { stop(): void } | undefined
   let enterpriseChat: EnterpriseChatView | undefined
   let disposed = false
   let cloudOpenEpoch = 0
@@ -220,6 +222,7 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
   }
 
 
+  const stopLayoutProbe = (): void => { layoutProbe?.stop(); layoutProbe = undefined }
   const onCloudNavigation = (_event: unknown, _url: string, isInPlace: boolean, isMainFrame: boolean): void => {
     if (!isMainFrame) return
     // Route changes invalidate the old selection; new documents must report overlays again.
@@ -230,6 +233,7 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
     }
   }
   const closeWindow = (): void => {
+    stopLayoutProbe()
     cancelPendingCloudOpen()
     mainWindow?.webContents.removeListener('did-start-navigation', onCloudNavigation)
     cloudView.close()
@@ -272,6 +276,7 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
       actions = services
       if (mainWindow === window) return
       if (mainWindow) {
+        stopLayoutProbe()
         mainWindow.webContents.removeListener('did-finish-load', deliverPendingEnterpriseLogin)
         mainWindow.removeListener('closed', closeWindow)
         mainWindow.webContents.removeListener('did-start-navigation', onCloudNavigation)
@@ -283,6 +288,12 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
       // Fail closed until this document reports its first overlay snapshot.
       cloudView.setHostOccluded(true)
       window.webContents.on('did-start-navigation', onCloudNavigation)
+      // Work mode may never create the Chat view. Watch the host window itself.
+      layoutProbe = startWindowLayoutProbe({
+        window,
+        readScaleFactor: () => screen.getDisplayMatching(window.getBounds()).scaleFactor,
+        writeLog: line => appendWindowLayoutLog(join(app.getPath('logs'), 'window-layout.log'), line)
+      })
       enterpriseChat = new EnterpriseChatView(enterpriseDesktop, line => console.info(line), () => mainWindow)
       window.webContents.on('did-finish-load', deliverPendingEnterpriseLogin)
       window.once('closed', closeWindow)

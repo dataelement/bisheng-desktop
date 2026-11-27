@@ -137,11 +137,45 @@ export function projectTranscriptFrame(value: unknown): unknown | undefined {
 /**
  * One process-local assistant frame, rewritten as the durable chunk the phone
  * already appends. `turn` is filled from the matching `start` frame because a
- * later chunk does not repeat it. Tool deltas stay out.
+ * later chunk does not repeat it. A tool delta becomes one compact
+ * `tool/status` row; raw arguments and tool output stay on the desktop.
  */
+export interface LiveAssistantCursor {
+  turn?: number
+  step?: number
+  tools?: Record<string, { name?: string; args: string; sent?: string }>
+}
+
+const TOOL_DETAIL_KEYS = [
+  'title',
+  'description',
+  'objective',
+  'task',
+  'task_name',
+  'name',
+  'question',
+  'questions',
+  'prompt',
+  'message',
+  'command',
+  'cmd',
+  'queries',
+  'query',
+  'pattern',
+  'url',
+  'uri',
+  'file_path',
+  'path',
+  'target',
+  'action',
+  'status'
+] as const
+
+const TOOL_ARGUMENT_CAP = 2048
+
 export function projectLiveAssistantFrame(
   frame: unknown,
-  turn: { turn?: number; step?: number }
+  turn: LiveAssistantCursor
 ): Record<string, unknown> | undefined {
   const body = record(frame)
   if (body === undefined) return undefined
@@ -151,6 +185,8 @@ export function projectLiveAssistantFrame(
     return undefined
   }
   if (body.type !== 'chunk') return undefined
+  const tool = projectLiveToolDelta(body, turn)
+  if (tool !== undefined) return tool
   const chunk = visibleDelta(body.chunk)
   if (chunk === undefined || typeof turn.turn !== 'number' || typeof turn.step !== 'number') return undefined
   return {
@@ -233,20 +269,382 @@ function projectEvent(event: Record<string, unknown>): Record<string, unknown> |
   if (type === 'turn/end') {
     const data = record(event.data)
     const projected = copyFields(event, ['type', 'time'])
-    if (data !== undefined && Object.prototype.hasOwnProperty.call(data, 'reason')) {
-      projected.data = { reason: data.reason }
-    }
+    const reason = projectTurnReason(data?.reason)
+    if (reason !== undefined) projected.data = { reason }
     return projected
   }
   if (type === 'user/message') return projectUserMessage(event)
+  if (type === 'developer/message') return projectDeveloperMessage(event)
   if (type === 'assistant/chunk') return projectAssistantChunk(event)
   if (type === 'assistant/message') return projectAssistantMessage(event)
+  if (type === 'tool/call') return projectToolCall(event)
+  if (type === 'tool/result') return projectToolResult(event)
+  if (type === 'deliverables/presented') return projectPresented(event)
+  if (type === 'workspace/changes') return projectWorkspaceChanges(event)
   return undefined
+}
+
+function projectLiveToolDelta(
+  body: Record<string, unknown>,
+  turn: LiveAssistantCursor
+): Record<string, unknown> | undefined {
+  const chunk = record(body.chunk)
+  if (chunk === undefined || chunk.type !== 'tool-call-delta') return undefined
+  if (typeof turn.turn !== 'number' || typeof turn.step !== 'number') return undefined
+  const index = typeof chunk.index === 'number' ? String(chunk.index) : '0'
+  const tools = turn.tools ?? {}
+  turn.tools = tools
+  const existing = tools[index]
+  const slot = existing ?? { args: '' }
+  tools[index] = slot
+  if (typeof chunk.name === 'string' && chunk.name.length > 0) slot.name = chunk.name
+  if (typeof chunk.argumentsDelta === 'string' && slot.args.length < TOOL_ARGUMENT_CAP) {
+    slot.args += chunk.argumentsDelta.slice(0, TOOL_ARGUMENT_CAP - slot.args.length)
+  }
+  if (slot.name === undefined) return undefined
+  const detail = toolDetail(slot.args)
+  const asks = projectQuestionAsks(slot.name, slot.args)
+  const signature = `${slot.name}\n${detail}\n${asks.map((item) => typeof item.question === 'string' ? item.question : '').join('\n')}`
+  if (slot.sent === signature) return undefined
+  slot.sent = signature
+  const data: Record<string, unknown> = {
+    turn: turn.turn,
+    step: turn.step,
+    phase: 'preparing',
+    activity: toolActivity(slot.name),
+    name: slot.name
+  }
+  if (typeof chunk.id === 'string' && chunk.id.length > 0) data.callId = chunk.id
+  if (detail.length > 0) data.detail = detail
+  if (asks.length > 0) data.asks = asks
+  return {
+    type: 'event',
+    event: {
+      type: 'tool/status',
+      ...(typeof body.time === 'number' ? { time: body.time } : {}),
+      data
+    }
+  }
+}
+
+function projectToolCall(event: Record<string, unknown>): Record<string, unknown> | undefined {
+  const data = record(event.data)
+  const name = typeof data?.name === 'string' ? data.name : ''
+  if (name.length === 0) return undefined
+  const projected = copyFields(event, ['type', 'time'])
+  projected.type = 'tool/status'
+  const next: Record<string, unknown> = {
+    phase: 'calling',
+    activity: toolActivity(name),
+    name
+  }
+  if (typeof data?.callId === 'string' && data.callId.length > 0) next.callId = data.callId
+  const detail = toolDetail(data?.arguments)
+  if (detail.length > 0) next.detail = detail
+  const asks = projectQuestionAsks(name, data?.arguments)
+  if (asks.length > 0) next.asks = asks
+  copyOwn(next, data, ['turn', 'step'])
+  projected.data = next
+  return projected
+}
+
+function projectToolResult(event: Record<string, unknown>): Record<string, unknown> | undefined {
+  const data = record(event.data)
+  const message = record(data?.message)
+  const source = record(message?.source)
+  const callId = typeof source?.callId === 'string' && source.callId.length > 0
+    ? source.callId
+    : typeof message?.toolCallId === 'string' && message.toolCallId.length > 0
+      ? message.toolCallId
+      : undefined
+  if (callId === undefined) return undefined
+  const projected = copyFields(event, ['type', 'time'])
+  projected.type = 'tool/status'
+  const next: Record<string, unknown> = { phase: 'done', callId }
+  const asks = projectQuestionAnswers(message)
+  if (asks.length > 0) next.asks = asks
+  copyOwn(next, data, ['turn', 'step'])
+  projected.data = next
+  return projected
+}
+
+function projectPresented(event: Record<string, unknown>): Record<string, unknown> | undefined {
+  const data = record(event.data)
+  if (data === undefined) return undefined
+  const files = presentedFiles(data.files)
+  if (files.length === 0) return undefined
+  const projected = copyFields(event, ['type', 'time'])
+  const seq = safeSeq(event.seq)
+  if (seq !== undefined) projected.seq = seq
+  const next: Record<string, unknown> = { files }
+  copyOwn(next, data, ['turn', 'step'])
+  if (typeof data.callId === 'string' && data.callId.length > 0) next.callId = data.callId
+  projected.data = next
+  return projected
+}
+
+function projectWorkspaceChanges(event: Record<string, unknown>): Record<string, unknown> | undefined {
+  const data = record(event.data)
+  const seq = safeSeq(event.seq)
+  const turn = data?.turn
+  if (seq === undefined || typeof turn !== 'number' || !Number.isSafeInteger(turn)) return undefined
+  const projected = copyFields(event, ['type', 'time'])
+  projected.seq = seq
+  projected.data = { turn }
+  return projected
+}
+
+/** Change summary the phone can draw. Diff hunks and unreadable files stay behind. */
+export function projectChangesSummary(value: unknown): Record<string, unknown> | undefined {
+  const body = record(value)
+  if (body === undefined) return undefined
+  const files = Array.isArray(body.files) ? body.files.flatMap(projectChangedFile) : []
+  const projected: Record<string, unknown> = { files }
+  for (const field of ['turn', 'total', 'added', 'deleted'] as const) {
+    const value = body[field]
+    if (typeof value === 'number' && Number.isFinite(value)) projected[field] = value
+  }
+  return projected
+}
+
+function projectChangedFile(value: unknown): Record<string, unknown>[] {
+  const row = record(value)
+  if (row === undefined || typeof row.path !== 'string' || row.path.trim().length === 0) return []
+  const file: Record<string, unknown> = { path: row.path }
+  if (typeof row.display === 'string') file.display = row.display
+  if (typeof row.added === 'number') file.added = row.added
+  if (typeof row.deleted === 'number') file.deleted = row.deleted
+  if (row.binary === true) file.binary = true
+  if (row.oversized === true) file.oversized = true
+  return [file]
+}
+
+function presentedFiles(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item) => {
+    const row = record(item)
+    if (row === undefined || typeof row.path !== 'string' || row.path.trim().length === 0) return []
+    const file: Record<string, unknown> = { path: row.path }
+    if (typeof row.description === 'string') file.description = row.description
+    return [file]
+  })
+}
+
+const ASK_LIMIT = 8
+const ASK_TEXT_CAP = 240
+
+/**
+ * Question prompts the desktop draws inside the process group.
+ * Option descriptions and every other argument stay on the desktop.
+ */
+function projectQuestionAsks(name: string, value: unknown): Record<string, unknown>[] {
+  if (name !== 'ask_user_question' && name !== 'request_user_input') return []
+  const body = argumentsRecord(value)
+  const questions = body?.questions
+  if (!Array.isArray(questions)) return []
+  const asks: Record<string, unknown>[] = []
+  for (const item of questions) {
+    if (asks.length >= ASK_LIMIT) break
+    const row = record(item)
+    const question = clipAsk(row?.question)
+    if (row === undefined || question.length === 0) continue
+    const ask: Record<string, unknown> = { question }
+    const id = clipAsk(row.id, 80)
+    if (id.length > 0) ask.id = id
+    const header = clipAsk(row.header, 80)
+    if (header.length > 0 && header !== question) ask.header = header
+    asks.push(ask)
+  }
+  return asks
+}
+
+/**
+ * Submitted answers for a question call. A skipped question keeps an empty
+ * answer so the phone can count it. Any other tool body is left behind.
+ */
+function projectQuestionAnswers(message: Record<string, unknown> | undefined): Record<string, unknown>[] {
+  const payload = answerPayload(message?.content)
+  const answers = payload?.answers
+  if (!Array.isArray(answers)) return []
+  const asks: Record<string, unknown>[] = []
+  for (const item of answers) {
+    if (asks.length >= ASK_LIMIT) break
+    const row = record(item)
+    const id = clipAsk(row?.id, 80)
+    if (row === undefined || id.length === 0 || !Array.isArray(row.selected)) continue
+    const selected = row.selected.flatMap((part) => {
+      const text = clipAsk(part)
+      return text.length > 0 ? [text] : []
+    })
+    const custom = clipAsk(row.custom)
+    const answer = custom.length > 0 ? custom : selected.join('、')
+    asks.push({ id, answer })
+  }
+  return asks
+}
+
+function argumentsRecord(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed.startsWith('{')) return undefined
+    try {
+      return record(JSON.parse(trimmed) as unknown)
+    } catch {
+      return undefined
+    }
+  }
+  return record(value)
+}
+
+function answerPayload(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value === 'string') return argumentsRecord(value)
+  if (Array.isArray(value)) {
+    const text = value.flatMap((item) => {
+      const block = record(item)
+      return typeof block?.text === 'string' ? [block.text] : []
+    }).join('')
+    return argumentsRecord(text)
+  }
+  return record(value)
+}
+
+function clipAsk(value: unknown, cap = ASK_TEXT_CAP): string {
+  if (typeof value !== 'string') return ''
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  const chars = [...normalized]
+  if (chars.length <= cap) return normalized
+  return `${chars.slice(0, cap - 1).join('').trimEnd()}…`
+}
+
+function toolActivity(name: string): string {
+  if (name === 'read') return 'read'
+  if (name === 'read_image') return 'readImage'
+  if (name === 'grep' || name === 'glob' || name.endsWith('_inspect')) return 'search'
+  if (name === 'write') return 'write'
+  if (name === 'edit' || name === 'apply_patch') return 'edit'
+  if (name === 'bash' || name === 'pwsh' || name === 'exec_command' || name === 'write_stdin' || name.startsWith('terminal_')) {
+    return 'commands'
+  }
+  if (name === 'run_code') return 'code'
+  if (name === 'web_search') return 'webSearch'
+  if (name === 'web_fetch') return 'webFetch'
+  if (name === 'subagent' || name.startsWith('subagent_')) return 'subagents'
+  if (name === 'todo_write' || name === 'create_goal' || name === 'update_goal' || name === 'get_goal') return 'plan'
+  if (name === 'ask_user_question' || name === 'request_user_input') return 'questions'
+  return 'tools'
+}
+
+function toolDetail(value: unknown): string {
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        const parsed: unknown = JSON.parse(trimmed)
+        const fromParsed = detailFromValue(parsed)
+        if (fromParsed.length > 0) return fromParsed
+      } catch {
+        return detailFromPartial(trimmed)
+      }
+    }
+    return ''
+  }
+  return detailFromValue(value)
+}
+
+function detailFromValue(value: unknown): string {
+  const row = record(value)
+  if (row !== undefined) {
+    for (const key of TOOL_DETAIL_KEYS) {
+      if (!Object.prototype.hasOwnProperty.call(row, key)) continue
+      const text = detailText(row[key])
+      if (text.length > 0) return clipDetail(text)
+    }
+    return ''
+  }
+  return detailText(value)
+}
+
+function detailText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value) && value.every((item) => typeof item === 'string')) return value.join(', ')
+  return ''
+}
+
+function detailFromPartial(raw: string): string {
+  for (const key of TOOL_DETAIL_KEYS) {
+    const marker = `"${key}"`
+    const at = raw.indexOf(marker)
+    if (at < 0) continue
+    let cursor = at + marker.length
+    while (cursor < raw.length && raw[cursor] !== undefined && /\s/.test(raw[cursor]!)) cursor += 1
+    if (raw[cursor] !== ':') continue
+    cursor += 1
+    while (cursor < raw.length && raw[cursor] !== undefined && /\s/.test(raw[cursor]!)) cursor += 1
+    if (raw[cursor] !== '"') continue
+    cursor += 1
+    let value = ''
+    while (cursor < raw.length) {
+      const char = raw[cursor]
+      if (char === undefined) break
+      if (char === '\\') {
+        const next = raw[cursor + 1]
+        if (next === undefined) break
+        value += next === 'n' ? '\n' : next === 't' ? '\t' : next
+        cursor += 2
+        continue
+      }
+      if (char === '"') break
+      value += char
+      cursor += 1
+      if (value.length > 200) break
+    }
+    const text = clipDetail(value)
+    if (text.length > 0) return text
+  }
+  return ''
+}
+
+function clipDetail(text: string): string {
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  const chars = [...normalized]
+  if (chars.length <= 160) return normalized
+  return `${chars.slice(0, 159).join('').trimEnd()}…`
+}
+
+function safeSeq(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+/** Kind plus the failure text. Request ids and provider status stay on the desktop. */
+function projectTurnReason(value: unknown): Record<string, unknown> | string | undefined {
+  if (typeof value === 'string') {
+    const kind = value.trim()
+    return kind.length === 0 ? undefined : kind
+  }
+  const reason = record(value)
+  if (reason === undefined) return undefined
+  const next: Record<string, unknown> = {}
+  if (typeof reason.kind === 'string' && reason.kind.trim().length > 0) next.kind = reason.kind.trim()
+  const error = record(reason.error)
+  const message = clipFailure(error?.message ?? reason.message, 300)
+  const code = clipFailure(error?.code ?? reason.code, 80)
+  if (message !== undefined) next.message = message
+  if (code !== undefined) next.code = code
+  return Object.keys(next).length === 0 ? undefined : next
+}
+
+function clipFailure(value: unknown, cap: number): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const text = value.trim()
+  if (text.length === 0) return undefined
+  return text.length <= cap ? text : text.slice(0, cap)
 }
 
 function projectUserMessage(event: Record<string, unknown>): Record<string, unknown> | undefined {
   const data = record(event.data)
-  if (data === undefined || !humanUser(data)) return undefined
+  if (data === undefined) return undefined
+  if (!humanUser(data)) return projectContextStatus(event, data)
+
   const projected = copyFields(event, ['type', 'time'])
   const next: Record<string, unknown> = {}
   const message = record(data.message)
@@ -297,6 +695,49 @@ function projectAssistantMessage(event: Record<string, unknown>): Record<string,
   if (usage !== undefined) next.usage = usage
   const stream = projectUsageStream(data.stream)
   if (stream !== undefined) next.stream = stream
+  projected.data = next
+  return projected
+}
+
+/**
+ * Context the desktop shows as a collapsed row. The body stays on the desktop:
+ * the phone only needs the producer kind, or a tool-list change count.
+ */
+function projectContextStatus(
+  event: Record<string, unknown>,
+  data: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  const message = record(data.message)
+  const source = record(message?.source) ?? record(data.source)
+  const kind = typeof source?.kind === 'string' ? source.kind.trim() : ''
+  if (kind.length === 0 || kind === 'user') return undefined
+  const projected = copyFields(event, ['type', 'time'])
+  projected.type = 'context/status'
+  const next: Record<string, unknown> = { kind }
+  copyOwn(next, data, ['turn', 'step'])
+  projected.data = next
+  return projected
+}
+
+function projectDeveloperMessage(event: Record<string, unknown>): Record<string, unknown> | undefined {
+  const data = record(event.data)
+  if (data === undefined) return undefined
+  const message = record(data.message) ?? data
+  const content = message.content
+  if (!Array.isArray(content) || content.length === 0) return undefined
+  let added = 0
+  let removed = 0
+  for (const item of content) {
+    const block = record(item)
+    if (block?.type === 'tool-addition') added += 1
+    else if (block?.type === 'tool-removal') removed += 1
+    else return undefined
+  }
+  if (added === 0 && removed === 0) return undefined
+  const projected = copyFields(event, ['type', 'time'])
+  projected.type = 'context/status'
+  const next: Record<string, unknown> = { kind: 'tools', added, removed }
+  copyOwn(next, data, ['turn', 'step'])
   projected.data = next
   return projected
 }

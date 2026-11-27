@@ -23,8 +23,8 @@ export function updateMenuLabel(locale: string): string {
   return desktopMenuMessages(locale).update
 }
 
-export function aboutMenuLabel(locale: string): string {
-  return desktopMenuMessages(locale).about
+export function aboutMenuLabel(locale: string, appName: string): string {
+  return desktopMenuMessages(locale).about.replace('{app}', () => appName)
 }
 
 export function safeModeMenuLabel(locale: string): string {
@@ -44,6 +44,37 @@ export function shortcutFileMenuLabels(locale: string): { fileMenu: string, clos
 export function standardMenuLabels(locale: string) {
   const { edit, undo, redo, cut, copy, paste, pasteAndMatchStyle, selectAll, window, minimize, close } = desktopMenuMessages(locale)
   return { edit, undo, redo, cut, copy, paste, pasteAndMatchStyle, selectAll, window, minimize, close }
+}
+
+/**
+ * View roles shared by the macOS menu bar and the hidden Windows menu.
+ * Reload keeps Electron's default chord (Command+R / Ctrl+R).
+ * On Windows and Linux the menu bar stays hidden, so that role does not receive
+ * Ctrl+R; the shortcut controller reloads the page for that chord instead.
+ * forceReload is omitted: Command+Shift+R / Ctrl+Shift+R already restarts the Host.
+ */
+function viewMenu(text: {
+  view: string
+  reload: string
+  devtools: string
+  actualSize: string
+  zoomIn: string
+  zoomOut: string
+  fullscreen: string
+}): DesktopMenuItem {
+  return {
+    label: text.view,
+    submenu: [
+      { role: 'reload', label: text.reload },
+      { role: 'toggleDevTools', label: text.devtools },
+      { type: 'separator' },
+      { role: 'resetZoom', label: text.actualSize },
+      { role: 'zoomIn', label: text.zoomIn },
+      { role: 'zoomOut', label: text.zoomOut },
+      { type: 'separator' },
+      { role: 'togglefullscreen', label: text.fullscreen }
+    ]
+  }
 }
 
 /** Keep About first. The file menu follows the application menu when shortcuts are installed. */
@@ -105,7 +136,7 @@ export function buildDarwinDesktopMenu(options: {
     {
       label: options.appName,
       submenu: [
-        { label: aboutMenuLabel(options.locale), click: options.showAbout },
+        { label: aboutMenuLabel(options.locale, options.appName), click: options.showAbout },
         { label: updateMenuLabel(options.locale), accelerator: 'CmdOrCtrl+U', click: options.checkForUpdates },
         { label: enterpriseMenuLabel(options.locale), click: options.openEnterprise },
         ...(options.restart === undefined
@@ -147,6 +178,7 @@ export function buildDarwinDesktopMenu(options: {
         { role: 'selectAll', label: standard.selectAll }
       ]
     },
+    viewMenu(text),
     {
       label: standard.window,
       submenu: [
@@ -212,19 +244,7 @@ export function buildWindowsApplicationMenu(options: {
         { role: 'selectAll', label: standard.selectAll }
       ]
     },
-    {
-      label: text.view,
-      submenu: [
-        { role: 'reload', label: text.reload },
-        { role: 'toggleDevTools', label: text.devtools },
-        { type: 'separator' },
-        { role: 'resetZoom', label: text.actualSize },
-        { role: 'zoomIn', label: text.zoomIn },
-        { role: 'zoomOut', label: text.zoomOut },
-        { type: 'separator' },
-        { role: 'togglefullscreen', label: text.fullscreen }
-      ]
-    },
+    viewMenu(text),
     {
       label: standard.window,
       submenu: [

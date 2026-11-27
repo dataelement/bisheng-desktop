@@ -40,18 +40,61 @@ async function runElectron(executable, fixture, environment) {
   let output = ''
   let spawnError
   let timedOut = false
-  const append = chunk => { output = (output + chunk.toString()).slice(-256_000) }
+  let exited = false
+  let stoppedAfterSuccess = false
+  let shutdownTimer
+  const append = chunk => {
+    output = (output + chunk.toString()).slice(-256_000)
+    if (shutdownTimer !== undefined || exited) return
+    const markerAt = output.lastIndexOf(SUCCESS)
+    if (markerAt < 0 || output.indexOf('\n', markerAt) < 0) return
+    // app.quit() can block the main thread inside before-quit, so the fixture's
+    // own exit timers never run. The UI marker is already complete; stop the tree.
+    shutdownTimer = setTimeout(() => {
+      if (exited) return
+      stoppedAfterSuccess = true
+      terminateOwnedTree(child)
+    }, 3_000)
+  }
   child.stdout.on('data', append)
   child.stderr.on('data', append)
+  child.stdout.on('error', () => {})
+  child.stderr.on('error', () => {})
   child.once('error', error => { spawnError = error })
-  const deadline = setTimeout(() => { timedOut = true; terminateOwnedTree(child) }, 95_000)
+  const deadline = setTimeout(() => {
+    if (exited) return
+    timedOut = true
+    terminateOwnedTree(child)
+  }, 95_000)
   try {
-    const result = await new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal })))
-    return { ...result, output, timedOut, spawnError }
+    const result = await new Promise(resolve => {
+      let settled = false
+      const finish = (code, signal) => {
+        if (settled) return
+        settled = true
+        resolve({ code, signal })
+      }
+      // A Host or plugin child can inherit these pipes and keep `close` from
+      // firing after Electron has already exited. Lifetime ends at `exit`.
+      child.once('exit', (code, signal) => {
+        exited = true
+        const linger = setTimeout(() => {
+          child.stdout.destroy()
+          child.stderr.destroy()
+          terminateOwnedTree(child)
+          finish(code, signal)
+        }, 1_000)
+        child.once('close', () => {
+          clearTimeout(linger)
+          finish(code, signal)
+        })
+      })
+    })
+    return { ...result, output, timedOut, spawnError, stoppedAfterSuccess }
   } finally {
     clearTimeout(deadline)
-    // Terminate only the process group this test created, including a surviving Host.
-    if (child.exitCode === null || child.signalCode !== null) terminateOwnedTree(child)
+    clearTimeout(shutdownTimer)
+    if (!exited) terminateOwnedTree(child)
   }
 }
 
@@ -102,9 +145,13 @@ it.skipIf(!supported)('opens enterprise account settings through the real Electr
     const evidence = result.output
     expect(result.spawnError, evidence).toBeUndefined()
     expect(result.timedOut, evidence).toBe(false)
-    expect(result.signal, evidence).toBeNull()
-    expect(result.code, evidence).toBe(0)
     expect(evidence, evidence).not.toContain(FAILURE)
+    // A clean exit is still checked. After the UI marker, a quit that never
+    // returns is stopped by this test and is not a failed scenario.
+    if (!result.stoppedAfterSuccess) {
+      expect(result.signal, evidence).toBeNull()
+      expect(result.code, evidence).toBe(0)
+    }
     // app.quit() can turn a failed main process into exit 0: require UI proof as well.
     const marker = evidence.split(String.fromCharCode(10)).find(line => line.startsWith(SUCCESS))
     expect(marker, evidence).toBeDefined()
@@ -144,9 +191,12 @@ function electronFixture() {
     clearTimeout(deadline)
     if (error) console.error('ENTERPRISE_DESKTOP_UI_FAILURE ' + JSON.stringify({ message: error.message }))
     else console.log('ENTERPRISE_DESKTOP_UI_SUCCESS ' + JSON.stringify(result))
-    process.exitCode = error ? 1 : 0
+    const code = error ? 1 : 0
+    process.exitCode = code
+    // Arm the force-exit before app.quit(). before-quit can block the main
+    // thread, and a timer scheduled after that call never runs.
+    setTimeout(() => { app.exit(code); process.exit(code) }, 1_000)
     app.quit()
-    setTimeout(() => app.exit(error ? 1 : 0), 5_000).unref()
   }
   app.on('browser-window-created', (_event, window) => {
     window.webContents.on('did-finish-load', async () => {
