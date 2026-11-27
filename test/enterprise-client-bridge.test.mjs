@@ -54,7 +54,8 @@ function componentRuntime() {
   }
 }
 
-function loadClient(bridges = {}) {
+function loadClient(bridges = {}, language = 'en') {
+  const translations = new Map()
   const hooks = componentRuntime()
   const target = new EventTarget()
   const effects = new Map()
@@ -76,7 +77,7 @@ function loadClient(bridges = {}) {
       entries: () => [],
       register: (options, component) => { slots.push({ options, component }); return () => {} }
     },
-    locale: { bind: () => key => key },
+    locale: { register: (namespace, copy) => translations.set(namespace, copy), bind: namespace => key => translations.get(namespace)?.[language]?.[key] ?? key },
     effect: (setup, label) => { effects.set(label, setup) }
   })
   return {
@@ -105,6 +106,16 @@ function subscriptions() {
 }
 
 describe('enterprise client desktop bridge behavior', () => {
+  it.each([['en', 'Example Dev', 'Example Dev version'], ['zh', 'Example Dev', 'Example Dev 版本'], ['en', undefined, 'BISHENG version'], ['zh', '   ', 'BISHENG 版本']])('uses the renderer identity in the %s About label (%j)', async (language, name, expected) => {
+    const client = loadClient({ __DSH_PRODUCT_NAME__: name, dshDesktopEnterprise: { settingsInfo: async () => ({ desktopVersion: '1.2.3' }) } }, language)
+    client.effects.get('enterprise: settings copy')()
+    const slot = client.slots.find(slot => slot.options.id === 'desktop-about' && slot.options.name === 'settings.section')
+    render(client, slot.component, slot.options.inject())
+    await tick()
+    expect(text(render(client, slot.component, slot.options.inject()))).toContain(expected)
+    client.hooks.dispose()
+  })
+
   it('omits desktop About and its icon in Web without desktop settings capabilities', () => {
     const client = loadClient()
     expect(client.component('desktop-about')).toBeUndefined()

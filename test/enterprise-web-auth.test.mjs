@@ -38,9 +38,31 @@ async function pluginFixture({ expired = false, sessionExpired = false, fetchImp
   const ctx = { connection: { fetch: { register(route) { routes.set(route.path, route) } } }, provide() {}, effect(fn) { effects.push(fn()) } }
   apply(ctx, {})
   cleanups.push(() => { for (const dispose of effects) dispose?.() })
-  const route = async path => routes.get(path).fetch(new Request('http://host' + path, { method: 'POST', body: '{}' }))
+  const route = async (path, body = {}) => routes.get(path).fetch(new Request('http://host' + path, { method: 'POST', body: JSON.stringify(body) }))
   return { file, fetchMock, route, dispose: () => effects.forEach(dispose => dispose?.()), auth: mounted.auth, account: mounted.account }
 }
+
+it.each([['', 'BISHENG'], ['Example & <Web>', 'Example &amp; &lt;Web&gt;']])('uses the Web host identity for device metadata and escaped callback title: %j', async (name, escaped) => {
+  vi.stubEnv('DSH_DESKTOP_PRODUCT_NAME', name)
+  const nativeFetch = globalThis.fetch
+  let authorization
+  const fixture = await pluginFixture({ fetchImpl: async (url, options) => {
+    if (String(url).endsWith('/api/v1/dsh/config')) return Response.json({ enabled: true, client_id: 'dsh-desktop', contract_version: '0.5.0' })
+    if (String(url).endsWith('/api/v1/dsh/authorizations')) {
+      authorization = JSON.parse(options.body)
+      return Response.json({ auth_id: 'auth', authorize_url: base + '/desktop-login?auth_id=auth', expires_in: 60 })
+    }
+    return Response.json({ status_code: 200, data: [] })
+  } })
+  const response = await fixture.route('/api/enterprise.login.start', { base })
+  expect(response.status).toBe(200)
+  expect(authorization.device_name).toBe(name || 'BISHENG')
+  const callback = new URL(authorization.redirect_uri)
+  callback.search = new URLSearchParams({ auth_id: 'auth', state: authorization.state }).toString()
+  const page = await nativeFetch(callback, { headers: { connection: 'close' } }).then(response => response.text())
+  expect(page).toContain(`<title>${escaped}</title>`)
+  expect(page).not.toContain('<Web>')
+})
 
 it('wires standalone Web plugins to the signed-in host without a broker or login', async () => {
   const fixture = await pluginFixture()

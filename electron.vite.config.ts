@@ -25,6 +25,11 @@ export default defineConfig({
     }
   },
   preload: {
+    resolve: {
+      alias: {
+        '../../build/brand-mark.svg?raw': resolve('packages/dsh-desktop-enterprise/desktop/update-brand.ts')
+      }
+    },
     plugins: [externalizeDepsPlugin(), packagedImportsPlugin(dependencies, true)],
     build: {
       rollupOptions: {
