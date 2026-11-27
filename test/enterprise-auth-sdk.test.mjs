@@ -53,6 +53,24 @@ describe('enterpriseAuth instance SDK', () => {
     expect(second.enterpriseAuth.getState().connected).toBe(true)
   })
 
+  it('exposes silent refresh and scoped state subscriptions through Cordis', async () => {
+    const ctx = fixture(), scoped = ctx.extend()
+    const { transport, dispose } = await bind(scoped)
+    const changed = vi.fn()
+    const unsubscribe = scoped.enterpriseAuth.subscribe(changed)
+    transport.state.mockResolvedValue({ connected: true, userId: 'employee', enterpriseId: 'tenant', sessionVersion: 'signed-in' })
+    expect(await scoped.enterpriseAuth.refresh()).toMatchObject({ connected: true, userId: 'employee' })
+    expect(changed).toHaveBeenCalledOnce()
+    expect(() => ctx.enterpriseAuth.subscribe(changed)).toThrow(EnterpriseAuthError)
+    await expect(ctx.enterpriseAuth.refresh()).rejects.toMatchObject({ errorCode: 'authorization_denied' })
+    unsubscribe()
+    transport.state.mockResolvedValue({ connected: false, sessionVersion: 'signed-out' })
+    await scoped.enterpriseAuth.refresh()
+    expect(changed).toHaveBeenCalledOnce()
+    dispose()
+    await expect(scoped.enterpriseAuth.refresh()).rejects.toMatchObject({ errorCode: 'authorization_denied' })
+  })
+
   it('fails closed on polling failure and ignores a late snapshot after revocation', async () => {
     vi.useFakeTimers()
     const scoped = fixture().extend()

@@ -11,6 +11,18 @@
       "types": "./index.d.ts",
       "default": "./index.js"
     },
+    "./auth": {
+      "types": "./enterprise-auth-client.d.ts",
+      "default": "./enterprise-auth-client.js"
+    },
+    "./auth-host": {
+      "types": "./enterprise-auth.d.ts",
+      "default": "./enterprise-auth.js"
+    },
+    "./auth-web-host": {
+      "types": "./web-auth.d.ts",
+      "default": "./web-auth.js"
+    },
     "./client": "./client.js",
     "./claimed-echo": "./claimed-echo.js",
     "./legacy-cloud-state": "./legacy-cloud-state.js",

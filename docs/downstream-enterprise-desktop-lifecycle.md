@@ -6,6 +6,8 @@
 
 公共接缝经上游 PR https://github.com/dataelement/dsh-desktop/pull/875 与独立兼容修复 PR https://github.com/dataelement/dsh-desktop/pull/876 合入后同步到下游。企业入口通过 register 模块注册产品工厂，再加载公共 shell，不改公共启动流程或复制底座实现。
 
+企业业务插件的静默身份复用、通用 SDK、非 Cordis 宿主适配与 xpie 跨客户端边界见 [企业插件统一身份与静默会话复用](downstream-enterprise-sso.md)。
+
 ## Desktop 启动与桥
 
 产品注册模块先注册 createEnterpriseProductRuntime，再加载公共 shell 入口。核心配置产品身份并取得单实例锁后，在启动 Host 前等待企业 broker 初始化；按本次初始化返回 hostEnvironment，不异步覆盖全局 process.env。企业 vault 目录使用上下文的 userDataPath，因此独立开发 Profile 不会误读正式版账号。

@@ -7,7 +7,7 @@ import { createFileMobileAccessStore, mobileAccessStorePath } from './mobile-acc
 import { renderMobilePage } from './mobile-pages'
 import { EnterpriseMobileRpc, transcriptFollowValue } from './mobile-rpc'
 
-export function createEnterpriseMobileExtension(account: Pick<EnterpriseDesktopRuntime, 'readMobileAccessAccount' | 'subscribeMobileAccessAccount'>, userDataPath: string): MobileProductExtension {
+export function createEnterpriseMobileExtension(account: Pick<EnterpriseDesktopRuntime, 'readMobileAccessAccount' | 'subscribeMobileAccessAccount'>, userDataPath: string, productName = 'BISHENG'): MobileProductExtension {
   let rpc: EnterpriseMobileRpc | undefined
   return {
     authorizeRemote(headers) {
@@ -31,7 +31,7 @@ export function createEnterpriseMobileExtension(account: Pick<EnterpriseDesktopR
       return async () => { current.dispose(); if (rpc === current) rpc = undefined; await client.stop() }
     },
     rpc: async input => rpc?.dispatch(input),
-    renderPage: locale => renderMobilePage({ locale, product: 'bisheng' }),
+    renderPage: locale => renderMobilePage({ locale, product: 'bisheng', productName }),
     sessionProjection(_sessionId, view) {
       const liveTurn: { turn?: number; step?: number } = {}
       return { assistantStream: true, project: value => transcriptFollowValue(value, view === 'transcript', liveTurn) }

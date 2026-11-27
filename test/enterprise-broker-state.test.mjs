@@ -9,10 +9,11 @@ const block = source.slice(start, source.indexOf('  const marketRequest =', star
 it('does not clear work resources repeatedly while disconnected', async () => {
   const clear = vi.fn()
   const reset = vi.fn()
+  const invalidate = vi.fn()
   let state = { connected: false }
-  const create = vm.runInNewContext('(function(deps) { let account = { connected: false }; const { broker, brokerJson, market, workbenches, capabilityPolicy, workResources, workSkills, workCapabilities, ingestEnterpriseState, thirdPartyFlags, disabledState } = deps; ' + block + '; return readBrokerState })')
+  const create = vm.runInNewContext('(function(deps) { let account = { connected: false }; const { broker, brokerJson, market, workbenches, capabilityPolicy, workResources, workSkills, workCapabilities, ingestEnterpriseState, thirdPartyFlags, disabledState, webAuth } = deps; ' + block + '; return readBrokerState })')
   const read = create({
-    broker: {}, brokerJson: async () => state,
+    broker: {}, brokerJson: async () => state, webAuth: { invalidate },
     market: { stop: vi.fn() }, workbenches: { stop: vi.fn() },
     capabilityPolicy: { reset, refresh: async () => {} },
     workResources: { clear }, workSkills: { clear }, workCapabilities: { clear },
@@ -29,4 +30,5 @@ it('does not clear work resources repeatedly while disconnected', async () => {
   expect(clear).toHaveBeenCalledTimes(6)
   await read()
   expect(clear).toHaveBeenCalledTimes(6)
+  expect(invalidate).toHaveBeenCalledTimes(2)
 })
