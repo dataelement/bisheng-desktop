@@ -23,8 +23,8 @@ beforeEach(async () => {
   const views = []
   const environment = { DSH_DESKTOP_ENTERPRISE_BROKER_URL: 'http://127.0.0.1:1', DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY: 'test-only-capability' }
   const accountListeners = new Set()
-  const cloud = { open: vi.fn(async () => {}), close: vi.fn(), closeFor: vi.fn(), resizeFor: vi.fn(), setHostOccluded: vi.fn() }
-  const desktop = { snapshot: () => ({ connected: true, connectionKey: 'account' }), cloudRequest: vi.fn(async () => ({ appId: 'a'.repeat(32), slug: 'board', ticket: 'ticket', launchUrl: 'https://enterprise.test/apps/board/_desktop', entryUrl: 'https://enterprise.test/apps/board/', connectionKey: 'account' })), subscribe: listener => { accountListeners.add(listener); return () => accountListeners.delete(listener) }, harnessEnvironment: vi.fn(() => ({ ...environment })), stop: vi.fn(async () => {}) }
+  const cloud = { open: vi.fn(async () => {}), close: vi.fn(), closeFor: vi.fn(), capture: vi.fn(async () => ({ dataURL: 'cloud-frame' })), resizeFor: vi.fn(), setHostOccluded: vi.fn() }
+  const desktop = { snapshot: vi.fn(() => ({ connected: true, connectionKey: 'account' })), cloudRequest: vi.fn(async () => ({ appId: 'a'.repeat(32), slug: 'board', ticket: 'ticket', launchUrl: 'https://enterprise.test/apps/board/_desktop', entryUrl: 'https://enterprise.test/apps/board/', connectionKey: 'account' })), subscribe: listener => { accountListeners.add(listener); return () => accountListeners.delete(listener) }, harnessEnvironment: vi.fn(() => ({ ...environment })), stop: vi.fn(async () => {}) }
   const start = vi.fn(async () => desktop)
   const ipcMain = {
     handle: vi.fn((channel, handler) => { if (handlers.has(channel)) throw new Error('duplicate handler'); handlers.set(channel, handler) }),
@@ -283,6 +283,110 @@ describe('enterprise desktop product runtime', () => {
     mocks.app.emit('open-url', { preventDefault }, 'bisheng://login/next')
     await tick()
     expect(window.webContents.send).toHaveBeenCalledOnce()
+  })
+})
+
+describe('cloud launch authorization lifecycle', () => {
+  const appId = 'a'.repeat(32)
+  const bounds = { x: 0, y: 0, width: 400, height: 300 }
+  const launch = { appId, slug: 'board', ticket: 'ticket', launchUrl: 'https://enterprise.test/apps/board/_desktop', entryUrl: 'https://enterprise.test/apps/board/', connectionKey: 'account' }
+
+  it.each(['close', 'navigation', 'route', 'account', 'disconnect', 'dispose', 'window-close', 'replace-window'])(
+    'does not open a late authorization after %s', async action => {
+      const runtime = await startRuntime()
+      const { window, event } = attach(runtime)
+      const authorization = deferred()
+      mocks.desktop.cloudRequest.mockReturnValueOnce(authorization.promise)
+      const pending = handler('enterprise-cloud:open')(event, appId, bounds, 'account', 'owner')
+      expect(mocks.cloud.open).not.toHaveBeenCalled()
+      if (action === 'close') handler('enterprise-cloud:close')(event, 'owner')
+      if (action === 'navigation' || action === 'route') window.webContents.emit('did-start-navigation', {}, 'dsh-app://app/next', action === 'route', true)
+      if (action === 'account' || action === 'disconnect') {
+        for (const listener of mocks.accountListeners) listener({ connected: action !== 'disconnect', connectionKey: action === 'account' ? 'other' : 'account' })
+        // Even reconnecting to the same account must not revive the cancelled request.
+        for (const listener of mocks.accountListeners) listener({ connected: true, connectionKey: 'account' })
+      }
+      if (action === 'dispose') await runtime.dispose()
+      if (action === 'window-close') window.emit('closed')
+      if (action === 'replace-window') attach(runtime)
+      authorization.resolve(launch)
+      await expect(pending).rejects.toThrow('cancelled')
+      expect(mocks.cloud.open).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['origin', 'frame', 'account', 'disconnect', 'destroyed'])('revalidates %s after authorization without relying on notifications', async change => {
+    const runtime = await startRuntime()
+    const { window, event } = attach(runtime)
+    const authorization = deferred()
+    mocks.desktop.cloudRequest.mockReturnValueOnce(authorization.promise)
+    const pending = handler('enterprise-cloud:open')(event, appId, bounds, 'account', 'owner')
+    if (change === 'origin') window.webContents.mainFrame.url = 'https://untrusted.test/'
+    if (change === 'frame') window.webContents.mainFrame = { url: 'dsh-app://app/' }
+    if (change === 'account') mocks.desktop.snapshot.mockReturnValue({ connected: true, connectionKey: 'other' })
+    if (change === 'disconnect') mocks.desktop.snapshot.mockReturnValue({ connected: false, connectionKey: 'account' })
+    if (change === 'destroyed') window.isDestroyed.mockReturnValue(true)
+    authorization.resolve(launch)
+    await expect(pending).rejects.toThrow()
+    expect(mocks.cloud.open).not.toHaveBeenCalled()
+  })
+
+  it('keeps a newer pending request cancellable when a superseded authorization finishes', async () => {
+    const runtime = await startRuntime()
+    const { event } = attach(runtime)
+    const first = deferred(), second = deferred()
+    mocks.desktop.cloudRequest.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const oldOpen = handler('enterprise-cloud:open')(event, appId, bounds, 'account', 'old')
+    const newOpen = handler('enterprise-cloud:open')(event, appId, bounds, 'account', 'new')
+    first.resolve(launch)
+    await expect(oldOpen).rejects.toThrow('cancelled')
+    handler('enterprise-cloud:close')(event, 'old')
+    handler('enterprise-cloud:close')(event, 'new')
+    second.resolve(launch)
+    await expect(newOpen).rejects.toThrow('cancelled')
+    expect(mocks.cloud.open).not.toHaveBeenCalled()
+  })
+
+  it('ignores subframe navigation and unrelated owner closes while authorization is pending', async () => {
+    const runtime = await startRuntime()
+    const { window, event } = attach(runtime)
+    const authorization = deferred()
+    mocks.desktop.cloudRequest.mockReturnValueOnce(authorization.promise)
+    const pending = handler('enterprise-cloud:open')(event, appId, bounds, 'account', 'owner')
+    window.webContents.emit('did-start-navigation', {}, 'https://child.test/', false, false)
+    handler('enterprise-cloud:close')(event, 'other')
+    authorization.resolve(launch)
+    await pending
+    expect(mocks.cloud.open).toHaveBeenCalledOnce()
+  })
+
+  it('starts each document occluded and clears only on a trusted overlay snapshot', async () => {
+    const runtime = await startRuntime()
+    const { window, event } = attach(runtime)
+    expect(mocks.cloud.setHostOccluded).toHaveBeenLastCalledWith(true)
+    handler('enterprise-cloud:occluded')(event, false)
+    expect(mocks.cloud.setHostOccluded).toHaveBeenLastCalledWith(false)
+    expect(() => handler('enterprise-cloud:occluded')(event, 'false')).toThrow('Invalid occlusion')
+    window.webContents.emit('did-start-navigation', {}, 'dsh-app://app/', false, true)
+    expect(mocks.cloud.close).toHaveBeenCalled()
+    expect(mocks.cloud.setHostOccluded).toHaveBeenLastCalledWith(true)
+    await runtime.dispose()
+    expect(window.webContents.listenerCount('did-start-navigation')).toBe(0)
+  })
+
+  it('captures only the trusted attached main window and removes the channel on disposal', async () => {
+    const runtime = await startRuntime()
+    const { window, event } = attach(runtime)
+    const capture = handler('enterprise-cloud:capture')
+    await expect(capture(event)).resolves.toEqual({ dataURL: 'cloud-frame' })
+    expect(mocks.cloud.capture).toHaveBeenCalledExactlyOnceWith(window)
+    expect(() => capture(eventFor(fakeWindow()))).toThrow('unowned window or frame')
+    window.webContents.mainFrame.url = 'https://untrusted.test/'
+    expect(() => capture(event)).toThrow('untrusted application origin')
+    expect(mocks.cloud.capture).toHaveBeenCalledOnce()
+    await runtime.dispose()
+    expect(mocks.handlers.has('enterprise-cloud:capture')).toBe(false)
+    expect(() => capture(event)).toThrow('stopping')
   })
 })
 

@@ -61,6 +61,7 @@ if (isEnterpriseAppUrl(location.href) && !process.argv.includes('--dsh-desktop-s
       resizeCloudWorkbench: (bounds: unknown, owner: string): Promise<void> => ipcRenderer.invoke('enterprise-cloud:resize', bounds, owner),
       closeCloudWorkbench: (owner: string): Promise<void> => ipcRenderer.invoke('enterprise-cloud:close', owner),
       setCloudHostOccluded: (value: boolean): Promise<void> => ipcRenderer.invoke('enterprise-cloud:occluded', value),
+      captureCloudWorkbench: () => ipcRenderer.invoke('enterprise-cloud:capture'),
       onCloudAccessRequired: (listener: (value: unknown) => void): (() => void) => {
         if (typeof listener !== 'function') throw new TypeError('Cloud listener must be a function.')
         const receive = (_event: Electron.IpcRendererEvent, value: unknown): void => listener(value)

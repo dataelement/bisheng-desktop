@@ -36,6 +36,14 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
   let layoutProbe: { stop(): void } | undefined
   let enterpriseChat: EnterpriseChatView | undefined
   let disposed = false
+  let cloudOpenEpoch = 0
+  let pendingCloudOpen: { epoch: number; owner: string } | undefined
+  // Launch authorization starts before the controller owns the requested view.
+  function cancelPendingCloudOpen(): void {
+    cloudOpenEpoch++
+    if (pendingCloudOpen) cloudView.closeFor(pendingCloudOpen.owner)
+    pendingCloudOpen = undefined
+  }
   let actions: EnterpriseHostActions | undefined
   const channels = new Set<string>()
   const enterpriseDesktop = await startEnterpriseDesktop({
@@ -51,7 +59,10 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
   })
   let cloudAccountKey = enterpriseDesktop.snapshot().connectionKey
   const unsubscribeCloud = enterpriseDesktop.subscribe(state => {
-    if (!state.connected || state.connectionKey !== cloudAccountKey) cloudView.close()
+    if (!state.connected || state.connectionKey !== cloudAccountKey) {
+      cancelPendingCloudOpen()
+      cloudView.close()
+    }
     cloudAccountKey = state.connectionKey
   })
   // A missing broker must not silently activate Web/session authentication in Desktop.
@@ -83,7 +94,7 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
     return { appId: record.appId, slug: record.slug, ticket: record.ticket, launchUrl: record.launchUrl, entryUrl: record.entryUrl, connectionKey: record.connectionKey }
   }
   function registerEnterpriseChatHandlers(): void {
-    for (const channel of ['enterprise-cloud:request', 'enterprise-cloud:open', 'enterprise-cloud:resize', 'enterprise-cloud:close', 'enterprise-cloud:occluded']) channels.add(channel)
+    for (const channel of ['enterprise-cloud:request', 'enterprise-cloud:open', 'enterprise-cloud:resize', 'enterprise-cloud:close', 'enterprise-cloud:occluded', 'enterprise-cloud:capture']) channels.add(channel)
     ipcMain.handle('enterprise-cloud:request', (event, input: unknown) => {
       assertTrustedMainWindowEvent(event)
       assertCloudRendererRequest(input)
@@ -92,12 +103,31 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
     ipcMain.handle('enterprise-cloud:open', async (event, id: unknown, bounds: unknown, key: unknown, owner: unknown) => {
       const parent = assertTrustedMainWindowEvent(event)
       if (typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id) || typeof owner !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(owner) || key !== enterpriseDesktop.snapshot().connectionKey) throw new Error('Invalid cloud request or account changed.')
-      const launch = await launchCloud(id)
-      if (launch.connectionKey !== key) throw new Error('Enterprise account changed.')
-      await cloudView.open(parent, launch, bounds, owner, () => enterpriseDesktop.snapshot().connectionKey, launchCloud)
+      cancelPendingCloudOpen()
+      const request = { epoch: cloudOpenEpoch, owner }
+      pendingCloudOpen = request
+      try {
+        const launch = await launchCloud(id)
+        if (request.epoch !== cloudOpenEpoch || pendingCloudOpen !== request) throw new Error('Cloud workbench opening was cancelled.')
+        // Authorization may outlive the initiating window, document or account.
+        if (assertTrustedMainWindowEvent(event) !== parent) throw new Error('Workbench window changed.')
+        const state = enterpriseDesktop.snapshot()
+        if (!state.connected || launch.connectionKey !== key || state.connectionKey !== key) throw new Error('Enterprise account changed.')
+        await cloudView.open(parent, launch, bounds, owner, () => {
+          const current = enterpriseDesktop.snapshot()
+          return current.connected ? current.connectionKey : undefined
+        }, launchCloud)
+      } finally {
+        if (pendingCloudOpen === request) pendingCloudOpen = undefined
+      }
     })
     ipcMain.handle('enterprise-cloud:resize', (event, bounds: unknown, owner: unknown) => { assertTrustedMainWindowEvent(event); cloudView.resizeFor(owner, bounds) })
-    ipcMain.handle('enterprise-cloud:close', (event, owner: unknown) => { assertTrustedMainWindowEvent(event); cloudView.closeFor(owner) })
+    ipcMain.handle('enterprise-cloud:close', (event, owner: unknown) => {
+      assertTrustedMainWindowEvent(event)
+      if (pendingCloudOpen?.owner === owner) cancelPendingCloudOpen()
+      cloudView.closeFor(owner)
+    })
+    ipcMain.handle('enterprise-cloud:capture', event => cloudView.capture(assertTrustedMainWindowEvent(event)))
     ipcMain.handle('enterprise-cloud:occluded', (event, value: unknown) => { assertTrustedMainWindowEvent(event); if (typeof value !== 'boolean') throw new Error('Invalid occlusion.'); cloudView.setHostOccluded(value) })
     for (const channel of [
       'enterprise-chat:present',
@@ -194,7 +224,24 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
 
 
   const stopLayoutProbe = (): void => { layoutProbe?.stop(); layoutProbe = undefined }
-  const closeWindow = (): void => { stopLayoutProbe(); cloudView.close(); enterpriseChat?.dispose(); enterpriseChat = undefined; mainWindow = undefined }
+  const onCloudNavigation = (_event: unknown, _url: string, isInPlace: boolean, isMainFrame: boolean): void => {
+    if (!isMainFrame) return
+    // Route changes invalidate the old selection; new documents must report overlays again.
+    cancelPendingCloudOpen()
+    if (!isInPlace) {
+      cloudView.close()
+      cloudView.setHostOccluded(true)
+    }
+  }
+  const closeWindow = (): void => {
+    stopLayoutProbe()
+    cancelPendingCloudOpen()
+    mainWindow?.webContents.removeListener('did-start-navigation', onCloudNavigation)
+    cloudView.close()
+    enterpriseChat?.dispose()
+    enterpriseChat = undefined
+    mainWindow = undefined
+  }
   try {
     registerEnterpriseChatHandlers()
     for (const channel of ['enterprise:settings-info', 'enterprise:settings-action']) channels.add(channel)
@@ -233,10 +280,15 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
         stopLayoutProbe()
         mainWindow.webContents.removeListener('did-finish-load', deliverPendingEnterpriseLogin)
         mainWindow.removeListener('closed', closeWindow)
+        mainWindow.webContents.removeListener('did-start-navigation', onCloudNavigation)
+        cancelPendingCloudOpen()
         cloudView.close()
         enterpriseChat?.dispose()
       }
       mainWindow = window
+      // Fail closed until this document reports its first overlay snapshot.
+      cloudView.setHostOccluded(true)
+      window.webContents.on('did-start-navigation', onCloudNavigation)
       // Work mode may never create the Chat view. Watch the host window itself.
       layoutProbe = startWindowLayoutProbe({
         window,

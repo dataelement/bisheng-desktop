@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto'
+import { resolveEnterpriseAppAccess } from 'dsh-desktop-enterprise/auth-apps-host'
+import { EnterpriseAuthError as AppAuthError } from 'dsh-desktop-enterprise/auth'
 import { EnterpriseProfileState, type ProfileRefreshReason } from './profile-state'
 import type { MobileAccessAccount } from './shared/mobile-access-account'
 import { parseWorkSkillRequest, readSkillBytes } from './work-skills'
@@ -141,6 +143,13 @@ export interface EnterpriseServiceNote {
   pluginId?: string
   path?: string
   duration?: number
+  protocol?: 'responses' | 'chat_completions'
+  model?: string
+  timeoutMs?: number
+  clientRequestId?: string
+  conversationId?: string
+  purpose?: string
+  bytes?: number
 }
 
 export interface EnterpriseServiceOptions {
@@ -912,7 +921,21 @@ export class EnterpriseService {
     const contract = await loadEnterpriseContract()
     const totalTimeout = AbortSignal.timeout(CHAT_TOTAL_TIMEOUT_MS)
     const headerController = new AbortController()
-    const headerTimer = setTimeout(() => headerController.abort(enterpriseHeaderTimeoutAbortReason()), CHAT_HEADER_TIMEOUT_MS)
+    const startedAt = Date.now()
+    const protocol = 'protocol' in parsed ? 'responses' : 'chat_completions'
+    const model = /^[A-Za-z0-9._:-]{1,128}$/.test(parsed.model) ? parsed.model : undefined
+    const clientRequestId = randomUUID()
+    const conversationId = parsed.attribution['x-dsh-conversation-id']
+    const purpose = parsed.attribution['x-dsh-request-purpose']
+    const report = (event: string, details: Omit<EnterpriseServiceNote, 'event'> = {}) => {
+      this.note(event, { protocol, model, clientRequestId, conversationId, purpose, duration: Date.now() - startedAt, ...details })
+    }
+    const headerTimer = setTimeout(() => {
+      report('chat_timeout', { code: 'response_headers', timeoutMs: CHAT_HEADER_TIMEOUT_MS })
+      headerController.abort(enterpriseHeaderTimeoutAbortReason())
+    }, CHAT_HEADER_TIMEOUT_MS)
+    const onCallerAbort = () => report('chat_caller_aborted', { code: 'response_headers' })
+    callerSignal.addEventListener('abort', onCallerAbort, { once: true })
     const lifetime = AbortSignal.any([callerSignal, sessionSignal])
     const upstreamSignal = AbortSignal.any([lifetime, headerController.signal, totalTimeout])
     let upstream: Response
@@ -924,6 +947,7 @@ export class EnterpriseService {
         {
           body: parsed.request,
           accessToken,
+          requestId: clientRequestId,
           signal: upstreamSignal,
           ...this.platformRequestOptions(),
           attribution: parsed.attribution
@@ -935,6 +959,7 @@ export class EnterpriseService {
       throw error
     } finally {
       clearTimeout(headerTimer)
+      callerSignal.removeEventListener('abort', onCallerAbort)
     }
     if (upstream.status === 401 && !retried && !response.headersSent) {
       await upstream.body?.cancel().catch(() => undefined)
@@ -950,7 +975,7 @@ export class EnterpriseService {
       this.writeForwarded(response, upstream, text)
       return
     }
-    await this.pipeSse(upstream, response, lifetime, 'protocol' in parsed)
+    await this.pipeSse(upstream, response, lifetime, 'protocol' in parsed, report, callerSignal)
     if (this.epoch === epoch) void this.syncUsage(epoch, parsed.model)
   }
 
@@ -990,19 +1015,58 @@ export class EnterpriseService {
       if (state.sessionVersion !== version) throw new EnterpriseAuthError('session_changed', 409)
       if (!state.connected) throw new EnterpriseAuthError('not_connected', 401)
     }
+    const refreshRejected = async (version: string, rejectedToken: string, signal: AbortSignal) => {
+      await this.enqueueMutation(async () => {
+        signal.throwIfAborted()
+        assertSession(version)
+        if (this.epoch !== epoch) throw new EnterpriseAuthError('session_changed', 409)
+        if (this.session?.access_token === rejectedToken) await this.refreshLocked()
+        assertSession(version)
+        if (this.epoch !== epoch) throw new EnterpriseAuthError('session_changed', 409)
+        if (!this.session?.access_token || this.session.access_token === rejectedToken) {
+          throw new EnterpriseAuthError('request_failed', 502)
+        }
+      })
+    }
     return this.authTransport.request(plugin, input, signal, {
       assertSession,
-      access: async request => {
-        const accessToken = await this.ensureAccess(epoch)
+      access: async (request, requestSignal) => {
+        let accessToken = await this.ensureAccess(epoch)
         assertSession(request.sessionVersion)
         const base = this.session?.base
         if (!base) throw new EnterpriseAuthError('not_connected', 401)
+        if (request.appId !== undefined) {
+          for (let attempt = 0; ; attempt++) {
+            try {
+              return await resolveEnterpriseAppAccess({
+                appId: request.appId, path: request.path, plugin, base, accessToken,
+                fetchImpl: (input, init) => createEnterpriseFetch(this.options.fetchImpl)(String(input), init), signal: requestSignal,
+                assertCurrent: () => {
+                  try { assertSession(request.sessionVersion) }
+                  catch (error) {
+                    if (error instanceof EnterpriseAuthError) throw new AppAuthError(error.code === 'not_connected' ? 'not_connected' : 'session_changed', error.message, error.status)
+                    throw error
+                  }
+                }
+              })
+            } catch (error) {
+              if (error instanceof AppAuthError && error.status === 401 && attempt === 0) {
+                await refreshRejected(request.sessionVersion, accessToken, requestSignal)
+                accessToken = await this.ensureAccess(epoch)
+                continue
+              }
+              if (error instanceof AppAuthError) throw new EnterpriseAuthError(error.errorCode, error.status)
+              throw error
+            }
+          }
+        }
         const { endpoint } = await resolveEnterpriseEndpoint(base, request.path,
           this.options.allowInsecureLoopback, this.platformRequestOptions().allowInsecurePrivateHttp)
         assertSession(request.sessionVersion)
         if (endpoint.origin !== new URL(base).origin) throw new EnterpriseAuthError('invalid_request', 400)
         return { endpoint: endpoint.toString(), accessToken }
       },
+      refresh: (request, token, requestSignal) => refreshRejected(request.sessionVersion, token, requestSignal),
       fetch: this.options.fetchImpl,
       audit: entry => this.note('auth_request', entry)
     })
@@ -1596,7 +1660,7 @@ export class EnterpriseService {
     }
   }
 
-  private async pipeSse(upstream: Response, response: ServerResponse, signal: AbortSignal, native = false): Promise<void> {
+  private async pipeSse(upstream: Response, response: ServerResponse, signal: AbortSignal, native = false, report: (event: string, details: Omit<EnterpriseServiceNote, 'event'>) => void, callerSignal: AbortSignal): Promise<void> {
     if (response.headersSent) return
     const requestId = sanitizeRequestId(upstream.headers.get('x-request-id') ?? undefined)
     const contentType = upstream.headers.get('content-type') ?? 'text/event-stream'
@@ -1611,11 +1675,17 @@ export class EnterpriseService {
     }
     const reader = upstream.body.getReader()
     let totalBytes = 0
-    let idle = setTimeout(() => response.destroy(), CHAT_FIRST_CHUNK_TIMEOUT_MS)
+    const timeout = (code: string, timeoutMs: number) => {
+      report('chat_timeout', { code, timeoutMs, requestId, status: upstream.status, bytes: totalBytes })
+      response.destroy()
+    }
+    let idle = setTimeout(() => timeout('first_chunk', CHAT_FIRST_CHUNK_TIMEOUT_MS), CHAT_FIRST_CHUNK_TIMEOUT_MS)
     const resetIdle = () => {
       clearTimeout(idle)
-      idle = setTimeout(() => response.destroy(), CHAT_IDLE_TIMEOUT_MS)
+      idle = setTimeout(() => timeout('stream_idle', CHAT_IDLE_TIMEOUT_MS), CHAT_IDLE_TIMEOUT_MS)
     }
+    const onCallerAbort = () => report('chat_caller_aborted', { code: totalBytes ? 'stream' : 'first_chunk', requestId, status: upstream.status, bytes: totalBytes })
+    callerSignal.addEventListener('abort', onCallerAbort, { once: true })
     const onAbort = () => {
       void reader.cancel().catch(() => undefined)
       if (!response.writableEnded) response.destroy()
@@ -1637,6 +1707,7 @@ export class EnterpriseService {
       if (!response.writableEnded) response.end()
     } finally {
       clearTimeout(idle)
+      callerSignal.removeEventListener('abort', onCallerAbort)
       signal.removeEventListener('abort', onAbort)
       await reader.cancel().catch(() => undefined)
       reader.releaseLock()
@@ -1828,7 +1899,14 @@ export class EnterpriseService {
       ...(details.originHash ? { originHash: details.originHash } : {}),
       ...(details.pluginId ? { pluginId: details.pluginId } : {}),
       ...(details.path ? { path: details.path } : {}),
-      ...(details.duration !== undefined ? { duration: details.duration } : {})
+      ...(details.duration !== undefined ? { duration: details.duration } : {}),
+      ...(details.protocol ? { protocol: details.protocol } : {}),
+      ...(details.model ? { model: details.model } : {}),
+      ...(details.timeoutMs !== undefined ? { timeoutMs: details.timeoutMs } : {}),
+      ...(sanitizeRequestId(details.clientRequestId) ? { clientRequestId: sanitizeRequestId(details.clientRequestId) } : {}),
+      ...(details.conversationId && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(details.conversationId) ? { conversationId: details.conversationId } : {}),
+      ...(['chat', 'compaction', 'session-title'].includes(details.purpose ?? '') ? { purpose: details.purpose } : {}),
+      ...(details.bytes !== undefined ? { bytes: details.bytes } : {})
     })
   }
 

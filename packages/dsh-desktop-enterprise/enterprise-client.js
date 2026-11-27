@@ -11,61 +11,85 @@ export class EnterpriseHttpError extends Error {
 }
 
 export class EnterpriseClient {
-  constructor({ getSessionAuth, refreshSessionTokens, getBroker = () => undefined }) {
+  constructor({ getSessionAuth, refreshSessionTokens, refreshAfter401, getBroker = () => undefined }) {
     this._getSessionAuth = getSessionAuth
     this._refreshSessionTokens = refreshSessionTokens
+    this._refreshAfter401 = refreshAfter401
     this._getBroker = getBroker
     this._cachedWebCookie = null
     this._cachedExpiresAt = 0
     this._webCookiePromise = null
+    this._webCookieKey = null
+    this._refreshPromise = null
   }
 
-  async getWebSessionCookie(forceFresh = false) {
-    const now = Date.now()
-    if (!forceFresh && this._cachedWebCookie && now < this._cachedExpiresAt - 30_000) {
-      return this._cachedWebCookie
+  _sameSession(a, b) {
+    if (!a?.base || !b?.base || a.base.replace(/\/+$/, '') !== b.base.replace(/\/+$/, '')) return false
+    for (const [left, right] of [[a.user?.id, b.user?.id], [a.tenant?.id, b.tenant?.id], [a.tokens?.session_id, b.tokens?.session_id]]) {
+      if ((left != null || right != null) && left !== right) return false
     }
-    if (this._webCookiePromise) return this._webCookiePromise
+    return true
+  }
 
-    this._webCookiePromise = (async () => {
+  async getWebSessionCookie(forceFresh = false, sessionAuth) {
+    const auth = sessionAuth || await this._getSessionAuth()
+    if (!auth?.base || !auth?.tokens?.access_token) return null
+    const key = JSON.stringify([auth.base, auth.user?.id, auth.tenant?.id, auth.tokens?.session_id, auth.tokens.access_token])
+    if (!forceFresh && this._webCookieKey === key && this._cachedWebCookie && Date.now() < this._cachedExpiresAt - 30_000) return this._cachedWebCookie
+    if (this._webCookiePromise?.key === key) return this._webCookiePromise.promise
+
+    const promise = (async () => {
       try {
-        const auth = await this._getSessionAuth()
-        if (!auth?.base || !auth?.tokens?.access_token) {
-          this._cachedWebCookie = null
-          this._cachedExpiresAt = 0
-          return null
-        }
-        const base = auth.base.replace(/\/+$/, '')
-        const res = await fetch(`${base}/api/v1/dsh/web-session`, {
+        const res = await fetch(`${auth.base.replace(/\/+$/, '')}/api/v1/dsh/web-session`, {
           method: 'POST',
-          headers: {
-            authorization: `Bearer ${auth.tokens.access_token}`,
-            'content-type': 'application/json',
-            accept: 'application/json'
-          },
+          headers: { authorization: `Bearer ${auth.tokens.access_token}`, 'content-type': 'application/json', accept: 'application/json' },
           body: JSON.stringify({ redirect_to: '/workspace/c/new' })
         })
         if (!res.ok) {
+          await res.body?.cancel().catch(() => {})
           console.warn('[enterprise-client] failed to exchange web session cookie', res.status)
           return null
         }
         const data = await res.json().catch(() => null)
+        const current = await this._getSessionAuth()
+        if (!this._sameSession(auth, current) || current.tokens?.access_token !== auth.tokens.access_token) return null
         if (data?.cookie) {
+          this._webCookieKey = key
           this._cachedWebCookie = data.cookie
-          const expiresIn = Number(data.expires_in) || 300
-          this._cachedExpiresAt = Date.now() + expiresIn * 1000
-          return this._cachedWebCookie
+          this._cachedExpiresAt = Date.now() + (Number(data.expires_in) || 300) * 1000
+          return data.cookie
         }
         return null
       } catch (err) {
         console.warn('[enterprise-client] error during web session exchange', err)
         return null
-      } finally {
-        this._webCookiePromise = null
       }
     })()
+    this._webCookiePromise = { key, promise }
+    try { return await promise } finally {
+      if (this._webCookiePromise?.promise === promise) this._webCookiePromise = null
+    }
+  }
 
-    return this._webCookiePromise
+  async refreshAfter401(auth) {
+    const token = auth?.tokens?.access_token
+    const current = await this._getSessionAuth()
+    if (!token || !this._sameSession(auth, current) || !current.tokens?.access_token) return null
+    if (current.tokens.access_token !== token) return current
+    if (typeof this._refreshAfter401 !== 'function' && typeof this._refreshSessionTokens !== 'function') return null
+    if (!this._refreshPromise || !this._sameSession(this._refreshPromise.auth, auth) || this._refreshPromise.token !== token) {
+      const promise = (async () => {
+        if (typeof this._refreshAfter401 === 'function') await this._refreshAfter401(token)
+        else await this._refreshSessionTokens()
+        return this._getSessionAuth()
+      })()
+      this._refreshPromise = { auth, token, promise }
+      promise.finally(() => {
+        if (this._refreshPromise?.promise === promise) this._refreshPromise = null
+      }).catch(() => {})
+    }
+    const fresh = await this._refreshPromise.promise
+    return this._sameSession(auth, fresh) && fresh?.tokens?.access_token && fresh.tokens.access_token !== token ? fresh : null
   }
 
   async request(path, options = {}) {
@@ -83,13 +107,20 @@ export class EnterpriseClient {
       timeoutMs = 60_000
     } = options
 
-    const execute = async (sessionAuth, isRetry = false) => {
+    const execute = async (sessionAuth, isRetry = false, failedCredential = null) => {
       const base = sessionAuth.base.replace(/\/+$/, '')
       const targetUrl = new URL(path, base)
 
       // Get web session cookie (double guarantee)
-      const webCookie = await this.getWebSessionCookie(isRetry)
-      const activeToken = webCookie || sessionAuth.tokens.access_token
+      const webCookie = await this.getWebSessionCookie(isRetry, sessionAuth)
+      const current = await this._getSessionAuth()
+      if (!this._sameSession(sessionAuth, current) || current?.tokens?.access_token !== sessionAuth.tokens.access_token) {
+        throw new EnterpriseHttpError('Enterprise session changed.', { status: 409, code: 'SESSION_CHANGED' })
+      }
+      const activeToken = (isRetry && webCookie === failedCredential ? null : webCookie) || sessionAuth.tokens.access_token
+      if (isRetry && activeToken === failedCredential) {
+        throw new EnterpriseHttpError('Enterprise session refresh failed.', { status: 401, code: 'UNAUTHORIZED' })
+      }
 
       const reqHeaders = { ...headers }
       // Merge cookies
@@ -101,7 +132,11 @@ export class EnterpriseClient {
       parts.push(`access_token_cookie=${activeToken}`)
       reqHeaders.cookie = parts.join('; ')
 
-      // Ensure Authorization header
+      // Replace caller credentials on replay so the failed token is never reused.
+      if (isRetry) {
+        delete reqHeaders.authorization
+        delete reqHeaders.Authorization
+      }
       if (!reqHeaders.authorization && !reqHeaders.Authorization) {
         reqHeaders.authorization = `Bearer ${activeToken}`
       }
@@ -122,25 +157,17 @@ export class EnterpriseClient {
         throw new EnterpriseHttpError(`Enterprise request failed: ${err.message}`, { status: 502, code: 'NETWORK_ERROR', cause: err })
       }
 
-      // Handle 401 auto-retry
       if (response.status === 401 && !isRetry) {
-        console.info('[enterprise-client] received 401, attempting token & cookie refresh...')
+        let freshAuth
         try {
-          // 1. Refresh web session cookie first
-          const newCookie = await this.getWebSessionCookie(true)
-          if (newCookie && newCookie !== webCookie) {
-            return execute(sessionAuth, true)
-          }
-          // 2. Refresh OAuth tokens
-          if (typeof this._refreshSessionTokens === 'function') {
-            await this._refreshSessionTokens()
-            const freshAuth = await this._getSessionAuth()
-            if (freshAuth?.tokens?.access_token) {
-              return execute(freshAuth, true)
-            }
-          }
+          freshAuth = await this.refreshAfter401(sessionAuth)
         } catch (refreshErr) {
           console.warn('[enterprise-client] refresh on 401 failed', refreshErr)
+        }
+        if (freshAuth) {
+          // This response is discarded when the request is replayed.
+          await response.body?.cancel().catch(() => {})
+          return execute(freshAuth, true, activeToken)
         }
       }
 

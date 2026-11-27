@@ -19,6 +19,10 @@
       "types": "./enterprise-auth.d.ts",
       "default": "./enterprise-auth.js"
     },
+    "./auth-apps-host": {
+      "types": "./enterprise-apps-host.d.ts",
+      "default": "./enterprise-apps-host.js"
+    },
     "./auth-web-host": {
       "types": "./web-auth.d.ts",
       "default": "./web-auth.js"

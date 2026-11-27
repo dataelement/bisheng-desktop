@@ -2,7 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { EnterpriseAuth } from './enterprise-auth.js'
 import type { AuditContextField } from './contract.js'
 export { EnterpriseAuthError } from './enterprise-auth.js'
-export type { EnterpriseAuth, EnterpriseAuthState, EnterpriseAuthRequestInit, EnterpriseAuthErrorCode } from './enterprise-auth.js'
+export type { EnterpriseAuth, EnterpriseAppClient, EnterpriseAuthState, EnterpriseAuthRequestInit, EnterpriseAuthErrorCode } from './enterprise-auth.js'
 
 export interface EnterpriseAuditCapability {
   fields: AuditContextField[]

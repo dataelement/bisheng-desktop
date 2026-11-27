@@ -76,6 +76,14 @@ describe('enterprise desktop preload bridge', () => {
     expect(invoke).toHaveBeenLastCalledWith('enterprise:settings-info')
   })
 
+  it('routes cloud backing capture through its named IPC and preserves failures', async () => {
+    const { enterprise } = await loadPreload()
+    await expect(enterprise.captureCloudWorkbench()).resolves.toEqual({ channel: 'enterprise-cloud:capture', args: [] })
+    expect(invoke).toHaveBeenLastCalledWith('enterprise-cloud:capture')
+    invoke.mockRejectedValueOnce(new Error('capture failed'))
+    await expect(enterprise.captureCloudWorkbench()).rejects.toThrow('capture failed')
+  })
+
   it('validates the three settings actions before invoking IPC and propagates rejected calls', async () => {
     const { enterprise } = await loadPreload()
     for (const value of ['install', '', null, {}, 42]) expect(() => enterprise.settingsAction(value)).toThrow('Invalid Desktop settings action')

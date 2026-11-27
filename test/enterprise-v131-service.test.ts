@@ -1,6 +1,7 @@
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { ServerResponse } from 'node:http'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createEnterpriseFetch, type EnterpriseFetch } from '../packages/dsh-desktop-enterprise/desktop/platform-fetch'
 import { EnterpriseService, type EnterpriseServiceNote, type EnterpriseServiceOptions } from '../packages/dsh-desktop-enterprise/desktop/enterprise-service'
@@ -128,6 +129,53 @@ async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<voi
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
 }
+
+it('records first-chunk timeout with response metadata and no payload', async () => {
+  const { service } = await createService()
+  const report = vi.fn()
+  const caller = new AbortController()
+  const upstream = new Response(new ReadableStream({}), { headers: { 'content-type': 'text/event-stream', 'x-request-id': 'request-123' } })
+  const response = { headersSent: false, writableEnded: false, writeHead: vi.fn(), destroy: vi.fn(), end: vi.fn() } as unknown as ServerResponse
+  vi.useFakeTimers()
+  try {
+    const pending = service['pipeSse'](upstream, response, caller.signal, true, report, caller.signal)
+    await vi.advanceTimersByTimeAsync(300_000)
+    expect(report).toHaveBeenCalledWith('chat_timeout', { code: 'first_chunk', timeoutMs: 300_000, requestId: 'request-123', status: 200, bytes: 0 })
+    expect(response.destroy).toHaveBeenCalledOnce()
+    caller.abort()
+    await pending
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('logs the same client request ID sent to the backend when a caller aborts before headers', async () => {
+  const platform = createMockEnterpriseServer({ port: 0 })
+  const origin = await platform.listen()
+  cleanups.push(() => platform.close())
+  let sentId = ''
+  const { service, entries } = await createService(createEnterpriseFetch(async (input, init) => {
+    if (new URL(input).pathname === '/api/v1/dsh/chat/completions') {
+      sentId = new Headers(init?.headers).get('x-request-id') ?? ''
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+      })
+    }
+    return fetch(input, init)
+  }))
+  await completeBrowserLogin(origin, (await service.startLogin(origin)).authorizationUrl)
+  await waitFor(() => service.snapshot().modelsAvailable)
+  const model = service.snapshot().models[0]!.id
+  const caller = new AbortController()
+  const response = {} as ServerResponse
+  const pending = service.proxyChat({ request: { model, messages: [], stream: true, stream_options: { include_usage: true } }, attribution: { 'x-dsh-conversation-id': 'conversation-123', 'x-dsh-request-purpose': 'chat' } }, response, caller.signal)
+  const result = expect(pending).rejects.toThrow()
+  await waitFor(() => sentId !== '')
+  caller.abort()
+  await result
+  expect(sentId).toMatch(/^[a-f0-9-]{36}$/)
+  expect(entries).toContainEqual(expect.objectContaining({ event: 'chat_caller_aborted', code: 'response_headers', clientRequestId: sentId, conversationId: 'conversation-123', purpose: 'chat' }))
+})
 
 describe('enterprise service login loop', () => {
   it('does not poll after login or retry in the background after failure, but recovers on demand', async () => {
@@ -918,7 +966,7 @@ describe('enterprise mobile access authorization', () => {
 })
 
 describe('enterprise market credential boundary', () => {
-  it('uses generic host auth without replaying 401 and preserves versions across refresh', async () => {
+  it('retries generic host auth once after 401 and preserves versions across refresh', async () => {
     const platform = createMockEnterpriseServer({ port: 0 })
     const origin = await platform.listen()
     cleanups.push(async () => platform.close())
@@ -943,11 +991,13 @@ describe('enterprise market credential boundary', () => {
     const response = await service.authRequest(plugin, { path: '/business/action?private=query', method: 'POST', body: 'business', sessionVersion: state.sessionVersion }, new AbortController().signal)
     expect(response.status).toBe(401)
     expect(await response.json()).toEqual({ denied: true })
-    expect(requests).toHaveLength(1)
+    expect(requests).toHaveLength(2)
     expect(new Headers(requests[0]?.headers).get('authorization')).toMatch(/^Bearer /)
     expect(new Headers(requests[0]?.headers).get('authorization')).not.toBe('Bearer ' + before?.access_token)
     expect(entries.find(entry => entry.event === 'auth_request')).toMatchObject({ pluginId: plugin.pluginId, path: '/business/action', status: 401, duration: expect.any(Number) })
     expect(requests[0]).toMatchObject({ redirect: 'error', credentials: 'omit' })
+    expect(requests.map(request => Buffer.from(request.body as Uint8Array).toString())).toEqual(['business', 'business'])
+    expect(new Headers(requests[1]?.headers).get('authorization')).not.toBe(new Headers(requests[0]?.headers).get('authorization'))
     await service.refresh()
     expect(service.authState().sessionVersion).toBe(state.sessionVersion)
     expect(service.snapshot().revision).toBeGreaterThan(0)
@@ -959,7 +1009,136 @@ describe('enterprise market credential boundary', () => {
     expect(service.authState().sessionVersion).not.toBe(state.sessionVersion)
     await expect(service.authRequest(plugin, { path: '/business/action', sessionVersion: state.sessionVersion }, new AbortController().signal)).rejects.toMatchObject({ code: 'session_changed', status: 409 })
     await logout
-    expect(requests).toHaveLength(1)
+    expect(requests).toHaveLength(2)
+  })
+
+  it.each([false, true])('refreshes a rejected app delegation once (repeat rejection: %s)', async (repeatRejection) => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    const tokens: Array<string | null> = []
+    let refreshes = 0
+    let targetCalls = 0
+    const appToken = 'bapp_v1_' + 'a'.repeat(43)
+    const { service } = await createService(async (url, init) => {
+      const parsed = new URL(url)
+      if (parsed.pathname.endsWith('/token') && String(init?.body).includes('refresh_token')) refreshes++
+      if (parsed.pathname === '/api/v1/dsh/integrations/example/delegations') {
+        tokens.push(new Headers(init?.headers).get('authorization'))
+        if (tokens.length === 1 || repeatRejection) return new Response('', { status: 401 })
+        return Response.json({ protocol_version: 1, app_id: 'example', audience: 'example', base_url: 'https://app.example.com', token_type: 'Bearer', access_token: appToken, expires_in: 60, scope: 'read' })
+      }
+      if (parsed.hostname === 'app.example.com') {
+        targetCalls++
+        expect(new Headers(init?.headers).get('authorization')).toBe('Bearer ' + appToken)
+        return new Response('target denied', { status: 401 })
+      }
+      if (parsed.hostname === 'enterprise.example.com') {
+        const response = await fetch(origin + parsed.pathname + parsed.search, init)
+        if (parsed.pathname === '/api/v1/dsh/authorizations') {
+          const body = await response.json() as { authorize_url: string }
+          body.authorize_url = body.authorize_url.replace(origin, 'https://enterprise.example.com')
+          return Response.json(body)
+        }
+        return response
+      }
+      return fetch(url, init)
+    })
+    await completeBrowserLogin(origin, (await service.startLogin('https://enterprise.example.com')).authorizationUrl)
+    await waitFor(() => service.snapshot().modelsAvailable)
+    const request = service.authRequest({ pluginId: 'a'.repeat(32), instanceId: 'one' },
+      { appId: 'example', path: '/action', sessionVersion: service.authState().sessionVersion }, new AbortController().signal)
+    if (repeatRejection) await expect(request).rejects.toMatchObject({ code: 'authorization_denied', status: 401 })
+    else {
+      const response = await request
+      expect(response.status).toBe(401)
+      expect(await response.text()).toBe('target denied')
+    }
+    expect(tokens).toHaveLength(2)
+    expect(tokens[1]).not.toBe(tokens[0])
+    expect(refreshes).toBe(1)
+    expect(targetCalls).toBe(repeatRejection ? 0 : 1)
+  })
+
+  it('returns an application target 401 without refreshing the enterprise session', async () => {
+    const { EnterpriseAuthTransport } = await import('../packages/dsh-desktop-enterprise/desktop/enterprise-auth')
+    const transport = new EnterpriseAuthTransport()
+    let refreshes = 0
+    let calls = 0
+    const response = await transport.request({ pluginId: 'example-plugin', instanceId: 'one' },
+      { appId: 'example', path: '/action', method: 'POST', body: 'payload', sessionVersion: 'v1' }, new AbortController().signal, {
+        assertSession: () => undefined,
+        access: async () => ({ endpoint: 'https://example.invalid/action', accessToken: 'app-token' }),
+        refresh: async () => { refreshes++ },
+        fetch: async () => { calls++; return new Response('denied', { status: 401 }) },
+        audit: () => undefined
+      })
+    expect(response.status).toBe(401)
+    expect(await response.text()).toBe('denied')
+    expect(calls).toBe(1)
+    expect(refreshes).toBe(0)
+  })
+
+  it('does not retry a request when logout interrupts its refresh', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    let release!: () => void
+    let started!: () => void
+    const refreshing = new Promise<void>(resolve => { started = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let calls = 0
+    const { service } = await createService(async (url, init) => {
+      const path = new URL(url).pathname
+      if (path === '/business/session-switch') { calls++; return new Response('', { status: 401 }) }
+      if (path.endsWith('/token') && String(init?.body).includes('refresh_token')) { started(); await gate }
+      return fetch(url, init)
+    })
+    await completeBrowserLogin(origin, (await service.startLogin(origin)).authorizationUrl)
+    await waitFor(() => service.snapshot().modelsAvailable)
+    const request = service.authRequest({ pluginId: 'example-plugin', instanceId: 'one' },
+      { path: '/business/session-switch', sessionVersion: service.authState().sessionVersion }, new AbortController().signal)
+    const outcome = expect(request).rejects.toMatchObject({ code: 'session_changed', status: 409 })
+    await refreshing
+    const logout = service.logout()
+    release()
+    await outcome
+    await logout
+    expect(calls).toBe(1)
+    expect(service.authState().connected).toBe(false)
+  })
+
+  it('coalesces concurrent 401 rotation and replays POST bodies with the new token', async () => {
+    const platform = createMockEnterpriseServer({ port: 0 })
+    const origin = await platform.listen()
+    cleanups.push(async () => platform.close())
+    let refreshes = 0
+    const calls: Array<{ token: string | null; body: string }> = []
+    let release!: () => void
+    const both = new Promise<void>(resolve => { release = resolve })
+    const { service } = await createService(async (url, init) => {
+      const path = new URL(url).pathname
+      if (path.endsWith('/token') && String(init?.body).includes('refresh_token')) refreshes++
+      if (path !== '/business/concurrent') return fetch(url, init)
+      calls.push({ token: new Headers(init?.headers).get('authorization'), body: Buffer.from(init?.body as Uint8Array).toString() })
+      if (calls.length <= 2) {
+        if (calls.length === 2) release()
+        await both
+        return new Response('', { status: 401 })
+      }
+      return Response.json({ ok: true })
+    })
+    await completeBrowserLogin(origin, (await service.startLogin(origin)).authorizationUrl)
+    await waitFor(() => service.snapshot().modelsAvailable)
+    const version = service.authState().sessionVersion
+    const input = { path: '/business/concurrent', method: 'POST', body: 'payload', sessionVersion: version }
+    const results = await Promise.all([1, 2].map(() => service.authRequest({ pluginId: 'example-plugin', instanceId: 'one' }, input, new AbortController().signal)))
+    expect(results.map(result => result.status)).toEqual([200, 200])
+    expect(refreshes).toBe(1)
+    expect(calls.map(call => call.body)).toEqual(['payload', 'payload', 'payload', 'payload'])
+    expect(calls[0]?.token).toBe(calls[1]?.token)
+    expect(calls[2]?.token).toBe(calls[3]?.token)
+    expect(calls[2]?.token).not.toBe(calls[0]?.token)
   })
 
   it('serves catalog and artifact through the broker with refreshed host credentials and rejects stale account requests', async () => {

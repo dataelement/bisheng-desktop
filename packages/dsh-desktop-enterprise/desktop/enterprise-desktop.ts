@@ -67,10 +67,18 @@ export async function startEnterpriseDesktop(options: {
       const parts = [`[enterprise] ${entry.event}`]
       if (entry.status) parts.push(`status=${entry.status}`)
       if (entry.requestId) parts.push(`requestId=${entry.requestId}`)
+      if (entry.clientRequestId) parts.push(`clientRequestId=${entry.clientRequestId}`)
+      if (entry.conversationId) parts.push(`conversationId=${entry.conversationId}`)
+      if (entry.purpose) parts.push(`purpose=${entry.purpose}`)
       if (entry.originHash) parts.push(`origin=${entry.originHash}`)
       if (entry.pluginId) parts.push(`plugin=${JSON.stringify(entry.pluginId)}`)
       if (entry.path) parts.push(`path=${JSON.stringify(entry.path)}`)
       if (entry.duration !== undefined) parts.push(`durationMs=${entry.duration}`)
+      if (entry.code) parts.push(`stage=${entry.code}`)
+      if (entry.protocol) parts.push(`protocol=${entry.protocol}`)
+      if (entry.model) parts.push(`model=${entry.model}`)
+      if (entry.timeoutMs !== undefined) parts.push(`timeoutMs=${entry.timeoutMs}`)
+      if (entry.bytes !== undefined) parts.push(`bytes=${entry.bytes}`)
       options.note?.(parts.join(' '))
     }
   })
