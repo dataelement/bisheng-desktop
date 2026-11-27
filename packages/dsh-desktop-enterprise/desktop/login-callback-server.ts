@@ -67,11 +67,13 @@ function sendHtml(response: ServerResponse, status: number, title: string, messa
 
 export async function startLoginCallbackServer(options: {
   expectedState: string
+  productName?: string
   expectedAuthId: () => string | undefined
   timeoutMs?: number
   onAccepted: (result: LoginCallbackAccepted) => void
   onExpired?: () => void
 }): Promise<EnterpriseLoginCallbackServer> {
+  const productName = options.productName?.trim() ? options.productName : 'BISHENG'
   let consumed = false
   let closed = false
   let flowTimer: ReturnType<typeof setTimeout> | undefined
@@ -156,8 +158,8 @@ export async function startLoginCallbackServer(options: {
     sendHtml(
       response,
       200,
-      'Return to BISHENG',
-      'You can close this window and return to BISHENG.'
+      `Return to ${productName}`,
+      `You can close this window and return to ${productName}.`
     )
     finish()
     options.onAccepted({

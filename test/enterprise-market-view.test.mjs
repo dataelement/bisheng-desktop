@@ -132,8 +132,8 @@ it.each([
 })
 
 it.each([
-  ['zh-CN', '企业插件需要桌面授权服务，请在 BISHENG Desktop 中打开市场或联系管理员。'],
-  ['en-US', 'Enterprise plugins require the desktop authorization service. Open the market in BISHENG Desktop or contact your administrator.']
+  ['zh-CN', '企业插件需要桌面授权服务，请在桌面客户端中打开市场或联系管理员。'],
+  ['en-US', 'Enterprise plugins require the desktop authorization service. Open the market in the desktop app or contact your administrator.']
 ])('shows actionable authorization guidance in %s while retaining browsing', async (language, copy) => {
   const { text, card } = await mountMarket({ language, installReady: false, failureCode: 'authorization_unavailable' })
   expect(text()).toContain(copy)

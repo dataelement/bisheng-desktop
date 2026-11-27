@@ -1,7 +1,7 @@
 {
   "name": "dsh-desktop-enterprise",
   "version": "0.3.18",
-  "description": "Built-in BiSheng enterprise identity and model integration for DSH Desktop.",
+  "description": "Built-in BiSheng enterprise identity and model integration.",
   "private": true,
   "type": "module",
   "main": "./index.js",

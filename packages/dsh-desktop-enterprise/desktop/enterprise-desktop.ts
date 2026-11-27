@@ -34,6 +34,7 @@ export interface EnterpriseDesktopRuntime {
 export async function startEnterpriseDesktop(options: {
   confirmCloudEffect?: CloudAuthorize
   desktopVersion?: string
+  productName?: string
   activateDesktop?: () => Promise<void> | void
   userDataPath: string
   safeStorage: SafeStorageCryptoAdapter
@@ -57,6 +58,7 @@ export async function startEnterpriseDesktop(options: {
     cloudRoot: join(options.userDataPath, 'cloud-development'),
     confirmCloudEffect: options.confirmCloudEffect,
     desktopVersion: options.desktopVersion,
+    productName: options.productName,
     activateDesktop: options.activateDesktop,
     vault,
     fetchImpl: options.fetchImpl,

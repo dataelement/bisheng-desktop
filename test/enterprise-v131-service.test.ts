@@ -29,7 +29,7 @@ function memorySafeStorage(): SafeStorageCryptoAdapter {
 
 async function createService(
   fetchImpl: EnterpriseFetch = createEnterpriseFetch(globalThis.fetch),
-  options: Pick<EnterpriseServiceOptions, 'desktopVersion' | 'activateDesktop' | 'now' | 'startCallback'> = {}
+  options: Pick<EnterpriseServiceOptions, 'desktopVersion' | 'productName' | 'activateDesktop' | 'now' | 'startCallback'> = {}
 ) {
   const directory = await mkdtemp(join(tmpdir(), 'enterprise-service-'))
   const vault = new SecureEnterpriseCredentialVault(join(directory, ENTERPRISE_VAULT_FILENAME), memorySafeStorage())
@@ -458,10 +458,14 @@ describe('enterprise service login loop', () => {
       if (failActivation) throw new Error('window unavailable')
     })
     const { service, notes } = await createService(createEnterpriseFetch(fetchImpl), {
-      desktopVersion: '0.1.1-beta.2+build.7', activateDesktop
+      desktopVersion: '0.1.1-beta.2+build.7', productName: 'Example Dev', activateDesktop,
+      startCallback: callbackOptions => {
+        expect(callbackOptions.productName).toBe('Example Dev')
+        return startLoginCallbackServer(callbackOptions)
+      }
     })
     const started = await service.startLogin(origin)
-    expect(requests[0]).toMatchObject({ client_version: '0.1.1-beta.2+build.7', device_name: 'BISHENG' })
+    expect(requests[0]).toMatchObject({ client_version: '0.1.1-beta.2+build.7', device_name: 'Example Dev' })
     expect(activateDesktop).not.toHaveBeenCalled()
     await completeBrowserLogin(origin, started.authorizationUrl)
     await activated

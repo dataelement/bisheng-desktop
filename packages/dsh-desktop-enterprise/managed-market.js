@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { enterpriseProductName } from './product-name.js'
 
 const PREFIX = 'enterprise:'
 const TARGET = /^enterprise:([a-f0-9]{64}):([a-f0-9]{32})$/u
@@ -96,7 +97,7 @@ export async function performMarketAction(manager, source, market, input) {
       if (!expectedAccountKey) throw new Error('Sign in and select an enterprise plugin.')
       return market.act({ ...input, expectedAccountKey })
     }
-    throw new Error('Plugin Manager does not support enterprise managed sources. Update BISHENG Desktop.')
+    throw new Error(`Plugin Manager does not support enterprise managed sources. Update ${enterpriseProductName()}.`)
   }
   const prepared = source.prepare(input)
   try {

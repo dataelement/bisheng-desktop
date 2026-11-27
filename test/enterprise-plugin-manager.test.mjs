@@ -6,6 +6,13 @@ import { PluginManager } from '@deepseek-ai/dsh-plugin-manager'
 import { createManagedMarketSource, performMarketAction } from '../packages/dsh-desktop-enterprise/managed-market.js'
 import { installEnterpriseWorkbench } from '../packages/dsh-desktop-enterprise/workbench-install.js'
 
+it('uses the host identity in managed-source upgrade errors', async () => {
+  vi.stubEnv('DSH_DESKTOP_PRODUCT_NAME', 'Example Dev')
+  try {
+    await expect(performMarketAction({}, {}, {}, { action: 'install' })).rejects.toThrow('Update Example Dev.')
+  } finally { vi.unstubAllEnvs() }
+})
+
 const roots = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))) })
 const id = 'a'.repeat(32), key = 'b'.repeat(64)
