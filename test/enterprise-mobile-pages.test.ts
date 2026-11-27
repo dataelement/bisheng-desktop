@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createEnterpriseMobileExtension } from './mobile-extension'
-import { renderMobilePage } from './mobile-pages'
+import { createEnterpriseMobileExtension } from '../packages/dsh-desktop-enterprise/desktop/mobile/mobile-extension'
+import { renderMobilePage } from '../packages/dsh-desktop-enterprise/desktop/mobile/mobile-pages'
 
 const account = { readMobileAccessAccount: () => ({}), subscribeMobileAccessAccount: () => () => {} }
 
