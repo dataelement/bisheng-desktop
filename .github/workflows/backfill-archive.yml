@@ -46,7 +46,7 @@ jobs:
       - name: Archive to ModelScope and rebuild the version index
         env:
           MODELSCOPE_TOKEN: ${{ secrets.MODELSCOPE_TOKEN }}
-          MODELSCOPE_REPO_ID: alexyaojin/dsh-desktop
+          MODELSCOPE_REPO_ID: alexyaojin/bisheng-work
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
@@ -74,7 +74,7 @@ jobs:
           print(f"✅ Archived {src} -> {repo_id}/releases/archive/{version}")
 
           sys.path.insert(0, ".github/scripts")
-          from append_version_index import append_version_index
+          from bisheng_append_version_index import append_version_index
           append_version_index(api, repo_id, token, version)
           print("✅ Appended release to releases/versions.json")
           PY

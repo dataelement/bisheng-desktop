@@ -28,6 +28,10 @@
     "developmentUserDataDirectory": "bisheng-dev",
     "protocolScheme": "bisheng"
   },
+  "dshDesktopUpdates": {
+    "updatesBaseUrl": "https://dshdesktop.com/work/updates/",
+    "strategy": "feed"
+  },
   "dshDesktopHostPlugins": [
     "dsh-desktop-enterprise",
     "dsh-desktop-client-ui",
@@ -352,6 +356,10 @@
         "userDataDirectory": "bisheng",
         "developmentUserDataDirectory": "bisheng-dev",
         "protocolScheme": "bisheng"
+      },
+      "dshDesktopUpdates": {
+        "updatesBaseUrl": "https://dshdesktop.com/work/updates/",
+        "strategy": "feed"
       },
       "dshDesktopHostPlugins": [
         "dsh-desktop-enterprise",
