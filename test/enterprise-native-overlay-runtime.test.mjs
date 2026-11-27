@@ -30,10 +30,6 @@ it.skipIf(!['darwin', 'win32'].includes(process.platform))('hands real Electron 
 function main() {
   const { app, BrowserWindow, WebContentsView, ipcMain } = require('electron')
   const { join } = require('node:path')
-  // A covered Windows window is reported occluded, which sets document.hidden.
-  // Overlay refresh returns immediately while hidden, so the modal never hides
-  // the native view on a CI desktop that does not uncover this fixture.
-  app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
   app.setPath('userData', join(__dirname, 'profile'))
   app.whenReady().then(async () => {
     const host = new BrowserWindow({ width: 1000, height: 700, show: false, webPreferences: { nodeIntegration: true, contextIsolation: false } })
@@ -46,8 +42,10 @@ function main() {
     ipcMain.handle('overlay:visible', () => native.getVisible())
     ipcMain.on('overlay:result', (_event, error) => { console.log(error ? 'NATIVE_OVERLAY_FAILURE ' + error : 'NATIVE_OVERLAY_SUCCESS'); host.destroy(); app.exit(error ? 1 : 0) })
     await host.loadFile(join(__dirname, 'page.html'))
-    // macOS can composite screenshots without foreground focus. Windows leaves a
-    // showInactive window occluded on the CI desktop, so show it there.
+    // In-page overlays are only applied while the document is visible. A covered
+    // window sets document.hidden and refresh waits for visibilitychange.
+    // showInactive leaves the Windows CI window covered, so show that fixture.
+    // macOS can composite screenshots without taking foreground focus.
     if (process.platform === 'win32') host.show()
     else host.showInactive()
     await host.webContents.executeJavaScript(require('node:fs').readFileSync(join(__dirname, 'client.cjs'), 'utf8'))
