@@ -790,6 +790,16 @@ const revealWorkSession = hasNavigationHandler || typeof originalOpenSession !==
     return result
   }
 if (revealWorkSession) ctx.uiWorkspace.openSession = revealWorkSession
+// Older hosts also start sessions without emitting navigation events. The sidebar
+// calls this same service, so reveal the host before it replaces the main session.
+const originalStartSession = ctx.uiWorkspace.startSession
+const revealNewWorkSession = hasNavigationHandler || typeof originalStartSession !== 'function'
+  ? null
+  : function (...args) {
+    if (value.mode === 'chat') select('work')
+    return originalStartSession.apply(this, args)
+  }
+if (revealNewWorkSession) ctx.uiWorkspace.startSession = revealNewWorkSession
           const settings = (event) => publish({ settingsOpen: event.detail?.open === true, ...(event.detail?.open ? {} : { settingsSurface: undefined }) })
           const approvals = (event) => publish({ approvalsOpen: event.detail?.open === true })
           // A sidebar account dialog is drawn by the renderer, so the native view yields the region.
@@ -848,6 +858,7 @@ deletion.reset(); renaming.reset(); projects.setScope(undefined); revision++; hi
             window.removeEventListener('dsh-desktop:enterprise-account-changed', account)
             disposeNavigation()
             if (revealWorkSession && ctx.uiWorkspace.openSession === revealWorkSession) ctx.uiWorkspace.openSession = originalOpenSession
+            if (revealNewWorkSession && ctx.uiWorkspace.startSession === revealNewWorkSession) ctx.uiWorkspace.startSession = originalStartSession
             window.removeEventListener('dsh-desktop:settings-visibility', settings)
             window.removeEventListener('dsh-desktop:approvals-visibility', approvals)
             window.removeEventListener('dsh-desktop:account-dialog-visibility', accountDialog)
@@ -1006,9 +1017,9 @@ function createSidebarSections() {
     }
 
 function SidebarSectionToggle({ collapsed, onClick, children }) {
-      return React.createElement('button', { type: 'button', className: 'dshEnterpriseSectionToggle', 'aria-expanded': !collapsed, onClick },
+      return React.createElement('button', { type: 'button', className: 'dshEnterpriseSectionToggle', 'aria-expanded': !collapsed, onClick }, children,
         React.createElement('span', { className: 'dshEnterpriseSectionChevron', 'aria-hidden': true, style: { transform: collapsed ? 'rotate(0deg)' : 'rotate(90deg)' } },
-          React.createElement(IconChevronRightOutlineRegular)), children)
+          React.createElement(IconChevronRightOutlineRegular)))
     }
 
 function WorkspaceSectionTitle({ flat, navigation, t }) {
@@ -1066,7 +1077,7 @@ function SharedCollection({ projects, items, mode, query, archivedOnly, searchPe
 function observeHostOverlays(report, { passive = false, gateName = '', gateModals = false } = {}) {
       // HoverCard exposes its content, not the portal element. Measure the entire card,
       // including its padding, when a cloud history preview crosses into the native view.
-      const selector = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [role="tooltip"], dialog, [popover], [data-dsh-host-overlay], :has(> [data-dsh-chat-history-preview])'
+      const selector = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [role="tooltip"], dialog, [popover], [data-dsh-host-overlay], [data-dsh-workbench-notice], #dsh-desktop-about-root, #dsh-desktop-update-root, :has(> [data-dsh-chat-history-preview])'
       const elements = new Set()
       const identities = new WeakMap()
       const pending = new Set()
@@ -1153,12 +1164,15 @@ function observeHostOverlays(report, { passive = false, gateName = '', gateModal
       })
       // Only added subtrees are searched. Attribute changes outside an active overlay's
       // ancestry are ignored; there is no per-token full-document query or polling loop.
-      body.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['role', 'aria-modal', 'open', 'popover', 'hidden', 'style', 'class', 'data-dsh-host-overlay'] })
-      const resume = () => { if (!document.hidden) { collect(document.body); refresh() } }
+      // Preload About/Update surfaces are closed shadow hosts attached directly to html.
+      // Their stable host IDs and visibility form the compatibility boundary; do not
+      // inspect private shadow contents or depend on the removed about-open marker.
+      body.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['role', 'aria-modal', 'open', 'popover', 'hidden', 'style', 'class', 'data-dsh-host-overlay'] })
+      const resume = () => { if (!document.hidden) { collect(document.documentElement); refresh() } }
       document.addEventListener('visibilitychange', resume)
       window.addEventListener('scroll', refresh, true)
       window.addEventListener('resize', refresh)
-      collect(document.body); refresh(); initialized = true
+      collect(document.documentElement); refresh(); initialized = true
       return {
         // Settings/approvals may own this very native surface. Only a different
         // foreground layer should cover their content, including nested confirmations.
@@ -1299,6 +1313,15 @@ function observeCloudHostOcclusion() {
 function createNativeSurfacePresenter(bridge, target) {
       let latest, revision = 0, cycle = 0, preparing = false, held = false, yielded = false, image, cancelPaint, disposed = false
       let warmReady, warmPending, warmImage, warmTimer, warmGeneration = 0
+      // Capturing a busy/crashed embedded renderer must never hold host input forever.
+      const captureFrame = async () => {
+        let timeout
+        try {
+          return await Promise.race([bridge.capture?.(), new Promise((_resolve, reject) => {
+            timeout = setTimeout(() => reject(new Error('Native capture timed out')), 1500)
+          })])
+        } finally { clearTimeout(timeout) }
+      }
       const releases = new Set()
       const releaseOverlays = () => { for (const release of releases) release(); releases.clear() }
       const frameKey = value => JSON.stringify([value.bounds, value.settings, value.theme, value.locale, value.landingComposerWidth])
@@ -1331,7 +1354,7 @@ function createNativeSurfacePresenter(bridge, target) {
         const generation = warmGeneration
         const promise = (async () => {
           try {
-            const frame = await bridge.capture()
+            const frame = await captureFrame()
             if (!frame || disposed || generation !== warmGeneration || key !== frameKey(latest.value)) return
             const backing = backingFor(frame)
             await decode(backing)
@@ -1414,7 +1437,7 @@ function createNativeSurfacePresenter(bridge, target) {
             if (warmPending?.key === key) await warmPending.promise
             if (disposed || captureCycle !== cycle || !latest.value.visible || !latest.occluded) return
             const prepared = warmReady?.key === key && Date.now() - warmReady.at < 250 ? warmReady : undefined
-            frame = prepared?.frame ?? await bridge.capture?.()
+            frame = prepared?.frame ?? await captureFrame()
             clearWarm(prepared?.backing)
             if (disposed || captureCycle !== cycle || !latest.value.visible || !latest.occluded) return
             if (frame) {
@@ -1761,7 +1784,7 @@ function DesktopModes({ work, columns, resizeHandle, navigation, t, locale }) {
         if (!bridge) return
         const appRoot = document.getElementById('root')
         const macModuleFrame = usesModuleFrame && document.documentElement.dataset.platform === 'darwin'
-        let observedLeading, observedComposer
+        let observedLeading, observedComposer, observedSeat
         const presenter = surfacePresenter.current || (surfacePresenter.current = createNativeSurfacePresenter(bridge, value => value.settings
           ? document.querySelector(`[data-dsh-native-surface="${value.settings}"]`) : panel.current))
         const present = (landingHandoff) => {
@@ -1799,8 +1822,13 @@ function DesktopModes({ work, columns, resizeHandle, navigation, t, locale }) {
           const palette = hostPalette()
           // Paint behind the original native controls. The web view stays below them for input.
           const squareBanner = squarePage && reserveTitlebar ? palette?.squareBanner : undefined
-          panel.current.style.setProperty('--dsh-square-chrome-height', squareBanner ? `${y - rect.y}px` : '')
-          panel.current.style.setProperty('--dsh-square-chrome-fill', squareBanner ? `rgb(${squareBanner.join(' ')})` : '')
+          for (const [property, value] of [
+            ['--dsh-square-chrome-height', squareBanner ? String(y - rect.y) + 'px' : ''],
+            ['--dsh-square-chrome-fill', squareBanner ? 'rgb(' + squareBanner.join(' ') + ')' : '']
+          ]) {
+            // Visibility observes this seat's style; do not feed it unchanged chrome.
+            if (panel.current.style.getPropertyValue(property) !== value) panel.current.style.setProperty(property, value)
+          }
           const surfaceOpen = settingsOpen || state.approvalsOpen || state.accountDialogOpen
           const remote = surfaceOpen && state.settingsProtocolVersion === 1 && settingsSurface
 const safeModePageOpen = document.documentElement.hasAttribute('data-dsh-safe-mode-page')
@@ -1811,7 +1839,12 @@ const bounds = reserveSidebarResizeBounds(remote ? remote.bounds : { x, y, width
 const chatHandoff = mode === 'chat' && morph && revealMorph.current === morph
 const keepChatUntilWorkPaints = morph?.to === 'work' && yieldedWorkMorph.current !== morph
 const chatVisible = ((mode === 'chat' && (!morph || chatHandoff)) || keepChatUntilWorkPaints) && !surfaceOpen && !safeModePageOpen
-const visible = !hostModalOpen && (remote ? state.connected && remote.bounds.width > 0 && remote.bounds.height > 0 : chatVisible)
+// Native siblings do not inherit a hidden DOM page. Ignore opacity during landing
+// animation, but require a connected, laid out host seat before revealing the view.
+const seat = remote ? surface : panel.current?.hidden ? workPanel.current : panel.current
+observeSeatVisibility(seat || panel.current)
+const seatVisible = seat?.isConnected && seat.checkVisibility({ checkVisibilityCSS: true }) && bounds.width > 0 && bounds.height > 0
+const visible = Boolean(seatVisible && !hostModalOpen && (remote ? state.connected : chatVisible))
 const occluded = overlays.intersects(bounds, surface)
 const revealChat = visible && !remote && !occluded && mode === 'chat' &&
   (chatHandoff && landingHandoff === true || !morph && enterChatCases.current)
@@ -1845,6 +1878,16 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         const theme = new MutationObserver(present)
         theme.observe(document.body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] })
         const overlays = observeHostOverlays(present)
+        // Watch the actual seat, including settings portals, without observing streamed content.
+        const seatVisibility = new MutationObserver(present)
+        const observeSeatVisibility = seat => {
+          if (seat === observedSeat) return
+          observedSeat = seat
+          seatVisibility.disconnect()
+          for (let ancestor = seat; ancestor; ancestor = ancestor.parentElement) {
+            seatVisibility.observe(ancestor, { attributes: true, attributeFilter: ['hidden', 'style', 'class'] })
+          }
+        }
         const stopWarmup = observeNativeSurfaceIntent(() => { void presenter.warm() })
         const unsubscribeLocale = locale.subscribe(present)
         window.addEventListener('resize', present)
@@ -1852,7 +1895,7 @@ interaction.observe(document.documentElement, { attributes: true, attributeFilte
         present()
         return () => {
           if (presentSurface.current === present) presentSurface.current = null
-          stopWarmup(); overlays.dispose(); interaction.disconnect(); resize.disconnect(); composerMount?.disconnect(); chromeLayout.disconnect(); theme.disconnect(); unsubscribeLocale(); window.removeEventListener('resize', present)
+          stopWarmup(); seatVisibility.disconnect(); overlays.dispose(); interaction.disconnect(); resize.disconnect(); composerMount?.disconnect(); chromeLayout.disconnect(); theme.disconnect(); unsubscribeLocale(); window.removeEventListener('resize', present)
         }
       }, [mode, morph, workLanding, usesModuleFrame, squarePage, settingsOpen, state.approvalsOpen, state.accountDialogOpen, settingsSurface, state.connected, state.epoch, state.settingsProtocolVersion, projectDialogOpen, cloudDeleteOpen, cloudRenameOpen, locale])
       React.useEffect(() => { surfacePresenter.current?.invalidate() }, [state.path, state.pageId, state.phase])

@@ -1,4 +1,5 @@
 import { Service } from '@deepseek-ai/cordis'
+import { validateEnterpriseAppId } from './enterprise-apps-contract.js'
 import { createEnterpriseAuthClient, EnterpriseAuthError, enterpriseAuthState as publicState } from './enterprise-auth-client.js'
 export { EnterpriseAuthError } from './enterprise-auth-client.js'
 
@@ -26,6 +27,7 @@ export function applyEnterpriseAuth(ctx) {
     getState() { return bindingFor(this.ctx).client.getState() },
     async refresh() { return bindingFor(this.ctx).client.refresh() },
     subscribe(listener) { return bindingFor(this.ctx).client.subscribe(listener) },
+    app(appId) { return bindingFor(this.ctx).client.app(appId) },
     async request(path, init = {}) { return bindingFor(this.ctx).client.request(path, init) }
   })
 }
@@ -123,26 +125,31 @@ export function createEnterpriseAuthTransport(origin, capability) {
     }, { highWaterMark: 0 })
     return new Response(bodyStream, { status: response.status, statusText: response.statusText, headers: response.headers })
   }
+
+  const request = async (path, init = {}, appId) => {
+    if (appId !== undefined) validateEnterpriseAppId(appId)
+    if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')) {
+      throw new EnterpriseAuthError('invalid_request', 'An enterprise-relative request path is required.', 400)
+    }
+    let headers
+    try { headers = Object.fromEntries(new Headers(init.headers)) }
+    catch { throw new EnterpriseAuthError('invalid_request', 'Invalid enterprise request headers.', 400) }
+    let body = init.body, bodyEncoding
+    if (body != null && typeof body !== 'string') {
+      if (body instanceof ArrayBuffer) body = new Uint8Array(body)
+      if (!ArrayBuffer.isView(body)) throw new EnterpriseAuthError('invalid_request', 'Unsupported request body.', 400)
+      body = Buffer.from(body.buffer, body.byteOffset, body.byteLength).toString('base64')
+      bodyEncoding = 'base64'
+    }
+    return send('/v1/auth/request', {
+      ...(appId === undefined ? {} : { appId }),
+      path, ...(init.method === undefined ? {} : { method: init.method }), headers,
+      ...(body == null ? {} : { body }), ...(bodyEncoding ? { bodyEncoding } : {}), sessionVersion: init.sessionVersion
+    }, init.signal)
+  }
   return {
     async state(signal) { return publicState(await (await send('/v1/auth/state', undefined, signal)).json()) },
-    async request(path, init = {}) {
-      if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')) {
-        throw new EnterpriseAuthError('invalid_request', 'An enterprise-relative request path is required.', 400)
-      }
-      let headers
-      try { headers = Object.fromEntries(new Headers(init.headers)) }
-      catch { throw new EnterpriseAuthError('invalid_request', 'Invalid enterprise request headers.', 400) }
-      let body = init.body, bodyEncoding
-      if (body != null && typeof body !== 'string') {
-        if (body instanceof ArrayBuffer) body = new Uint8Array(body)
-        if (!ArrayBuffer.isView(body)) throw new EnterpriseAuthError('invalid_request', 'Unsupported request body.', 400)
-        body = Buffer.from(body.buffer, body.byteOffset, body.byteLength).toString('base64')
-        bodyEncoding = 'base64'
-      }
-      return send('/v1/auth/request', {
-        path, ...(init.method === undefined ? {} : { method: init.method }), headers,
-        ...(body == null ? {} : { body }), ...(bodyEncoding ? { bodyEncoding } : {}), sessionVersion: init.sessionVersion
-      }, init.signal)
-    }
+    request,
+    requestApp: (appId, path, init) => request(path, init, appId)
   }
 }

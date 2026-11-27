@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import http from 'node:http'
 import { EnterpriseClient, EnterpriseHttpError } from '../packages/dsh-desktop-enterprise/enterprise-client.js'
 
@@ -169,5 +169,103 @@ describe('Enterprise Unified Client', () => {
     } finally {
       await upstream.close()
     }
+  })
+})
+
+describe('Enterprise client 401 refresh', () => {
+  const session = (token, user = 'one') => ({ base: 'https://enterprise.test', user: { id: user }, tenant: { id: 'tenant' }, tokens: { access_token: token, session_id: 'session' } })
+
+  it('replays a POST once using new credentials and releases the first response', async () => {
+    let auth = session('old')
+    let cancelled = false
+    const calls = []
+    const fetchMock = vi.fn(async (url, options) => {
+      if (url.endsWith('/web-session')) return Response.json({ cookie: auth.tokens.access_token + '-cookie' })
+      calls.push(options)
+      if (calls.length === 1) return new Response(new ReadableStream({ cancel() { cancelled = true } }), { status: 401 })
+      return Response.json({ ok: true })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const client = new EnterpriseClient({ getSessionAuth: async () => auth, refreshSessionTokens: async () => { auth = session('new') } })
+      expect(await client.requestJson('/post', { method: 'POST', body: { value: 1 }, headers: { Authorization: 'Bearer old' } })).toEqual({ ok: true })
+      expect(calls).toHaveLength(2)
+      expect(calls.map(call => call.body)).toEqual(['{"value":1}', '{"value":1}'])
+      expect(calls[1].headers.authorization).toBe('Bearer new-cookie')
+      expect(calls[1].headers.Authorization).toBeUndefined()
+      expect(cancelled).toBe(true)
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('propagates the retry response rather than the initial 401', async () => {
+    let auth = session('old')
+    let attempts = 0
+    vi.stubGlobal('fetch', vi.fn(async url => {
+      if (url.endsWith('/web-session')) return Response.json({ cookie: auth.tokens.access_token })
+      attempts++
+      return Response.json({ detail: attempts === 1 ? 'expired' : 'forbidden' }, { status: attempts === 1 ? 401 : 403 })
+    }))
+    try {
+      const client = new EnterpriseClient({ getSessionAuth: async () => auth, refreshSessionTokens: async () => { auth = session('new') } })
+      await expect(client.request('/post', { method: 'POST', body: 'x' })).rejects.toMatchObject({ status: 403, message: 'forbidden' })
+      expect(attempts).toBe(2)
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('does not retry when refresh leaves the same token or switches account', async () => {
+    for (const next of [session('old'), session('new', 'two')]) {
+      let auth = session('old')
+      let requests = 0
+      vi.stubGlobal('fetch', vi.fn(async url => {
+        if (url.endsWith('/web-session')) return Response.json({ cookie: 'cookie' })
+        requests++
+        return Response.json({ detail: 'denied' }, { status: 401 })
+      }))
+      try {
+        const client = new EnterpriseClient({ getSessionAuth: async () => auth, refreshSessionTokens: async () => { auth = next } })
+        await expect(client.request('/post', { method: 'POST', body: 'x' })).rejects.toMatchObject({ status: 401 })
+        expect(requests).toBe(1)
+      } finally { vi.unstubAllGlobals() }
+    }
+  })
+
+  it('passes the failed token to an injected refresh callback', async () => {
+    let auth = session('old')
+    const refresh = vi.fn(async token => { expect(token).toBe('old'); auth = session('new') })
+    const fallback = vi.fn()
+    const client = new EnterpriseClient({ getSessionAuth: async () => auth, refreshAfter401: refresh, refreshSessionTokens: fallback })
+    expect((await client.refreshAfter401(auth)).tokens.access_token).toBe('new')
+    expect(refresh).toHaveBeenCalledTimes(1)
+    expect(fallback).not.toHaveBeenCalled()
+  })
+
+  it('does not reuse a web cookie across accounts', async () => {
+    let auth = session('one-token')
+    const exchange = vi.fn(async (_url, options) => Response.json({ cookie: options.headers.authorization }))
+    vi.stubGlobal('fetch', exchange)
+    try {
+      const client = new EnterpriseClient({ getSessionAuth: async () => auth })
+      expect(await client.getWebSessionCookie()).toBe('Bearer one-token')
+      auth = session('two-token', 'two')
+      expect(await client.getWebSessionCookie()).toBe('Bearer two-token')
+      expect(exchange).toHaveBeenCalledTimes(2)
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('shares concurrent refresh and reuses the new token for a delayed 401', async () => {
+    let auth = session('old')
+    let count = 0
+    let release
+    const gate = new Promise(resolve => { release = resolve })
+    const client = new EnterpriseClient({ getSessionAuth: async () => auth, refreshSessionTokens: async () => { count++; await gate; auth = session('new') } })
+    const old = auth
+    const first = client.refreshAfter401(old)
+    const second = client.refreshAfter401(old)
+    await Promise.resolve()
+    release()
+    expect((await first).tokens.access_token).toBe('new')
+    expect((await second).tokens.access_token).toBe('new')
+    expect((await client.refreshAfter401(old)).tokens.access_token).toBe('new')
+    expect(count).toBe(1)
   })
 })

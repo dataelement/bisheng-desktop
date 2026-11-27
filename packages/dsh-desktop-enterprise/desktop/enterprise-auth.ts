@@ -1,4 +1,6 @@
 import type { EnterpriseFetch } from './platform-fetch'
+import { assertEnterprisePublicRequestPath } from 'dsh-desktop-enterprise/auth-apps-host'
+import { EnterpriseAuthError as PublicAuthError } from 'dsh-desktop-enterprise/auth'
 
 export const AUTH_MAX_REQUEST_BYTES = 1024 * 1024
 export const AUTH_MAX_RESPONSE_BYTES = 32 * 1024 * 1024
@@ -21,6 +23,7 @@ export interface EnterpriseAuthState {
 }
 
 export interface EnterpriseAuthRequest {
+  appId?: string
   path: string
   method: string
   headers: Record<string, string>
@@ -33,11 +36,19 @@ function invalid(): never { throw new EnterpriseAuthError('invalid_request', 400
 export function parseEnterpriseAuthRequest(input: unknown): EnterpriseAuthRequest {
   if (!input || typeof input !== 'object' || Array.isArray(input)) invalid()
   const value = input as Record<string, unknown>
-  if (Object.keys(value).some(key => !['path', 'method', 'headers', 'body', 'bodyEncoding', 'sessionVersion'].includes(key))) invalid()
-  const { path, sessionVersion } = value
+  if (Object.keys(value).some(key => !['appId', 'path', 'method', 'headers', 'body', 'bodyEncoding', 'sessionVersion'].includes(key))) invalid()
+  const { path, sessionVersion, appId } = value
+  if (appId !== undefined && (typeof appId !== 'string' || appId.length > 64 || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(appId))) invalid()
   if (typeof path !== 'string' || path.length > 8192 || !path.startsWith('/') || path.startsWith('//') ||
       /[\\#\s\x00-\x1f\x7f]/u.test(path) || /%5c|%0[ad]/iu.test(path) ||
       typeof sessionVersion !== 'string' || !sessionVersion || sessionVersion.length > 256) invalid()
+  if (appId === undefined) {
+    try { assertEnterprisePublicRequestPath(path) }
+    catch (error) {
+      if (error instanceof PublicAuthError) throw new EnterpriseAuthError(error.errorCode, error.status)
+      throw error
+    }
+  }
   const origin = 'https://enterprise.invalid'
   let url: URL
   try { url = new URL(path, origin) } catch { return invalid() }
@@ -69,7 +80,7 @@ export function parseEnterpriseAuthRequest(input: unknown): EnterpriseAuthReques
     body = decoded
     if (body.byteLength > AUTH_MAX_REQUEST_BYTES) throw new EnterpriseAuthError('request_too_large', 413)
   } else if (value.bodyEncoding !== undefined) invalid()
-  return { path, method, headers, ...(body === undefined ? {} : { body }), sessionVersion }
+  return { ...(appId === undefined ? {} : { appId }), path, method, headers, ...(body === undefined ? {} : { body }), sessionVersion }
 }
 
 const RESPONSE_HEADERS = new Set(['content-type', 'content-language', 'content-disposition', 'cache-control', 'expires', 'last-modified', 'etag', 'retry-after', 'x-request-id', 'request-id'])
@@ -96,7 +107,8 @@ export class EnterpriseAuthTransport {
 
   async request(plugin: { pluginId: string; instanceId: string }, input: unknown, signal: AbortSignal, options: {
     assertSession: (version: string) => void
-    access: (request: EnterpriseAuthRequest) => Promise<{ endpoint: string; accessToken: string }>
+    access: (request: EnterpriseAuthRequest, signal: AbortSignal) => Promise<{ endpoint: string; accessToken: string }>
+    refresh: (request: EnterpriseAuthRequest, accessToken: string, signal: AbortSignal) => Promise<void>
     fetch: EnterpriseFetch
     audit: (entry: { pluginId: string; path: string; status: number; duration: number }) => void
   }): Promise<Response> {
@@ -164,16 +176,25 @@ export class EnterpriseAuthTransport {
     if (signal.aborted) onCallerAbort()
     try {
       guard()
-      const { endpoint, accessToken } = await abortable(options.access(request), controller.signal)
-      guard()
-      const upstreamPromise = options.fetch(endpoint, {
-        method: request.method, headers: { ...request.headers, authorization: `Bearer ${accessToken}`, 'x-dsh-plugin-id': plugin.pluginId, 'x-dsh-plugin-instance-id': plugin.instanceId },
-        ...(request.body === undefined ? {} : { body: Buffer.from(request.body) }),
-        signal: controller.signal, redirect: 'error', credentials: 'omit'
-      })
-      // A fetch adapter may settle after cancellation; never leave its body open.
-      void upstreamPromise.then(response => { if (controller.signal.aborted) void response.body?.cancel().catch(() => undefined) }, () => undefined)
-      upstream = await abortable(upstreamPromise, controller.signal)
+      let access = await abortable(options.access(request, controller.signal), controller.signal)
+      for (let attempt = 0; ; attempt++) {
+        guard()
+        const upstreamPromise = options.fetch(access.endpoint, {
+          method: request.method, headers: { ...request.headers, authorization: `Bearer ${access.accessToken}`, 'x-dsh-plugin-id': plugin.pluginId, 'x-dsh-plugin-instance-id': plugin.instanceId },
+          ...(request.body === undefined ? {} : { body: Buffer.from(request.body) }),
+          signal: controller.signal, redirect: 'error', credentials: 'omit'
+        })
+        // A fetch adapter may settle after cancellation; never leave its body open.
+        void upstreamPromise.then(response => { if (controller.signal.aborted) void response.body?.cancel().catch(() => undefined) }, () => undefined)
+        upstream = await abortable(upstreamPromise, controller.signal)
+        guard()
+        if (upstream.status !== 401 || attempt !== 0 || request.appId !== undefined) break
+        void upstream.body?.cancel().catch(() => undefined)
+        upstream = undefined
+        await abortable(options.refresh(request, access.accessToken, controller.signal), controller.signal)
+        guard()
+        access = await abortable(options.access(request, controller.signal), controller.signal)
+      }
       clearTimeout(headerTimer)
       timers.delete(headerTimer)
       guard()

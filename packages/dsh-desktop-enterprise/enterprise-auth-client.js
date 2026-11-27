@@ -1,3 +1,4 @@
+import { validateEnterpriseAppId } from './enterprise-apps-contract.js'
 import { observeRequestResponse } from './request-status.js'
 
 export class EnterpriseAuthError extends Error {
@@ -65,6 +66,32 @@ export async function createEnterpriseAuthClient(transport, options = {}) {
   }
   const timer = pollIntervalMs ? setInterval(() => { void refresh().catch(() => undefined) }, pollIntervalMs) : undefined
   timer?.unref?.()
+  const request = async (path, init = {}, appId) => {
+    assertActive()
+    const signals = [lifetime.signal, session.signal, ...(init.signal ? [init.signal] : [])]
+    const signal = AbortSignal.any(signals)
+    if (signal.aborted) throw signal.reason
+    const revision = ++requestRevision
+    const settle = error => {
+      if (active && !signal.aborted && revision === requestRevision) options.onRequestSettled?.(error)
+    }
+    try {
+      const send = appId === undefined ? transport.request?.bind(transport) : transport.requestApp?.bind(transport, appId)
+      if (!send) throw new EnterpriseAuthError('app_unavailable', 'Enterprise application access is not supported by this host.', 503)
+      const response = await send(path, { ...init, signal, sessionVersion: state.sessionVersion })
+      if (signal.aborted) {
+        await response.body?.cancel(signal.reason).catch(() => undefined)
+        throw signal.reason
+      }
+      return options.onRequestSettled ? observeRequestResponse(response, signal, settle) : response
+    } catch (error) {
+      settle(error)
+      throw error
+    } finally {
+      // Background reads fail closed; explicit refresh() preserves the original error for callers.
+      if (active) void refresh().catch(() => undefined)
+    }
+  }
   return {
     getState() { assertActive(); return { ...state } },
     async refresh() { return refresh() },
@@ -74,29 +101,11 @@ export async function createEnterpriseAuthClient(transport, options = {}) {
       listeners.add(listener)
       return () => { listeners.delete(listener) }
     },
-    async request(path, init = {}) {
+    request,
+    app(appId) {
       assertActive()
-      const signals = [lifetime.signal, session.signal, ...(init.signal ? [init.signal] : [])]
-      const signal = AbortSignal.any(signals)
-      if (signal.aborted) throw signal.reason
-      const revision = ++requestRevision
-      const settle = error => {
-        if (active && !signal.aborted && revision === requestRevision) options.onRequestSettled?.(error)
-      }
-      try {
-        const response = await transport.request(path, { ...init, signal, sessionVersion: state.sessionVersion })
-        if (signal.aborted) {
-          await response.body?.cancel(signal.reason).catch(() => undefined)
-          throw signal.reason
-        }
-        return options.onRequestSettled ? observeRequestResponse(response, signal, settle) : response
-      } catch (error) {
-        settle(error)
-        throw error
-      } finally {
-        // Background reads fail closed; explicit refresh() preserves the original error for callers.
-        if (active) void refresh().catch(() => undefined)
-      }
+      validateEnterpriseAppId(appId)
+      return Object.freeze({ appId, request: (path, init) => request(path, init, appId) })
     },
     dispose() {
       if (!active) return

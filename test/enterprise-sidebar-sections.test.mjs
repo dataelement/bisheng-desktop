@@ -54,6 +54,10 @@ it('renders peer project and conversation sections with independent collapse sta
       .toBe(expanded ? 'rotate(90deg)' : 'rotate(0deg)')
   }
   expect(toggles()).toHaveLength(3)
+  for (const toggle of toggles()) {
+    expect(toggle.firstChild.nodeType).toBe(Node.TEXT_NODE)
+    expect(toggle.lastElementChild.className).toBe('dshEnterpriseSectionChevron')
+  }
   expect(host.querySelector('.dshChatProjects').parentElement).toBe(host.querySelector('.dshRecentHistory').parentElement)
   for (let index = 0; index < 3; index++) expectToggle(index, true)
   act(() => toggles()[0].click())

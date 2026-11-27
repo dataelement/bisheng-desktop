@@ -38,6 +38,7 @@ export interface EnterpriseStreamRequestOptions {
   allowInsecureLoopback?: boolean
   allowInsecurePrivateHttp?: boolean
   attribution?: Record<string, string>
+  requestId?: string
 }
 
 export interface EnterpriseJsonRequestOptions {
@@ -125,7 +126,10 @@ export async function requestEnterpriseStream(
       AbortSignal.timeout(options.timeoutMs)
     ])
     : options.signal
-  const requestId = randomUUID()
+  const requestId = options.requestId ?? randomUUID()
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) {
+    throw new EnterprisePlatformError('Invalid enterprise request ID.', { code: 'invalid_request' })
+  }
   const fetchEnterprise = createEnterpriseFetch(fetchImpl)
   const body = withConversationAuditContext(options.body, options.attribution)
   try {

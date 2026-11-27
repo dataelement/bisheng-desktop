@@ -1,7 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { EnterpriseAuthTransport } from './enterprise-auth-client.js'
 export { EnterpriseAuthError } from './enterprise-auth-client.js'
-export type { EnterpriseAuth, EnterpriseAuthState, EnterpriseAuthRequestInit, EnterpriseAuthErrorCode, EnterpriseAuthTransport } from './enterprise-auth-client.js'
+export type { EnterpriseAuth, EnterpriseAppClient, EnterpriseAuthState, EnterpriseAuthRequestInit, EnterpriseAuthErrorCode, EnterpriseAuthTransport } from './enterprise-auth-client.js'
 
 export interface EnterpriseAuthHost {
   grant(identity: { pluginId: string; instanceId: string }): Promise<EnterpriseAuthTransport>

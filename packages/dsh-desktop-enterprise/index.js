@@ -444,7 +444,8 @@ export function apply(ctx, config) {
             webAuth?.invalidate()
             ingestEnterpriseState(account)
           }
-          throw new EnterpriseAuthError('authorization_denied', 'Enterprise session refresh failed.', res.status)
+          const credentialRejected = res.status === 400 || res.status === 401 || res.status === 403
+          throw new EnterpriseAuthError(credentialRejected ? 'authorization_denied' : 'request_failed', 'Enterprise session refresh failed.', res.status)
         }
         const newTokens = parseToken(await res.json(), previous.base)
         assertCurrent()
@@ -490,12 +491,20 @@ export function apply(ctx, config) {
     return sessionAuth
   }
 
-  const webAuth = broker ? null : createWebEnterpriseAuth({ getAccount: () => account, getSessionAuth: ensureValidSessionAuth })
+  const refreshWebSession = async (failedToken, connectionKey) => {
+    if (disposed || !account.connected || account.connectionKey !== connectionKey || !sessionAuth) throw sessionChanged()
+    if (sessionAuth.tokens?.access_token === failedToken) await refreshSessionTokens()
+    if (disposed || !account.connected || account.connectionKey !== connectionKey || !sessionAuth) throw sessionChanged()
+    if (!sessionAuth.tokens?.access_token || sessionAuth.tokens.access_token === failedToken) throw new EnterpriseAuthError('authorization_denied', 'Enterprise session refresh failed.', 401)
+    return sessionAuth
+  }
+  const webAuth = broker ? null : createWebEnterpriseAuth({ getAccount: () => account, getSessionAuth: ensureValidSessionAuth, refreshSession: refreshWebSession })
   ctx.effect(() => () => { disposed = true; webAuth?.invalidate() }, 'dsh-desktop-enterprise: Web authorization')
 
   const enterpriseClient = new EnterpriseClient({
     getSessionAuth: ensureValidSessionAuth,
     refreshSessionTokens,
+    refreshAfter401: token => refreshWebSession(token, account.connectionKey),
     getBroker: () => broker
   })
 
