@@ -1635,6 +1635,16 @@ function animateWorkLanding(work, { to, chat }) {
       }
     }
 
+// Native views sit above the renderer, so z-index cannot protect the resize hit area.
+function reserveSidebarResizeBounds(bounds) {
+  const handle = document.querySelector('[data-side="sidebar"]')?.getBoundingClientRect()
+  if (!handle || handle.width <= 0 || handle.height <= 0 ||
+      handle.bottom <= bounds.y || handle.top >= bounds.y + bounds.height ||
+      handle.left > bounds.x || handle.right <= bounds.x) return bounds
+  const x = Math.min(bounds.x + bounds.width, Math.ceil(handle.right))
+  return { ...bounds, x, width: Math.max(0, bounds.x + bounds.width - x) }
+}
+
 function DesktopModes({ work, columns, resizeHandle, navigation, t, locale }) {
       const state = React.useSyncExternalStore(navigation.subscribe, navigation.snapshot)
       const projectState = React.useSyncExternalStore(navigation.projects.subscribe, navigation.projects.snapshot)
@@ -1797,7 +1807,7 @@ const safeModePageOpen = document.documentElement.hasAttribute('data-dsh-safe-mo
 const surface = remote ? document.querySelector(`[data-dsh-native-surface="${remote.section}"]`) : panel.current
 // Project dialogs have an explicit lifecycle; yield the native sibling as they open.
 const hostModalOpen = projectDialogOpen || cloudDeleteOpen || cloudRenameOpen || overlays.isModal(surface) || appRoot?.inert || document.documentElement.hasAttribute('data-dsh-about-open')
-const bounds = remote ? remote.bounds : { x, y, width: Math.max(0, rect.right - x), height: Math.max(0, rect.y + rect.height - y) }
+const bounds = reserveSidebarResizeBounds(remote ? remote.bounds : { x, y, width: Math.max(0, rect.right - x), height: Math.max(0, rect.y + rect.height - y) })
 const chatHandoff = mode === 'chat' && morph && revealMorph.current === morph
 const keepChatUntilWorkPaints = morph?.to === 'work' && yieldedWorkMorph.current !== morph
 const chatVisible = ((mode === 'chat' && (!morph || chatHandoff)) || keepChatUntilWorkPaints) && !surfaceOpen && !safeModePageOpen
