@@ -6,7 +6,7 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
 
     const React = require('react')
-    const { createElement: h, useCallback, useEffect, useRef, useState } = React
+    const { createElement: h, useCallback, useEffect, useRef, useState, useSyncExternalStore } = React
     let primitives = {}
     try {
       primitives = require('@deepseek-ai/dsh-client-ui-primitives') || {}
@@ -2188,11 +2188,183 @@ window.__ModuleLoader__.load({
       @media(max-width:640px){.dshSettingsRemote{height:max(300px,calc(100vh - 280px))}.dshApprovalsNav{width:152px;gap:14px;padding:18px 8px}.dshApprovalsOptions{padding:0 16px 16px}}
     `
 
+    const CLAIMED_ECHO_EMPTY = []
+    const CLAIMED_ECHO_CSS = `
+      .dshClaimedEcho{display:flex;flex-direction:column;align-items:flex-end;gap:6px;width:100%}
+      .dshClaimedEchoStack{box-sizing:border-box;width:min(calc(var(--dsh-chat-content-width, 748px) * 0.702), 82%);max-width:82%;margin-left:auto}
+      .dshClaimedEchoBubble{box-sizing:border-box;background:var(--dsw-specific-bubble);border-radius:var(--dsw-radius-xl);padding:10px 16px;font-size:var(--dsh-content-font-size, 14px);line-height:calc(22px + var(--dsh-content-font-delta, 0px));color:var(--dsw-alias-label-primary);white-space:pre-wrap;word-break:break-word}
+    `
+
+    function claimedEchoApi() {
+      try {
+        const loaded = require('dsh-desktop-enterprise/claimed-echo')
+        if (typeof loaded?.claimedUserMessages === 'function' && typeof loaded?.visibleClaimedMessages === 'function') return loaded
+      } catch {}
+      return { claimedUserMessages: claimedUserMessagesFallback, visibleClaimedMessages: visibleClaimedMessagesFallback }
+    }
+
+    function claimedUserMessagesFallback(priorPending, splice) {
+      if (splice == null || typeof splice !== 'object') return []
+      const removed = splice.removedCount ?? 0
+      if (!(removed > 0) || splice.outcome === 'canceled') return []
+      const pending = materializeClaimedPending(priorPending)
+      const start = Number.isInteger(splice.start) ? splice.start : 0
+      const messages = []
+      for (const message of pending.slice(start, start + removed)) {
+        if (message == null || message.source?.kind !== 'user') continue
+        const text = claimedMessageText(message.content)
+        if (text === '') continue
+        const id = message.id == null || message.id === '' ? undefined : String(message.id)
+        messages.push({ id, text })
+      }
+      return messages
+    }
+
+    function materializeClaimedPending(pending) {
+      if (pending == null || typeof pending !== 'object') return []
+      const splices = []
+      let current = pending
+      while (current && current.kind === 'splice') {
+        splices.push(current)
+        current = current.previous
+      }
+      const messages = Array.isArray(current?.ids) ? [...current.ids] : []
+      for (const splice of splices.reverse()) {
+        const start = Number.isInteger(splice.start) ? splice.start : 0
+        const removed = Number.isInteger(splice.removedCount) ? splice.removedCount : 0
+        const inserted = Array.isArray(splice.inserted) ? splice.inserted : []
+        messages.splice(start, removed, ...inserted)
+      }
+      return messages
+    }
+
+    function claimedMessageText(content) {
+      if (typeof content === 'string') return content.trim()
+      if (!Array.isArray(content)) return ''
+      let text = ''
+      for (const block of content) {
+        if (typeof block === 'string') text += block
+        else if (block != null && block.type === 'text' && typeof block.text === 'string') text += block.text
+      }
+      return text.trim()
+    }
+
+    function visibleClaimedMessagesFallback(messages, entries) {
+      if (!Array.isArray(messages)) return []
+      const logged = new Set()
+      if (Array.isArray(entries)) {
+        for (const entry of entries) {
+          const event = entry?.event ?? entry
+          if (event == null || event.type !== 'user/message' || event.data == null) continue
+          const data = event.data
+          const message = data.message != null && typeof data.message === 'object' ? data.message : data
+          const source = message.source ?? data.source
+          if (source?.kind !== 'user') continue
+          const id = message.id ?? data.id
+          if (id != null && id !== '') logged.add(String(id))
+        }
+      }
+      return messages.filter((message) => {
+        if (message == null || typeof message.text !== 'string' || message.text === '') return false
+        if (message.id == null || message.id === '') return true
+        return !logged.has(String(message.id))
+      })
+    }
+
+    function installClaimedEcho(ctx) {
+      if (typeof ctx.uiConversation?.events?.register !== 'function' || typeof ctx.slots?.inject !== 'function') return
+      const echo = claimedEchoApi()
+      const ClaimedEchoView = function ClaimedEchoView({ node, claimedSessionId, renderFactorySlot }) {
+        const binding = typeof claimedSessionId === 'string' && typeof ctx.sessions?.binding === 'function'
+          ? ctx.sessions.binding(claimedSessionId)
+          : undefined
+        const source = binding?.eventSource
+        const entries = useSyncExternalStore(
+          (onStoreChange) => (typeof source?.subscribe === 'function' ? source.subscribe(onStoreChange) : () => {}),
+          () => source?.getSnapshot?.().entries ?? CLAIMED_ECHO_EMPTY,
+          () => source?.getSnapshot?.().entries ?? CLAIMED_ECHO_EMPTY
+        )
+        const visible = echo.visibleClaimedMessages(node?.data?.messages, entries)
+        if (!Array.isArray(visible) || visible.length === 0) return null
+        return h('div', { className: 'dshClaimedEcho' }, visible.map((message, index) => {
+          const prepared = { text: message.text, attachments: [], extraBlocks: [] }
+          const slotted = typeof renderFactorySlot === 'function'
+            ? renderFactorySlot('conversation.chat.user.content', { content: prepared, interactive: false })
+            : null
+          return h('div', { className: 'dshClaimedEchoStack', key: message.id || String(index) },
+            slotted || h('div', { className: 'dshClaimedEchoBubble' }, message.text))
+        }))
+      }
+      const registerTarget = (target) => ctx.uiConversation.events.register({
+        kind: `claimed-echo-${target}`,
+        target: 'chat',
+        match: (event) => {
+          if (event?.type !== 'agent/inbox/spliced') return null
+          const data = event.data
+          if (data == null || data.target !== target) return null
+          const removed = data.removedCount ?? 0
+          if (!(removed > 0) || data.outcome === 'canceled') return null
+          return { id: String(event.seq), role: 'start' }
+        },
+        start: (_context, match, reader) => {
+          try {
+            const prior = reader.previous(`inbox-${target}`)
+            return { messages: echo.claimedUserMessages(prior?.state?.pending, match.event?.data) }
+          } catch {
+            return { messages: [] }
+          }
+        },
+        update: (context) => context.state,
+        buildViewNode: (context) => {
+          const messages = context.state?.messages
+          if (!Array.isArray(messages) || messages.length === 0) return null
+          return {
+            key: context.key,
+            kind: 'claimed-echo',
+            id: context.id,
+            target: 'chat',
+            anchorSeq: context.matches?.[0]?.event?.seq ?? 0,
+            location: context.start?.location,
+            visibility: 'visible',
+            groupTree: 'input',
+            data: { messages }
+          }
+        }
+      })
+      ctx.effect(() => {
+        const stops = [
+          registerTarget('next-step'),
+          registerTarget('next-turn'),
+          ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
+            name: 'conversation.chat.node',
+            key: 'claimed-echo',
+            inject: (sessionId) => ({ claimedSessionId: sessionId })
+          }, ClaimedEchoView))
+        ]
+        let style
+        if (typeof document !== 'undefined') {
+          style = document.createElement('style')
+          style.dataset.plugin = 'dsh-desktop-enterprise'
+          style.dataset.pluginCss = 'dsh-claimed-echo'
+          style.textContent = CLAIMED_ECHO_CSS
+          document.head.appendChild(style)
+        }
+        return () => {
+          for (const stop of stops) if (typeof stop === 'function') stop()
+          style?.remove()
+        }
+      }, 'enterprise: claimed inbox echo')
+    }
+
     function apply(ctx) {
       if (typeof ctx.provide === 'function') {
         ctx.provide('enterpriseLauncher', { accountSectionId: ENTERPRISE_SECTION_ID })
         ctx.provide('enterpriseWorkResources', { enabled: true })
       }
+      ctx.effect(() => {
+        if (typeof ctx.inject !== 'function') return undefined
+        return ctx.inject(['uiConversation', 'sessions', 'slots'], installClaimedEcho)
+      }, 'enterprise: claimed inbox echo')
       ctx.effect(bindWorkToolChanges, 'enterprise: refresh saved tool availability')
       ctx.effect(bindDesktopSettingsEvents, 'enterprise: desktop settings events')
       installStyles()

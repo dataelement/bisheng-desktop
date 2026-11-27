@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { boundedMobileResponse, chunkFramePieces, MAX_CHUNK_FRAME_BYTES, MAX_MOBILE_FRAME_BYTES } from '../packages/dsh-desktop-enterprise/desktop/mobile/mobile-access-client'
-import { projectLiveAssistantFrame, projectMobileOfficeCatalog, projectTranscriptFrame, projectTranscriptHistory } from '../packages/dsh-desktop-enterprise/desktop/mobile/mobile-phone-view'
+import { projectChangesSummary, projectLiveAssistantFrame, projectMobileOfficeCatalog, projectTranscriptFrame, projectTranscriptHistory } from '../packages/dsh-desktop-enterprise/desktop/mobile/mobile-phone-view'
 
 describe('phone transcript projection', () => {
   it('keeps the fields the phone parser uses and drops tool output', () => {
@@ -57,6 +57,7 @@ describe('phone transcript projection', () => {
           time: 10,
           data: { source: { kind: 'user' }, content: [{ type: 'text', text: '你好' }] }
         },
+        { type: 'context/status', data: { kind: 'runtime-context' } },
         {
           type: 'assistant/chunk',
           data: { turn: 1, step: 1, chunk: { type: 'reasoning-delta', text: 'think' } }
@@ -84,6 +85,48 @@ describe('phone transcript projection', () => {
       ],
       hasMore: false
     })
+  })
+
+  it('projects context rows and tool-list counts without their bodies', () => {
+    const projected = projectTranscriptHistory({
+      events: [
+        {
+          type: 'user/message',
+          data: {
+            source: { kind: 'skill-catalog' },
+            content: [{ type: 'text', text: 'secret catalog' }]
+          }
+        },
+        {
+          type: 'developer/message',
+          data: {
+            turn: 1,
+            message: {
+              content: [
+                { type: 'tool-addition', toolName: 'office_render' },
+                { type: 'tool-addition', toolName: 'office_convert' },
+                { type: 'tool-removal', toolName: 'old_tool' }
+              ]
+            }
+          }
+        },
+        {
+          type: 'developer/message',
+          data: { message: { content: [{ type: 'text', text: 'secret note' }] } }
+        }
+      ],
+      hasMore: false
+    })
+    expect(projected).toEqual({
+      events: [
+        { type: 'context/status', data: { kind: 'skill-catalog' } },
+        { type: 'context/status', data: { kind: 'tools', added: 2, removed: 1, turn: 1 } }
+      ],
+      hasMore: false
+    })
+    const encoded = JSON.stringify(projected)
+    expect(encoded).not.toContain('secret')
+    expect(encoded).not.toContain('office_render')
   })
 
   it('keeps reasoning on the latest turns and drops it from earlier ones', () => {
@@ -203,6 +246,208 @@ describe('phone transcript projection', () => {
       type: 'event',
       event: { type: 'tool/result', data: { output: 'big' } }
     })).toBeUndefined()
+  })
+
+  it('projects a compact tool row, presented files, and a change coordinate', () => {
+    const history = projectTranscriptHistory({
+      events: [
+        {
+          type: 'tool/call',
+          data: {
+            turn: 4,
+            step: 2,
+            callId: 'call-1',
+            name: 'read',
+            arguments: JSON.stringify({ path: 'notes/a.md', secret: 'do-not-copy' })
+          }
+        },
+        {
+          type: 'tool/result',
+          data: {
+            turn: 4,
+            step: 2,
+            message: { source: { kind: 'tool', callId: 'call-1' }, content: 'file body' },
+            meta: { diff: 'secret' }
+          }
+        },
+        {
+          type: 'deliverables/presented',
+          seq: 8,
+          data: {
+            turn: 4,
+            callId: 'call-2',
+            files: [{ path: 'out/纪要.docx', description: '会议纪要' }, { description: '缺路径' }, 'bad']
+          }
+        },
+        { type: 'workspace/changes', seq: 9, data: { turn: 4, diff: 'secret' } },
+        { type: 'workspace/changes', data: { turn: 4 } }
+      ]
+    }) as { events: Array<Record<string, unknown>> }
+    expect(history.events).toEqual([
+      {
+        type: 'tool/status',
+        data: {
+          phase: 'calling',
+          activity: 'read',
+          name: 'read',
+          callId: 'call-1',
+          detail: 'notes/a.md',
+          turn: 4,
+          step: 2
+        }
+      },
+      { type: 'tool/status', data: { phase: 'done', callId: 'call-1', turn: 4, step: 2 } },
+      {
+        type: 'deliverables/presented',
+        seq: 8,
+        data: {
+          files: [{ path: 'out/纪要.docx', description: '会议纪要' }],
+          turn: 4,
+          callId: 'call-2'
+        }
+      },
+      { type: 'workspace/changes', seq: 9, data: { turn: 4 } }
+    ])
+    expect(JSON.stringify(history)).not.toContain('do-not-copy')
+    expect(JSON.stringify(history)).not.toContain('file body')
+    const cursor: { turn?: number; step?: number } = { turn: 4, step: 2 }
+    const first = projectLiveAssistantFrame({
+      type: 'chunk',
+      chunk: { type: 'tool-call-delta', index: 0, id: 'call-3', name: 'read', argumentsDelta: '{"path":"notes' }
+    }, cursor)
+    const second = projectLiveAssistantFrame({
+      type: 'chunk',
+      chunk: { type: 'tool-call-delta', index: 0, id: 'call-3', name: 'read', argumentsDelta: '/b.md"}' }
+    }, cursor)
+    expect(first).toMatchObject({ event: { type: 'tool/status', data: { phase: 'preparing', detail: 'notes' } } })
+    expect(second).toMatchObject({ event: { data: { detail: 'notes/b.md', callId: 'call-3' } } })
+    expect(projectLiveAssistantFrame({
+      type: 'chunk',
+      chunk: { type: 'tool-call-delta', index: 0, id: 'call-3', argumentsDelta: '' }
+    }, cursor)).toBeUndefined()
+    expect(projectChangesSummary({
+      turn: 4,
+      total: 1,
+      files: [{ path: 'out/纪要.docx', display: '纪要.docx', added: 12, deleted: 3, hunks: ['secret'] }, { added: 1 }]
+    })).toEqual({
+      files: [{ path: 'out/纪要.docx', display: '纪要.docx', added: 12, deleted: 3 }],
+      turn: 4,
+      total: 1
+    })
+    expect(projectChangesSummary('bad')).toBeUndefined()
+  })
+
+  it('keeps a skill name and question answers, and drops the rest of the tool body', () => {
+    const history = projectTranscriptHistory({
+      events: [
+        {
+          type: 'tool/call',
+          data: {
+            turn: 4,
+            callId: 'skill-1',
+            name: 'skill',
+            arguments: { name: 'bisheng-docx', instructions: 'secret instructions' }
+          }
+        },
+        {
+          type: 'tool/call',
+          data: {
+            turn: 4,
+            callId: 'ask-1',
+            name: 'ask_user_question',
+            arguments: {
+              timeout: 120,
+              note: 'secret note',
+              questions: [
+                { id: 'city', question: '哪个城市？', header: '城市', options: [{ label: '北京', description: 'secret option' }] },
+                { id: 'range', question: '哪个范围？' }
+              ]
+            }
+          }
+        },
+        {
+          type: 'tool/result',
+          data: {
+            turn: 4,
+            message: {
+              source: { kind: 'tool', callId: 'ask-1' },
+              content: JSON.stringify({
+                answers: [
+                  { id: 'city', selected: ['北京'], note: 'secret result' },
+                  { id: 'range', selected: [], custom: '' }
+                ],
+                message: 'secret pending notice'
+              })
+            }
+          }
+        }
+      ]
+    }) as { events: Array<Record<string, unknown>> }
+    expect(history.events[0]).toMatchObject({
+      type: 'tool/status',
+      data: { name: 'skill', activity: 'tools', detail: 'bisheng-docx', callId: 'skill-1' }
+    })
+    expect(history.events[1]).toMatchObject({
+      type: 'tool/status',
+      data: {
+        name: 'ask_user_question',
+        activity: 'questions',
+        asks: [
+          { id: 'city', question: '哪个城市？', header: '城市' },
+          { id: 'range', question: '哪个范围？' }
+        ]
+      }
+    })
+    expect(history.events[2]).toEqual({
+      type: 'tool/status',
+      data: {
+        phase: 'done',
+        callId: 'ask-1',
+        turn: 4,
+        asks: [
+          { id: 'city', answer: '北京' },
+          { id: 'range', answer: '' }
+        ]
+      }
+    })
+    const encoded = JSON.stringify(history)
+    expect(encoded).not.toContain('secret')
+    expect(encoded).toContain('哪个城市？')
+    expect(encoded).toContain('北京')
+  })
+
+  it('keeps a turn failure message and drops the request id', () => {
+    const history = projectTranscriptHistory({
+      events: [
+        {
+          type: 'turn/end',
+          time: 30,
+          data: {
+            reason: {
+              kind: 'error',
+              error: {
+                message: 'Upstream model request failed',
+                code: 'upstream_error',
+                status: 200,
+                requestId: 'secret-request'
+              }
+            }
+          }
+        }
+      ]
+    }) as { events: Array<Record<string, unknown>> }
+    expect(history.events[0]).toEqual({
+      type: 'turn/end',
+      time: 30,
+      data: {
+        reason: {
+          kind: 'error',
+          message: 'Upstream model request failed',
+          code: 'upstream_error'
+        }
+      }
+    })
+    expect(JSON.stringify(history)).not.toContain('secret-request')
   })
 })
 
