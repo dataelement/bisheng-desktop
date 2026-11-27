@@ -18,7 +18,7 @@ let createRuntime, mocks, runtimes
 beforeEach(async () => {
   vi.resetModules()
   runtimes = []
-  const app = Object.assign(new EventEmitter(), { getAppPath: vi.fn(() => '/fixture/app'), getLocale: () => 'en' })
+  const app = Object.assign(new EventEmitter(), { getAppPath: vi.fn(() => '/fixture/app'), getLocale: () => 'en', getName: () => 'Example Dev' })
   const handlers = new Map()
   const views = []
   const environment = { DSH_DESKTOP_ENTERPRISE_BROKER_URL: 'http://127.0.0.1:1', DSH_DESKTOP_ENTERPRISE_BROKER_CAPABILITY: 'test-only-capability' }
@@ -97,7 +97,7 @@ describe('enterprise desktop product runtime', () => {
     started.resolve(mocks.desktop)
     const runtime = await pending
     expect(completed).toBe(true)
-    expect(mocks.start).toHaveBeenCalledWith(expect.objectContaining({ userDataPath: context.userDataPath, desktopVersion: context.version }))
+    expect(mocks.start).toHaveBeenCalledWith(expect.objectContaining({ userDataPath: context.userDataPath, desktopVersion: context.version, productName: 'Example Dev' }))
     expect(Object.keys(runtime.hostEnvironment()).sort()).toEqual([...Object.keys(mocks.environment), 'DSH_ENTERPRISE_LEGACY_CLOUD_PROJECTS'].sort())
     expect(runtime.hostEnvironment().DSH_DESKTOP_ENTERPRISE_BROKER_URL).toBe(mocks.environment.DSH_DESKTOP_ENTERPRISE_BROKER_URL)
     // Assert booleans so failures cannot print the caller's real environment values.

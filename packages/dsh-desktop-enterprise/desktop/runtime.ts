@@ -50,6 +50,7 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
     userDataPath: context.userDataPath,
     confirmCloudEffect: effect => confirmCloudEffect(effect, mainWindow, app.getLocale().startsWith('zh')),
     desktopVersion: context.version,
+    productName: app.getName(),
     activateDesktop: () => { mainWindow?.show(); mainWindow?.focus() },
     safeStorage,
     fetchImpl: createElectronEnterpriseFetch(net.fetch.bind(net)),

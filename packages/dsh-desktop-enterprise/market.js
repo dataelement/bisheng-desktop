@@ -1,4 +1,5 @@
 import semver from 'semver'
+import { DESKTOP_AUTHORIZATION_UNAVAILABLE } from './product-name.js'
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
@@ -134,7 +135,7 @@ export function createMarketController(ctx, accountController, options = {}) {
   const sessionOpen = () => !(account?.sessionExpiresAt && Date.parse(account.sessionExpiresAt) <= Date.now())
   const requireOnline = () => {
     if (!sessionOpen()) throw marketFailure('Enterprise session expired.', 'session_expired')
-    if (options.authorizationAvailable === false) throw marketFailure('Enterprise plugins require the desktop authorization service. Open the market in BISHENG Desktop or contact your administrator.', 'authorization_unavailable')
+    if (options.authorizationAvailable === false) throw marketFailure(DESKTOP_AUTHORIZATION_UNAVAILABLE, 'authorization_unavailable')
     if (!online || !policy) throw marketFailure(lastError || 'Connect to the enterprise market to enable plugins.', failureCode || 'offline')
     return policy
   }
@@ -248,7 +249,7 @@ export function createMarketController(ctx, accountController, options = {}) {
         ...version, compatible: Boolean(version.manifest?.targets?.[target]) && isMarketVersionCompatible(desktopVersion(), version.manifest?.plugin?.desktop_min)
       })) }))
       return { ...state(), data, total: catalog.total, installReady: online && options.authorizationAvailable !== false,
-        ...(online && options.authorizationAvailable === false ? { error: 'Enterprise plugins require the desktop authorization service. Open the market in BISHENG Desktop or contact your administrator.', failureCode: 'authorization_unavailable' } : {}) }
+        ...(online && options.authorizationAvailable === false ? { error: DESKTOP_AUTHORIZATION_UNAVAILABLE, failureCode: 'authorization_unavailable' } : {}) }
     }),
     act: input => serialized(async () => {
       if (!['install', 'enable', 'disable', 'uninstall', 'configure'].includes(input.action)) throw new Error('Unknown plugin operation.')

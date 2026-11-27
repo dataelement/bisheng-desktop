@@ -39,6 +39,8 @@ window.__ModuleLoader__.load({
     const LEARN_MORE_URL = 'https://dshdesktop.com/zh/enterprise/deployment/'
     const OPEN_SETTINGS_SECTION_EVENT = 'dsh-desktop:open-settings-section'
     const BISHENG_PROVIDER_ROUTE = 'bisheng-enterprise'
+    const productName = typeof window.__DSH_PRODUCT_NAME__ === 'string' && window.__DSH_PRODUCT_NAME__.trim()
+      ? window.__DSH_PRODUCT_NAME__ : 'BISHENG'
     const NS = 'settings.desktopEnterprise'
     const SAFETY_NS = 'enterprise.contentSafety'
     const safetyCopy = {
@@ -606,7 +608,7 @@ window.__ModuleLoader__.load({
       loading: '正在读取企业插件…', empty: '企业暂未提供插件，请联系管理员导入。',
       failed: '暂时无法读取企业插件，请重试或联系管理员。',
       protocolMismatch: '当前客户端需要更新后的企业市场，请联系管理员升级服务端。',
-      authorizationUnavailable: '企业插件需要桌面授权服务，请在 BISHENG Desktop 中打开市场或联系管理员。',
+      authorizationUnavailable: '企业插件需要桌面授权服务，请在桌面客户端中打开市场或联系管理员。',
       endpointUnavailable: '企业市场接口不可用，请检查企业插件是否已加载或联系管理员。',
       install: '安装', update: '更新',
       installed: '已安装', uninstall: '卸载', enable: '启用', disable: '停用', disabled: '已停用',
@@ -618,7 +620,7 @@ window.__ModuleLoader__.load({
       loading: 'Loading enterprise plugins…', empty: 'Your enterprise has no plugins yet. Contact your administrator.',
       failed: 'Enterprise plugins are unavailable. Try again or contact your administrator.',
       protocolMismatch: 'This Desktop requires a newer enterprise market. Ask an administrator to upgrade the server.',
-      authorizationUnavailable: 'Enterprise plugins require the desktop authorization service. Open the market in BISHENG Desktop or contact your administrator.',
+      authorizationUnavailable: 'Enterprise plugins require the desktop authorization service. Open the market in the desktop app or contact your administrator.',
       endpointUnavailable: 'The enterprise market endpoint is unavailable. Check that the enterprise plugin is loaded or contact your administrator.',
       install: 'Install', update: 'Update',
       installed: 'Installed', uninstall: 'Uninstall', enable: 'Enable', disable: 'Disable', disabled: 'Disabled',
@@ -1627,14 +1629,14 @@ window.__ModuleLoader__.load({
         creditsRemaining: '剩余积分', creditsUnavailable: '积分暂不可用',
         activity: '用量活动', period: '统计范围：{start} — {end}', less: '少', more: '多', totalTokens: '累计 Token', totalMessages: '累计消息',
         tokenWan: '{value}万', tokenYi: '{value}亿', numberLocale: 'zh-CN', modelUsage: '模型用量', tokens: 'Token 用量', messages: '消息数', storage: '个人存储空间', unlimited: '不限', storageValue: '已使用 {used} / {limit}', breakdown: '输入 {input} Token · 输出 {output} Token', missingUsage: '{count} 条记录缺少 Token 用量', usageError: '用量统计加载失败，请重试。', storageError: '存储空间加载失败，请重试。', noUsage: '暂无用量记录', unavailable: '—',
-        openContent: '进入设置内容', usage: '用量与存储', about: '关于与帮助', tasks: '我的审批', requests: '我的申请', notifications: '通知', ai: 'AI 助手接入', loading: '正在加载企业设置…', error: '暂时无法加载企业设置，请检查连接后重试。', restart: '请完全退出并重新启动客户端，以启用统一设置。', unsupported: '平台暂不支持统一设置，请联系管理员更新平台。', retry: '重新连接', signIn: '登录企业账号后可查看', openAccount: '前往账号设置', desktopVersion: 'BISHENG 版本', harnessVersion: 'Harness 版本', infoError: '无法读取版本信息', update: '检查更新', logs: '查看日志', recovery: '安全模式与插件恢复', localHint: '本机设置仍可正常使用。', actionError: '操作未完成，请重试。',
+        openContent: '进入设置内容', usage: '用量与存储', about: '关于与帮助', tasks: '我的审批', requests: '我的申请', notifications: '通知', ai: 'AI 助手接入', loading: '正在加载企业设置…', error: '暂时无法加载企业设置，请检查连接后重试。', restart: '请完全退出并重新启动客户端，以启用统一设置。', unsupported: '平台暂不支持统一设置，请联系管理员更新平台。', retry: '重新连接', signIn: '登录企业账号后可查看', openAccount: '前往账号设置', desktopVersion: `${productName} 版本`, harnessVersion: 'Harness 版本', infoError: '无法读取版本信息', update: '检查更新', logs: '查看日志', recovery: '安全模式与插件恢复', localHint: '本机设置仍可正常使用。', actionError: '操作未完成，请重试。',
       },
       en: {
         accountMenu: 'Account menu', enterpriseAccount: 'Enterprise account', signedOut: 'Not signed in', deviceOnly: 'Device only', signInHint: 'Sign in to use enterprise features', identityLoading: 'Loading account…', identityError: 'Account unavailable', settings: 'Settings', accountSettings: 'Account settings', approvals: 'Messages', approvalsPending: 'Pending approvals', phone: 'Connect phone', login: 'Sign in', logout: 'Log out', logoutBody: 'You will need to sign in again. Device settings, installed plugins and local data are kept.', logoutFailed: 'Logout did not complete. Try again.', cancel: 'Cancel', again: 'Retry', close: 'Close', loggingOut: 'Logging out…',
         creditsRemaining: 'Credits remaining', creditsUnavailable: 'Credits unavailable',
         activity: 'Usage activity', period: 'Reporting period: {start} — {end}', less: 'Less', more: 'More', totalTokens: 'Total tokens', totalMessages: 'Total messages',
         tokenWan: '{value} ten thousand', tokenYi: '{value} hundred million', numberLocale: 'en-US', modelUsage: 'Model usage', tokens: 'Token usage', messages: 'Messages', storage: 'Personal storage', unlimited: 'Unlimited', storageValue: 'Used {used} / {limit}', breakdown: 'Input {input} tokens · Output {output} tokens', missingUsage: '{count} records are missing token usage', usageError: 'Usage statistics failed to load. Please retry.', storageError: 'Storage failed to load. Please retry.', noUsage: 'No usage recorded', unavailable: '—',
-        openContent: 'Enter settings content', usage: 'Usage and storage', about: 'About and help', tasks: 'My approvals', requests: 'My requests', notifications: 'Notifications', ai: 'AI assistant access', loading: 'Loading enterprise settings…', error: 'Enterprise settings could not load. Check the connection and try again.', restart: 'Quit and restart the desktop app to enable unified settings.', unsupported: 'This platform does not support unified settings yet. Ask your administrator to update it.', retry: 'Reconnect', signIn: 'Sign in to view enterprise settings', openAccount: 'Open account settings', desktopVersion: 'BISHENG version', harnessVersion: 'Harness version', infoError: 'Could not read version information', update: 'Check for updates', logs: 'Show logs', recovery: 'Safe Mode and plugin recovery', localHint: 'Device settings remain available.', actionError: 'The action did not complete. Try again.',
+        openContent: 'Enter settings content', usage: 'Usage and storage', about: 'About and help', tasks: 'My approvals', requests: 'My requests', notifications: 'Notifications', ai: 'AI assistant access', loading: 'Loading enterprise settings…', error: 'Enterprise settings could not load. Check the connection and try again.', restart: 'Quit and restart the desktop app to enable unified settings.', unsupported: 'This platform does not support unified settings yet. Ask your administrator to update it.', retry: 'Reconnect', signIn: 'Sign in to view enterprise settings', openAccount: 'Open account settings', desktopVersion: `${productName} version`, harnessVersion: 'Harness version', infoError: 'Could not read version information', update: 'Check for updates', logs: 'Show logs', recovery: 'Safe Mode and plugin recovery', localHint: 'Device settings remain available.', actionError: 'The action did not complete. Try again.',
       }
     }
 

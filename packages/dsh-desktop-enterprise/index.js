@@ -1,4 +1,5 @@
 import { parseDisplayProfile } from './display-profile.js'
+import { enterpriseProductName } from './product-name.js'
 import { createAuditFeedbackSync } from './audit-feedback.js'
 import { registerCloudTools } from './cloud-tools.js'
 import { changeCloudMembership } from './cloud-membership.js'
@@ -261,7 +262,8 @@ function startEphemeralLoginCallbackServer(onAccepted) {
             'content-type': 'text/html; charset=utf-8',
             'cache-control': 'no-store'
           })
-          res.end('<!doctype html><html><head><meta charset="utf-8"><title>BISHENG</title></head><body><p>Sign-in complete. You may return to the application.</p><script>window.close()</script></body></html>')
+          const safeName = enterpriseProductName().replace(/[&<>"']/gu, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char])
+          res.end(`<!doctype html><html><head><meta charset="utf-8"><title>${safeName}</title></head><body><p>Sign-in complete. You may return to the application.</p><script>window.close()</script></body></html>`)
           if (!closed && onAccepted) {
             onAccepted({ authId, state, identityTicket, error })
           }
@@ -1006,7 +1008,7 @@ export function apply(ctx, config) {
         code_challenge: pkce.codeChallenge,
         code_challenge_method: 'S256',
         state: pkce.state,
-        device_name: 'BISHENG Web'
+        device_name: enterpriseProductName()
       })
     })
     if (!authRes.ok) {

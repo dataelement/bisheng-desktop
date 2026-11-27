@@ -10,7 +10,6 @@ const requestAnimationFrame = window.requestAnimationFrame.bind(window)
 const cancelAnimationFrame = window.cancelAnimationFrame.bind(window)
 let unload
 const roots = new Map()
-const PRODUCT_NAME = JSON.parse(await readFile('package.json', 'utf8')).build.productName
 afterEach(() => {
   unload?.()
   unload = undefined
@@ -19,7 +18,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-it('renders the authoritative BiSheng mark in built About, manual update and notification surfaces', async () => {
+it.each(['BISHENG', 'BISHENG Dev'])('renders %s with the authoritative logo across built dialog surfaces', async productName => {
   const config = await loadConfigFromFile({ command: 'build', mode: 'production' }, 'electron.vite.config.ts')
   const bundle = await build({
     configFile: false, logLevel: 'silent', resolve: config.config.preload.resolve,
@@ -38,10 +37,9 @@ it('renders the authoritative BiSheng mark in built About, manual update and not
     invoke: vi.fn(async () => ({ phase: 'idle', currentVersion: '1.0.0', manual: false }))
   }
   const exports = {}
-  // The preload runs in Electron, where the shell passes the window identity through process.argv.
-  const context = vm.createContext({ exports, require: () => ({ ipcRenderer }), window, document,
+  const context = vm.createContext({ exports, process: { argv: ['--dsh-product-name=' + encodeURIComponent(productName)] }, require: () => ({ ipcRenderer }), window, document,
     HTMLElement, Element, ShadowRoot: window.ShadowRoot, MutationObserver, navigator, console, setTimeout, clearTimeout,
-    requestAnimationFrame, cancelAnimationFrame, process: { argv: ['electron', '--dsh-product-name=' + encodeURIComponent(PRODUCT_NAME)] } })
+    requestAnimationFrame, cancelAnimationFrame })
   vm.runInContext((Array.isArray(bundle) ? bundle[0] : bundle).output.find(item => item.type === 'chunk').code, context)
   exports.mountDesktopUpdateUi()
   unload = () => window.dispatchEvent(new Event('unload'))
@@ -64,10 +62,12 @@ it('renders the authoritative BiSheng mark in built About, manual update and not
     document.body.toggleAttribute('data-ds-dark-theme', dark)
     handlers.get('desktop:show-about')({}, { desktopVersion: '1.0.0', locale })
     assertMark('dsh-desktop-about-root')
-    expect(roots.get('dsh-desktop-about-root').querySelector('.about-title').textContent).toBe(PRODUCT_NAME)
+    expect(roots.get('dsh-desktop-about-root').querySelector('.about-title').textContent).toBe(productName)
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     handlers.get('updates:status-changed')({}, { phase: 'unsupported', currentVersion: '1.0.0', manual: true, locale, presentationId: ++presentationId })
     assertMark('dsh-desktop-update-root')
+    handlers.get('updates:status-changed')({}, { phase: 'up-to-date', currentVersion: '1.0.0', manual: true, locale, presentationId: ++presentationId })
+    expect(roots.get('dsh-desktop-update-root').querySelector('.title').textContent).toBe(`${productName} v1.0.0`)
     handlers.get('updates:status-changed')({}, { phase: 'checking', currentVersion: '1.0.0', manual: false, locale })
     handlers.get('updates:status-changed')({}, { phase: 'available', currentVersion: '1.0.0', availableVersion: `1.0.${presentationId + 1}`, manual: false, locale })
     assertMark('dsh-desktop-update-root')

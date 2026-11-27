@@ -247,7 +247,7 @@ describe('account-bound lifecycle', () => {
     const { market, request, active } = await fixture({ authorizationAvailable: false })
     await market.synchronize()
     expect(market.state()).toMatchObject({ connected: true, online: true })
-    expect(await market.catalog()).toMatchObject({ total: 1, installReady: false, failureCode: 'authorization_unavailable', error: expect.stringContaining('desktop authorization service') })
+    expect(await market.catalog()).toMatchObject({ total: 1, installReady: false, failureCode: 'authorization_unavailable', error: 'Enterprise plugins require the desktop authorization service. Open the market in the desktop app or contact your administrator.' })
     await expect(market.act({ action: 'install', plugin_id: pluginId })).rejects.toMatchObject({ code: 'authorization_unavailable' })
     expect(request.mock.calls.some(([path]) => path.endsWith('/artifact'))).toBe(false)
     expect(active.size).toBe(0)

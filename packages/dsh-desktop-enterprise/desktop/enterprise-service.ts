@@ -153,6 +153,7 @@ export interface EnterpriseServiceNote {
 }
 
 export interface EnterpriseServiceOptions {
+  productName?: string
   cloudRoot?: string
   confirmCloudEffect?: CloudAuthorize
   desktopVersion?: string
@@ -449,6 +450,7 @@ export class EnterpriseService {
       let expectedAuthId: string | undefined
       const callback = await (this.options.startCallback ?? startLoginCallbackServer)({
         expectedState: pkce.state,
+        productName: this.options.productName,
         expectedAuthId: () => expectedAuthId,
         timeoutMs: ENTERPRISE_CALLBACK_FLOW_TIMEOUT_MS,
         onAccepted: (result) => {
@@ -470,7 +472,7 @@ export class EnterpriseService {
                 code_challenge: pkce.codeChallenge,
                 code_challenge_method: 'S256',
                 state: pkce.state,
-                device_name: 'BISHENG',
+                device_name: this.options.productName?.trim() ? this.options.productName : 'BISHENG',
                 ...(this.options.desktopVersion ? { client_version: this.options.desktopVersion } : {})
               }
             })
