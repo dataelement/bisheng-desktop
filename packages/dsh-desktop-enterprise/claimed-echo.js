@@ -2,7 +2,9 @@
 // returns a single id. The view node therefore uses the splice seq and
 // renders every recovered user message. The claim event does not carry
 // those bodies; they are still on the previous inbox pending chain.
-// A later logged user/message with the same id hides the echo.
+// A later logged user/message with the same id or rpcId hides the echo.
+// A desktop composer submission already paints its own bubble, so an echo
+// whose rpcId is one of those request ids stays hidden.
 // This module never writes the session log.
 
 export function materializePending(pending) {
@@ -36,15 +38,63 @@ export function claimedUserMessages(priorPending, splice) {
     if (message.source?.kind !== 'user') continue
     const text = messageText(message.content)
     if (text === '') continue
-    const id = message.id == null || message.id === '' ? undefined : String(message.id)
-    messages.push({ id, text })
+    messages.push(claimedEchoRow(message.id, message.source?.rpcId, text))
   }
   return messages
 }
 
 export function loggedUserIds(entries) {
   const ids = new Set()
-  if (!Array.isArray(entries)) return ids
+  for (const logged of loggedUserMessages(entries)) {
+    if (logged.id !== undefined) ids.add(logged.id)
+  }
+  return ids
+}
+
+export function visibleClaimedMessages(messages, entries, options) {
+  if (!Array.isArray(messages)) return []
+  const loggedIds = new Set()
+  const loggedRpcIds = new Set()
+  for (const logged of loggedUserMessages(entries)) {
+    if (logged.id !== undefined) loggedIds.add(logged.id)
+    if (logged.rpcId !== undefined) loggedRpcIds.add(logged.rpcId)
+  }
+  const extra = options?.matches
+  if (Array.isArray(extra)) {
+    for (const match of extra) {
+      if (match == null || typeof match !== 'object') continue
+      const id = presentId(match.id)
+      const rpcId = presentId(match.rpcId)
+      if (id !== undefined) loggedIds.add(id)
+      if (rpcId !== undefined) loggedRpcIds.add(rpcId)
+    }
+  }
+  const localRequestIds = new Set()
+  collectRequestIds(localRequestIds, options?.localRequestIds)
+  return messages.filter((message) => {
+    if (message == null || typeof message.text !== 'string' || message.text === '') return false
+    const id = presentId(message.id)
+    const rpcId = presentId(message.rpcId)
+    if (id === undefined && rpcId === undefined) return false
+    if (rpcId !== undefined && localRequestIds.has(rpcId)) return false
+    if (id !== undefined && loggedIds.has(id)) return false
+    if (rpcId !== undefined && loggedRpcIds.has(rpcId)) return false
+    return true
+  })
+}
+
+function claimedEchoRow(id, rpcId, text) {
+  const row = { text }
+  const present = presentId(id)
+  const requestId = presentId(rpcId)
+  if (present !== undefined) row.id = present
+  if (requestId !== undefined) row.rpcId = requestId
+  return row
+}
+
+function loggedUserMessages(entries) {
+  if (!Array.isArray(entries)) return []
+  const logged = []
   for (const entry of entries) {
     const event = entry?.event ?? entry
     if (event == null || event.type !== 'user/message') continue
@@ -53,21 +103,23 @@ export function loggedUserIds(entries) {
     const message = data.message != null && typeof data.message === 'object' ? data.message : data
     const source = message.source ?? data.source
     if (source?.kind !== 'user') continue
-    const id = message.id ?? data.id
-    if (id == null || id === '') continue
-    ids.add(String(id))
+    logged.push({ id: presentId(message.id ?? data.id), rpcId: presentId(source.rpcId) })
   }
-  return ids
+  return logged
 }
 
-export function visibleClaimedMessages(messages, entries) {
-  if (!Array.isArray(messages)) return []
-  const logged = loggedUserIds(entries)
-  return messages.filter((message) => {
-    if (message == null || typeof message.text !== 'string' || message.text === '') return false
-    if (message.id == null || message.id === '') return true
-    return !logged.has(String(message.id))
-  })
+function collectRequestIds(target, values) {
+  if (values == null || typeof values === 'string' || typeof values[Symbol.iterator] !== 'function') return
+  for (const id of values) {
+    const requestId = presentId(id)
+    if (requestId !== undefined) target.add(requestId)
+  }
+}
+
+function presentId(value) {
+  if (value == null || value === '') return undefined
+  const id = String(value)
+  return id === '' ? undefined : id
 }
 
 function messageText(content) {
