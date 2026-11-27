@@ -4,7 +4,7 @@ import { adoptLegacyCloudState } from '../legacy-cloud-state.js'
 import { CloudWorkbenchView } from './cloud-workbench-view'
 import type { CloudLaunch } from './cloud-workbench'
 import { assertCloudRendererRequest, confirmCloudEffect } from './cloud-confirmation'
-import { app, ipcMain, net, safeStorage, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { app, ipcMain, net, safeStorage, screen, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { startEnterpriseDesktop } from './enterprise-desktop'
 import { EnterpriseChatView } from './chat-view'
 import { createElectronEnterpriseFetch } from './platform-fetch'
@@ -12,6 +12,7 @@ import { assertEnterpriseSender, isEnterpriseAppUrl } from './ipc-policy'
 import { parseDesktopSettingsAction } from './shared/desktop-settings'
 import { bundledHarnessVersion } from '../../../src/main/version-info'
 import { allowInsecureEnterpriseLoopback, enterpriseLoginFromArgv, parseEnterpriseLoginLink, registerEnterpriseLoginProtocol } from './login-link'
+import { appendWindowLayoutLog, startWindowLayoutProbe } from './window-layout-probe'
 
 export interface EnterpriseProductContext {
   userDataPath: string
@@ -32,6 +33,7 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
   adoptLegacyCloudState(join(context.dshHome, 'desktop-workbenches'))
   const cloudView = new CloudWorkbenchView()
   let mainWindow: BrowserWindow | undefined
+  let layoutProbe: { stop(): void } | undefined
   let enterpriseChat: EnterpriseChatView | undefined
   let disposed = false
   let actions: EnterpriseHostActions | undefined
@@ -190,7 +192,8 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
   }
 
 
-  const closeWindow = (): void => { cloudView.close(); enterpriseChat?.dispose(); enterpriseChat = undefined; mainWindow = undefined }
+  const stopLayoutProbe = (): void => { layoutProbe?.stop(); layoutProbe = undefined }
+  const closeWindow = (): void => { stopLayoutProbe(); cloudView.close(); enterpriseChat?.dispose(); enterpriseChat = undefined; mainWindow = undefined }
   try {
     registerEnterpriseChatHandlers()
     for (const channel of ['enterprise:settings-info', 'enterprise:settings-action']) channels.add(channel)
@@ -226,12 +229,19 @@ export async function createEnterpriseProductRuntime(context: EnterpriseProductC
       actions = services
       if (mainWindow === window) return
       if (mainWindow) {
+        stopLayoutProbe()
         mainWindow.webContents.removeListener('did-finish-load', deliverPendingEnterpriseLogin)
         mainWindow.removeListener('closed', closeWindow)
         cloudView.close()
         enterpriseChat?.dispose()
       }
       mainWindow = window
+      // Work mode may never create the Chat view. Watch the host window itself.
+      layoutProbe = startWindowLayoutProbe({
+        window,
+        readScaleFactor: () => screen.getDisplayMatching(window.getBounds()).scaleFactor,
+        writeLog: line => appendWindowLayoutLog(join(app.getPath('logs'), 'window-layout.log'), line)
+      })
       enterpriseChat = new EnterpriseChatView(enterpriseDesktop, line => console.info(line), () => mainWindow)
       window.webContents.on('did-finish-load', deliverPendingEnterpriseLogin)
       window.once('closed', closeWindow)
