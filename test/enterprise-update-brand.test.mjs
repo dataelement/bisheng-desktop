@@ -10,6 +10,7 @@ const requestAnimationFrame = window.requestAnimationFrame.bind(window)
 const cancelAnimationFrame = window.cancelAnimationFrame.bind(window)
 let unload
 const roots = new Map()
+const PRODUCT_NAME = JSON.parse(await readFile('package.json', 'utf8')).build.productName
 afterEach(() => {
   unload?.()
   unload = undefined
@@ -37,9 +38,10 @@ it('renders the authoritative BiSheng mark in built About, manual update and not
     invoke: vi.fn(async () => ({ phase: 'idle', currentVersion: '1.0.0', manual: false }))
   }
   const exports = {}
+  // The preload runs in Electron, where the shell passes the window identity through process.argv.
   const context = vm.createContext({ exports, require: () => ({ ipcRenderer }), window, document,
     HTMLElement, Element, ShadowRoot: window.ShadowRoot, MutationObserver, navigator, console, setTimeout, clearTimeout,
-    requestAnimationFrame, cancelAnimationFrame })
+    requestAnimationFrame, cancelAnimationFrame, process: { argv: ['electron', '--dsh-product-name=' + encodeURIComponent(PRODUCT_NAME)] } })
   vm.runInContext((Array.isArray(bundle) ? bundle[0] : bundle).output.find(item => item.type === 'chunk').code, context)
   exports.mountDesktopUpdateUi()
   unload = () => window.dispatchEvent(new Event('unload'))
@@ -62,6 +64,7 @@ it('renders the authoritative BiSheng mark in built About, manual update and not
     document.body.toggleAttribute('data-ds-dark-theme', dark)
     handlers.get('desktop:show-about')({}, { desktopVersion: '1.0.0', locale })
     assertMark('dsh-desktop-about-root')
+    expect(roots.get('dsh-desktop-about-root').querySelector('.about-title').textContent).toBe(PRODUCT_NAME)
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
     handlers.get('updates:status-changed')({}, { phase: 'unsupported', currentVersion: '1.0.0', manual: true, locale, presentationId: ++presentationId })
     assertMark('dsh-desktop-update-root')
