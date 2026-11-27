@@ -1038,21 +1038,13 @@ jobs:
 
           import sys
           sys.path.insert(0, ".github/scripts")
-          from append_version_index import append_version_index
+          from bisheng_append_version_index import append_version_index
           append_version_index(api, repo_id, token, version)
           print("✅ Appended release to releases/versions.json")
           PY
 
-      - name: Configure initial 5% rollout on crash service
-        env:
-          CRASH_ADMIN_TOKEN: ${{ secrets.CRASH_ADMIN_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -z "${CRASH_ADMIN_TOKEN:-}" ]; then
-            echo "⚠️ CRASH_ADMIN_TOKEN secret not set; skipping rollout configuration."
-            exit 0
-          fi
-          node scripts/release/configure-rollout.mjs "${RELEASE_TAG#v}" 5
+      # BiSheng follows its product feed, matching historical installers.
+      # Do not configure rollout in the upstream DSH policy service.
 
       - name: Build Feishu release note prompt
         run: |
