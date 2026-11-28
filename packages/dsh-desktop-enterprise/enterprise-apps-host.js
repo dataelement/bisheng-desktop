@@ -6,7 +6,6 @@ export { validateEnterpriseAppId, assertEnterprisePublicRequestPath } from './en
 
 const MAX_RESPONSE_BYTES = 64 * 1024
 const TIMEOUT_MS = 15_000
-const ENVELOPE_KEYS = ['protocol_version', 'app_id', 'audience', 'base_url', 'token_type', 'access_token', 'expires_in', 'scope']
 
 function failure(code = 'request_failed', status = 502) {
   return new EnterpriseAuthError(code, 'Enterprise application request failed (' + code + ').', status)
@@ -27,10 +26,10 @@ function relativePath(value) {
 }
 
 function trustedBase(value) {
-  if (typeof value !== 'string' || value.length > 8192 || !/^https:\/\//iu.test(value) || /[\\\s\x00-\x1f\x7f]/u.test(value)) throw failure()
+  if (typeof value !== 'string' || value.length > 8192 || !/^https?:\/\//iu.test(value) || /[\\\s\x00-\x1f\x7f]/u.test(value)) throw failure()
   let url
   try { url = new URL(value) } catch { throw failure() }
-  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || /[?#]/u.test(value)) throw failure()
+  if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || /[?#]/u.test(value)) throw failure()
   // Validate the source spelling too: URL parsing can erase a traversal segment.
   const authorityStart = value.indexOf('://') + 3
   const pathStart = value.indexOf('/', authorityStart)
@@ -51,17 +50,40 @@ function trustedBase(value) {
   return url.href.replace(/\/$/u, '')
 }
 
-function validateEnvelope(value, appId, hostToken) {
+const ACCESS_TOKEN_TYPE = 'urn:ietf:params:oauth:token-type:access_token'
+const PLATFORM_SESSION_TYPE = 'urn:bisheng:params:oauth:token-type:platform-session'
+const IDENTITY_SCOPES = new Set(['openid', 'profile', 'email'])
+const OAUTH_ERRORS = new Set(['consent_required', 'invalid_grant', 'invalid_target', 'invalid_scope',
+  'invalid_client', 'unauthorized_client', 'unsupported_grant_type', 'invalid_request', 'temporarily_unavailable'])
+
+function requestGrant(appId, appBaseUrl, appScopes, accessToken) {
+  if (typeof appBaseUrl !== 'string' || !appBaseUrl) throw failure('invalid_request', 400)
+  const targetBase = trustedBase(appBaseUrl)
+  // Match the ordinary identity flow; optional email requires an explicit app request.
+  const scopes = appScopes ?? ['openid', 'profile']
+  if (!Array.isArray(scopes) || !scopes.length || scopes.length > 3 ||
+      scopes.some(scope => !IDENTITY_SCOPES.has(scope)) || new Set(scopes).size !== scopes.length) throw failure('invalid_request', 400)
+  const body = new URLSearchParams({
+    grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+    subject_token: accessToken, subject_token_type: PLATFORM_SESSION_TYPE,
+    requested_token_type: ACCESS_TOKEN_TYPE, audience: appId, scope: scopes.join(' ')
+  })
+  return { targetBase, body: body.toString(), subjectToken: accessToken, scopes }
+}
+
+function validateExchange(value, subjectToken, hostToken, scopes, startedAt) {
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
-      Object.keys(value).length !== ENVELOPE_KEYS.length || Object.keys(value).some(key => !ENVELOPE_KEYS.includes(key)) ||
-      value.protocol_version !== 1 || value.app_id !== appId ||
-      typeof value.audience !== 'string' || !/^[\x21-\x7e]{1,256}$/u.test(value.audience) ||
-      value.token_type !== 'Bearer' || typeof value.access_token !== 'string' ||
-      !/^bapp_v1_[A-Za-z0-9_-]{43}$/u.test(value.access_token) || value.access_token === hostToken ||
-      !Number.isInteger(value.expires_in) || value.expires_in < 1 || value.expires_in > 60 ||
-      typeof value.scope !== 'string' || value.scope.length > 2048 ||
-      !/^[\x21\x23-\x5b\x5d-\x7e]+(?: [\x21\x23-\x5b\x5d-\x7e]+)*$/u.test(value.scope)) throw failure()
-  return { base: trustedBase(value.base_url), token: value.access_token }
+      value.issued_token_type !== ACCESS_TOKEN_TYPE || typeof value.token_type !== 'string' ||
+      value.token_type.toLowerCase() !== 'bearer' || typeof value.access_token !== 'string' ||
+      value.access_token.length > 16384 || !/^[A-Za-z0-9\-._~+/]+=*$/u.test(value.access_token) ||
+      value.access_token === subjectToken || value.access_token === hostToken ||
+      !Number.isInteger(value.expires_in) || value.expires_in < 1 || value.expires_in > 300 ||
+      startedAt + value.expires_in * 1000 <= Date.now() ||
+      'refresh_token' in value || 'id_token' in value || typeof value.scope !== 'string') throw failure()
+  const granted = value.scope.split(' ')
+  if (granted.length !== scopes.length || new Set(granted).size !== granted.length ||
+      granted.some(scope => !scopes.includes(scope))) throw failure()
+  return value.access_token
 }
 
 function abortable(promise, signal) {
@@ -80,7 +102,7 @@ async function readEnvelope(response, signal, check) {
     throw failure('response_too_large', 413)
   }
   const reader = response.body?.getReader()
-  if (!reader) throw failure()
+  if (!reader) throw new SyntaxError('Empty enterprise application response.')
   let completed = false
   try {
     let size = 0
@@ -108,46 +130,78 @@ async function readEnvelope(response, signal, check) {
 }
 
 /** Host-only exchange. The result must never be returned to a business plugin or renderer. */
-export async function resolveEnterpriseAppAccess({ appId, path, plugin, base, accessToken, fetchImpl = fetch, signal, assertCurrent }) {
+async function resolveAppAccess({ appId, path, plugin, base, accessToken, context, appBaseUrl, appScopes, fetchImpl = fetch, signal, assertCurrent }, diagnostic) {
   validateEnterpriseAppId(appId)
   relativePath(path)
   if (!plugin || typeof plugin.pluginId !== 'string' || !/^[a-f0-9]{32}$/u.test(plugin.pluginId) ||
       typeof plugin.instanceId !== 'string' || !/^[a-z0-9-]{1,128}$/iu.test(plugin.instanceId) ||
       typeof accessToken !== 'string' || !accessToken || /[\r\n]/u.test(accessToken) || typeof assertCurrent !== 'function') throw failure('invalid_request', 400)
+  diagnostic.stage = 'enterprise_url'
   const enterpriseBase = trustedBase(base)
+  if (!context || context.base !== base || ['userId', 'tenantId', 'sessionVersion'].some(key => typeof context[key] !== 'string' || !context[key])) {
+    throw failure('invalid_request', 400)
+  }
   const timeout = AbortSignal.timeout(TIMEOUT_MS)
   const combined = signal ? AbortSignal.any([signal, timeout]) : timeout
   const check = () => { combined.throwIfAborted(); assertCurrent() }
   let response
   try {
     check()
-    response = await abortable(Promise.resolve(fetchImpl(enterpriseBase + '/api/v1/dsh/integrations/' + appId + '/delegations', {
+    // The plugin supplies its configured service URL. Only BiSheng decides target-client authorization.
+    diagnostic.stage = 'target_validation'
+    const grant = requestGrant(appId, appBaseUrl, appScopes, accessToken)
+    check()
+    diagnostic.stage = 'token_exchange'
+    const startedAt = Date.now()
+    response = await abortable(Promise.resolve(fetchImpl(enterpriseBase + '/api/v1/oauth2/token', {
       method: 'POST', redirect: 'error', credentials: 'omit', cache: 'no-store', signal: combined,
-      headers: { authorization: 'Bearer ' + accessToken, 'content-type': 'application/json',
-        'x-dsh-plugin-id': plugin.pluginId, 'x-dsh-plugin-instance-id': plugin.instanceId }, body: '{}'
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body: grant.body
     })).then(value => {
-      // A custom host fetch may finish after cancellation; discard its unused body.
       if (combined.aborted) void value.body?.cancel().catch(() => undefined)
       return value
     }), combined)
     check()
     if (!response.ok) {
-      void response.body?.cancel().catch(() => undefined)
-      if (response.status === 404) throw failure('app_unavailable', 404)
-      if (response.status >= 400 && response.status < 500) throw failure('authorization_denied', response.status)
-      throw failure()
+      let code = response.status >= 400 && response.status < 500 ? 'authorization_denied' : 'request_failed'
+      if (response.status >= 400 && response.status < 500) {
+        try {
+          const error = await readEnvelope(response, combined, check)
+          if (OAUTH_ERRORS.has(error?.error)) code = error.error
+        } catch (error) {
+          // An HTML/plain-text denial still preserves its HTTP status; bounded-read and session failures must propagate.
+          if (!(error instanceof SyntaxError) && !(error instanceof TypeError)) throw error
+        }
+      }
+      throw failure(code, response.status >= 400 && response.status < 500 ? response.status : 502)
     }
-    const envelope = await readEnvelope(response, combined, check)
-    const value = validateEnvelope(envelope, appId, accessToken)
+    diagnostic.stage = 'token_response'
+    const value = await readEnvelope(response, combined, check)
+    const token = validateExchange(value, grant.subjectToken, accessToken, grant.scopes, startedAt)
     check()
-    // Concatenation preserves the registry's path prefix even for a leading slash path.
-    return { endpoint: value.base + path, accessToken: value.token }
+    return { endpoint: grant.targetBase + path, accessToken: token }
   } catch (error) {
     if (combined.aborted) throw failure(signal?.aborted ? 'request_aborted' : 'request_timeout', signal?.aborted ? 499 : 504)
     if (error instanceof EnterpriseAuthError) throw failure(error.errorCode, error.status)
     throw failure()
   } finally {
-    // Cleanup must not mask a session or transport failure. readEnvelope owns locked bodies.
     if (response?.body && !response.bodyUsed && !response.body.locked) void response.body.cancel().catch(() => undefined)
+  }
+}
+
+/** Keep failure diagnostics at the Host even when a business plugin collapses the public error. */
+export async function resolveEnterpriseAppAccess(options) {
+  const diagnostic = { stage: 'validation' }
+  try {
+    return await resolveAppAccess(options, diagnostic)
+  } catch (error) {
+    const appId = typeof options?.appId === 'string' && options.appId.length <= 64 &&
+      /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(options.appId) ? options.appId : undefined
+    const code = error instanceof EnterpriseAuthError && /^[a-z_]{1,64}$/u.test(error.errorCode)
+      ? error.errorCode : 'request_failed'
+    const status = error instanceof EnterpriseAuthError && Number.isInteger(error.status) && error.status >= 400 && error.status <= 599
+      ? error.status : 502
+    // Never log the exception, URL, request body, source credential or returned token.
+    console.warn('[enterprise-app-access]', { appId, stage: diagnostic.stage, code, status })
+    throw error
   }
 }

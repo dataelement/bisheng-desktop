@@ -294,3 +294,22 @@ describe('enterpriseAuth wire transport', () => {
     await expect(transport.request('/api/test', { headers: { 'invalid header': 'value' } })).rejects.toMatchObject({ errorCode: 'invalid_request' })
   })
 })
+
+it('preserves bound service routing through the Cordis SDK without local registration', async () => {
+  const ctx = fixture()
+  const transport = {
+    state: vi.fn(async () => ({ connected: true, enterpriseId: 'e', userId: 'u', sessionVersion: 'one' })),
+    request: vi.fn(async () => new Response('ordinary')),
+    requestApp: vi.fn(async () => new Response('business'))
+  }
+  cleanup.push(await bindEnterpriseAuth(ctx, transport))
+  const options = { baseUrl: 'http://192.168.10.21:8000/team', scopes: ['openid'] }
+  const app = ctx.enterpriseAuth.app('new-client', options)
+  options.baseUrl = 'https://another.example.test'
+  options.scopes.push('email')
+  expect(await (await app.request('/projects')).text()).toBe('business')
+  expect(transport.requestApp).toHaveBeenCalledWith('new-client', '/projects', expect.objectContaining({
+    appBaseUrl: 'http://192.168.10.21:8000/team', appScopes: ['openid'], sessionVersion: 'one'
+  }))
+  expect(transport.request).not.toHaveBeenCalled()
+})

@@ -11,14 +11,25 @@ export interface EnterpriseAuthRequestInit {
   body?: string | ArrayBuffer | ArrayBufferView
   signal?: AbortSignal
 }
+export interface EnterpriseAppOptions {
+  /** Existing plugin service address, used for routing rather than client authorization. */
+  baseUrl: string
+  /** Defaults to openid/profile; email is optional and may require additional consent. */
+  scopes?: Array<'openid' | 'profile' | 'email'>
+}
+export interface EnterpriseAppTransportInit extends EnterpriseAuthRequestInit {
+  sessionVersion?: string
+  appBaseUrl?: string
+  appScopes?: string[]
+}
 export interface EnterpriseAppClient {
   readonly appId: string
-  /** Host exchanges app-scoped credentials and proxies to the administrator-registered application. */
+  /** Host obtains a server-authorized application token and proxies to the configured service. */
   request(path: string, init?: EnterpriseAuthRequestInit): Promise<Response>
 }
 export interface EnterpriseAuth {
-  /** No URLs, tokens, plugin IDs or user identities are supplied by the caller. */
-  app(appId: string): EnterpriseAppClient
+  /** Supply the plugin service URL; no local client registration or allowlist is required. */
+  app(appId: string, options?: EnterpriseAppOptions): EnterpriseAppClient
   /** Cached public state; use refresh() when a fresh snapshot is needed. */
   getState(): EnterpriseAuthState
   /** Read the existing host session without opening a login page. */
@@ -28,7 +39,7 @@ export interface EnterpriseAuth {
   /** No automatic replay of business requests, including HTTP 401. */
   request(path: string, init?: EnterpriseAuthRequestInit): Promise<Response>
 }
-export type EnterpriseAuthErrorCode = 'app_unavailable' | 'authorization_denied' | 'invalid_request' | 'session_changed' | 'not_connected' | 'too_many_requests' | 'request_aborted' | 'request_timeout' | 'request_failed' | 'response_too_large' | 'request_too_large' | 'redirect_rejected'
+export type EnterpriseAuthErrorCode = 'consent_required' | 'invalid_grant' | 'invalid_target' | 'invalid_scope' | 'invalid_client' | 'unauthorized_client' | 'unsupported_grant_type' | 'temporarily_unavailable' | 'app_unavailable' | 'authorization_denied' | 'invalid_request' | 'session_changed' | 'not_connected' | 'too_many_requests' | 'request_aborted' | 'request_timeout' | 'request_failed' | 'response_too_large' | 'request_too_large' | 'redirect_rejected'
 export declare class EnterpriseAuthError extends Error {
   readonly errorCode: EnterpriseAuthErrorCode
   readonly status: number
@@ -37,7 +48,7 @@ export declare class EnterpriseAuthError extends Error {
 export interface EnterpriseAuthTransport {
   state(signal?: AbortSignal): Promise<EnterpriseAuthState>
   /** Optional capability: missing support fails closed, never falls back to an enterprise-origin request. */
-  requestApp?(appId: string, path: string, init?: EnterpriseAuthRequestInit & { sessionVersion?: string }): Promise<Response>
+  requestApp?(appId: string, path: string, init?: EnterpriseAppTransportInit): Promise<Response>
   /** Trusted host validates sessionVersion and cancels requests/streams when it is invalidated. */
   request(path: string, init?: EnterpriseAuthRequestInit & { sessionVersion?: string }): Promise<Response>
 }

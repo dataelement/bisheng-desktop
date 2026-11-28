@@ -22,5 +22,6 @@ export declare function createWebEnterpriseAuth(options: {
   getAccount(): WebEnterpriseAccount
   /** Refreshes credentials silently; must not return another user's session. */
   getSessionAuth(): Promise<WebEnterpriseSession | null>
+  refreshSession?(failedToken: string, sessionVersion: string): Promise<WebEnterpriseSession | null>
   fetchImpl?: typeof fetch
 }): WebEnterpriseAuthHost

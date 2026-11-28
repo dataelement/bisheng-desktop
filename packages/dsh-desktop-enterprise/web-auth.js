@@ -77,7 +77,10 @@ export function createWebEnterpriseAuth({ getAccount, getSessionAuth, refreshSes
       }
       const request = async (path, init = {}, appId) => {
         if (appId !== undefined) validateEnterpriseAppId(appId)
-        else assertEnterprisePublicRequestPath(path)
+        else {
+          if (init.appBaseUrl !== undefined || init.appScopes !== undefined) throw failure('invalid_request', 400)
+          assertEnterprisePublicRequestPath(path)
+        }
         const parsed = validateRequest(path, init)
         assertSession(grant, init.sessionVersion)
         if (requests.size >= 8 || grant.controllers.size >= 4) throw failure('too_many_requests', 429)
@@ -119,6 +122,8 @@ export function createWebEnterpriseAuth({ getAccount, getSessionAuth, refreshSes
             const resolveAccess = () => resolveEnterpriseAppAccess({
               appId, path, plugin: { pluginId: grant.pluginId, instanceId: grant.instanceId },
               base: session.base, accessToken: session.tokens.access_token, fetchImpl, signal: controller.signal,
+              appBaseUrl: init.appBaseUrl, appScopes: init.appScopes,
+              context: { base: session.base, userId: grant.userId, tenantId: grant.tenantId, sessionVersion: grant.connectionKey },
               assertCurrent: () => assertSession(grant, init.sessionVersion)
             })
             let access

@@ -1040,6 +1040,8 @@ export class EnterpriseService {
             try {
               return await resolveEnterpriseAppAccess({
                 appId: request.appId, path: request.path, plugin, base, accessToken,
+                appBaseUrl: request.appBaseUrl ?? '', appScopes: request.appScopes,
+                context: { base, userId: this.session?.user?.id ?? '', tenantId: this.session?.tenant?.id ?? '', sessionVersion: request.sessionVersion },
                 fetchImpl: (input, init) => createEnterpriseFetch(this.options.fetchImpl)(String(input), init), signal: requestSignal,
                 assertCurrent: () => {
                   try { assertSession(request.sessionVersion) }

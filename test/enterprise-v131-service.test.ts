@@ -1012,21 +1012,21 @@ describe('enterprise market credential boundary', () => {
     expect(requests).toHaveLength(2)
   })
 
-  it.each([false, true])('refreshes a rejected app delegation once (repeat rejection: %s)', async (repeatRejection) => {
+  it.each([false, true])('refreshes a rejected OAuth exchange once (repeat rejection: %s)', async (repeatRejection) => {
     const platform = createMockEnterpriseServer({ port: 0 })
     const origin = await platform.listen()
     cleanups.push(async () => platform.close())
     const tokens: Array<string | null> = []
     let refreshes = 0
     let targetCalls = 0
-    const appToken = 'bapp_v1_' + 'a'.repeat(43)
+    const appToken = 'synthetic.app.token'
     const { service } = await createService(async (url, init) => {
       const parsed = new URL(url)
       if (parsed.pathname.endsWith('/token') && String(init?.body).includes('refresh_token')) refreshes++
-      if (parsed.pathname === '/api/v1/dsh/integrations/example/delegations') {
-        tokens.push(new Headers(init?.headers).get('authorization'))
+      if (parsed.pathname === '/api/v1/oauth2/token') {
+        tokens.push(new URLSearchParams(String(init?.body)).get('subject_token'))
         if (tokens.length === 1 || repeatRejection) return new Response('', { status: 401 })
-        return Response.json({ protocol_version: 1, app_id: 'example', audience: 'example', base_url: 'https://app.example.com', token_type: 'Bearer', access_token: appToken, expires_in: 60, scope: 'read' })
+        return Response.json({ issued_token_type: 'urn:ietf:params:oauth:token-type:access_token', token_type: 'Bearer', access_token: appToken, expires_in: 300, scope: 'openid profile' })
       }
       if (parsed.hostname === 'app.example.com') {
         targetCalls++
@@ -1047,7 +1047,7 @@ describe('enterprise market credential boundary', () => {
     await completeBrowserLogin(origin, (await service.startLogin('https://enterprise.example.com')).authorizationUrl)
     await waitFor(() => service.snapshot().modelsAvailable)
     const request = service.authRequest({ pluginId: 'a'.repeat(32), instanceId: 'one' },
-      { appId: 'example', path: '/action', sessionVersion: service.authState().sessionVersion }, new AbortController().signal)
+      { appId: 'example', appBaseUrl: 'https://app.example.com', path: '/action', sessionVersion: service.authState().sessionVersion }, new AbortController().signal)
     if (repeatRejection) await expect(request).rejects.toMatchObject({ code: 'authorization_denied', status: 401 })
     else {
       const response = await request
@@ -1066,7 +1066,7 @@ describe('enterprise market credential boundary', () => {
     let refreshes = 0
     let calls = 0
     const response = await transport.request({ pluginId: 'example-plugin', instanceId: 'one' },
-      { appId: 'example', path: '/action', method: 'POST', body: 'payload', sessionVersion: 'v1' }, new AbortController().signal, {
+      { appId: 'example', appBaseUrl: 'https://app.example.com', path: '/action', method: 'POST', body: 'payload', sessionVersion: 'v1' }, new AbortController().signal, {
         assertSession: () => undefined,
         access: async () => ({ endpoint: 'https://example.invalid/action', accessToken: 'app-token' }),
         refresh: async () => { refreshes++ },
