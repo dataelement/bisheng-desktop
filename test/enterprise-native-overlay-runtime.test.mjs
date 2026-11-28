@@ -32,7 +32,10 @@ function main() {
   const { join } = require('node:path')
   app.setPath('userData', join(__dirname, 'profile'))
   app.whenReady().then(async () => {
-    const host = new BrowserWindow({ width: 1000, height: 700, show: false, webPreferences: { nodeIntegration: true, contextIsolation: false } })
+    // Windows native occlusion can mark even a shown CI window as document.hidden.
+    // This fixture exercises DOM overlay/seat visibility, so keep its renderer active
+    // independently of other desktop windows; retain real layout, capture and native IPC.
+    const host = new BrowserWindow({ width: 1000, height: 700, show: false, webPreferences: { nodeIntegration: true, contextIsolation: false, backgroundThrottling: false } })
     const native = new WebContentsView()
     native.setVisible(false)
     host.contentView.addChildView(native)
@@ -42,12 +45,7 @@ function main() {
     ipcMain.handle('overlay:visible', () => native.getVisible())
     ipcMain.on('overlay:result', (_event, error) => { console.log(error ? 'NATIVE_OVERLAY_FAILURE ' + error : 'NATIVE_OVERLAY_SUCCESS'); host.destroy(); app.exit(error ? 1 : 0) })
     await host.loadFile(join(__dirname, 'page.html'))
-    // In-page overlays are only applied while the document is visible. A covered
-    // window sets document.hidden and refresh waits for visibilitychange.
-    // showInactive leaves the Windows CI window covered, so show that fixture.
-    // macOS can composite screenshots without taking foreground focus.
-    if (process.platform === 'win32') host.show()
-    else host.showInactive()
+    host.showInactive()
     await host.webContents.executeJavaScript(require('node:fs').readFileSync(join(__dirname, 'client.cjs'), 'utf8'))
   }).catch(error => { console.error(error); app.exit(1) })
 }
@@ -64,27 +62,27 @@ function renderer() {
   const locale = { getSnapshot: () => ({ active: 'zh' }), subscribe: () => () => {} }
   const root = createRoot(document.getElementById('root'))
   root.render(React.createElement(DesktopModes, { work: null, navigation, t: key => key, locale }))
-  const waitFor = async predicate => {
+  const waitFor = async (stage, predicate) => {
     const deadline = Date.now() + 5000
     while (!await predicate()) {
-      if (Date.now() > deadline) throw new Error('Native visibility did not converge')
+      if (Date.now() > deadline) throw new Error(`Native visibility did not converge: ${stage}; document.visibilityState=${document.visibilityState}; native.visible=${await ipcRenderer.invoke('overlay:visible')}`)
       await new Promise(resolve => setTimeout(resolve, 20))
     }
   }
   const visible = value => async () => await ipcRenderer.invoke('overlay:visible') === value
   ;(async () => {
-    await waitFor(visible(true))
+    await waitFor('initial Chat', visible(true))
     const modal = document.createElement('div'); modal.setAttribute('role', 'dialog'); modal.setAttribute('aria-modal', 'true'); modal.textContent = 'Confirmation'
-    document.body.append(modal); await waitFor(visible(false))
-    modal.remove(); await waitFor(visible(true))
+    document.body.append(modal); await waitFor('modal opens', visible(false))
+    modal.remove(); await waitFor('modal closes', visible(true))
     const menu = document.createElement('div'); menu.setAttribute('role', 'menu'); menu.style.cssText = 'position:fixed;inset:100px auto auto 100px;width:200px;height:100px;background:white'; menu.textContent = 'Menu'
-    document.body.append(menu); await waitFor(visible(false))
-    await waitFor(() => !menu.hasAttribute('data-dsh-native-overlay-pending'))
+    document.body.append(menu); await waitFor('menu opens', visible(false))
+    await waitFor('menu paint gate releases', () => !menu.hasAttribute('data-dsh-native-overlay-pending'))
     if (!document.querySelector('[data-dsh-native-frame]')) throw new Error('Native screenshot backing missing')
-    menu.remove(); await waitFor(visible(true))
-    document.querySelector('.dshModes').hidden = true; await waitFor(visible(false))
-    document.querySelector('.dshModes').hidden = false; await waitFor(visible(true))
-    root.unmount(); await waitFor(visible(false))
+    menu.remove(); await waitFor('menu closes', visible(true))
+    document.querySelector('.dshModes').hidden = true; await waitFor('host seat hides', visible(false))
+    document.querySelector('.dshModes').hidden = false; await waitFor('host seat restores', visible(true))
+    root.unmount(); await waitFor('unmount', visible(false))
     ipcRenderer.send('overlay:result')
   })().catch(error => ipcRenderer.send('overlay:result', error.stack))
 }
