@@ -1660,12 +1660,19 @@ function animateWorkLanding(work, { to, chat }) {
 
 // Native views sit above the renderer, so z-index cannot protect the resize hit area.
 function reserveSidebarResizeBounds(bounds) {
-  const handle = document.querySelector('[data-side="sidebar"]')?.getBoundingClientRect()
-  if (!handle || handle.width <= 0 || handle.height <= 0 ||
-      handle.bottom <= bounds.y || handle.top >= bounds.y + bounds.height ||
-      handle.left > bounds.x || handle.right <= bounds.x) return bounds
-  const x = Math.min(bounds.x + bounds.width, Math.ceil(handle.right))
-  return { ...bounds, x, width: Math.max(0, bounds.x + bounds.width - x) }
+  let left = bounds.x
+  let right = bounds.x + bounds.width
+  for (const side of ['sidebar', 'rightbar']) {
+    const handle = document.querySelector('[data-side="' + side + '"]')?.getBoundingClientRect()
+    if (!handle || handle.width <= 0 || handle.height <= 0 ||
+        handle.bottom <= bounds.y || handle.top >= bounds.y + bounds.height) continue
+    // A native surface can be on either side of a divider (Chat or preview).
+    // Only trim a shared edge; a handle inside an unrelated surface must not split it.
+    if (handle.left <= left && handle.right > left) left = Math.min(right, Math.ceil(handle.right))
+    else if (handle.left < right && handle.right >= right) right = Math.max(left, Math.floor(handle.left))
+  }
+  return left === bounds.x && right === bounds.x + bounds.width
+    ? bounds : { ...bounds, x: left, width: right - left }
 }
 
 function DesktopModes({ work, columns, resizeHandle, navigation, t, locale }) {
@@ -2072,6 +2079,8 @@ function installDesktopModes(ctx) {
           .dshModeBody{grid-area:1/1;min-width:0;min-height:0;display:flex;flex-direction:column;position:relative}.dshModeBody[hidden]{display:none}
           #dsh-panel-chat::before{content:'';position:absolute;inset:0 0 auto;height:var(--dsh-square-chrome-height,0px);background:var(--dsh-square-chrome-fill,transparent);pointer-events:none}
           .dshWorkContent{display:grid;grid-template-rows:minmax(0,1fr);isolation:isolate}.dshWorkContent[hidden]{display:none}
+          /* The contributed handle keeps frame coordinates; anchor it to the nested right track. */
+          .dshWorkContent > [data-side="rightbar"]{grid-column:2;left:0!important}
           /* Keep Harness's column ResizeObserver at the real width while its landing is behind Chat. */
           .dshWorkContent[hidden][data-keep-landing-layout]{display:grid;visibility:hidden;opacity:0;pointer-events:none}
           /* Replay the Work cards when its retained landing becomes visible. */
