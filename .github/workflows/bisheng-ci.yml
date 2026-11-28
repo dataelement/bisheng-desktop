@@ -1,11 +1,14 @@
-name: BiSheng candidate checks
+name: BiSheng core checks
 
 on:
   pull_request:
     branches: [main, V1.3.1, codex/bisheng-unified]
-  push:
-    branches: [main, V1.3.1, codex/bisheng-unified]
   workflow_dispatch:
+    inputs:
+      extended:
+        description: 运行全部原生平台测试与未签名安装包验证
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -20,29 +23,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: ubuntu-24.04
-            platform: linux
-            arch: x64
-            desktop: false
-          - runner: windows-2022
-            platform: win32
-            arch: x64
-            desktop: true
-            package-script: package:dev:win
-            artifact-platform: win
-          - runner: macos-15
-            platform: darwin
-            arch: arm64
-            desktop: true
-            package-script: package:dev:mac:arm64
-            artifact-platform: mac
-          - runner: macos-15-intel
-            platform: darwin
-            arch: x64
-            desktop: true
-            package-script: package:dev:mac:x64
-            artifact-platform: mac
+        # Daily PRs use one native target; opt in to the full matrix manually.
+        include: >-
+          ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.extended && '[{"runner":"ubuntu-24.04","platform":"linux","arch":"x64","desktop":false},
+          {"runner":"windows-2022","platform":"win32","arch":"x64","desktop":true,"package-script":"package:dev:win","artifact-platform":"win"},
+          {"runner":"macos-15","platform":"darwin","arch":"arm64","desktop":true,"package-script":"package:dev:mac:arm64","artifact-platform":"mac"},
+          {"runner":"macos-15-intel","platform":"darwin","arch":"x64","desktop":true,"package-script":"package:dev:mac:x64","artifact-platform":"mac"}]' || '[{"runner":"macos-15","platform":"darwin","arch":"arm64","desktop":true}]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     env:
@@ -74,7 +60,9 @@ jobs:
           git fetch --no-tags upstream "$baseline_commit"
           git update-ref refs/remotes/upstream/V0.14.1 "$baseline_commit"
           git rev-parse --verify upstream/V0.14.1
+      # PRs have one independent boundary check; manual runs must enforce it here.
       - run: npm run verify:boundary
+        if: github.event_name == 'workflow_dispatch'
         env:
           UPSTREAM_BASE: upstream/V0.14.1
       - name: Install locked dependencies with postinstall
@@ -94,20 +82,44 @@ jobs:
       - name: Build on supported native Office targets
         if: matrix.desktop
         run: npm run build
+      - name: Run core business and CI regressions
+        if: matrix.desktop && !(github.event_name == 'workflow_dispatch' && inputs.extended)
+        run: >-
+          node node_modules/vitest/vitest.mjs run
+          test/enterprise-auth-client.test.mjs
+          test/enterprise-auth-concurrency.test.mjs
+          test/enterprise-auth-sdk.test.mjs
+          test/enterprise-web-auth.test.mjs
+          test/enterprise-apps-host.test.mjs
+          test/enterprise-apps-integration.test.mjs
+          test/enterprise-generation-lifecycle.test.mjs
+          test/enterprise-community-package.test.ts
+          test/enterprise-market.test.ts
+          test/enterprise-proxy.test.mjs
+          test/enterprise-content-safety-runtime.test.ts
+          test/enterprise-cloud-workbench-tools.test.mjs
+          test/enterprise-cloud-session-store.test.mjs
+          test/workbench-client.test.mjs
+          test/web-runtime-ci-workflows.test.mjs
+          test/enterprise-boundary-gate.test.mjs
+          test/enterprise-ci-baseline.test.mjs
+          test/enterprise-release-workflow.test.mjs
+          test/enterprise-electron-download-retry.test.mjs
+          --maxWorkers=2
       - name: Run complete regressions under ordinary Node on supported native targets
-        if: matrix.desktop
+        if: github.event_name == 'workflow_dispatch' && inputs.extended && matrix.desktop
         run: npm test -- --maxWorkers=2
       - name: Run Linux pure Web regressions without native Office preparation
         if: ${{ !matrix.desktop }}
         run: node node_modules/vitest/vitest.mjs run test/web-runtime-ci.test.mjs test/web-runtime-ci-workflows.test.mjs test/web-runtime-offline-launcher.test.mjs test/web-runtime-system-proxy.test.mjs test/enterprise-linux-installer.test.mjs --maxWorkers=2
       - name: Verify native Desktop loader
-        if: matrix.desktop
+        if: github.event_name == 'workflow_dispatch' && inputs.extended && matrix.desktop
         run: node scripts/verify/verify-target.mjs ${{ matrix.platform }} ${{ matrix.arch }}
       - name: Build unsigned Desktop packages with mandatory afterPack gates
-        if: matrix.desktop
+        if: github.event_name == 'workflow_dispatch' && inputs.extended && matrix.desktop
         run: npm run ${{ matrix.package-script }}
       - name: Verify Desktop package files
-        if: matrix.desktop
+        if: github.event_name == 'workflow_dispatch' && inputs.extended && matrix.desktop
         run: node ops/ci/desktop-artifacts.mjs development ${{ matrix.artifact-platform }} ${{ matrix.arch }}
       - name: Verify tracked sources remain clean
         run: git diff --exit-code

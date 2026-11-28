@@ -178,6 +178,15 @@ test('precise downstream enterprise, Web packaging and enterprise CI paths pass'
   assert.deepEqual(f.check().illegalFiles, [])
 })
 
+test('enterprise release paths pass without opening other Python scripts or workflows', t => {
+  const f = fixture(t)
+  for (const file of ['.github/scripts/bisheng_append_version_index.py', '.github/scripts/test_bisheng_append_version_index.py', '.github/workflows/backfill-archive.yml']) f.put(file)
+  assert.deepEqual(f.check().illegalFiles, [])
+  const rejected = ['.github/scripts/bisheng_backdoor.py', '.github/scripts/append_version_index.py', '.github/workflows/backfill-other.yml']
+  for (const file of rejected) f.put(file)
+  assert.deepEqual(f.check().illegalFiles, rejected.sort())
+})
+
 test('patches, prefix lookalikes and arbitrary scripts are never whitelisted', t => {
   const f = fixture(t)
   f.put('patches/sdk.patch', 'local patch\n')

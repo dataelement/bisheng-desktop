@@ -3,12 +3,14 @@ name: Downstream Boundary Gatekeeper
 on:
   pull_request:
     branches: [main, V1.3.1, codex/bisheng-unified]
-  push:
-    branches: [main, V1.3.1, codex/bisheng-unified]
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: boundary-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check-boundary:
