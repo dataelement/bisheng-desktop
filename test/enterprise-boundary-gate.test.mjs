@@ -180,8 +180,7 @@ test('precise downstream enterprise, Web packaging and enterprise CI paths pass'
 
 test('enterprise release paths pass without opening other Python scripts or workflows', t => {
   const f = fixture(t)
-  const allowed = ['.github/scripts/bisheng_append_version_index.py', '.github/scripts/test_bisheng_append_version_index.py', '.github/workflows/backfill-archive.yml']
-  for (const file of allowed) f.put(file)
+  for (const file of ['.github/scripts/bisheng_append_version_index.py', '.github/scripts/test_bisheng_append_version_index.py', '.github/workflows/backfill-archive.yml']) f.put(file)
   assert.deepEqual(f.check().illegalFiles, [])
   const rejected = ['.github/scripts/bisheng_backdoor.py', '.github/scripts/append_version_index.py', '.github/workflows/backfill-other.yml']
   for (const file of rejected) f.put(file)
