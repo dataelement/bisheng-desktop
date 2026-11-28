@@ -124,8 +124,6 @@ jobs:
 
   macos:
     name: macOS ${{ matrix.label }}
-    env:
-      DSH_OFFICE_SMOKE_DIAGNOSTICS_DIR: ${{ runner.temp }}/office-smoke-diagnostics
     needs: validate-dispatch
     if: >-
       inputs.mode != 'publish' && (startsWith(github.ref, 'refs/tags/v') ||
@@ -262,11 +260,13 @@ jobs:
       - name: Build signed ${{ matrix.label }} package
         if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'signed' || inputs.mode == 'prerelease'))
         env:
+          DSH_OFFICE_SMOKE_DIAGNOSTICS_DIR: ${{ runner.temp }}/office-smoke-diagnostics
           CSC_KEYCHAIN: ${{ steps.signing_keychain.outputs.keychain }}
         run: node scripts/verify/verify-target.mjs darwin ${{ matrix.arch }} && npx --no-install electron-builder --mac --${{ matrix.arch }} --publish never
       - name: Build isolated ${{ matrix.label }} development package
         if: ${{ !startsWith(github.ref, 'refs/tags/v') && (github.event_name != 'workflow_dispatch' || inputs.mode == 'development') }}
         env:
+          DSH_OFFICE_SMOKE_DIAGNOSTICS_DIR: ${{ runner.temp }}/office-smoke-diagnostics
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: node scripts/verify/verify-target.mjs darwin ${{ matrix.arch }} && npx --no-install electron-builder --mac --${{ matrix.arch }} --publish never --config electron-builder.dev.cjs
       - name: Preserve failed Office smoke diagnostics

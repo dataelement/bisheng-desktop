@@ -47,7 +47,10 @@ function interpolate(value, ctx) {
 
 describe('private desktop release YAML contracts', () => {
   it('retains failed Office inputs only as scoped diagnostic artifacts', () => {
-    expect(jobs.macos.env.DSH_OFFICE_SMOKE_DIAGNOSTICS_DIR).toBe('${{ runner.temp }}/office-smoke-diagnostics')
+    expect(jobs.macos.env?.DSH_OFFICE_SMOKE_DIAGNOSTICS_DIR).toBeUndefined()
+    for (const name of ['Build signed ${{ matrix.label }} package', 'Build isolated ${{ matrix.label }} development package']) {
+      expect(named('macos', name).env.DSH_OFFICE_SMOKE_DIAGNOSTICS_DIR).toBe('${{ runner.temp }}/office-smoke-diagnostics')
+    }
     const diagnostic = named('macos', 'Preserve failed Office smoke diagnostics')
     expect(diagnostic.if).toBe('failure()')
     expect(diagnostic.with.path).toBe('${{ runner.temp }}/office-smoke-diagnostics/')
