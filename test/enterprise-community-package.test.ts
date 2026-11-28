@@ -107,9 +107,9 @@ describe('community npm packages', () => {
     const bytes = await readFile(archive)
     const expected = { name: 'company-demo', version: '1.2.3', digest: sha256(bytes) }
     const generation = await installFixtureBundle(root, bytes, expected, target, { dshEntryPath: join(process.cwd(), 'node_modules/@deepseek-ai/dsh/lib/bin.js') })
-    expect(generation.directory).toContain(join('profiles', '.generations', 'live'))
+    expect(generation.directory).toBe(join(root, 'profiles', '.enterprise-generations', generation.id))
     expect(() => assertEnterpriseGenerationPath(root, { ...generation, generation_id: generation.id })).not.toThrow()
-    expect(() => assertEnterpriseGenerationPath(root, { ...generation, generation_id: generation.id, integrity: undefined })).toThrow('Invalid enterprise generation path.')
+    expect(() => assertEnterpriseGenerationPath(root, { ...generation, generation_id: generation.id, directory: join(root, 'profiles', '.generations', 'live', generation.id), integrity: undefined })).toThrow('Invalid enterprise generation path.')
     expect(() => assertEnterpriseGenerationPath(root, { ...generation, generation_id: '../escape' })).toThrow('Invalid enterprise generation path.')
     expect(() => assertEnterpriseGenerationPath(root, { ...generation, generation_id: generation.id, directory: join(root, 'elsewhere', generation.id) })).toThrow('Invalid enterprise generation path.')
     expect(generation.integrity).toMatch(/^[a-f0-9]{64}$/)

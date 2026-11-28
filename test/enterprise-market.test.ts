@@ -243,6 +243,21 @@ describe('account-bound lifecycle', () => {
     expect(active.has('1.0.0')).toBe(true)
   })
 
+  it('restores a missing exact version after restart without losing its config', async () => {
+    const { market, root, request, active } = await fixture()
+    await market.act({ action: 'install', plugin_id: pluginId, config: { endpoint: 'https://xpie.example.test' } })
+    await market.stop()
+    const document = JSON.parse(await readFile(join(root, 'enterprise-market', sha256(`${account.base}|${account.tenant.id}|${account.user.id}`) + '.json'), 'utf8'))
+    const installed = document.installed[0]
+    await rm(installed.directory, { recursive: true })
+    await market.synchronize()
+    const recovered = JSON.parse(await readFile(join(root, 'enterprise-market', sha256(`${account.base}|${account.tenant.id}|${account.user.id}`) + '.json'), 'utf8')).installed[0]
+    expect(recovered).toMatchObject({ version_id: installed.version_id, digest: installed.digest, config: installed.config, status: 'enabled' })
+    expect(recovered.directory).not.toBe(installed.directory)
+    expect(active.has('1.0.0')).toBe(true)
+    expect(request.mock.calls.filter(([path]) => String(path).endsWith('/artifact'))).toHaveLength(2)
+  })
+
   it('fails closed before catalog or activation without the desktop authorization service', async () => {
     const { market, request, active } = await fixture({ authorizationAvailable: false })
     await market.synchronize()
