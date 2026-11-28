@@ -149,7 +149,13 @@ accountSnapshot 至少含 connected、connectionKey、user.id 和 tenant.id，�
 
 xpie 若使用独立进程或浏览器 renderer，则通过受认证、限定插件实例和生命周期的 IPC/后端通道实现同一个 transport 契约；不能把上例中的 tokens 或 Web host 对象搬进不可信前端。客户端模块使用标准 AbortController、AbortSignal.any、fetch Response 和 Web Streams，需要宿主提供兼容运行环境。
 
-如果 xpie 只有自己的 SSO 会话，企业认证服务还必须完成：登记 client_id=xpie；验证身份源、issuer/audience/有效期；映射企业员工与租户；签发绑定 xpie 的短期会话。可以复用 SSO 浏览器登录态或可信服务端身份兑换。当前仓库没有实现外部 xpie 的身份兑换端点，不能把 dsh-desktop 的固定 client_id 或别的应用 token 直接当作 xpie 的企业会话。
+如果 xpie 只有自己的 SSO 会话，企业认证服务还必须完成：登记 client_id=xpie；验证身份源、issuer/audience/有效期；映射企业员工与租户；签发绑定 xpie 的短期会话。可以复用 SSO 浏览器登录态或可信服务端身份兑换。当前仓库已接通 RFC 8693 默认换证入口：Host 使用当前 Enterprise 主会话，以插件提供的 client ID 向服务端申请应用 Token，并按插件现有服务地址转发请求，动态路由接口与部署前提见 [企业应用 RFC 8693 迁移](downstream-enterprise-apps.md)。后台须支持该主会话来源；主凭据只发送给 BiSheng，xpie 只收到换证后的应用凭据。
+
+## Desktop 统一平台登录后续迁移
+
+统一平台认证入口为 POST /api/v1/auth/login，配套 POST /api/v1/auth/refresh、GET /api/v1/auth/session、POST /api/v1/auth/logout。参考实现见 [BiSheng platform_auth 路由](https://github.com/dataelement/bisheng/blob/feat/026-token-exchange-alpha1/src/backend/bisheng/user/api/endpoints/platform_auth.py)。它们与跨应用 RFC 8693 Token Endpoint 分属主会话建立和目标应用换证两个阶段。
+
+本次跨应用 Host 迁移不改变 Desktop 当前系统浏览器授权、identity_ticket 和 /api/v1/dsh/token 主登录。Desktop 主登录切换仍需单独完成 UI/浏览器交接、Native 凭据交付、client_id、刷新轮换、安全存储与旧会话迁移。参考分支只列出 bisheng-web / bisheng-mobile，不能以冒充 Mobile 或只改 URL 的方式声明 Desktop 主登录已经迁移；实际部署的 Desktop 正式契约应由后台版本确定。
 
 ## 公共 API 与生命周期
 

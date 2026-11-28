@@ -1,8 +1,8 @@
 import { EnterpriseAuthError } from './enterprise-auth-client.js'
 
-/** Application registry identifier; never a URL or a path. */
+/** Bounded OAuth audience value. Client existence and authorization belong to the server. */
 export function validateEnterpriseAppId(value) {
-  if (typeof value !== 'string' || value.length > 64 || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(value)) {
+  if (typeof value !== 'string' || !/^[\x21-\x7e]{1,128}$/u.test(value)) {
     throw new EnterpriseAuthError('invalid_request', 'Invalid enterprise application identifier.', 400)
   }
   return value
@@ -25,7 +25,8 @@ export function assertEnterprisePublicRequestPath(path) {
   pathname = pathname.replace(/\\/gu, '/').replace(/\/{2,}/gu, '/')
     .split('/').map(segment => segment.split(';')[0]).join('/')
   const normalized = new URL(pathname, 'https://enterprise.invalid').pathname.toLowerCase()
-  if (normalized === '/api/v1/dsh/integrations' || normalized.startsWith('/api/v1/dsh/integrations/')) {
+  if (normalized === '/api/v1/dsh/integrations' || normalized.startsWith('/api/v1/dsh/integrations/') ||
+      normalized === '/api/v1/oauth2/token' || normalized.startsWith('/api/v1/oauth2/token/')) {
     throw new EnterpriseAuthError('authorization_denied', 'Integration credentials are restricted to the host.', 403)
   }
 }

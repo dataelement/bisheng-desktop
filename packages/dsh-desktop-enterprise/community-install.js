@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
-import { lstat, mkdir, readFile, readdir, readlink, realpath, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readdir, readlink, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative } from 'node:path'
 import { create } from 'tar'
 import { installGeneration, verifyGenerationPeers } from 'dsh-desktop-market-installer/generations/installer'
 import { readCommunityPackage } from './community-package.js'
 import { assertHostEntry, safePath, sha256 } from './offline-bundle.js'
+import { generationId, registryLayout, writeGenerationMeta } from 'dsh-desktop-market-installer/generations/registry'
+import { createEnterpriseInstallWorkspace, ensureEnterpriseStore, prepareEnterpriseInstallerHome } from './enterprise-generation-store.js'
 
 function installFailure(detail) {
   const text = String(detail || 'Plugin dependency installation failed.')
@@ -38,11 +40,11 @@ async function inventory(directory) {
 export async function installCommunityPackage(home, bytes, expected, target, options = {}) {
   assertHostEntry(options.dshEntryPath)
   const { files, manifest } = await readCommunityPackage(bytes, expected, target)
-  const work = join(home, 'profiles', '.enterprise-staging', randomUUID())
+  const work = await createEnterpriseInstallWorkspace(home)
   const source = join(work, 'package'), archive = join(work, 'plugin.tgz')
-  let generation
-  await mkdir(source, { recursive: true })
+  let pending
   try {
+    await mkdir(source, { recursive: true })
     for (const [path, file] of files) {
       const destination = join(source, path)
       await mkdir(dirname(destination), { recursive: true })
@@ -51,9 +53,11 @@ export async function installCommunityPackage(home, bytes, expected, target, opt
     await create({ cwd: work, file: archive, gzip: true, portable: true }, ['package'])
     const require = createRequire(import.meta.url)
     const pnpmEntryPath = join(dirname(require.resolve('pnpm')), 'bin', 'pnpm.cjs')
+    const profile = options.installOptions?.profile ?? process.env.DSH_DESKTOP_PROFILE ?? 'desktop'
+    const installHome = await prepareEnterpriseInstallerHome(home, work, profile)
     const result = await installGeneration({
       ...options.installOptions,
-      dshHome: home,
+      dshHome: installHome, profile,
       pluginSpec: await realpath(archive),
       expectedPluginName: expected.name,
       expectedVersion: expected.version,
@@ -64,17 +68,33 @@ export async function installCommunityPackage(home, bytes, expected, target, opt
       strictDepBuilds: true
     })
     if (!result.ok || !result.generation) throw installFailure(result.detail)
-    generation = result.generation
+    const installed = result.generation
+    if (typeof installed.id !== 'string' || installed.id === '.' || installed.id === '..' || !/^[a-z0-9+_.-]+$/iu.test(installed.id) ||
+        installed.directory !== join(registryLayout(installHome).generations, installed.id)) throw new Error('Invalid installer generation path.')
+    const store = await ensureEnterpriseStore(home, '.enterprise-generations')
+    const id = generationId(expected.name, expected.version, expected.digest + installed.id + randomUUID())
+    pending = join(store, '.staging-' + randomUUID())
+    await rename(installed.directory, pending)
+    const generation = { ...installed, id, directory: pending }
+    // Check from the final profiles ancestry so host peers resolve through the real installation closure.
     const peers = await verifyGenerationPeers(home, generation, { dshEntryPath: options.dshEntryPath })
     if (!peers.ok) throw new Error('Plugin host dependencies do not match this Desktop.')
     const contents = Buffer.from(JSON.stringify(await inventory(generation.directory)))
     await writeFile(join(generation.directory, 'enterprise-bundle.zip'), bytes, { flag: 'wx', mode: 0o600 })
     await writeFile(join(generation.directory, 'enterprise-files.json'), contents, { flag: 'wx', mode: 0o600 })
-    return { ...generation, manifest, integrity: sha256(contents) }
-  } catch (error) {
-    if (generation) await rm(generation.directory, { recursive: true, force: true })
-    throw error
-  } finally { await rm(work, { recursive: true, force: true }) }
+    const directory = join(store, id)
+    await writeGenerationMeta(pending, { ...generation, directory })
+    await rename(pending, directory)
+    pending = undefined
+    return { ...generation, directory, manifest, integrity: sha256(contents) }
+  } finally {
+    // Cleanup must not mask the original failure or turn a committed publication into an apparent failed install.
+    for (const directory of [pending, work]) {
+      if (!directory) continue
+      try { await rm(directory, { recursive: true, force: true }) }
+      catch (error) { console.warn('[enterprise-install] staging cleanup failed', { code: error.code ?? 'cleanup_failed' }) }
+    }
+  }
 }
 
 export async function verifyCommunityPackage(generation, bytes, target) {

@@ -5,6 +5,7 @@ import { lstat, mkdir, readFile, readdir, rename, rm, statfs, writeFile } from '
 import { join } from 'node:path'
 import { generationId, registryLayout, writeGenerationMeta } from 'dsh-desktop-market-installer/generations/registry'
 import { verifyGenerationPeers } from 'dsh-desktop-market-installer/generations/installer'
+import { ensureEnterpriseStore } from './enterprise-generation-store.js'
 
 export const MAX_ARCHIVE = 512 * 1024 * 1024
 const MAX_EXPANDED = 1024 * 1024 * 1024
@@ -100,9 +101,10 @@ export async function installOfflineBundle(home, bytes, expected, target, option
   }
   const { files, manifest } = validateOfflineBundle(bytes, expected, target)
   const dshEntryPath = options.dshEntryPath
-  const layout = { staging: join(home, 'profiles', '.enterprise-staging'), generations: join(home, 'profiles', '.enterprise-generations') }
-  await mkdir(layout.staging, { recursive: true })
-  await mkdir(layout.generations, { recursive: true })
+  const layout = {
+    staging: await ensureEnterpriseStore(home, '.enterprise-staging'),
+    generations: await ensureEnterpriseStore(home, '.enterprise-generations')
+  }
   const free = await statfs(layout.staging)
   const required = [...files.values()].reduce((size, file) => size + file.data.length, 0) + bytes.length
   if (free.bavail * free.bsize < required * 1.2) fail('Insufficient disk space for plugin installation.')

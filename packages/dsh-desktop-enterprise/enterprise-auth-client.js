@@ -66,7 +66,7 @@ export async function createEnterpriseAuthClient(transport, options = {}) {
   }
   const timer = pollIntervalMs ? setInterval(() => { void refresh().catch(() => undefined) }, pollIntervalMs) : undefined
   timer?.unref?.()
-  const request = async (path, init = {}, appId) => {
+  const request = async (path, init = {}, appId, application) => {
     assertActive()
     const signals = [lifetime.signal, session.signal, ...(init.signal ? [init.signal] : [])]
     const signal = AbortSignal.any(signals)
@@ -78,7 +78,10 @@ export async function createEnterpriseAuthClient(transport, options = {}) {
     try {
       const send = appId === undefined ? transport.request?.bind(transport) : transport.requestApp?.bind(transport, appId)
       if (!send) throw new EnterpriseAuthError('app_unavailable', 'Enterprise application access is not supported by this host.', 503)
-      const response = await send(path, { ...init, signal, sessionVersion: state.sessionVersion })
+      const response = await send(path, { ...init,
+        ...(application?.baseUrl === undefined ? {} : { appBaseUrl: application.baseUrl }),
+        ...(application?.scopes === undefined ? {} : { appScopes: application.scopes }),
+        signal, sessionVersion: state.sessionVersion })
       if (signal.aborted) {
         await response.body?.cancel(signal.reason).catch(() => undefined)
         throw signal.reason
@@ -102,10 +105,17 @@ export async function createEnterpriseAuthClient(transport, options = {}) {
       return () => { listeners.delete(listener) }
     },
     request,
-    app(appId) {
+    app(appId, application = {}) {
       assertActive()
       validateEnterpriseAppId(appId)
-      return Object.freeze({ appId, request: (path, init) => request(path, init, appId) })
+      if (!application || typeof application !== 'object' || Array.isArray(application) ||
+          Object.keys(application).some(key => !['baseUrl', 'scopes'].includes(key)) ||
+          (application.baseUrl !== undefined && (typeof application.baseUrl !== 'string' || !application.baseUrl || application.baseUrl.length > 8192)) ||
+          (application.scopes !== undefined && (!Array.isArray(application.scopes) || application.scopes.length > 3 || application.scopes.some(scope => typeof scope !== 'string')))) {
+        throw new EnterpriseAuthError('invalid_request', 'Invalid application request options.', 400)
+      }
+      const route = Object.freeze({ baseUrl: application.baseUrl, scopes: application.scopes === undefined ? undefined : Object.freeze([...application.scopes]) })
+      return Object.freeze({ appId, request: (path, init) => request(path, init, appId, route) })
     },
     dispose() {
       if (!active) return

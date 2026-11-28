@@ -13,18 +13,18 @@ const cleanup = []
 afterEach(async () => { for (const dispose of cleanup.splice(0).reverse()) await dispose() })
 const base = 'https://enterprise.example.test'
 const appBase = 'https://apps.example.test/mounted/xpie'
-const opaque = 'bapp_v1_' + 'a'.repeat(43)
+const opaque = 'synthetic.app.token'
 const plugin = { pluginId: 'a'.repeat(32), instanceId: 'test-instance' }
 const user = { id: '12', username: 'fixture', display_name: 'Fixture' }, tenant = { id: '34', name: 'Fixture tenant' }
 const expiry = () => new Date(Date.now() + 3600000).toISOString()
-const envelope = () => ({ protocol_version: 1, app_id: 'xpie', audience: 'xpie-service', base_url: appBase, token_type: 'Bearer', access_token: opaque, expires_in: 30, scope: 'projects:read projects:write' })
+const envelope = () => ({ issued_token_type: 'urn:ietf:params:oauth:token-type:access_token', token_type: 'Bearer', access_token: opaque, expires_in: 300, scope: 'openid profile' })
 
 async function fixture(mode) {
   let exchangeStatus = 200, businessStatus = 200, businessStream, exchangeGate
   const calls = []
   const fetchImpl = vi.fn(async (input, init = {}) => {
     const url = new URL(input)
-    if (url.pathname.endsWith('/delegations')) {
+    if (url.pathname.endsWith('/oauth2/token')) {
       calls.push({ kind: 'exchange', url: url.href, init })
       if (exchangeGate) await exchangeGate
       return exchangeStatus === 200 ? Response.json(envelope()) : new Response('private backend error', { status: exchangeStatus })
@@ -77,16 +77,16 @@ async function fixture(mode) {
 for (const mode of ['desktop', 'web']) describe(mode + ' enterprise application access', () => {
   it('exchanges host credentials and sends only app credentials to a prefix-preserving target', async () => {
     const { client, calls } = await fixture(mode)
-    const app = client.app('xpie')
+    const app = client.app('xpie', { baseUrl: appBase })
     expect(Object.keys(app).sort()).toEqual(['appId', 'request'])
     const response = await app.request('/v1/me?view=full')
     expect(await response.text()).toBe('business result')
     expect(response.headers.get('set-cookie')).toBe(null)
     expect(calls.map(call => call.kind)).toEqual(['exchange', 'business'])
-    expect(calls[0].url).toBe(base + '/api/v1/dsh/integrations/xpie/delegations')
-    expect(new Headers(calls[0].init.headers).get('authorization')).toBe('Bearer synthetic-host-secret')
-    expect(new Headers(calls[0].init.headers).get('x-dsh-plugin-id')).toBe(plugin.pluginId)
-    expect(calls[0].init.body).toBe('{}')
+    expect(calls[0].url).toBe(base + '/api/v1/oauth2/token')
+    expect(new Headers(calls[0].init.headers).get('authorization')).toBe(null)
+    expect(new URLSearchParams(calls[0].init.body).get('subject_token')).toBe('synthetic-host-secret')
+    expect(new URLSearchParams(calls[0].init.body).get('audience')).toBe('xpie')
     expect(calls[1].url).toBe(appBase + '/v1/me?view=full')
     expect(new Headers(calls[1].init.headers).get('authorization')).toBe('Bearer ' + opaque)
     expect(calls[1].init).toMatchObject({ redirect: 'error', credentials: 'omit' })
@@ -98,7 +98,7 @@ for (const mode of ['desktop', 'web']) describe(mode + ' enterprise application 
     f.status(200, 401)
     const data = new Uint8Array([99, 0, 255, 88])
     for (let i = 0; i < 2; i++) {
-      const response = await f.client.app('xpie').request('/v1/upload', { method: 'POST', body: data.subarray(1, 3) })
+      const response = await f.client.app('xpie', { baseUrl: appBase }).request('/v1/upload', { method: 'POST', body: data.subarray(1, 3) })
       expect(response.status).toBe(401)
       await response.text()
     }
@@ -111,27 +111,27 @@ for (const mode of ['desktop', 'web']) describe(mode + ' enterprise application 
   it('rejects redirects returned by an application without following them', async () => {
     const f = await fixture(mode)
     f.status(200, 302)
-    await expect(f.client.app('xpie').request('/v1/redirect')).rejects.toMatchObject({ errorCode: 'redirect_rejected' })
+    await expect(f.client.app('xpie', { baseUrl: appBase }).request('/v1/redirect')).rejects.toMatchObject({ errorCode: 'redirect_rejected' })
     expect(f.calls.map(call => call.kind)).toEqual(['exchange', 'business'])
   })
 
   it('fails closed when the backend has not enabled app access', async () => {
     const f = await fixture(mode)
     f.status(403, 200)
-    await expect(f.client.app('xpie').request('/v1/me')).rejects.toMatchObject({ errorCode: 'authorization_denied' })
+    await expect(f.client.app('xpie', { baseUrl: appBase }).request('/v1/me')).rejects.toMatchObject({ errorCode: 'authorization_denied' })
     expect(f.calls.map(call => call.kind)).toEqual(['exchange'])
   })
 
   it('rejects forged identity headers and absolute targets before exchanging credentials', async () => {
     const f = await fixture(mode)
-    await expect(f.client.app('xpie').request('https://other.example.test/v1/me')).rejects.toMatchObject({ errorCode: 'invalid_request' })
-    await expect(f.client.app('xpie').request('/v1/me', { headers: { 'x-dsh-plugin-id': 'forged' } })).rejects.toMatchObject({ errorCode: 'invalid_request' })
+    await expect(f.client.app('xpie', { baseUrl: appBase }).request('https://other.example.test/v1/me')).rejects.toMatchObject({ errorCode: 'invalid_request' })
+    await expect(f.client.app('xpie', { baseUrl: appBase }).request('/v1/me', { headers: { 'x-dsh-plugin-id': 'forged' } })).rejects.toMatchObject({ errorCode: 'invalid_request' })
     expect(f.calls).toEqual([])
   })
 
   it('does not expose application credentials through ordinary enterprise requests', async () => {
     const f = await fixture(mode)
-    for (const path of ['/api/v1/dsh/integrations/xpie/delegations', '/api/v1/dsh/%69ntegrations/xpie/introspect']) {
+    for (const path of ['/api/v1/oauth2/token', '/api/v1/oauth2/%74oken', '/api/v1/dsh/integrations/xpie/delegations', '/api/v1/dsh/%69ntegrations/xpie/introspect']) {
       await expect(f.client.request(path, { method: 'POST', body: '{}' })).rejects.toMatchObject({ errorCode: 'authorization_denied', status: 403 })
     }
     expect(f.calls).toEqual([])
@@ -140,19 +140,19 @@ for (const mode of ['desktop', 'web']) describe(mode + ' enterprise application 
   it('aborts app streams when the authorized plugin is revoked', async () => {
     const f = await fixture(mode)
     f.stream(new ReadableStream({ pull() {} }, { highWaterMark: 0 }))
-    const response = await f.client.app('xpie').request('/v1/events')
+    const response = await f.client.app('xpie', { baseUrl: appBase }).request('/v1/events')
     const body = response.text()
     const rejected = expect(body).rejects.toBeDefined()
     await f.revoke()
     await rejected
-    await expect(f.client.app('xpie').request('/v1/me')).rejects.toBeDefined()
+    await expect(f.client.app('xpie', { baseUrl: appBase }).request('/v1/me')).rejects.toBeDefined()
   })
 
   it('does not dispatch a late app exchange after logout', async () => {
     const f = await fixture(mode)
     let release
     f.gate(new Promise(resolve => { release = resolve }))
-    const pending = f.client.app('xpie').request('/v1/me')
+    const pending = f.client.app('xpie', { baseUrl: appBase }).request('/v1/me')
     const rejected = expect(pending).rejects.toBeDefined()
     await vi.waitFor(() => expect(f.calls.filter(call => call.kind === 'exchange')).toHaveLength(1))
     await f.logout()
@@ -166,7 +166,7 @@ it('never falls back to an enterprise-origin request on an older custom transpor
   const request = vi.fn()
   const client = await createEnterpriseAuthClient({ state: async () => ({ connected: true, sessionVersion: 'one' }), request }, { pollIntervalMs: 0 })
   cleanup.push(() => client.dispose())
-  await expect(client.app('xpie').request('/v1/me')).rejects.toMatchObject({ errorCode: 'app_unavailable' })
+  await expect(client.app('xpie', { baseUrl: appBase }).request('/v1/me')).rejects.toMatchObject({ errorCode: 'app_unavailable' })
   expect(request).not.toHaveBeenCalled()
-  expect(() => client.app('https://evil.example')).toThrow()
+  expect(() => client.app('invalid client')).toThrow()
 })

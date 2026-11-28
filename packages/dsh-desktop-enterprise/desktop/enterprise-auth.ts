@@ -1,5 +1,5 @@
 import type { EnterpriseFetch } from './platform-fetch'
-import { assertEnterprisePublicRequestPath } from 'dsh-desktop-enterprise/auth-apps-host'
+import { assertEnterprisePublicRequestPath, validateEnterpriseAppId } from 'dsh-desktop-enterprise/auth-apps-host'
 import { EnterpriseAuthError as PublicAuthError } from 'dsh-desktop-enterprise/auth'
 
 export const AUTH_MAX_REQUEST_BYTES = 1024 * 1024
@@ -24,6 +24,8 @@ export interface EnterpriseAuthState {
 
 export interface EnterpriseAuthRequest {
   appId?: string
+  appBaseUrl?: string
+  appScopes?: string[]
   path: string
   method: string
   headers: Record<string, string>
@@ -36,9 +38,26 @@ function invalid(): never { throw new EnterpriseAuthError('invalid_request', 400
 export function parseEnterpriseAuthRequest(input: unknown): EnterpriseAuthRequest {
   if (!input || typeof input !== 'object' || Array.isArray(input)) invalid()
   const value = input as Record<string, unknown>
-  if (Object.keys(value).some(key => !['appId', 'path', 'method', 'headers', 'body', 'bodyEncoding', 'sessionVersion'].includes(key))) invalid()
-  const { path, sessionVersion, appId } = value
-  if (appId !== undefined && (typeof appId !== 'string' || appId.length > 64 || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(appId))) invalid()
+  if (Object.keys(value).some(key => !['appId', 'appBaseUrl', 'appScopes', 'path', 'method', 'headers', 'body', 'bodyEncoding', 'sessionVersion'].includes(key))) invalid()
+  const { path, sessionVersion, appId, appBaseUrl, appScopes } = value
+  let application: { appId: string; appBaseUrl: string; appScopes?: string[] } | undefined
+  if (appId === undefined) {
+    if (appBaseUrl !== undefined || appScopes !== undefined) invalid()
+  } else {
+    if (typeof appId !== 'string' ||
+        typeof appBaseUrl !== 'string' || !appBaseUrl || appBaseUrl.length > 8192) invalid()
+    try { validateEnterpriseAppId(appId) } catch { invalid() }
+    let scopes: string[] | undefined
+    if (appScopes !== undefined) {
+      if (!Array.isArray(appScopes) || appScopes.length > 3) invalid()
+      scopes = []
+      for (const scope of appScopes) {
+        if (typeof scope !== 'string') invalid()
+        scopes.push(scope)
+      }
+    }
+    application = { appId, appBaseUrl, ...(scopes === undefined ? {} : { appScopes: scopes }) }
+  }
   if (typeof path !== 'string' || path.length > 8192 || !path.startsWith('/') || path.startsWith('//') ||
       /[\\#\s\x00-\x1f\x7f]/u.test(path) || /%5c|%0[ad]/iu.test(path) ||
       typeof sessionVersion !== 'string' || !sessionVersion || sessionVersion.length > 256) invalid()
@@ -80,7 +99,7 @@ export function parseEnterpriseAuthRequest(input: unknown): EnterpriseAuthReques
     body = decoded
     if (body.byteLength > AUTH_MAX_REQUEST_BYTES) throw new EnterpriseAuthError('request_too_large', 413)
   } else if (value.bodyEncoding !== undefined) invalid()
-  return { ...(appId === undefined ? {} : { appId }), path, method, headers, ...(body === undefined ? {} : { body }), sessionVersion }
+  return { ...application, path, method, headers, ...(body === undefined ? {} : { body }), sessionVersion }
 }
 
 const RESPONSE_HEADERS = new Set(['content-type', 'content-language', 'content-disposition', 'cache-control', 'expires', 'last-modified', 'etag', 'retry-after', 'x-request-id', 'request-id'])

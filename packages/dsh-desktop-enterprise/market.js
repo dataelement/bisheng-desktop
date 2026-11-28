@@ -6,8 +6,9 @@ import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { acceptMarketSnapshot } from './market-policy.js'
-import { assertEnterpriseGenerationPath, installOfflineBundle, sha256, verifyInstalledBundle } from './offline-bundle.js'
+import { assertEnterpriseGenerationPath, installOfflineBundle, sha256 } from './offline-bundle.js'
 import { createMarketRuntime } from './market-runtime.js'
+import { prepareEnterpriseGeneration } from './enterprise-generation-recovery.js'
 import { createManagedMarketSource, performMarketAction } from './managed-market.js'
 
 const PREFIX = '/api/v1/dsh/market'
@@ -149,8 +150,27 @@ export function createMarketController(ctx, accountController, options = {}) {
     requireOnline()
     assertEnterpriseGenerationPath(home, record)
     if (!authorized(record) || startedEpoch !== epoch) throw new Error('Plugin usage authorization changed.')
-    await verifyInstalledBundle(record, target)
-    if (startedEpoch !== epoch) throw new Error('Enterprise account changed.')
+    const assertCurrent = () => {
+      assertCurrentOperation()
+      requireOnline()
+      if (startedEpoch !== epoch || identityKey(accountController.state()) !== key) throw new Error('Enterprise account changed.')
+      if (!authorized(record)) throw new Error('Plugin usage authorization changed.')
+    }
+    const prepared = await prepareEnterpriseGeneration(home, record, target, {
+      assertCurrent,
+      installOptions: { dshEntryPath: options.dshEntryPath ?? hostDshEntryPath() },
+      fetchArtifact: () => {
+        assertCurrent()
+        if (!/^[a-f0-9]{32}$/u.test(record.plugin_id) || !/^[a-f0-9]{32}$/u.test(record.version_id)) throw new Error('Invalid installed plugin identity.')
+        return accountController.marketRequest(`${PREFIX}/plugins/${record.plugin_id}/versions/${record.version_id}/artifact`, undefined, true)
+      }
+    })
+    assertCurrent()
+    Object.assign(record, prepared)
+    if (!prepared.integrity) delete record.integrity
+    // Commit a migrated/restored location before activation so a crash cannot restore a stale public pointer.
+    if (prepared !== record) await save()
+    assertCurrent()
     const fiber = await load(record)
     if (startedEpoch !== epoch) { await fiber.dispose(); throw new Error('Enterprise account changed.') }
     running.set(record.plugin_id, fiber)

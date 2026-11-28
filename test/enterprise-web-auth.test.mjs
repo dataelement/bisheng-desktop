@@ -154,19 +154,19 @@ it('refreshes once for concurrent 401 responses and replays POST bodies', async 
   expect(fixture.fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/api/v1/dsh/token'))).toHaveLength(1)
 })
 
-it('retries app delegation once after host credential refresh', async () => {
+it('retries OAuth exchange once after host credential refresh', async () => {
   const account = { connected: true, connectionKey: 'one', base, user, tenant }
   const refreshSession = vi.fn(async () => ({ base, user, tenant, tokens: { access_token: 'new-host' } }))
   const fetchImpl = vi.fn(async (url, init) => {
-    if (String(url).includes('/delegations')) {
-      if (init.headers.authorization === 'Bearer host') return new Response(null, { status: 401 })
-      return Response.json({ protocol_version: 1, app_id: 'app-one', audience: 'app', base_url: 'https://app.example.test', token_type: 'Bearer', access_token: 'bapp_v1_' + 'a'.repeat(43), expires_in: 60, scope: 'read' })
+    if (String(url).endsWith('/api/v1/oauth2/token')) {
+      if (new URLSearchParams(init.body).get('subject_token') === 'host') return new Response(null, { status: 401 })
+      return Response.json({ issued_token_type: 'urn:ietf:params:oauth:token-type:access_token', token_type: 'Bearer', access_token: 'synthetic.app.token', expires_in: 300, scope: 'openid profile' })
     }
     return new Response('ok')
   })
   const auth = createWebEnterpriseAuth({ getAccount: () => account, getSessionAuth: async () => ({ base, user, tenant, tokens: { access_token: 'host' } }), refreshSession, fetchImpl })
   const transport = await auth.grant(identity)
-  const response = await transport.requestApp('app-one', '/data', { sessionVersion: 'one' })
+  const response = await transport.requestApp('app-one', '/data', { appBaseUrl: 'https://app.example.test', sessionVersion: 'one' })
   expect(await response.text()).toBe('ok')
   expect(refreshSession).toHaveBeenCalledTimes(1)
   expect(fetchImpl).toHaveBeenCalledTimes(3)
@@ -202,13 +202,13 @@ it('does not replay after a session switch while refreshing', async () => {
 it('does not retry a target application 401 with host credentials', async () => {
   const account = { connected: true, connectionKey: 'one', base, user, tenant }
   const refreshSession = vi.fn()
-  const fetchImpl = vi.fn(async url => String(url).includes('/delegations') ? Response.json({
-    protocol_version: 1, app_id: 'app-one', audience: 'app', base_url: 'https://app.example.test', token_type: 'Bearer',
-    access_token: 'bapp_v1_' + 'a'.repeat(43), expires_in: 60, scope: 'read'
+  const fetchImpl = vi.fn(async url => String(url).endsWith('/api/v1/oauth2/token') ? Response.json({
+    issued_token_type: 'urn:ietf:params:oauth:token-type:access_token', token_type: 'Bearer',
+    access_token: 'synthetic.app.token', expires_in: 300, scope: 'openid profile'
   }) : new Response('denied', { status: 401 }))
   const auth = createWebEnterpriseAuth({ getAccount: () => account, getSessionAuth: async () => ({ base, user, tenant, tokens: { access_token: 'host' } }), refreshSession, fetchImpl })
   const transport = await auth.grant(identity)
-  const response = await transport.requestApp('app-one', '/data', { sessionVersion: 'one' })
+  const response = await transport.requestApp('app-one', '/data', { appBaseUrl: 'https://app.example.test', sessionVersion: 'one' })
   expect(response.status).toBe(401)
   await response.text()
   expect(refreshSession).not.toHaveBeenCalled()

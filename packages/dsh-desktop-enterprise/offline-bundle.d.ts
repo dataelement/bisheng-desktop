@@ -1,3 +1,10 @@
+import type { GenerationInstallOptions } from 'dsh-desktop-market-installer/generations/installer'
+
+export interface EnterpriseBundleInstallOptions {
+  dshEntryPath?: string
+  installOptions?: Partial<GenerationInstallOptions>
+}
+
 export interface BundleManifest {
   schema_version: number
   plugin: { name: string; version: string; display_name: string; description: string; publisher: string; license: string; desktop_min: string; permissions: string[]; services: string[]; changelog?: string }
@@ -11,7 +18,7 @@ export declare function safePath(value: string): boolean
 export declare function assertHostEntry(dshEntryPath?: string): void
 export declare function readBundleZip(bytes: Buffer): Map<string, { data: Buffer; executable: boolean }>
 export declare function validateOfflineBundle(bytes: Buffer, expected: BundleIdentity, target: string): { manifest: BundleManifest; files: Map<string, { data: Buffer; executable: boolean }> }
-export declare function installOfflineBundle(home: string, bytes: Buffer, expected: BundleIdentity, target: string, options?: { dshEntryPath?: string }): Promise<OfflineGeneration>
+export declare function installOfflineBundle(home: string, bytes: Buffer, expected: BundleIdentity, target: string, options?: EnterpriseBundleInstallOptions): Promise<OfflineGeneration>
 export declare function verifyInstalledBundle(generation: BundleIdentity & { directory: string }, target: string): Promise<{ manifest: BundleManifest }>
 
 export declare function assertEnterpriseGenerationPath(home: string, record: { generation_id: string; directory: string; integrity?: string }): void

@@ -27,7 +27,7 @@ export function applyEnterpriseAuth(ctx) {
     getState() { return bindingFor(this.ctx).client.getState() },
     async refresh() { return bindingFor(this.ctx).client.refresh() },
     subscribe(listener) { return bindingFor(this.ctx).client.subscribe(listener) },
-    app(appId) { return bindingFor(this.ctx).client.app(appId) },
+    app(appId, options) { return bindingFor(this.ctx).client.app(appId, options) },
     async request(path, init = {}) { return bindingFor(this.ctx).client.request(path, init) }
   })
 }
@@ -142,7 +142,7 @@ export function createEnterpriseAuthTransport(origin, capability) {
       bodyEncoding = 'base64'
     }
     return send('/v1/auth/request', {
-      ...(appId === undefined ? {} : { appId }),
+      ...(appId === undefined ? {} : { appId, appBaseUrl: init.appBaseUrl, ...(init.appScopes === undefined ? {} : { appScopes: init.appScopes }) }),
       path, ...(init.method === undefined ? {} : { method: init.method }), headers,
       ...(body == null ? {} : { body }), ...(bodyEncoding ? { bodyEncoding } : {}), sessionVersion: init.sessionVersion
     }, init.signal)
