@@ -52,7 +52,7 @@ flowchart TD
 * `build/bisheng-*`、`build/app-icon.png`、`build/icon.*`（品牌资源）
 * `build/web-runtime/**`、`bin/start.*`（Web 运行时独立配置与脚本）
 * `build/dsh-desktop.patch.yml`（仅允许挂载 enterprise 插件）
-* `ops/ci/**`、`ops/nginx/work-updates.conf`、`docs/downstream-*.md`；CI workflow 精确允许 `release.yml`、`build-web-runtime.yml`、`verify-boundary.yml`、`bisheng-ci.yml`。
+* `ops/ci/**`、`ops/nginx/work-updates.conf`、`docs/downstream-*.md`；CI workflow 精确允许 `release.yml`、`build-web-runtime.yml`、`verify-boundary.yml`、`bisheng-ci.yml`、`backfill-archive.yml`；企业发布索引脚本 `bisheng_append_version_index.py` 及其 `test_bisheng_append_version_index.py` 也属于下游。
 * Web 打包脚本 `pack-{office-web,ppt-web,workbenches-web,web-runtime}.mjs`、`prepare-web-ci-inputs.mjs` 及门禁列出的构建/验证/启动辅助脚本；不按 `scripts/web-*` 前缀任意放行。
 * `test/enterprise-*`、`test/web-runtime-*` 的脚本与 fixture、门禁自身、package/锁文件、品牌及构建配置，具体扩展名与路径以脚本列表为准。
 
@@ -135,6 +135,17 @@ npm run web:pack             # 一键打出包含 Node 绿色环境的 Web 独�
 ---
 
 ## 5. 质量保证与交付检查清单
+
+日常 PR 自动运行两项检查：
+
+- `Downstream Boundary Gatekeeper`：按固定受审上游基准检查企业边界。
+- `BiSheng core checks / Native checks (darwin/arm64)`：锁定依赖安装、类型检查、桌面编译与核心回归（认证换证、应用授权、安装恢复、市场、模型代理、内容安全、云工作台/会话、公共工作台及 CI 契约）。使用单个平台，不制作安装包。
+
+这两项仅在 PR 创建、更新或重开时自动触发，不再额外由分支 push 重复运行；更新 PR 会取消同一 PR 的旧任务。直接向分支 push 不触发日常验证，应通过 PR 提交代码。
+
+需要跨平台验收时，手动运行 `BiSheng core checks` 并勾选 `extended`，恢复 Linux、Windows x64、macOS arm64/x64 的原有矩阵、桌面完整回归，以及原生目标校验和未签名安装包检查。Windows Web 便携包通过 `Build BiSheng Web Runtime (Portable)` 手动运行。桌面发布仅由 `v*` tag 或手动操作触发，签名、发布审核和安装包验收流程保留。
+
+日常检查通过只证明相应平台上的编译和回归；发布前仍须按变更范围完成 Windows、Intel Mac、Web 包及真实安装验收。边界检查失败应修正归属或回流上游，不能用关闭检查、更新未评审公共哈希或自动切换基准来掩盖。
 
 提交前必须依次执行以下检查命令，确保通过后方可交付：
 

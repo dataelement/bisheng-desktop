@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { test } from 'vitest'
+import vm from 'node:vm'
 
 const require = createRequire(import.meta.url)
 const { parse } = require('yaml')
@@ -14,9 +15,9 @@ test('candidate workflows cannot acquire publication permissions, secrets or tag
   for (const name of workflowNames) {
     const config = workflow(name)
     assert.deepEqual(config.permissions, { contents: 'read' }, name)
-    assert.deepEqual(config.on.push.branches, ['main', 'V1.3.1', 'codex/bisheng-unified'])
-    assert.equal(config.on.push.tags, undefined)
-    assert.deepEqual(config.on.pull_request.branches, ['main', 'V1.3.1', 'codex/bisheng-unified'])
+    assert.equal(config.on.push, undefined, 'branch pushes must not duplicate PR checks')
+    if (name === 'build-web-runtime') assert.equal(config.on.pull_request, undefined)
+    else assert.deepEqual(config.on.pull_request.branches, ['main', 'V1.3.1', 'codex/bisheng-unified'])
     assert.ok(Object.hasOwn(config.on, 'workflow_dispatch'))
     for (const job of Object.values(config.jobs)) {
       assert.equal(job.permissions, undefined)
@@ -40,6 +41,8 @@ test('boundary preparation fails closed and uses one explicit reviewed upstream'
       assert.doesNotMatch(fetch.run, /\|\||continue-on-error|upstream main/)
       const gate = job.steps.find(step => step.run === 'npm run verify:boundary')
       assert.equal(gate.env.UPSTREAM_BASE, 'upstream/V0.14.1')
+      if (name === 'bisheng-ci') assert.equal(gate.if, "github.event_name == 'workflow_dispatch'")
+      else assert.equal(gate.if, undefined)
     }
   }
 })
@@ -61,17 +64,43 @@ test('portable build consumes platform choice and uploads only verified Actions 
   assert.doesNotMatch(JSON.stringify(config), /Downloads|offline-base|pnpm@latest|node-v22/)
 })
 
-test('native candidate checks retain all Desktop targets and ordinary Node tests', () => {
+function candidateTargets(event = 'pull_request', extended = false) {
+  const expression = workflow('bisheng-ci').jobs['native-checks'].strategy.matrix.include.slice(3, -2).trim()
+  return JSON.parse(JSON.stringify(vm.runInNewContext(expression, {
+    github: { event_name: event }, inputs: { extended }, fromJSON: JSON.parse
+  })))
+}
+
+test('daily PRs retain one native target; full platform checks require explicit manual selection', () => {
+  assert.deepEqual(candidateTargets().map(target => target.platform + '/' + target.arch), ['darwin/arm64'])
+  assert.deepEqual(candidateTargets('pull_request', true), candidateTargets())
+  assert.deepEqual(candidateTargets('workflow_dispatch'), candidateTargets())
+  assert.equal(workflow('bisheng-ci').on.workflow_dispatch.inputs.extended.default, false)
+})
+
+test('extended candidate checks retain all Desktop targets and ordinary Node tests', () => {
   const job = workflow('bisheng-ci').jobs['native-checks']
-  const desktop = job.strategy.matrix.include.filter(target => target.desktop)
+  const targets = candidateTargets('workflow_dispatch', true)
+  assert.deepEqual(targets.map(target => target.platform + '/' + target.arch).sort(), ['darwin/arm64', 'darwin/x64', 'linux/x64', 'win32/x64'])
+  const desktop = targets.filter(target => target.desktop)
   assert.deepEqual(desktop.map(target => target.platform + '/' + target.arch).sort(), ['darwin/arm64', 'darwin/x64', 'win32/x64'])
-  assert.ok(job.steps.some(step => step.run === 'npm test -- --maxWorkers=2' && step.if === 'matrix.desktop'))
+  const full = job.steps.find(step => step.run === 'npm test -- --maxWorkers=2')
+  assert.equal(full.if, "github.event_name == 'workflow_dispatch' && inputs.extended && matrix.desktop")
+  const core = job.steps.find(step => step.name === 'Run core business and CI regressions')
+  assert.equal(core.if, "matrix.desktop && !(github.event_name == 'workflow_dispatch' && inputs.extended)")
+  for (const suite of ['enterprise-auth-client', 'enterprise-apps-integration', 'enterprise-generation-lifecycle', 'enterprise-market', 'enterprise-proxy', 'enterprise-content-safety-runtime', 'enterprise-cloud-workbench-tools', 'workbench-client', 'enterprise-boundary-gate', 'enterprise-release-workflow']) {
+    assert.ok(core.run.includes('test/' + suite + '.test.'), suite)
+  }
+  assert.ok(!core.run.includes(' --exclude'), 'core selection must not silently exclude failing cases')
   assert.ok(job.steps.some(step => step.run === 'npm run build' && step.if === 'matrix.desktop'))
   const linux = job.steps.find(step => step.name?.includes('Linux pure Web'))
   assert.ok(linux)
   assert.match(linux.run, /node node_modules\/vitest\/vitest.mjs run/)
   assert.doesNotMatch(linux.run, /npm test|office:prepare/)
-  assert.ok(job.steps.some(step => step.run?.includes('scripts/verify/verify-target.mjs')))
+  for (const name of ['Verify native Desktop loader', 'Build unsigned Desktop packages with mandatory afterPack gates', 'Verify Desktop package files']) {
+    const step = job.steps.find(step => step.name === name)
+    assert.equal(step.if, "github.event_name == 'workflow_dispatch' && inputs.extended && matrix.desktop")
+  }
   const scripts = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).scripts
   for (const target of desktop) {
     const command = scripts[target['package-script']]

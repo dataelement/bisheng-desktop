@@ -46,8 +46,10 @@ function interpolate(value, ctx) {
 }
 
 describe('private desktop release YAML contracts', () => {
-  it('keeps native targets, main PRs, locked Node and least privilege', () => {
-    expect(workflow.on.pull_request.branches).toEqual(['main'])
+  it('keeps native targets, locked Node and least privilege; packaging runs only on tags or dispatch', () => {
+    expect(workflow.on.pull_request).toBeUndefined()
+    expect(workflow.on.push).toEqual({ tags: ['v*'] })
+    expect(workflow.on.workflow_dispatch).toBeDefined()
     expect(workflow.permissions).toEqual({ contents: 'write' })
     expect(jobs.macos.strategy.matrix.include.map(row => [row.arch, row.runner])).toEqual([
       ['arm64', 'macos-15'], ['x64', 'macos-15-intel']
