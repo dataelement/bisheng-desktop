@@ -110,6 +110,7 @@ it('provides web search only from the account MCP catalog, calls it and clears o
 it('disables search in real retained preset compositions and later revisions', async () => {
   const { ctx } = await fixture()
   await ctx.plugin(SessionProjectionRegistry)
+  ctx.provide('agents', {})
   await ctx.plugin(AgentPresetRegistry, { default: 'enterprise' })
   const id = await ctx.loader.create({ name: '@deepseek-ai/dsh-agent-preset', config: {
     id: 'enterprise', plugins: [{ id: 'web', name: '@deepseek-ai/dsh-tool-web', config: { fetch: true } }]

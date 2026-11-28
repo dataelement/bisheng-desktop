@@ -53,6 +53,24 @@ describe('enterpriseAuth instance SDK', () => {
     expect(second.enterpriseAuth.getState().connected).toBe(true)
   })
 
+  it('exposes silent refresh and scoped state subscriptions through Cordis', async () => {
+    const ctx = fixture(), scoped = ctx.extend()
+    const { transport, dispose } = await bind(scoped)
+    const changed = vi.fn()
+    const unsubscribe = scoped.enterpriseAuth.subscribe(changed)
+    transport.state.mockResolvedValue({ connected: true, userId: 'employee', enterpriseId: 'tenant', sessionVersion: 'signed-in' })
+    expect(await scoped.enterpriseAuth.refresh()).toMatchObject({ connected: true, userId: 'employee' })
+    expect(changed).toHaveBeenCalledOnce()
+    expect(() => ctx.enterpriseAuth.subscribe(changed)).toThrow(EnterpriseAuthError)
+    await expect(ctx.enterpriseAuth.refresh()).rejects.toMatchObject({ errorCode: 'authorization_denied' })
+    unsubscribe()
+    transport.state.mockResolvedValue({ connected: false, sessionVersion: 'signed-out' })
+    await scoped.enterpriseAuth.refresh()
+    expect(changed).toHaveBeenCalledOnce()
+    dispose()
+    await expect(scoped.enterpriseAuth.refresh()).rejects.toMatchObject({ errorCode: 'authorization_denied' })
+  })
+
   it('fails closed on polling failure and ignores a late snapshot after revocation', async () => {
     vi.useFakeTimers()
     const scoped = fixture().extend()
@@ -275,4 +293,23 @@ describe('enterpriseAuth wire transport', () => {
     await expect(transport.request('/api/test', { body: {} })).rejects.toMatchObject({ errorCode: 'invalid_request' })
     await expect(transport.request('/api/test', { headers: { 'invalid header': 'value' } })).rejects.toMatchObject({ errorCode: 'invalid_request' })
   })
+})
+
+it('preserves bound service routing through the Cordis SDK without local registration', async () => {
+  const ctx = fixture()
+  const transport = {
+    state: vi.fn(async () => ({ connected: true, enterpriseId: 'e', userId: 'u', sessionVersion: 'one' })),
+    request: vi.fn(async () => new Response('ordinary')),
+    requestApp: vi.fn(async () => new Response('business'))
+  }
+  cleanup.push(await bindEnterpriseAuth(ctx, transport))
+  const options = { baseUrl: 'http://192.168.10.21:8000/team', scopes: ['openid'] }
+  const app = ctx.enterpriseAuth.app('new-client', options)
+  options.baseUrl = 'https://another.example.test'
+  options.scopes.push('email')
+  expect(await (await app.request('/projects')).text()).toBe('business')
+  expect(transport.requestApp).toHaveBeenCalledWith('new-client', '/projects', expect.objectContaining({
+    appBaseUrl: 'http://192.168.10.21:8000/team', appScopes: ['openid'], sessionVersion: 'one'
+  }))
+  expect(transport.request).not.toHaveBeenCalled()
 })

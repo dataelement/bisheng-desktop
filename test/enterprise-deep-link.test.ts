@@ -23,6 +23,13 @@ describe('BiSheng enterprise deep link', () => {
     expect(parsed.url).toBe('bisheng-dev://login?server=https%3A%2F%2Fbisheng.example.com')
   })
 
+  it('accepts the product-configured DSH protocol without changing the login payload', () => {
+    const base = 'https://dsh.example.com'
+    const link = 'dsh-desktop://login?server=' + encodeURIComponent(base)
+    expect(parseEnterpriseLoginDeepLink(link, { protocols: ['dsh-desktop', 'dsh-desktop-dev'] }).serverUrl).toBe(base)
+    expect(() => parseEnterpriseLoginDeepLink('bisheng://login?server=' + encodeURIComponent(base), { protocols: ['dsh-desktop'] })).toThrow()
+  })
+
   it.each(['http://127.0.0.1:17860', 'http://[::1]:17860'])('allows literal loopback HTTP without a development opt-in: %s', (base) => {
     expect(normalizeEnterpriseServerUrl(base, { allowInsecureLoopback: false })).toBe(base)
     expect(isInsecurePrivateHttpOrigin(base)).toBe(false)

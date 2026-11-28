@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { archiveFeedUrl, compareVersions } from '../update/version-catalog'
+import { DEFAULT_UPDATE_CONFIG, type DesktopUpdateConfig } from '../update/update-config'
 
 export const SERVICE_URL = 'https://dshdesktop.com/crash'
 export type DesktopPlatform = 'mac' | 'mac-intel' | 'windows'
 export type FailureKind = 'startup-failure' | 'harness-crash' | 'renderer-crash' | 'gpu-crash' | 'main-crash' | 'unclean-exit'
+export type UpdateDecision = { updateAvailable: false } | { updateAvailable: true; version: string; feedUrl: string }
 type Request = (url: string, init?: RequestInit) => Promise<Response>
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const semver = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([\da-zA-Z-]+(?:\.[\da-zA-Z-]+)*))?(?:\+[\da-zA-Z-]+(?:\.[\da-zA-Z-]+)*)?$/
@@ -145,4 +148,17 @@ export class DesktopService {
     }
   }
 
+  // A user-initiated check asks the policy service to bypass percentage rollout.
+  // Server-side version, platform, enabled-release, and archive validation remain mandatory.
+  async checkUpdate(manual = false, config: Readonly<DesktopUpdateConfig> = DEFAULT_UPDATE_CONFIG): Promise<UpdateDecision> {
+    if (config.strategy !== 'policy') throw new Error('Update policy requires policy strategy')
+    const query = new URLSearchParams({ installationId: this.installationId, currentVersion: this.options.version, platform: this.platform })
+    if (manual) query.set('manual', 'true')
+    const response = await this.options.request(`${config.policyUrl}?${query}`, { signal: AbortSignal.timeout(5000), redirect: 'error' })
+    if (!response.ok) throw new Error(`Update policy unavailable (${response.status})`)
+    const policy = await response.json() as Record<string, unknown>
+    if (policy?.updateAvailable === false) return { updateAvailable: false }
+    if (policy?.updateAvailable !== true || !isVersion(policy.version) || compareVersions(policy.version.split('+')[0]!, this.options.version.split('+')[0]!) <= 0 || (!isPrereleaseVersion(this.options.version) && isPrereleaseVersion(policy.version)) || policy.feedUrl !== archiveFeedUrl(policy.version, config)) throw new Error('Invalid update policy')
+    return { updateAvailable: true, version: policy.version, feedUrl: policy.feedUrl as string }
+  }
 }

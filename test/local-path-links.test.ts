@@ -1,11 +1,11 @@
 import { readFile } from 'node:fs/promises'
-import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { patchPath, projectRoot } from './patch-path'
+import { patchPath } from './patch-path'
 
 interface LocalPath {
   path: string
   kind: 'file' | 'folder'
+  line?: number
 }
 
 /**
@@ -25,83 +25,23 @@ async function loadLocalPathReference(): Promise<
     .filter((line) => line.startsWith('+') && !line.startsWith('+++'))
     .map((line) => line.slice(1))
     .join('\n')
+  const splitLineSuffix = extractFunction(added, 'splitLineSuffix')
   const source = extractFunction(added, 'localPathReference')
   const rawSuffix = extractFunction(added, 'rawSuffix')
   const extension = extractFunction(added, 'fileExtensionOf')
+  expect(splitLineSuffix).toBeDefined()
   expect(source).toBeDefined()
   expect(rawSuffix).toBeDefined()
   expect(extension).toBeDefined()
   return new Function(
-    `${source}\n${rawSuffix}\n${extension}\nreturn localPathReference`
+    `${splitLineSuffix}\n${source}\n${rawSuffix}\n${extension}\nreturn localPathReference`
   )() as (value: string) => LocalPath | undefined
-}
-
-interface FolderOpenFailure {
-  details?: { reason?: string; path?: string }
-  message?: string
-}
-
-interface FolderOpenResult {
-  ok: boolean
-  error?: FolderOpenFailure
-}
-
-/**
- * The applied client bundle is what Harness loads. The patch assertions below
- * still require these helpers to be recorded there, so a node_modules-only edit
- * cannot pass.
- */
-async function loadFolderOpen(): Promise<{
-  workspaceOpenCandidates: (cwd: string | undefined, value: string) => string[]
-  openFolderInFileManager: (
-    openWorkspacePath: (request: { path: string }) => Promise<FolderOpenResult>,
-    cwd: string | undefined,
-    value: string
-  ) => Promise<void>
-}> {
-  const client = await readFile(
-    path.join(projectRoot, 'node_modules', '@deepseek-ai', 'dsh-client-ui-chat', 'lib', 'client.js'),
-    'utf8'
-  )
-  const names = [
-    'isWindowsStylePath',
-    'isAbsoluteWorkspacePath',
-    'hostPathForOpen',
-    'workspaceOpenCandidates',
-    'missingFolderMessage',
-    'openFolderInFileManager'
-  ]
-  const source = names.map((name) => {
-    const body = extractFunction(client, name)
-    expect(body, name).toBeDefined()
-    return body
-  }).join('\n')
-  return new Function(`${source}\nreturn { workspaceOpenCandidates, openFolderInFileManager }`)() as {
-    workspaceOpenCandidates: (cwd: string | undefined, value: string) => string[]
-    openFolderInFileManager: (
-      openWorkspacePath: (request: { path: string }) => Promise<FolderOpenResult>,
-      cwd: string | undefined,
-      value: string
-    ) => Promise<void>
-  }
-}
-
-async function loadPathOpenFailureMessage(): Promise<(error: unknown) => string> {
-  const host = await readFile(
-    path.join(projectRoot, 'node_modules', '@deepseek-ai', 'dsh-api-session-controller', 'lib', 'index.js'),
-    'utf8'
-  )
-  const source = extractFunction(host, 'pathOpenFailureMessage')
-  expect(source).toBeDefined()
-  return new Function(`${source}\nreturn pathOpenFailureMessage`)() as (error: unknown) => string
 }
 
 /** Pull one `function name(...) { ... }` out of the patch's added source. */
 function extractFunction(source: string, name: string): string | undefined {
-  const marker = `function ${name}(`
-  let start = source.indexOf(marker)
+  const start = source.indexOf(`function ${name}(`)
   if (start < 0) return undefined
-  if (source.slice(Math.max(0, start - 6), start) === 'async ') start -= 6
   const open = source.indexOf('{', start)
   let depth = 0
   for (let index = open; index < source.length; index += 1) {
@@ -137,15 +77,20 @@ describe('assistant local path links', () => {
     expect(patch).toContain('presented.openFolder')
     expect(patch).toContain('在文件管理器中打开 {name}')
     // Upstream bails out of `forClosing` when the turn produced and presented
-    // nothing; the patch drops that guard so a mention still resolves against
-    // an empty deliverable set.
-    expect(patch).toContain('-\t\t\t\tif (paths === null && presented.length === 0) return void 0;')
+    // nothing. rc.4 ships that guard minified; the patch deletes it so a
+    // mention still resolves against an empty deliverable set.
+    const droppedGuard = patch
+      .split('\n')
+      .find(line => line.startsWith('-') && line.includes('if(paths===null&&presented.length===0)return void 0'))
+    expect(droppedGuard).toBeDefined()
+    expect(patch.split('\n').some(line =>
+      line.startsWith('+') && line.includes('if(paths===null&&presented.length===0)return void 0')
+    )).toBe(false)
     expect(primitives).toContain('mention.kind === "folder" ? "folder"')
     expect(primitives).toContain('kind?: "file" | "folder"')
     expect(chat).toContain('options?.revealInFileManager === true')
-    expect(chat).toContain('openFolderInFileManager((request) => ctx.remote.session.openWorkspacePath(request), cwd, path)')
-    expect(chat).toContain('reason === "PATH_NOT_FOUND" && index === 0 && candidates.length > 1')
-    expect(chat).toContain('throw opened.error')
+    expect(chat).toContain('openWorkspacePath({ path: hostPathForOpen(cwd, workingPath) })')
+    expect(chat).toContain('if (!opened.ok) throw opened.error')
     expect(chat).toContain('requestOpenFile(fileOpenError.path, fileOpenError.options)')
     expect(chat).toContain('readonly revealInFileManager?: boolean')
   })
@@ -245,96 +190,145 @@ describe('assistant local path links', () => {
     })
   })
 
-  it('keeps the literal folder path ahead of a workspace-name overlap', async () => {
-    const { workspaceOpenCandidates } = await loadFolderOpen()
-    const cwd = '/work/deepseek-harness/default-workspace'
-
-    expect(workspaceOpenCandidates(cwd, 'default-workspace/城市晨间通勤观察/')).toEqual([
-      `${cwd}/default-workspace/城市晨间通勤观察/`,
-      `${cwd}/城市晨间通勤观察`
-    ])
-    expect(workspaceOpenCandidates(cwd, '城市晨间通勤观察/')).toEqual([
-      `${cwd}/城市晨间通勤观察/`
-    ])
-    expect(workspaceOpenCandidates(cwd, '/etc/hosts')).toEqual(['/etc/hosts'])
-    expect(workspaceOpenCandidates(undefined, 'docs/')).toEqual(['docs/'])
-    expect(workspaceOpenCandidates(cwd, 'deepseek-harness/default-workspace/foo/')).toEqual([
-      `${cwd}/deepseek-harness/default-workspace/foo/`,
-      `${cwd}/foo`
-    ])
-    expect(workspaceOpenCandidates('/work/Reports', 'reports/q1/')).toEqual([
-      '/work/Reports/reports/q1/'
-    ])
-    expect(workspaceOpenCandidates('C:\\Users\\me\\Default-Workspace', 'default-workspace/城市晨间通勤观察/')).toEqual([
-      'C:/Users/me/Default-Workspace/default-workspace/城市晨间通勤观察/',
-      'C:/Users/me/Default-Workspace/城市晨间通勤观察'
-    ])
-  })
-
-  it('retries a missing folder only when the literal path is absent', async () => {
-    const { openFolderInFileManager } = await loadFolderOpen()
-    const cwd = '/work/deepseek-harness/default-workspace'
-    const mention = 'default-workspace/城市晨间通勤观察/'
-    const literal = `${cwd}/default-workspace/城市晨间通勤观察/`
-    const deduped = `${cwd}/城市晨间通勤观察`
-
-    const calls: string[] = []
-    await openFolderInFileManager(async (request) => {
-      calls.push(request.path)
-      if (request.path === literal) {
-        return { ok: false, error: { details: { reason: 'PATH_NOT_FOUND', path: request.path } } }
-      }
-      return { ok: true }
-    }, cwd, mention)
-    expect(calls).toEqual([literal, deduped])
-
-    const present: string[] = []
-    await openFolderInFileManager(async (request) => {
-      present.push(request.path)
-      return { ok: true }
-    }, cwd, mention)
-    expect(present).toEqual([literal])
-
-    const denied: string[] = []
-    const permission = { message: 'path open failed: EACCES', details: { reason: 'EACCES' } }
-    await expect(openFolderInFileManager(async (request) => {
-      denied.push(request.path)
-      return { ok: false, error: permission }
-    }, cwd, mention)).rejects.toBe(permission)
-    expect(denied).toEqual([literal])
-
-    const openerFailure = { message: 'path open failed: Command failed: open', details: {} }
-    const opened: string[] = []
-    await expect(openFolderInFileManager(async (request) => {
-      opened.push(request.path)
-      return { ok: false, error: openerFailure }
-    }, cwd, mention)).rejects.toBe(openerFailure)
-    expect(opened).toEqual([literal])
-
-    await expect(openFolderInFileManager(async (request) => {
-      return { ok: false, error: { details: { reason: 'PATH_NOT_FOUND', path: request.path } } }
-    }, cwd, mention)).rejects.toThrow(`Path does not exist: ${deduped}`)
-  })
-
-  it('keeps the native opener cause in the path-open failure', async () => {
-    const pathOpenFailureMessage = await loadPathOpenFailureMessage()
-    const sessionPatch = await readFile(patchPath('@deepseek-ai/dsh-api-session-controller'), 'utf8')
-
-    expect(pathOpenFailureMessage(new Error('The file /tmp/a does not exist'))).toBe(
-      'path open failed: The file /tmp/a does not exist'
-    )
-    expect(pathOpenFailureMessage(new Error('path open failed'))).toBe('path open failed')
-    expect(pathOpenFailureMessage('boom')).toBe('path open failed: boom')
-    expect(pathOpenFailureMessage(new Error(''))).toBe('path open failed')
-    expect(sessionPatch).toContain('reason: "PATH_NOT_FOUND"')
-    expect(sessionPatch).toContain('pathOpenFailureMessage(error)')
-    expect(sessionPatch).toContain('fs.stat(resolved, signal)')
-  })
-
-  it('strips line and column suffixes from resolved paths', async () => {
+  it('strips line and column suffixes from resolved paths and preserves positive line numbers', async () => {
     const localPathReference = await loadLocalPathReference()
 
-    expect(localPathReference('src/main.ts#L42')).toEqual({ path: 'src/main.ts', kind: 'file' })
-    expect(localPathReference('src/main.ts:42:7')).toEqual({ path: 'src/main.ts', kind: 'file' })
+    expect(localPathReference('src/main.ts#L42')).toEqual({
+      path: 'src/main.ts',
+      kind: 'file',
+      line: 42
+    })
+    expect(localPathReference('src/main.ts#L42C7')).toEqual({
+      path: 'src/main.ts',
+      kind: 'file',
+      line: 42
+    })
+    expect(localPathReference('src/main.ts#L42-L50')).toEqual({
+      path: 'src/main.ts',
+      kind: 'file',
+      line: 42
+    })
+    expect(localPathReference('src/main.ts:42:7')).toEqual({
+      path: 'src/main.ts',
+      kind: 'file',
+      line: 42
+    })
+    expect(localPathReference('/Users/alex/Library/Logs/BISHENG/harness.log:10092')).toEqual({
+      path: '/Users/alex/Library/Logs/BISHENG/harness.log',
+      kind: 'file',
+      line: 10092
+    })
+    expect(localPathReference('C:\\Users\\me\\file.txt:15')).toEqual({
+      path: 'C:\\Users\\me\\file.txt',
+      kind: 'file',
+      line: 15
+    })
+    expect(localPathReference('src/main.ts:0')).toEqual({
+      path: 'src/main.ts',
+      kind: 'file'
+    })
+    expect(localPathReference('/private/tmp/somedir:10')).toEqual({
+      path: '/private/tmp/somedir',
+      kind: 'folder'
+    })
+  })
+
+  it('forwards line numbers from produced and heuristic mentions to openFile', async () => {
+    const deliverables = await readFile(
+      'node_modules/@deepseek-ai/dsh-client-ui-deliverables/lib/client.js',
+      'utf8'
+    )
+    const basenameFn = extractFunction(deliverables, 'basename')
+    const producedFileMentionsFn = extractFunction(deliverables, 'producedFileMentions')
+    const fileMentionFn = extractFunction(deliverables, 'fileMention')
+    const splitLineSuffixFn = extractFunction(deliverables, 'splitLineSuffix')
+    const localPathReferenceFn = extractFunction(deliverables, 'localPathReference')
+    const rawSuffixFn = extractFunction(deliverables, 'rawSuffix')
+    const fileExtensionOfFn = extractFunction(deliverables, 'fileExtensionOf')
+    expect(basenameFn).toBeDefined()
+    expect(producedFileMentionsFn).toBeDefined()
+
+    const createMentions = new Function(
+      `${basenameFn}\n${producedFileMentionsFn}\n${fileMentionFn}\n${splitLineSuffixFn}\n${localPathReferenceFn}\n${rawSuffixFn}\n${fileExtensionOfFn}\nreturn producedFileMentions`
+    )() as (
+      paths: readonly string[],
+      openFile: (path: string, options?: { line?: number; revealInFileManager?: boolean }) => void,
+      label: (path: string, kind?: string) => string
+    ) => { resolve: (value: string) => { open: () => void; title: string; kind: string } | undefined }
+
+    const calls: Array<{ path: string; options?: { line?: number; revealInFileManager?: boolean } }> = []
+    const mentions = createMentions(
+      ['/workspace/src/main.ts'],
+      (path, options) => calls.push({ path, options }),
+      (path) => path
+    )
+
+    const producedByBasename = mentions.resolve('main.ts:42:7')
+    expect(producedByBasename?.title).toBe('/workspace/src/main.ts')
+    producedByBasename?.open()
+
+    const heuristicWithLine = mentions.resolve('/Users/alex/Library/Logs/BISHENG/harness.log:10092')
+    expect(heuristicWithLine?.title).toBe('/Users/alex/Library/Logs/BISHENG/harness.log')
+    heuristicWithLine?.open()
+
+    expect(calls).toEqual([
+      { path: '/workspace/src/main.ts', options: { line: 42 } },
+      { path: '/Users/alex/Library/Logs/BISHENG/harness.log', options: { line: 10092 } }
+    ])
+  })
+
+  it('parses colon and GitHub line suffixes in Markdown file links and normalizes chat openFile targets', async () => {
+    const primitives = await readFile(
+      'node_modules/@deepseek-ai/dsh-client-ui-primitives/lib/index.js',
+      'utf8'
+    )
+    const parseFileLinkFn = extractFunction(primitives, 'parseFileLink')
+    expect(parseFileLinkFn).toBeDefined()
+    const parseFileLink = new Function(`${parseFileLinkFn}\nreturn parseFileLink`)() as (
+      value: string
+    ) => { path: string; line?: number } | undefined
+
+    expect(parseFileLink('/Users/alex/Library/Logs/BISHENG/harness.log:10092')).toEqual({
+      path: '/Users/alex/Library/Logs/BISHENG/harness.log',
+      line: 10092
+    })
+    expect(parseFileLink('harness.log:10092')).toEqual({
+      path: 'harness.log',
+      line: 10092
+    })
+    expect(parseFileLink('src/main.ts:42:7')).toEqual({
+      path: 'src/main.ts',
+      line: 42
+    })
+    expect(parseFileLink('src/main.ts#L42C7-L50C2')).toEqual({
+      path: 'src/main.ts',
+      line: 42
+    })
+    expect(parseFileLink('http://example.com:8080')).toBeUndefined()
+    expect(parseFileLink('localhost:8080')).toBeUndefined()
+
+    const chat = await readFile(
+      'node_modules/@deepseek-ai/dsh-client-ui-chat/lib/client.js',
+      'utf8'
+    )
+    const normalizeFn = extractFunction(chat, 'normalizeOpenFileTarget')
+    expect(normalizeFn).toBeDefined()
+    const normalizeOpenFileTarget = new Function(`${normalizeFn}\nreturn normalizeOpenFileTarget`)() as (
+      rawPath: string,
+      options?: { line?: number; revealInFileManager?: boolean }
+    ) => { path: string; options?: { line?: number; revealInFileManager?: boolean } }
+
+    expect(normalizeOpenFileTarget('/Users/alex/Library/Logs/BISHENG/harness.log:10092')).toEqual({
+      path: '/Users/alex/Library/Logs/BISHENG/harness.log',
+      options: { line: 10092 }
+    })
+    expect(normalizeOpenFileTarget('src/main.ts#L18C3')).toEqual({
+      path: 'src/main.ts',
+      options: { line: 18 }
+    })
+    expect(normalizeOpenFileTarget('src/main.ts:18', { line: 99 })).toEqual({
+      path: 'src/main.ts',
+      options: { line: 99 }
+    })
   })
 })

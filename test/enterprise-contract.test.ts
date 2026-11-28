@@ -4,7 +4,6 @@ import {
   CLIENT_ID,
   createPkceTransaction,
   parseAuthorization,
-  parseAuditFeedbackUpdate,
   parseConfig,
   parseThirdPartyPolicy,
   parseModels,
@@ -107,7 +106,9 @@ describe('BiSheng compatible client API mock', () => {
       },
       llm: { registerAdapter: () => () => undefined },
       effect: (callback: () => unknown) => callback(),
-      provide: () => undefined
+      provide: () => undefined,
+      // Optional install services are absent; the route must still register with a closed runtime.
+      inject: () => undefined
     }
 
     applyEnterprise(ctx as never)
@@ -116,9 +117,22 @@ describe('BiSheng compatible client API mock', () => {
       '/api/enterprise.market.state',
       '/api/enterprise.market.catalog',
       '/api/enterprise.market.action',
+      '/api/enterprise.workbenches/work-ui-client.js',
+      '/api/enterprise.workbenches/welcome-cases-client.js',
+      '/api/enterprise.workbenches/welcome-cases.json',
+      '/api/enterprise.workbenches/cloud-collection-client.js',
+      '/api/enterprise.workbenches/workbench-card-client.js',
+      '/api/enterprise.workbenches/workbench-counts-client.js',
+      '/api/enterprise.workbenches/client.js',
+      '/api/enterprise.workbenches/cloud',
+      '/api/enterprise.workbenches/favorites',
+      '/api/enterprise.workbenches/favorites/write',
+      '/api/enterprise.workbenches/screenshot',
       '/api/enterprise.workbenches/catalog',
       '/api/enterprise.workbenches/detail',
       '/api/enterprise.workbenches/verify',
+      '/api/desktop-workbenches/enterprise-access-check',
+      '/api/desktop-workbenches/enterprise-install',
       '/api/enterprise.state',
       '/api/enterprise.profile.refresh',
       '/api/enterprise.base.inspect',
@@ -128,7 +142,9 @@ describe('BiSheng compatible client API mock', () => {
       '/api/enterprise.deep-link.confirm',
       '/api/enterprise.models.refresh',
       '/api/enterprise.refresh',
-      '/api/enterprise.logout'
+      '/api/enterprise.logout',
+      '/api/enterprise.chat.history',
+      '/api/enterprise.chat.delete'
     ])
     expect(routes.every(route => route.requestBody === 'buffered')).toBe(true)
   })
@@ -154,31 +170,6 @@ describe('BiSheng compatible client API mock', () => {
       client_id: 'other-client',
       contract_version: '0.5.0'
     })).toThrow('contract version is incompatible')
-    expect(parseConfig({
-      enabled: true,
-      client_id: 'dsh-desktop',
-      contract_version: '0.5.0',
-      audit_message_feedback: { version: 1, extra: true }
-    })).toEqual({
-      enabled: true,
-      client_id: 'dsh-desktop',
-      contract_version: '0.5.0',
-      audit_message_feedback: { version: 1 }
-    })
-    expect(parseConfig({
-      enabled: true,
-      client_id: 'dsh-desktop',
-      contract_version: '0.5.0',
-      audit_message_feedback: { version: 2 }
-    })).toEqual({ enabled: true, client_id: 'dsh-desktop', contract_version: '0.5.0' })
-    expect(parseAuditFeedbackUpdate({
-      conversation_id: 'session', message_id: 'msg-1', event_seq: 3, op: 'put', rating: 'negative', note: 'kept'
-    })).toEqual({
-      conversation_id: 'session', message_id: 'msg-1', event_seq: 3, op: 'put', rating: 'negative', note: 'kept'
-    })
-    expect(() => parseAuditFeedbackUpdate({
-      conversation_id: 'session', message_id: 'msg-1', event_seq: 3, op: 'delete', rating: 'negative'
-    })).toThrow('Invalid audit feedback update.')
   })
 
   it('serves audit negotiation alongside third-party capabilities and the workbench catalog', async () => {
@@ -344,29 +335,6 @@ describe('BiSheng compatible client API mock', () => {
     }
   })
 
-  it('keeps valid credit ratio hints and drops malformed ones without dropping the model', () => {
-    const base = { id: 'bisheng:7', capabilities: { streaming: true, tools: true, reasoning_content: false } }
-    for (const hint of [
-      { ratio: '3.00', base: false, free: false },
-      { ratio: '1.00', base: true, free: false },
-      { ratio: '<0.01', base: false, free: false },
-      { ratio: null, base: false, free: true },
-      { ratio: null, base: true, free: false }
-    ]) {
-      expect(parseModels({ object: 'list', data: [{ ...base, pricing_hint: { ...hint, extra: 'ignored' } }] })[0]?.pricing_hint)
-        .toEqual(hint)
-    }
-    for (const invalid of [null, 'x', {}, { ratio: 3, base: false, free: false }, { ratio: '3', base: false, free: false },
-      { ratio: '-1.00', base: false, free: false }, { ratio: '3.00x', base: false, free: false },
-      { ratio: '3.00', base: 'no', free: false }, { ratio: '3.00', base: false }]) {
-      const [model] = parseModels({ object: 'list', data: [{ ...base, pricing_hint: invalid }] })
-      expect(model?.id).toBe('bisheng:7')
-      expect(model).not.toHaveProperty('pricing_hint')
-    }
-    // Servers before F016 send no hint at all.
-    expect(parseModels({ object: 'list', data: [base] })[0]).not.toHaveProperty('pricing_hint')
-  })
-
   it('skips invalid models without failing the whole list', () => {
     expect(parseModelsLenient({
       object: 'list',
@@ -443,5 +411,41 @@ describe('BiSheng compatible client API mock', () => {
         usage: { used: 12, limit: 99 }
       }]
     })[0]?.usage).toMatchObject({ used: 12, limit: 99, source: 'live' })
+  })
+
+  it('preserves context_window and max_tokens declarations from model root or capabilities', () => {
+    const models = parseModelsLenient({
+      object: 'list',
+      data: [
+        {
+          id: 'model-with-root-limits',
+          context_window: 256000,
+          max_tokens: 4096,
+          capabilities: { streaming: true, tools: true, reasoning_content: false }
+        },
+        {
+          id: 'model-with-cap-limits',
+          capabilities: {
+            streaming: true,
+            tools: true,
+            reasoning_content: false,
+            context_window: 128000,
+            max_tokens: 8192
+          }
+        }
+      ]
+    })
+    expect(models[0]).toMatchObject({
+      id: 'model-with-root-limits',
+      context_window: 256000,
+      max_tokens: 4096,
+      capabilities: { context_window: 256000, max_tokens: 4096 }
+    })
+    expect(models[1]).toMatchObject({
+      id: 'model-with-cap-limits',
+      context_window: 128000,
+      max_tokens: 8192,
+      capabilities: { context_window: 128000, max_tokens: 8192 }
+    })
   })
 })

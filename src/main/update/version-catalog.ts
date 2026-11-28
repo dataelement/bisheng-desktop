@@ -1,0 +1,129 @@
+import type { AvailableRelease } from '../../shared/contracts'
+import { DEFAULT_UPDATE_CONFIG, stableFeedUrl, versionIndexUrl, type DesktopUpdateConfig } from './update-config'
+
+export type { AvailableRelease }
+
+export const STABLE_FEED_URL = stableFeedUrl()
+export const VERSION_INDEX_URL = versionIndexUrl()
+
+const INDEX_TIMEOUT_MS = 8_000
+
+export function archiveFeedUrl(version: string, config: Readonly<DesktopUpdateConfig> = DEFAULT_UPDATE_CONFIG): string {
+  if (!/^[0-9][a-zA-Z0-9.+-]*$/.test(version)) throw new Error('Invalid archive version')
+  return new URL(`archive/${version}/`, config.updatesBaseUrl).href
+}
+
+/** Split "1.2.3-rc.1" into ([1,2,3], "rc.1"). Non-numeric segments read as 0. */
+function splitVersion(value: string): { nums: number[]; pre: string } {
+  const [core = '', ...preParts] = value.trim().split('-')
+  const nums = core.split('.').map((part) => {
+    const parsed = Number.parseInt(part, 10)
+    return Number.isFinite(parsed) ? parsed : 0
+  })
+  while (nums.length < 3) nums.push(0)
+  return { nums, pre: preParts.join('-') }
+}
+
+export function compareVersions(a: string, b: string): -1 | 0 | 1 {
+  const left = splitVersion(a)
+  const right = splitVersion(b)
+  for (let i = 0; i < Math.max(left.nums.length, right.nums.length); i += 1) {
+    const diff = (left.nums[i] ?? 0) - (right.nums[i] ?? 0)
+    if (diff !== 0) return diff < 0 ? -1 : 1
+  }
+  return comparePrerelease(left.pre, right.pre)
+}
+
+/**
+ * Semver-style prerelease precedence once the numeric core is equal. A release
+ * (no prerelease) sorts above any prerelease; dot-separated identifiers
+ * compare with numeric identifiers numerically and below alphanumeric ones,
+ * and fewer identifiers sort below more ("alpha" < "alpha.1"). Plain string
+ * comparison would order "rc.10" below "rc.9", mis-sorting the archive index
+ * (and the picker/downgrade split in the preload) once a prerelease counter
+ * reaches two digits.
+ */
+function comparePrerelease(left: string, right: string): -1 | 0 | 1 {
+  if (left === right) return 0
+  if (!left) return 1 // release > prerelease
+  if (!right) return -1
+  const l = left.split('.')
+  const r = right.split('.')
+  const length = Math.max(l.length, r.length)
+  for (let i = 0; i < length; i += 1) {
+    const x = l[i]
+    const y = r[i]
+    if (x === undefined) return -1 // fewer identifiers sorts below
+    if (y === undefined) return 1
+    if (x === y) continue
+    const xn = /^\d+$/.test(x)
+    const yn = /^\d+$/.test(y)
+    if (xn && yn) {
+      // Compare without Number() so leading-zero forms and large counters do
+      // not lose precision.
+      const nx = x.replace(/^0+/, '') || '0'
+      const ny = y.replace(/^0+/, '') || '0'
+      if (nx.length !== ny.length) return nx.length < ny.length ? -1 : 1
+      if (nx !== ny) return nx < ny ? -1 : 1
+      continue
+    }
+    if (xn) return -1 // numeric identifiers sort below alphanumeric ones
+    if (yn) return 1
+    if (x < y) return -1
+    if (x > y) return 1
+  }
+  return 0
+}
+
+function isRelease(value: unknown): value is AvailableRelease {
+  if (typeof value !== 'object' || value === null) return false
+  const record = value as Record<string, unknown>
+  return (
+    typeof record.version === 'string' &&
+    record.version.length > 0 &&
+    typeof record.tag === 'string' &&
+    record.tag.length > 0 &&
+    typeof record.archiveUrl === 'string' &&
+    record.archiveUrl.length > 0
+  )
+}
+
+export function parseVersionIndex(raw: unknown, config: Readonly<DesktopUpdateConfig> = DEFAULT_UPDATE_CONFIG): AvailableRelease[] {
+  if (typeof raw !== 'object' || raw === null) return []
+  const versions = (raw as { versions?: unknown }).versions
+  if (!Array.isArray(versions)) return []
+  return versions.filter(isRelease)
+    .filter(release => /^[0-9][a-zA-Z0-9.+-]*$/.test(release.version))
+    .map(release => ({ ...release, archiveUrl: archiveFeedUrl(release.version, config) }))
+}
+
+/** The fields the index reader uses. Node fetch and the desktop session fetch both satisfy it. */
+export type VersionIndexRequest = (
+  url: string,
+  init?: { signal?: AbortSignal }
+) => Promise<{
+  ok: boolean
+  status: number
+  json(): Promise<unknown>
+}>
+
+export async function fetchAvailableReleases(
+  currentVersion: string,
+  fetchImpl: VersionIndexRequest = globalThis.fetch,
+  config: Readonly<DesktopUpdateConfig> = DEFAULT_UPDATE_CONFIG
+): Promise<AvailableRelease[]> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), INDEX_TIMEOUT_MS)
+  try {
+    const response = await fetchImpl(versionIndexUrl(config), { signal: controller.signal })
+    if (!response.ok) {
+      throw new Error(`Version index request failed: ${response.status}`)
+    }
+    const releases = parseVersionIndex(await response.json(), config)
+    return releases
+      .filter((release) => compareVersions(release.version, currentVersion) < 0)
+      .sort((a, b) => compareVersions(b.version, a.version))
+  } finally {
+    clearTimeout(timer)
+  }
+}

@@ -1,0 +1,96 @@
+name: Build BiSheng Web Runtime (Portable)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_platform:
+        description: Portable targets (all currently means Windows x64)
+        required: true
+        default: windows-x64
+        type: choice
+        options: [windows-x64, all]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bisheng-web-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    name: Windows x64 portable (no publication)
+    if: github.event_name != 'workflow_dispatch' || inputs.target_platform == 'windows-x64' || inputs.target_platform == 'all'
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      DSH_TELEMETRY_DISABLED: '1'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      # The boundary gate compares raw bytes against reviewed Git objects.
+      - name: Preserve repository bytes on checkout
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+          architecture: x64
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fetch reviewed upstream baseline
+        shell: bash
+        run: |
+          git remote add upstream https://github.com/dataelement/dsh-desktop.git
+          baseline_commit=$(node -e "const b=require('./ops/ci/upstream-baseline.json');if(!/^[a-f0-9]{40}$/.test(b.commit))process.exit(1);process.stdout.write(b.commit)")
+          git fetch --no-tags upstream "$baseline_commit"
+          git update-ref refs/remotes/upstream/V0.14.1 "$baseline_commit"
+          git rev-parse --verify upstream/V0.14.1
+      - name: Verify downstream boundary
+        run: npm run verify:boundary
+        env:
+          UPSTREAM_BASE: upstream/V0.14.1
+      - name: Install locked build dependencies with postinstall
+        run: node ops/ci/npm-ci.mjs --prefer-offline --no-audit --no-fund
+      - name: Verify pinned pnpm
+        run: |
+          $version = node node_modules/pnpm/bin/pnpm.cjs --version
+          if ($LASTEXITCODE -ne 0 -or $version.Trim() -ne '10.34.5') { throw 'Expected pnpm 10.34.5' }
+      - name: Download and verify pinned portable Node
+        run: |
+          $nodeDirectory = Join-Path $env:RUNNER_TEMP 'bisheng-portable-node'
+          New-Item -ItemType Directory -Path $nodeDirectory -ErrorAction Stop | Out-Null
+          $executable = Join-Path $nodeDirectory 'node.exe'
+          Invoke-WebRequest -Uri 'https://nodejs.org/dist/v24.15.0/win-x64/node.exe' -OutFile $executable
+          $digest = (Get-FileHash -Algorithm SHA256 $executable).Hash.ToLowerInvariant()
+          if ($digest -ne '3331e1ffe19874215472217c5e94f5a0c6d8e18c4ac7111d3937aa0ad5e9b4a5') { throw 'Node SHA-256 mismatch' }
+          "BISHENG_NODE_DIRECTORY=$nodeDirectory" >> $env:GITHUB_ENV
+      - name: Prepare locked Windows production modules and complete Office/PPT packages
+        run: node scripts/prepare-web-ci-inputs.mjs "${{ runner.temp }}/bisheng-web-inputs"
+      - name: Assemble ZIP and verify extracted offline runtime
+        run: >-
+          node ops/ci/build-web-portable.mjs
+          --node-directory "$env:BISHENG_NODE_DIRECTORY"
+          --modules-directory "${{ runner.temp }}/bisheng-web-inputs/node_modules"
+          --office-directory "${{ runner.temp }}/bisheng-web-inputs/office"
+          --ppt-directory "${{ runner.temp }}/bisheng-web-inputs/ppt"
+          --output-directory "${{ github.workspace }}/dist/bisheng-web-runtime"
+      - name: Upload verified Actions artifacts only
+        uses: actions/upload-artifact@v4
+        with:
+          name: bisheng-web-runtime-windows-x64
+          path: |
+            dist/bisheng-web-runtime-windows-x64.zip
+            dist/bisheng-web-runtime-windows-x64.zip.sha256
+            dist/bisheng-web-runtime-windows-x64.zip.verification.json
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Verify tracked sources remain clean
+        run: git diff --exit-code

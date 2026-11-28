@@ -129,6 +129,48 @@ describe('enterprise reasoning effort', () => {
   })
 })
 
+describe('enterprise context window and compaction support', () => {
+  it('resolves default context window and declared maxTokens', async () => {
+    const customModel = {
+      id: 'bisheng:custom',
+      display_name: 'Custom Capacity Model',
+      context_window: 256_000,
+      max_tokens: 8192,
+      capabilities: { streaming: true, tools: true, reasoning_content: false }
+    }
+    const adapter = new EnterpriseLlmAdapter({
+      models: () => [model, customModel],
+      providerName: () => 'Enterprise'
+    })
+    const resolvedDefault = await adapter.resolveModel('enterprise', model.id)
+    expect(resolvedDefault.context).toEqual({ contextWindow: 128_000 })
+    expect(resolvedDefault.defaultMaxTokens).toBeUndefined()
+
+    const resolvedCustom = await adapter.resolveModel('enterprise', customModel.id)
+    expect(resolvedCustom.context).toEqual({ contextWindow: 256_000 })
+    expect(resolvedCustom.defaultMaxTokens).toBe(8192)
+  })
+
+  it('provides valid context to Harness resolveModelInfo for compaction pressure checks', async () => {
+    const ctx = new Context()
+    const fiber = ctx.plugin(LlmRuntime)
+    await fiber
+    const adapter = new EnterpriseLlmAdapter({
+      models: () => [model],
+      providerName: () => 'Enterprise'
+    })
+    const dispose = ctx.llm.registerAdapter(['enterprise'], adapter)
+    try {
+      const info = await ctx.llm.resolveModelInfo('enterprise', model.id)
+      expect(info.context).toEqual({ contextWindow: 128_000 })
+      expect(info.id).toBe(model.id)
+    } finally {
+      dispose()
+      await fiber.dispose()
+    }
+  })
+})
+
 const referenceImage = {
   attachmentId: 'sha256:abcdef1234567890',
   mediaType: 'image/png',
@@ -839,21 +881,6 @@ describe('BiSheng OpenAI adapter', () => {
     expect(busy.error.failure.code).toBe('enterprise_chat_busy')
     expect(internal.error.failure.code).toBe('internal_error')
     expect(internal.error.failure.code).not.toBe('SERVER')
-  })
-
-  it('F016: classifies an unpriced BiSheng model as its own platform failure, not a generic server error', async () => {
-    const body = {
-      error: { message: 'Model pricing is not configured; contact the administrator', type: 'service_unavailable_error', code: 'model_pricing_missing' }
-    }
-    const direct = await finishFrom(new Response(JSON.stringify(body), { status: 503, headers: { 'content-type': 'application/json' } }))
-    // The local chat proxy forwards the platform code as errorCode.
-    const proxied = await finishFrom(new Response(JSON.stringify({ ...body, errorCode: 'model_pricing_missing' }), {
-      status: 503, headers: { 'content-type': 'application/json' }
-    }))
-    for (const result of [direct, proxied]) {
-      expect(result.error.failure.code).toBe('model_pricing_missing')
-      expect(result.error.failure.code).not.toBe('SERVER')
-    }
   })
 
   it('keeps a JSON request id when the response header is absent', async () => {

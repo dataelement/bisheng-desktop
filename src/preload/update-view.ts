@@ -1,21 +1,16 @@
 import type { AvailableRelease, UpdateStatus } from '../shared/contracts'
 
-export type UpdateLocale = 'en' | 'zh'
+import type { DesktopLocale } from '../shared/desktop-locale'
+import { updateText } from '../shared/desktop-update-messages'
+
+export type UpdateLocale = DesktopLocale
+
+/** Internal presentation marker: keep generic failures translatable after a locale change. */
+export const UPDATE_ACTION_FAILED = 'dsh-desktop:update-action-failed'
 
 export function shouldShowUpdate(status: UpdateStatus, allowManualPresentation = true): boolean {
   if (['available', 'downloading', 'downloaded'].includes(status.phase)) return true
   return allowManualPresentation && status.manual && ['checking', 'up-to-date', 'error', 'unsupported'].includes(status.phase)
-}
-
-/** About is the only dialog on screen. The corner card returns when it closes. */
-export function shouldPresentUpdateCard(
-  status: UpdateStatus,
-  dismissedVersion: string | null,
-  dismissedTransientPhase: UpdateStatus['phase'] | null,
-  aboutOpen: boolean
-): boolean {
-  if (aboutOpen) return false
-  return shouldShowUpdate(status) && !isUpdateDismissed(status, dismissedVersion, dismissedTransientPhase)
 }
 
 export function isUpdateDismissed(
@@ -25,16 +20,6 @@ export function isUpdateDismissed(
 ): boolean {
   if (status.availableVersion) return status.availableVersion === dismissedVersion
   return status.phase === dismissedTransientPhase
-}
-
-/**
- * Skip is a decision made before the download starts. Once the user accepts,
- * the same offer must stay locked through the download; it opens again only
- * when the package is ready to install.
- */
-export function isUpdateSkipEnabled(phase: UpdateStatus['phase'], accepting: boolean): boolean {
-  if (accepting || phase === 'downloading') return false
-  return phase === 'available' || phase === 'downloaded'
 }
 
 /** A manual request may replay a cached update; progress keeps the same request ID. */
@@ -59,81 +44,37 @@ export interface UpdateHeadline {
  * require parsing a version string out of a sentence.
  */
 export function updateHeadline(status: UpdateStatus, locale: UpdateLocale): UpdateHeadline {
-  const zh = locale === 'zh'
+  const t = (key: Parameters<typeof updateText>[1], values = {}) => updateText(locale, key, values)
   const version = status.availableVersion ? `v${status.availableVersion}` : ''
-
+  if (status.downgrade && status.availableVersion) return { title: t('downgrading', { version }), description: t('rollingBack', { current: status.currentVersion, version }) }
   switch (status.phase) {
-    case 'checking':
-      return {
-        title: zh ? '正在检查更新' : 'Checking for updates',
-        description: zh ? `当前 v${status.currentVersion}` : `Currently on v${status.currentVersion}`
-      }
-    case 'available':
-      return {
-        title: zh ? `检测到新版本 ${version}` : `New version ${version} available`,
-        description: zh
-          ? `${version} 已发布，同意后开始下载。`
-          : `${version} is ready to download.`
-      }
-    case 'downloading':
-      return {
-        title: zh ? '正在下载更新' : 'Downloading update',
-        description: zh ? `${version} · ${Math.round(status.percent ?? 0)}%` : `${version} · ${Math.round(status.percent ?? 0)}%`
-      }
-    case 'downloaded':
-      return {
-        title: zh ? '更新已就绪' : 'Update ready',
-        description: zh
-          ? `${version} 将在重启后生效。`
-          : `${version} will be applied on next launch.`
-      }
-    case 'up-to-date':
-      return {
-        title: zh ? '已是最新版本' : 'Up to date',
-        description: zh ? `当前 v${status.currentVersion}` : `Currently on v${status.currentVersion}`
-      }
-    case 'unsupported':
-      return {
-        title: zh ? '当前构建不支持在线更新' : 'Online updates are not available',
-        description: zh
-          ? '当前构建不支持在线更新。'
-          : 'Online updates are unavailable in this build.'
-      }
-    case 'error':
-      return {
-        title: zh ? '更新失败' : 'Update failed',
-        description: zh ? '无法检查或下载更新。' : 'Unable to check for or download updates.'
-      }
-    case 'idle':
-      return { title: '', description: '' }
+    case 'checking': return { title: t('checking'), description: t('currently', { version: status.currentVersion }) }
+    case 'available': return { title: t('available', { version }), description: t('readyDownload', { version }) }
+    case 'downloading': return { title: t('downloading'), description: `${version} · ${Math.round(status.percent ?? 0)}%` }
+    case 'downloaded': return { title: t('ready'), description: t('nextLaunch', { version }) }
+    case 'up-to-date': return { title: t('upToDate'), description: t('currently', { version: status.currentVersion }) }
+    case 'unsupported': return { title: t('unsupported'), description: t('website') }
+    case 'error': return { title: t('failed'), description: t('unable') }
+    case 'idle': return { title: '', description: '' }
   }
 }
 
-export function updateMessage(status: UpdateStatus, locale: UpdateLocale): string {
-  const zh = locale === 'zh'
+export function updateMessage(status: UpdateStatus, locale: UpdateLocale, productName = 'DSH Desktop'): string {
   const version = status.availableVersion ? ` ${status.availableVersion}` : ''
-
+  const percent = Math.round(status.percent ?? 0)
+  if (status.downgrade && status.availableVersion) {
+    const key = status.phase === 'downloaded' ? 'downgradeReady' : status.phase === 'downloading' ? 'downgrading' : 'preparingDowngrade'
+    return updateText(locale, key, { version: status.availableVersion }) + (status.phase === 'downloading' ? ` (${percent}%)` : '')
+  }
   switch (status.phase) {
-    case 'checking':
-      return zh ? '正在检查更新…' : 'Checking for updates…'
-    case 'available':
-      return zh
-        ? `发现新版本${version}，是否更新？`
-        : `BISHENG${version} is available. Update now?`
-    case 'downloading': {
-      const percent = Math.round(status.percent ?? 0)
-      return zh ? `正在下载更新 ${percent}%` : `Downloading update ${percent}%`
-    }
-    case 'downloaded':
-      return zh ? `BISHENG${version} 已下载完成` : `BISHENG${version} is ready to install`
-    case 'up-to-date':
-      return zh ? 'BISHENG 已是最新版本' : 'BISHENG is up to date'
-    case 'unsupported':
-      return zh ? '当前构建不支持在线更新。' : 'Online updates are unavailable in this build.'
-    case 'error':
-      return zh ? '无法检查或下载更新' : 'Unable to check for or download updates'
-    case 'idle':
-      return ''
+    case 'checking': return updateText(locale, 'checking') + '…'
+    case 'available': return updateText(locale, 'askUpdate', { version, app: productName })
+    case 'downloading': return updateText(locale, 'downloading') + ` ${percent}%`
+    case 'downloaded': return updateText(locale, 'downloaded', { version, app: productName })
+    case 'up-to-date': return updateText(locale, 'appLatest', { app: productName })
+    case 'unsupported': return updateText(locale, 'buildUnsupported')
+    case 'error': return updateText(locale, 'unable').replace(/[。.]$/, '')
+    case 'idle': return ''
   }
 }
 
@@ -194,5 +135,15 @@ export function rollbackReleases(releases: AvailableRelease[], currentVersion: s
 }
 
 export function rollbackEmptyMessage(locale: UpdateLocale): string {
-  return locale === 'zh' ? '暂无可回退的历史版本' : 'No older versions available to roll back to'
+  return updateText(locale, 'noOlder')
+}
+
+/** Known updater failures stay in the Desktop language instead of the English exception text. */
+export function presentedUpdateMessage(message: string | undefined, locale: UpdateLocale): string | undefined {
+  if (message === UPDATE_ACTION_FAILED) return updateText(locale, 'actionFailed')
+  if (message === 'Desktop update service is unavailable') return updateText(locale, 'serviceUnavailable')
+  if (message === 'Updates are available in installed macOS and Windows builds.' || message === 'Update checks are only available in installed macOS and Windows builds.') return updateText(locale, 'buildUnsupported')
+  if (message === 'Selected version is not in the release history' || message === '在更新源未找到该版本') return updateText(locale, 'versionsError')
+  if (message === 'Update archive does not match the selected version' || message === 'downloaded-version-mismatch' || message === 'downloaded-update-changed-during-install' || message === 'updater-not-initialized') return updateText(locale, 'actionFailed')
+  return message
 }

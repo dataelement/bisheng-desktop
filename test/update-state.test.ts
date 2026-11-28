@@ -40,6 +40,14 @@ describe('desktop update state', () => {
     expect(status.manual).toBe(true)
   })
 
+  it('carries downgrade through transient events and clears it on reset', () => {
+    const base = { ...initialUpdateStatus('1.5.0'), downgrade: true }
+    expect(reduceUpdateStatus(base, { type: 'available', version: '1.2.0' }).downgrade).toBe(true)
+    expect(reduceUpdateStatus(base, { type: 'progress', percent: 40 }).downgrade).toBe(true)
+    expect(reduceUpdateStatus(base, { type: 'downloaded', version: '1.2.0' }).downgrade).toBe(true)
+    expect(reduceUpdateStatus(base, { type: 'reset' }).downgrade).toBeUndefined()
+  })
+
   it('clamps invalid download percentages', () => {
     const status = {
       ...initialUpdateStatus('1.0.0'),
@@ -63,15 +71,6 @@ it('preserves startup source and release notes through download completion', () 
   expect(status.source).toBe('startup')
   expect(status.releaseNotes).toBe('Fixes')
   expect(reduceUpdateStatus(status, { type: 'present-manual' })).toMatchObject({ phase: 'downloaded', source: 'manual', manual: true, releaseNotes: 'Fixes' })
-})
-
-it('keeps a manual presentation id from the check through the result', () => {
-  let status = reduceUpdateStatus(initialUpdateStatus('1.0.0'), { type: 'check', manual: true, presentationId: 3 })
-  status = reduceUpdateStatus(status, { type: 'available', version: '1.1.0' })
-  expect(status.presentationId).toBe(3)
-  expect(status.manual).toBe(true)
-  status = reduceUpdateStatus(status, { type: 'present-manual', presentationId: 4 })
-  expect(status).toMatchObject({ phase: 'available', manual: true, source: 'manual', presentationId: 4, availableVersion: '1.1.0' })
 })
 
 it('normalizes only supported release notes and bounds external text', () => {

@@ -67,11 +67,11 @@
     !define MUI_PAGE_CUSTOMFUNCTION_LEAVE DshEnsureInstDirExists
 
     Function DshEnsureInstDirExists
-      ensure_mkdir_retry:
+      dsh_target_mkdir_retry:
       ClearErrors
       CreateDirectory "$INSTDIR"
       ${If} ${Errors}
-        MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "无法创建目标安装目录：$\r$\n$INSTDIR$\r$\n$\r$\n请确认您有权限写入该路径（或尝试以管理员身份运行安装程序），或选择其他目录。$\r$\n$\r$\n点击【重试】再次尝试创建，或点击【取消】返回重新选择目录。" IDRETRY ensure_mkdir_retry
+        !insertmacro dshRetryInstallError "Could not create the installation directory:$\r$\n$INSTDIR$\r$\n$\r$\nCheck write permissions or select another directory. Retry tries again; Cancel returns to directory selection." "无法创建目标安装目录：$\r$\n$INSTDIR$\r$\n$\r$\n请检查写入权限或选择其他目录。“重试”将再次创建；“取消”将返回目录选择。" dsh_target_mkdir_retry
         Abort
       ${EndIf}
     FunctionEnd
@@ -87,10 +87,13 @@
 
     !macro customInstall
       !insertmacro dshFinishDirectories
+      ; Ensure Chromium AppContainer sandbox (GPU and Renderer processes) can read installed
+      ; files even when the installer was executed with elevated Administrator permissions.
+      nsExec::Exec 'icacls "$INSTDIR" /grant "*S-1-15-2-1:(OI)(CI)(RX)" /grant "*S-1-15-2-2:(OI)(CI)(RX)" /T /C /Q'
       ; CHECK_APP_RUNNING force-kills the previous process, so will-quit never
       ; clears the session marker. Same-version overwrite would otherwise look
       ; like an unclean-exit. Delete is a no-op when the file is absent.
-      Delete "$APPDATA\bisheng\desktop-service\session.json"
+      Delete "$APPDATA\dsh-desktop\desktop-service\session.json"
     !macroend
   !endif
 !endif

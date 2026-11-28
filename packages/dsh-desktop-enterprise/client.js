@@ -6,14 +6,41 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
 
     const React = require('react')
-    const { createElement: h, useCallback, useEffect, useRef, useState } = React
+    const { createElement: h, useCallback, useEffect, useRef, useState, useSyncExternalStore } = React
+    let primitives = {}
+    try {
+      primitives = require('@deepseek-ai/dsh-client-ui-primitives') || {}
+    } catch {}
+    const Fallback = ({ children, ...props }) => h('div', props, children)
+    const FallbackButton = ({ children, ...props }) => h('button', props, children)
+    const FallbackIcon = (props) => h('span', { 'aria-hidden': 'true', ...props })
+
+    const Button = primitives.Button || FallbackButton
+    const SegmentedControl = primitives.SegmentedControl || Fallback
+    const Tooltip = primitives.Tooltip || (({ children }) => children)
+    const Menu = primitives.Menu || Fallback
+    const MenuItemButton = primitives.MenuItemButton || FallbackButton
+    const Modal = primitives.Modal || Fallback
+
+    const IconSettingsOutlineRegular = primitives.IconSettingsOutlineRegular || FallbackIcon
+    const IconChecklistOutlineRegular = primitives.IconChecklistOutlineRegular || FallbackIcon
+    const IconChecklistOutlineMedium = primitives.IconChecklistOutlineMedium || FallbackIcon
+    const IconPaperPlaneOutlineMedium = primitives.IconPaperPlaneOutlineMedium || FallbackIcon
+    const IconAlarmClockOutlineMedium = primitives.IconAlarmClockOutlineMedium || FallbackIcon
+    const IconGaugeOutlineMedium = primitives.IconGaugeOutlineMedium || FallbackIcon
+    const IconApiOutlineMedium = primitives.IconApiOutlineMedium || FallbackIcon
+    const IconInfoOutlineMedium = primitives.IconInfoOutlineMedium || FallbackIcon
+    const IconUserOutlineMedium = primitives.IconUserOutlineMedium || FallbackIcon
+    const IconChevronDownOutlineRegular = primitives.IconChevronDownOutlineRegular || FallbackIcon
+    const IconCloseOutlineRegular = primitives.IconCloseOutlineRegular || FallbackIcon
     const LAST_BASE_KEY = 'dshDesktopEnterprise.lastBase'
     const MANUAL_FALLBACK_DELAY_MS = 8_000
     const ENTERPRISE_SECTION_ID = 'enterprise-account'
     const LEARN_MORE_URL = 'https://dshdesktop.com/zh/enterprise/deployment/'
     const OPEN_SETTINGS_SECTION_EVENT = 'dsh-desktop:open-settings-section'
-    // Mirrors BISHENG_PROVIDER_ROUTE in index.js; the client bundle cannot import the server entry.
     const BISHENG_PROVIDER_ROUTE = 'bisheng-enterprise'
+    const productName = typeof window.__DSH_PRODUCT_NAME__ === 'string' && window.__DSH_PRODUCT_NAME__.trim()
+      ? window.__DSH_PRODUCT_NAME__ : 'BISHENG'
     const NS = 'settings.desktopEnterprise'
     const SAFETY_NS = 'enterprise.contentSafety'
     const safetyCopy = {
@@ -61,6 +88,9 @@ window.__ModuleLoader__.load({
     }
 
     const zh = {
+      ratioBase: '基准',
+      ratioFree: '免费',
+      ratioHint: '积分倍率：按输入与输出 3:1 估算，相对企业设置的基准模型；实际按每次用量扣积分。',
       seat_not_assigned: '当前服务版本不支持直接登录，请联系管理员升级平台。',
       seat_revoked: '当前登录已失效，请重新登录。',
       seat_limit_reached: '当前平台仍启用了旧版接入限制，请联系管理员升级。',
@@ -80,11 +110,12 @@ window.__ModuleLoader__.load({
       loginAgain: '重新登录',
       loggingIn: '等待浏览器授权…',
       learnMore: '了解企业版',
+      openWorkspace: '进入企业工作台',
+      unlimitedUsage: '不限额度',
+      usedCredits: '已消耗积分',
+      totalCredits: '总分配额度',
       vision: '视觉',
       visionHint: '企业已开启图片输入',
-      ratioBase: '基准',
-      ratioFree: '免费',
-      ratioHint: '积分倍率：按输入与输出 3:1 估算，相对企业设置的基准模型；实际按每次用量扣积分。',
       usageLabel: '剩余积分',
       creditsHelp: 'Chat 和 Work 共用积分，每月重置。',
       ticket: '一次性登录码',
@@ -131,6 +162,9 @@ window.__ModuleLoader__.load({
     }
 
     const en = {
+      ratioBase: 'Base',
+      ratioFree: 'Free',
+      ratioHint: 'Credit ratio, estimated at 3:1 input to output against the base model set by your organization. Each call is charged by its actual usage.',
       seat_not_assigned: 'This server uses a legacy sign-in policy. Ask your administrator to upgrade the platform.',
       seat_revoked: 'Your sign-in is no longer valid. Sign in again.',
       seat_limit_reached: 'This server still enforces a legacy access limit. Ask your administrator to upgrade.',
@@ -150,11 +184,12 @@ window.__ModuleLoader__.load({
       loginAgain: 'Sign in again',
       loggingIn: 'Waiting for browser authorization…',
       learnMore: 'Learn about Enterprise',
+      openWorkspace: 'Open Enterprise Workspace',
+      unlimitedUsage: 'Unlimited',
+      usedCredits: 'Used Credits',
+      totalCredits: 'Total Allocation',
       vision: 'Vision',
       visionHint: 'Image input enabled by your enterprise',
-      ratioBase: 'Base',
-      ratioFree: 'Free',
-      ratioHint: 'Credit ratio, estimated at 3:1 input to output against the base model set by your organization. Each call is charged by its actual usage.',
       usageLabel: 'Credits remaining',
       creditsHelp: 'Chat and Work share credits, reset monthly.',
       ticket: 'One-time code',
@@ -215,9 +250,10 @@ window.__ModuleLoader__.load({
         .dshEnterpriseTitleRow {
           display: flex;
           align-items: center;
+          justify-content: space-between;
           flex-wrap: wrap;
-          gap: 10px;
-          margin: 0 0 8px;
+          gap: 12px;
+          margin: 0 0 12px;
         }
         .dshEnterpriseTitleRow h2 {
           margin: 0;
@@ -294,23 +330,61 @@ window.__ModuleLoader__.load({
           opacity: .5;
           cursor: default;
         }
+        .dshEnterpriseWorkspaceBtn {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          height: 24px;
+          padding: 0 6px;
+          border: 0;
+          border-radius: var(--dsw-radius-sm, 6px);
+          color: var(--dsw-alias-label-secondary);
+          background: transparent;
+          font-size: 12px;
+          font-weight: 400;
+          line-height: 24px;
+          text-decoration: none;
+          cursor: pointer;
+          white-space: nowrap;
+          transition: background .15s ease, color .15s ease;
+        }
+        .dshEnterpriseWorkspaceBtn:hover {
+          color: var(--dsw-alias-label-primary);
+          background: var(--dsw-alias-interactive-bg-hover);
+        }
+        .dshEnterpriseWorkspaceBtn:active {
+          background: var(--dsw-alias-interactive-bg-active, rgba(0, 0, 0, .08));
+        }
+        .dshEnterpriseWorkspaceBtn:focus-visible {
+          outline: 2px solid var(--dsw-alias-label-primary);
+          outline-offset: 2px;
+        }
+        .dshEnterpriseWorkspaceIcon {
+          display: inline-flex;
+          align-items: center;
+          font-size: 11px;
+          opacity: .75;
+        }
         .dshEnterpriseLearnMoreShell {
           display: inline-flex;
         }
         .dshEnterpriseLearnMore {
           display: inline-flex;
           align-items: center;
-          gap: 5px;
-          min-height: 32px;
-          padding: 4px 8px;
+          gap: 4px;
+          height: 24px;
+          padding: 0 6px;
           border: 0;
-          border-radius: 6px;
+          border-radius: var(--dsw-radius-sm, 6px);
           color: var(--dsw-alias-label-secondary);
           background: transparent;
           font: inherit;
           font-size: 12px;
+          font-weight: 400;
+          line-height: 24px;
           cursor: pointer;
           white-space: nowrap;
+          transition: background .15s ease, color .15s ease;
         }
         .dshEnterpriseLearnMore:hover {
           color: var(--dsw-alias-label-primary);
@@ -471,15 +545,9 @@ window.__ModuleLoader__.load({
           line-height: 18px;
           white-space: nowrap;
         }
+        .dshEnterpriseModelRatio { color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;font-variant-numeric:tabular-nums;white-space:nowrap }
         .dshEnterpriseModelVision svg {
           flex: none;
-        }
-        .dshEnterpriseModelRatio {
-          color: var(--dsw-alias-label-secondary);
-          font-size: 12px;
-          line-height: 18px;
-          font-variant-numeric: tabular-nums;
-          white-space: nowrap;
         }
         .dshEnterpriseModels.paused {
           opacity: .5;
@@ -514,6 +582,14 @@ window.__ModuleLoader__.load({
           background: #1f2024;
           border-color: #50535c;
         }
+        body[data-ds-dark-theme] .dshEnterpriseWorkspaceBtn {
+          color: var(--dsw-alias-label-secondary);
+          background: transparent;
+        }
+        body[data-ds-dark-theme] .dshEnterpriseWorkspaceBtn:hover {
+          color: var(--dsw-alias-label-primary);
+          background: var(--dsw-alias-interactive-bg-hover);
+        }
         body[data-ds-dark-theme] .dshEnterpriseError {
           color: #ffb4ab;
           background: #421b1b;
@@ -532,8 +608,10 @@ window.__ModuleLoader__.load({
       loading: '正在读取企业插件…', empty: '企业暂未提供插件，请联系管理员导入。',
       failed: '暂时无法读取企业插件，请重试或联系管理员。',
       protocolMismatch: '当前客户端需要更新后的企业市场，请联系管理员升级服务端。',
+      authorizationUnavailable: '企业插件需要桌面授权服务，请在桌面客户端中打开市场或联系管理员。',
+      endpointUnavailable: '企业市场接口不可用，请检查企业插件是否已加载或联系管理员。',
       install: '安装', update: '更新',
-      installed: '已安装', uninstall: '卸载', enable: '启用', disable: '停用', disabled: '已停用', revoked: '管理员已收回使用权限',
+      installed: '已安装', uninstall: '卸载', enable: '启用', disable: '停用', disabled: '已停用',
       version: '版本', incompatible: '当前系统或版本暂不支持',
       installing: '安装中…', updating: '更新中…', enabling: '启用中…', disabling: '停用中…', uninstalling: '卸载中…', unsupported: '暂不支持', setup: '企业市场暂未就绪，可联系管理员完成配置。'
     }
@@ -542,18 +620,23 @@ window.__ModuleLoader__.load({
       loading: 'Loading enterprise plugins…', empty: 'Your enterprise has no plugins yet. Contact your administrator.',
       failed: 'Enterprise plugins are unavailable. Try again or contact your administrator.',
       protocolMismatch: 'This Desktop requires a newer enterprise market. Ask an administrator to upgrade the server.',
+      authorizationUnavailable: 'Enterprise plugins require the desktop authorization service. Open the market in the desktop app or contact your administrator.',
+      endpointUnavailable: 'The enterprise market endpoint is unavailable. Check that the enterprise plugin is loaded or contact your administrator.',
       install: 'Install', update: 'Update',
-      installed: 'Installed', uninstall: 'Uninstall', enable: 'Enable', disable: 'Disable', disabled: 'Disabled', revoked: 'Your administrator revoked access',
+      installed: 'Installed', uninstall: 'Uninstall', enable: 'Enable', disable: 'Disable', disabled: 'Disabled',
       version: 'Version', incompatible: 'Unsupported system or Desktop version',
       installing: 'Installing…', updating: 'Updating…', enabling: 'Enabling…', disabling: 'Disabling…', uninstalling: 'Uninstalling…', unsupported: 'Unavailable', setup: 'The enterprise market is not ready. Contact your administrator.'
     }
 
     let marketTranslate
     let accountTranslate
+    let settingsTranslate = (key) => key
     function marketLabels() { return Object.fromEntries(Object.keys(marketEn).map(key => [key, marketTranslate(key)])) }
     function marketStatusCopy(cause) {
       const code = typeof cause?.errorCode === 'string' ? cause.errorCode : ''
       if (code === 'protocol_mismatch') return marketLabels().protocolMismatch
+      if (code === 'authorization_unavailable') return marketLabels().authorizationUnavailable
+      if (code === 'market_endpoint_unavailable') return marketLabels().endpointUnavailable
       if ((code === 'seat_revoked' || code === 'session_expired') && accountTranslate) {
         const known = accountErrorCopy(code, accountTranslate)
         if (known) return known
@@ -663,7 +746,9 @@ window.__ModuleLoader__.load({
           h('button', { type: 'button', disabled: loading, onClick: refresh }, marketCopy.refresh)),
         loading ? h('p', { role: 'status' }, marketCopy.loading) : null,
         error ? h('div', { role: 'alert', className: 'dshEnterpriseMarketError' }, error) : null,
-        catalog && !catalog.installReady && !showEmpty ? h('p', null, marketCopy.setup) : null,
+        catalog && !catalog.installReady && catalog.failureCode === 'authorization_unavailable'
+          ? h('p', { role: 'alert', className: 'dshEnterpriseMarketError' }, marketCopy.authorizationUnavailable)
+          : catalog && !catalog.installReady && !showEmpty ? h('p', null, marketCopy.setup) : null,
         showEmpty ? h('p', null, marketCopy.empty) : null,
         h('div', { className: 'dshEnterpriseMarketList' }, rows.map(plugin => {
           const current = plugin.versions.find(version => version.id === plugin.current_version_id)
@@ -685,10 +770,7 @@ window.__ModuleLoader__.load({
                   h('button', { type: 'button', disabled: busy || (!local.enabled && !catalog.installReady), 'aria-busy': activeAction === 'enable' || activeAction === 'disable', onClick: () => operate(local.enabled ? 'disable' : 'enable', plugin) }, activeAction === 'enable' ? marketCopy.enabling : activeAction === 'disable' ? marketCopy.disabling : local.enabled ? marketCopy.disable : marketCopy.enable),
                   h('button', { type: 'button', disabled: busy, 'aria-busy': activeAction === 'uninstall', onClick: () => operate('uninstall', plugin) }, activeAction === 'uninstall' ? marketCopy.uninstalling : marketCopy.uninstall)) : null)),
             h('p', { className: 'dshEnterpriseMarketDescription', title: plugin.description }, plugin.description),
-            // A revoked grant is not the user's own "Disabled" switch: say who turned it
-            // off, also in place of the generic error a retried "Enable" then reports.
-            (local?.reason === 'revoked' || operation?.error || local?.error) ? h('p', { role: 'alert', className: 'dshEnterpriseMarketError' },
-              local?.reason === 'revoked' ? marketCopy.revoked : operation?.error || local.error) : null,
+            (operation?.error || local?.error) ? h('p', { role: 'alert', className: 'dshEnterpriseMarketError' }, operation?.error || local.error) : null,
             h('div', { className: 'dshEnterpriseMarketCardFooter' },
               h('span', { className: 'dshEnterpriseMarketVersion' }, `${marketCopy.version} ${current?.version || local?.version || '—'}`),
               local ? h('span', { className: 'dshEnterpriseMarketInstalled' }, local.enabled ? marketCopy.installed : marketCopy.disabled) : null))
@@ -705,10 +787,12 @@ window.__ModuleLoader__.load({
           if (!response.ok) throw new Error('Enterprise state unavailable')
           const account = await response.json()
           if (disposed || currentRevision !== revision) return
-          const next = account.connected && Date.parse(account.sessionExpiresAt) > Date.now() ? `${account.base}|${account.tenant.id}|${account.user.id}` : null
+          const sessionExpires = account.sessionExpiresAt ? Date.parse(account.sessionExpiresAt) : undefined
+          const notExpired = sessionExpires === undefined || sessionExpires > Date.now()
+          const next = account.connected && notExpired ? `${account.base}|${account.tenant.id}|${account.user.id}` : null
           currentAccount = account
           window.clearTimeout(expiryTimer)
-          if (next) expiryTimer = window.setTimeout(() => { void sync() }, Math.min(Date.parse(account.sessionExpiresAt) - Date.now() + 1, 2_147_483_647))
+          if (next && sessionExpires !== undefined) expiryTimer = window.setTimeout(() => { void sync() }, Math.min(sessionExpires - Date.now() + 1, 2_147_483_647))
           if (identity === next) return
           disposeTab?.(); disposeTab = undefined; identity = next
           if (next) disposeTab = ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({
@@ -732,10 +816,39 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /**
-     * F016 credit-ratio hints of the signed-in account's BiSheng models, keyed by catalog model id.
-     * Fed by the foreground catalog refresh, whose response is the full account state.
-     */
+    function bindEnterpriseWorkUi(ctx) {
+      return ctx.inject?.(['slots', 'locale', 'remote', 'remote.session', 'sessions', 'uiWorkspace', 'layout'], scoped => {
+        let disposed = false
+        import('/api/enterprise.workbenches/work-ui-client.js').then(module => {
+          if (!disposed) module.createWorkUi(React, primitives).apply(scoped)
+        }).catch(error => { if (!disposed) console.error('[enterprise-work-ui] Client module failed to load', error) })
+        return () => { disposed = true }
+      })
+    }
+
+    function bindEnterpriseWelcomeCases(ctx) {
+      let disposed = false, cleanup
+      const controller = new AbortController()
+      import('/api/enterprise.workbenches/welcome-cases-client.js').then(async module => {
+        if (disposed) return
+        const response = await fetch('/api/enterprise.workbenches/welcome-cases.json', { signal: controller.signal })
+        if (!response.ok) throw new Error('Welcome catalog unavailable.')
+        const catalog = await response.json()
+        if (!disposed) cleanup = module.mountWelcomeCases(React, ctx, catalog)
+      }).catch(error => { if (!disposed) console.error('[enterprise-welcome] Client module failed to load', error) })
+      return () => { disposed = true; controller.abort(); cleanup?.() }
+    }
+
+    function bindEnterpriseWorkbenchCollection(ctx) {
+      return ctx.inject?.(['desktopWorkbenches'], scoped => {
+        let disposed = false, cleanup
+        import('/api/enterprise.workbenches/client.js').then(module => {
+          if (!disposed) cleanup = module.mountCollections(React, scoped, scoped.desktopWorkbenches)
+        }).catch(error => { if (!disposed) console.error('[enterprise-workbench] Client module failed to load', error) })
+        return () => { disposed = true; cleanup?.() }
+      })
+    }
+
     function createPricingHintStore() {
       let hints = new Map()
       let version = 0
@@ -821,6 +934,39 @@ window.__ModuleLoader__.load({
       return () => { unsubscribeHints(); unsubscribeLocale?.(); document.getElementById(MODEL_RATIO_STYLE_ID)?.remove() }
     }
 
+    let accountActionEpoch = 0
+    const actionOwner = {}
+    const observeAction = event => {
+      if (event.detail?.actionStarted && event.detail.source !== actionOwner) accountActionEpoch++
+    }
+    const staleAccountAction = () => Object.assign(new Error('Account action superseded.'), { staleAccountAction: true })
+    function pricingHintBadge(hint, t) {
+      if (!hint) return null
+      if (hint.free) return { text: t('ratioFree'), tone: 'success' }
+      if (!hint.ratio) return null
+      return hint.base
+        ? { text: `${hint.ratio}x · ${t('ratioBase')}`, tone: 'info' }
+        : { text: `${hint.ratio}x`, tone: 'neutral' }
+    }
+
+    function EnterpriseAvatar({ nickname, src, attempt, onImageError }) {
+      const [failed, setFailed] = useState(null)
+      useEffect(() => setFailed(null), [src, attempt])
+      const showImage = src && failed !== src
+      return h('span', { className: 'dshEnterpriseAvatar', 'data-avatar-variant': showImage ? 'image' : 'initial', 'aria-hidden': 'true' }, showImage
+        ? h('img', { key: `${src}:${attempt}`, src, alt: '', referrerPolicy: 'no-referrer', style: { width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }, onError: () => { setFailed(src); onImageError(src) } })
+        : (Array.from(nickname?.trim() ?? '')[0] ?? '?').toUpperCase())
+    }
+
+    function openEnterpriseSettingsSection() {
+      if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return
+      const dispatch = () => window.dispatchEvent(
+        new CustomEvent(OPEN_SETTINGS_SECTION_EVENT, { detail: { id: ENTERPRISE_SECTION_ID } })
+      )
+      dispatch()
+      window.setTimeout(dispatch, 0)
+    }
+
     function bindEnterpriseModelSync(onState) {
       let pending, disposed = false, resync = false
       const sync = () => {
@@ -853,12 +999,6 @@ window.__ModuleLoader__.load({
       }
     }
 
-    let accountActionEpoch = 0
-    const actionOwner = {}
-    const observeAction = event => {
-      if (event.detail?.actionStarted && event.detail.source !== actionOwner) accountActionEpoch++
-    }
-    const staleAccountAction = () => Object.assign(new Error('Account action superseded.'), { staleAccountAction: true })
     async function api(path, body, signal) {
       const authorization = path === '/api/enterprise.login.start' || path === '/api/enterprise.deep-link.confirm'
       const mutation = authorization || ['/api/enterprise.logout', '/api/enterprise.refresh', '/api/enterprise.login.manual'].includes(path)
@@ -872,11 +1012,13 @@ window.__ModuleLoader__.load({
           headers: body === undefined ? {} : { 'content-type': 'application/json' },
           ...(body === undefined ? {} : { body: JSON.stringify(body) })
         })
-        const payload = await response.json().catch(() => ({}))
+        let invalidJson = false
+        const payload = await response.json().catch(() => { invalidJson = true; return {} })
         if (!response.ok || payload.ok === false) {
           if (mutation && actionEpoch !== accountActionEpoch) throw staleAccountAction()
           const failure = new Error(payload.error || `Request failed (${response.status})`)
           if (typeof payload.errorCode === 'string' && payload.errorCode) failure.errorCode = payload.errorCode
+          else if (invalidJson && response.status === 404 && path.startsWith('/api/enterprise.market.')) failure.errorCode = 'market_endpoint_unavailable'
           throw failure
         }
         if (mutation) {
@@ -913,8 +1055,9 @@ window.__ModuleLoader__.load({
       if (!usage || usage.source === 'unavailable' || usage.quota_state === 'unavailable') {
         return t('usageUnavailable')
       }
-      const formatter = new Intl.NumberFormat(language || 'en', { maximumFractionDigits: 2 })
+      const formatter = new Intl.NumberFormat(language || 'en', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
       if (usage.limit === 0) return formatter.format(0)
+      if (usage.limit === -1 || (usage.limit === null && usage.used !== null)) return t('unlimitedUsage')
       if (usage.used === null || usage.limit === null) return t('usageUnavailable')
       return formatter.format(Math.max(0, usage.limit - usage.used) / 1_000_000)
     }
@@ -932,15 +1075,6 @@ window.__ModuleLoader__.load({
       try {
         localStorage.setItem(LAST_BASE_KEY, value.trim())
       } catch {}
-    }
-
-    function openEnterpriseSettingsSection() {
-      if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return
-      const dispatch = () => window.dispatchEvent(
-        new CustomEvent(OPEN_SETTINGS_SECTION_EVENT, { detail: { id: ENTERPRISE_SECTION_ID } })
-      )
-      dispatch()
-      window.setTimeout(dispatch, 0)
     }
 
     const LEGACY_ACCOUNT_PHRASES = {
@@ -1066,16 +1200,6 @@ window.__ModuleLoader__.load({
         && usage.used < usage.limit
     }
 
-    /** Short credit-ratio text for a server hint, or null when no ratio can be shown. */
-    function pricingHintBadge(hint, t) {
-      if (!hint) return null
-      if (hint.free) return { text: t('ratioFree'), tone: 'success' }
-      if (!hint.ratio) return null
-      return hint.base
-        ? { text: `${hint.ratio}x · ${t('ratioBase')}`, tone: 'info' }
-        : { text: `${hint.ratio}x`, tone: 'neutral' }
-    }
-
     function renderModelRow(model, state, language, t) {
       const display = modelDisplayParts(model.display_name)
       const usage = state.usage
@@ -1101,14 +1225,6 @@ window.__ModuleLoader__.load({
             display.provider ? h('span', { className: 'dshEnterpriseModelProvider' }, display.provider) : null,
             vision,
             ratio) : null))
-    }
-
-    function EnterpriseAvatar({ name, src, attempt, onImageError }) {
-      const [failed, setFailed] = useState(null)
-      useEffect(() => setFailed(null), [src, attempt])
-      return h('span', { className: 'dshEnterpriseAvatar', 'aria-hidden': 'true' }, src && failed !== src
-        ? h('img', { key: `${src}:${attempt}`, src, alt: '', referrerPolicy: 'no-referrer', style: { width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }, onError: () => { setFailed(src); onImageError(src) } })
-        : Array.from(String(name)).slice(0, 2).join('').toLocaleUpperCase())
     }
 
     function EnterpriseSection({ t, renderSlot }) {
@@ -1226,6 +1342,13 @@ window.__ModuleLoader__.load({
           // Profile freshness is best effort; a local read keeps sign-in usable offline.
           if (current.alive) void refreshState().catch(cause => { if (current.alive) showFailure(cause) })
         })
+        let accountRevision
+        const unsubscribeAccount = window.dshEnterpriseChat?.subscribe?.(next => {
+          if (!next.connected || !Number.isFinite(next.accountRevision) || next.accountRevision === accountRevision) return
+          accountRevision = next.accountRevision
+          // The native event only invalidates the local broker snapshot.
+          if (accountRevision !== stateRef.current?.revision) void refreshState().catch(() => {})
+        })
         const bridge = window.dshDesktopEnterprise
         const unsubscribe = bridge?.onLoginLink?.((url) => {
           openEnterpriseSettingsSection()
@@ -1234,6 +1357,7 @@ window.__ModuleLoader__.load({
         })
         return () => {
           current.alive = false; current.revision++; accountActionEpoch++; current.request?.abort()
+          unsubscribeAccount?.()
           unsubscribe?.(); window.removeEventListener(ACCOUNT_CHANGED_EVENT, changed)
           window.removeEventListener(ACCOUNT_CHANGED_EVENT, observeAction)
         }
@@ -1280,6 +1404,7 @@ window.__ModuleLoader__.load({
       const models = Array.isArray(state?.models) ? state.models : []
       const userLabel = state?.user?.display_name || state?.user?.username || state?.user?.id || '—'
       const language = readUiLanguage()
+      const usageIdentity = JSON.stringify([state?.base ?? null, state?.tenant?.id ?? null, state?.user?.id ?? state?.user?.username ?? null])
 
       const logoutButton = connected && h(require('@deepseek-ai/dsh-client-ui-primitives').Button, {
         variant: 'ghost', size: 'md',
@@ -1292,10 +1417,10 @@ window.__ModuleLoader__.load({
       }, t('logout'))
       const status = connected
         ? h('div', { className: 'dshEnterpriseIdentity' },
-          h(EnterpriseAvatar, { name: userLabel, src: state?.user?.avatar, attempt: imageAttempt, onImageError: imageFailed }),
+          h(EnterpriseAvatar, { nickname: state?.user?.username, src: state?.user?.avatar, attempt: imageAttempt, onImageError: imageFailed }),
           h('div', { className: 'dshEnterpriseAccount' },
             h('strong', null, userLabel),
-            h('span', { className: 'dshEnterpriseAccountLabel' }, state?.user?.username || t('accountLabel'))))
+            h('span', { className: 'dshEnterpriseAccountLabel' }, state?.user?.external_id || '—')))
         : null
 
       const accountContent = connected
@@ -1331,7 +1456,7 @@ window.__ModuleLoader__.load({
               }
             })),
           h('p', { id: 'dsh-enterprise-platform-help', className: 'dshEnterpriseLoginHelp' }, t('platformHelp')),
-          state?.secureStorageAvailable === false
+          state?.secureStorageAvailable === false && state?.storageMode !== 'session'
             ? h('p', { className: 'dshEnterpriseError' }, t('secureUnavailable'))
             : h(React.Fragment, null,
               state?.phase === 'authorizing'
@@ -1420,19 +1545,56 @@ window.__ModuleLoader__.load({
             }, t('cancel'))))
         : null
 
+      const openWorkspaceLink = connected && state?.base
+        ? h('a', {
+            className: 'dshEnterpriseWorkspaceBtn',
+            href: `${state.base.replace(/\/+$/u, '')}/workspace/`,
+            target: '_blank',
+            rel: 'noopener noreferrer'
+          },
+            t('openWorkspace'),
+            h('span', { className: 'dshEnterpriseWorkspaceIcon', 'aria-hidden': 'true' }, '↗')
+          )
+        : null
+
       return h('section', { className: 'dshEnterprise' },
         h('div', { className: 'dshEnterpriseTitleRow' },
           h('h2', null, t(connected ? 'title' : 'signInTitle')),
-          renderLearnMoreButton(t)),
+          h('div', { style: { display: 'flex', gap: '8px', alignItems: 'center' } },
+            openWorkspaceLink,
+            renderLearnMoreButton(t))),
         connected ? null : h('p', { className: 'dshEnterpriseLoginIntro' }, t('signInIntro')),
         status,
-        connected && renderSlot?.('desktop.account.usage', {
-          credits: usageText(state.usage, document.documentElement.lang, t),
-          creditsLabel: t('usageLabel'), creditsHelp: t('creditsHelp'),
-          models: h('section', { className: 'dshEnterpriseManagedModels' }, accountContent)
-        }, { fallback: h(React.Fragment, null,
-          h('p', { title: t('creditsHelp') }, `${t('usageLabel')}: ${usageText(state.usage, document.documentElement.lang, t)}`),
-          h('section', { className: 'dshEnterpriseManagedModels' }, accountContent)) }),
+        connected && (
+          typeof renderSlot === 'function'
+            ? renderSlot('desktop.account.usage', {
+                usageIdentity,
+                credits: usageText(state.usage, document.documentElement.lang, t),
+                creditsLabel: t('usageLabel'),
+                creditsHelp: t('creditsHelp'),
+                usage: state.usage,
+                models: h('section', { className: 'dshEnterpriseManagedModels' }, accountContent)
+              }, {
+                fallback: h(Usage, {
+                  t: settingsTranslate,
+                  usageIdentity,
+                  credits: usageText(state.usage, document.documentElement.lang, t),
+                  creditsLabel: t('usageLabel'),
+                  creditsHelp: t('creditsHelp'),
+                  usage: state.usage,
+                  models: h('section', { className: 'dshEnterpriseManagedModels' }, accountContent)
+                })
+              })
+            : h(Usage, {
+                t: settingsTranslate,
+                usageIdentity,
+                credits: usageText(state.usage, document.documentElement.lang, t),
+                creditsLabel: t('usageLabel'),
+                creditsHelp: t('creditsHelp'),
+                usage: state.usage,
+                models: h('section', { className: 'dshEnterpriseManagedModels' }, accountContent)
+              })
+        ),
         connected ? logoutButton : accountContent,
         manualFallback,
         errorPanel,
@@ -1460,8 +1622,860 @@ window.__ModuleLoader__.load({
       return () => { unsubscribe(); controller.abort() }
     }
 
+    const DESKTOP_SETTINGS_NS = 'desktop.settings'
+    const DESKTOP_SETTINGS_COPY = {
+      zh: {
+        accountMenu: '账号菜单', enterpriseAccount: '企业账号', signedOut: '未登录', deviceOnly: '本机模式', signInHint: '登录后可使用企业功能', identityLoading: '正在读取账号…', identityError: '暂时无法读取账号', settings: '设置', accountSettings: '账号设置', approvals: '消息', approvalsPending: '待处理审批', phone: '连接手机', login: '登录企业账号', logout: '退出登录', logoutBody: '退出后需要重新登录企业账号。本机设置、已安装插件和本地数据保留。', logoutFailed: '退出登录未完成，请重试。', cancel: '取消', again: '重试', close: '关闭', loggingOut: '正在退出登录…',
+        creditsRemaining: '剩余积分', creditsUnavailable: '积分暂不可用',
+        activity: '用量活动', period: '统计范围：{start} — {end}', less: '少', more: '多', totalTokens: '累计 Token', totalMessages: '累计消息',
+        tokenWan: '{value}万', tokenYi: '{value}亿', numberLocale: 'zh-CN', modelUsage: '模型用量', tokens: 'Token 用量', messages: '消息数', storage: '个人存储空间', unlimited: '不限', storageValue: '已使用 {used} / {limit}', breakdown: '输入 {input} Token · 输出 {output} Token', missingUsage: '{count} 条记录缺少 Token 用量', usageError: '用量统计加载失败，请重试。', storageError: '存储空间加载失败，请重试。', noUsage: '暂无用量记录', unavailable: '—',
+        openContent: '进入设置内容', usage: '用量与存储', about: '关于与帮助', tasks: '我的审批', requests: '我的申请', notifications: '通知', ai: 'AI 助手接入', loading: '正在加载企业设置…', error: '暂时无法加载企业设置，请检查连接后重试。', restart: '请完全退出并重新启动客户端，以启用统一设置。', unsupported: '平台暂不支持统一设置，请联系管理员更新平台。', retry: '重新连接', signIn: '登录企业账号后可查看', openAccount: '前往账号设置', desktopVersion: `${productName} 版本`, harnessVersion: 'Harness 版本', infoError: '无法读取版本信息', update: '检查更新', logs: '查看日志', recovery: '安全模式与插件恢复', localHint: '本机设置仍可正常使用。', actionError: '操作未完成，请重试。',
+      },
+      en: {
+        accountMenu: 'Account menu', enterpriseAccount: 'Enterprise account', signedOut: 'Not signed in', deviceOnly: 'Device only', signInHint: 'Sign in to use enterprise features', identityLoading: 'Loading account…', identityError: 'Account unavailable', settings: 'Settings', accountSettings: 'Account settings', approvals: 'Messages', approvalsPending: 'Pending approvals', phone: 'Connect phone', login: 'Sign in', logout: 'Log out', logoutBody: 'You will need to sign in again. Device settings, installed plugins and local data are kept.', logoutFailed: 'Logout did not complete. Try again.', cancel: 'Cancel', again: 'Retry', close: 'Close', loggingOut: 'Logging out…',
+        creditsRemaining: 'Credits remaining', creditsUnavailable: 'Credits unavailable',
+        activity: 'Usage activity', period: 'Reporting period: {start} — {end}', less: 'Less', more: 'More', totalTokens: 'Total tokens', totalMessages: 'Total messages',
+        tokenWan: '{value} ten thousand', tokenYi: '{value} hundred million', numberLocale: 'en-US', modelUsage: 'Model usage', tokens: 'Token usage', messages: 'Messages', storage: 'Personal storage', unlimited: 'Unlimited', storageValue: 'Used {used} / {limit}', breakdown: 'Input {input} tokens · Output {output} tokens', missingUsage: '{count} records are missing token usage', usageError: 'Usage statistics failed to load. Please retry.', storageError: 'Storage failed to load. Please retry.', noUsage: 'No usage recorded', unavailable: '—',
+        openContent: 'Enter settings content', usage: 'Usage and storage', about: 'About and help', tasks: 'My approvals', requests: 'My requests', notifications: 'Notifications', ai: 'AI assistant access', loading: 'Loading enterprise settings…', error: 'Enterprise settings could not load. Check the connection and try again.', restart: 'Quit and restart the desktop app to enable unified settings.', unsupported: 'This platform does not support unified settings yet. Ask your administrator to update it.', retry: 'Reconnect', signIn: 'Sign in to view enterprise settings', openAccount: 'Open account settings', desktopVersion: `${productName} version`, harnessVersion: 'Harness version', infoError: 'Could not read version information', update: 'Check for updates', logs: 'Show logs', recovery: 'Safe Mode and plugin recovery', localHint: 'Device settings remain available.', actionError: 'The action did not complete. Try again.',
+      }
+    }
+
+    const openAccount = () => window.dispatchEvent(new CustomEvent('dsh-desktop:open-settings-section', { detail: { id: ENTERPRISE_SECTION_ID } }))
+
+    function navigateSections(event, ids, active, select, refs) {
+      if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key) || !ids.length) return
+      event.preventDefault()
+      const index = Math.max(0, ids.indexOf(active))
+      const next = ids[event.key === 'Home' ? 0 : event.key === 'End' ? ids.length - 1 : (index + (event.key === 'ArrowUp' ? -1 : 1) + ids.length) % ids.length]
+      select(next); refs.current[next]?.focus()
+    }
+
+    function RemoteSettings({ section, t, close, focusShell }) {
+      const target = useRef(null)
+      const [state, setState] = useState({ phase: 'idle', connected: false })
+      const [failed, setFailed] = useState(false)
+      const alive = useRef(true)
+      useEffect(() => {
+        const bridge = window.dshEnterpriseChat
+        if (!bridge) return
+        alive.current = true
+        let disposed = false, revision = 0
+        const receive = next => { revision++; if (!disposed) setState(next) }
+        const unsubscribe = bridge.subscribe(receive)
+        const request = revision
+        void bridge.state().then(next => { if (!disposed && request === revision) receive(next) }).catch(() => { if (!disposed && request === revision) setFailed(true) })
+        return () => { disposed = true; alive.current = false; unsubscribe() }
+      }, [])
+      useEffect(() => {
+        if (!state.connected || state.settingsProtocolVersion !== 1 || !target.current) return
+        const token = `${section}:${Math.random()}`
+        const node = target.current
+        const publish = () => {
+          const rect = node.getBoundingClientRect()
+          const clip = node.closest('[data-dsh-settings-content], [data-dsh-approvals-content]')?.getBoundingClientRect() || rect
+          const x = Math.max(rect.x, clip.x), y = Math.max(rect.y, clip.y)
+          window.dispatchEvent(new CustomEvent('dsh-desktop:settings-surface', { detail: { token, section, bounds: { x: Math.max(0, x), y: Math.max(0, y), width: Math.max(0, Math.min(rect.right, clip.right) - x), height: Math.max(0, Math.min(rect.bottom, clip.bottom) - y) } } }))
+        }
+        const resize = new ResizeObserver(publish)
+        resize.observe(node)
+        const clip = node.closest('[data-dsh-settings-content], [data-dsh-approvals-content]')
+        if (clip) resize.observe(clip)
+        window.addEventListener('resize', publish)
+        window.addEventListener('scroll', publish, true)
+        publish()
+        return () => {
+          resize.disconnect(); window.removeEventListener('resize', publish); window.removeEventListener('scroll', publish, true)
+          window.dispatchEvent(new CustomEvent('dsh-desktop:settings-surface', { detail: { token, close: true } }))
+        }
+      }, [section, state.connected, state.settingsProtocolVersion])
+      useEffect(() => {
+        const requestClose = () => { if (typeof close === 'function') close() }
+        const focus = event => {
+          if (event.detail?.section !== section || !['previous', 'next'].includes(event.detail.direction)) return
+          if (typeof focusShell === 'function') focusShell(event.detail.direction)
+        }
+        window.addEventListener('dsh-desktop:close-settings', requestClose)
+        window.addEventListener('dsh-desktop:settings-focus', focus)
+        return () => {
+          window.removeEventListener('dsh-desktop:close-settings', requestClose)
+          window.removeEventListener('dsh-desktop:settings-focus', focus)
+        }
+      }, [section, close, focusShell])
+      const failure = failed || state.settingsFailure || state.phase === 'error'
+      const supported = state.settingsProtocolVersion === 1
+      const ready = supported && state.settingsSection === section && state.settingsReady
+      return h('div', { ref: target, className: 'dshSettingsRemote', tabIndex: ready ? 0 : -1, role: 'group', 'aria-label': t('openContent'), onFocus: () => { if (ready) void window.dshEnterpriseChat.focusSettings().catch(() => { if (alive.current) setFailed(true) }) }, 'aria-busy': state.connected && supported && !ready && !failure },
+        !state.connected ? h('div', { className: 'dshSettingsStatus' },
+          h('p', null, t('signIn')), h('p', { className: 'dshSettingsHint' }, t('localHint')),
+          h('button', { type: 'button', onClick: openAccount }, t('openAccount')))
+          : !supported ? h('div', { className: 'dshSettingsStatus', role: 'status' }, h('p', null, t('restart')))
+          : !ready && h('div', { className: 'dshSettingsStatus', role: failure ? 'alert' : 'status' },
+            h('p', null, t(state.settingsFailure === 'unsupported' ? 'unsupported' : failure ? 'error' : 'loading')),
+            failure && h('button', { type: 'button', onClick: () => { setFailed(false); setState(previous => ({ ...previous, phase: 'loading', settingsFailure: undefined, settingsReady: false })); void window.dshEnterpriseChat.retry().catch(() => { if (alive.current) setFailed(true) }) } }, t('retry'))))
+    }
+
+    // Mirrors src/shared/enterprise-usage.ts at the browser boundary; keep both contracts aligned.
+    function parseWebUsage(value, storage = false) {
+      const object = row => { if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error('Invalid usage response'); return row }
+      if (storage) {
+        if (!Array.isArray(value) || value.length > 1000) throw new Error('Invalid storage quota')
+        const item = value.map(object).find(row => row.resource_type === 'knowledge_space_file')
+        if (!item) return null
+        const used = item.user_used, limit = item.effective
+        if (typeof used !== 'number' || !Number.isFinite(used) || used < 0 || typeof limit !== 'number' || !Number.isFinite(limit) || (limit < 0 && limit !== -1)) throw new Error('Invalid storage quota')
+        return { used, limit }
+      }
+      const count = number => { if (!Number.isSafeInteger(number) || number < 0) throw new Error('Invalid usage count'); return number }
+      const metrics = value => { const row = object(value), token = key => row[key] === null ? null : count(row[key]); return { message_count: count(row.message_count), missing_usage_count: count(row.missing_usage_count), input_tokens: token('input_tokens'), output_tokens: token('output_tokens'), total_tokens: token('total_tokens') } }
+      const timestamp = value => { if (typeof value !== 'string' || value.length > 64 || !Number.isFinite(Date.parse(value))) throw new Error('Invalid usage timestamp'); return value }
+      const row = object(value)
+      if (row.timezone !== 'Asia/Shanghai' || row.granularity !== 'day' || !Array.isArray(row.points) || row.points.length > 366) throw new Error('Invalid daily usage summary')
+      const start_at = timestamp(row.start_at), end_at = timestamp(row.end_at)
+      if (Date.parse(end_at) < Date.parse(start_at)) throw new Error('Invalid usage range')
+      let previous = -Infinity
+      const points = row.points.map(value => {
+        const point = object(value), start = timestamp(point.start_at), end = timestamp(point.end_at), time = Date.parse(start)
+        if (time <= previous || Date.parse(end) <= time || time < Date.parse(start_at) || time > Date.parse(end_at)) throw new Error('Invalid usage bucket')
+        previous = time
+        return { ...metrics(point), start_at: start, end_at: end }
+      })
+      return { start_at, end_at, totals: metrics(row.totals), points }
+    }
+
+    async function fetchWebUsage(signal) {
+      const section = async (path, storage) => {
+        try {
+          const response = await fetch(path, { credentials: 'same-origin', signal })
+          if (!response.ok || response.redirected || !response.body) throw new Error('Usage request failed')
+          const reader = response.body.getReader(), chunks = []
+          let length = 0
+          try {
+            while (true) {
+              const next = await reader.read()
+              if (next.done) break
+              length += next.value.byteLength
+              if (length > 512 * 1024) throw new Error('Usage response too large')
+              chunks.push(next.value)
+            }
+          } finally { await reader.cancel(); reader.releaseLock() }
+          const bytes = new Uint8Array(length)
+          let offset = 0
+          for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
+          const envelope = JSON.parse(new TextDecoder().decode(bytes))
+          if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope) || envelope.status_code !== 200 || !('data' in envelope)) throw new Error('Invalid usage envelope')
+          return { status: 'ready', data: parseWebUsage(envelope.data, storage) }
+        } catch (error) {
+          if (signal.aborted) throw error
+          return { status: 'error' }
+        }
+      }
+      const [summary, storage] = await Promise.all([section('/api/v1/dsh/me/usage-summary', false), section('/api/v1/quota/effective', true)])
+      return { summary, storage }
+    }
+
+    function Usage({ t, credits, creditsLabel, creditsHelp, models, usage, usageIdentity }) {
+      const [state, setState] = useState({ phase: 'loading' })
+      const [metric, setMetric] = useState('tokens')
+      const [attempt, setAttempt] = useState(0)
+      const id = React.useId()
+      useEffect(() => {
+        let disposed = false, revision = 0, identity, phase, pending = false
+        const bridge = window.dshEnterpriseChat
+        const receive = (next, requested = false) => {
+          if (!bridge?.usage) { setState({ phase: 'unsupported' }); return }
+          const key = `${next.epoch}:${next.connected}`
+          const changed = key !== identity
+          const ready = next.phase === 'ready' && phase !== 'ready'
+          identity = key
+          phase = next.phase
+          if (changed) { revision++; pending = false }
+          if (!next.connected) { setState({ phase: 'signedOut' }); return }
+          if (next.phase === 'error' && !requested) { setState({ phase: 'error' }); return }
+          if (pending || (!changed && !ready && !requested)) return
+          const request = ++revision
+          pending = true
+          setState({ phase: 'loading' })
+          void bridge.usage().then(data => {
+            if (!disposed && request === revision) { pending = false; setState({ phase: 'ready', data }) }
+          }).catch(() => {
+            if (!disposed && request === revision) { pending = false; setState({ phase: 'error' }) }
+          })
+        }
+        const unsubscribe = bridge?.subscribe(next => { if (!disposed) receive(next) })
+        const initial = revision
+        const controller = !bridge ? new AbortController() : null
+        let timer
+        if (!bridge) {
+          let timedOut = false
+          setState({ phase: 'loading', identity: usageIdentity })
+          timer = window.setTimeout(() => { timedOut = true; controller.abort(); if (!disposed) setState({ phase: 'error', identity: usageIdentity }) }, 15_000)
+          void fetchWebUsage(controller.signal).then(data => { if (!disposed && !timedOut) setState({ phase: 'ready', data, identity: usageIdentity }) }).catch(() => { if (!disposed && !timedOut) setState({ phase: 'error', identity: usageIdentity }) }).finally(() => window.clearTimeout(timer))
+        } else if (bridge.usage) void bridge.state().then(next => { if (!disposed && initial === revision) receive(next, true) }).catch(() => { if (!disposed && initial === revision) setState({ phase: 'error' }) })
+        else setState({ phase: 'unsupported' })
+        return () => { disposed = true; revision++; window.clearTimeout(timer); controller?.abort(); unsubscribe?.() }
+      }, [attempt, usageIdentity])
+      const locale = t('numberLocale')
+      const amount = value => value == null ? t('unavailable') : new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 2 }).format(value)
+      const tokenAmount = value => {
+        if (value == null) return t('unavailable')
+        if (locale.startsWith('zh')) {
+          const hundredMillion = value >= 100_000_000
+          return t(hundredMillion ? 'tokenYi' : 'tokenWan', { value: (value / (hundredMillion ? 100_000_000 : 10_000)).toFixed(1) })
+        }
+        return new Intl.NumberFormat(locale, { notation: 'compact', minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value)
+      }
+      const size = (value, unit) => `${Number((unit === 'MB' ? value * 1024 : value).toFixed(2))} ${unit}`
+      // Hide the prior account immediately, before the replacement effect runs.
+      const current = !window.dshEnterpriseChat && state.identity !== usageIdentity ? { phase: 'loading' } : state
+      const data = current.data?.summary.status === 'ready' ? current.data.summary.data : null
+      const storage = current.data?.storage
+      const quota = storage?.status === 'ready' ? storage.data : null
+      const unit = (quota?.limit === -1 ? quota.used : quota?.limit) < 1 ? 'MB' : 'GB'
+      const failure = key => h('div', { className: 'dshSettingsStatus', role: 'alert' }, h('p', null, t(key)), h('button', { type: 'button', onClick: () => setAttempt(value => value + 1) }, t('again')))
+      let content
+      if (current.phase === 'signedOut') content = h('div', { className: 'dshSettingsStatus' }, h('p', null, t('signIn')), h('button', { type: 'button', onClick: openAccount }, t('openAccount')))
+      else if (current.phase !== 'ready') content = h('div', { className: 'dshSettingsStatus', role: current.phase === 'error' ? 'alert' : 'status' }, h('p', null, t(current.phase === 'unsupported' ? 'restart' : current.phase === 'error' ? 'usageError' : 'loading')), current.phase === 'error' && h('button', { type: 'button', onClick: () => setAttempt(value => value + 1) }, t('again')))
+      else if (!data) content = failure('usageError')
+      else {
+        const value = point => metric === 'tokens' ? point.total_tokens : point.message_count
+        const max = Math.max(1, ...data.points.map(point => value(point) || 0))
+        const first = data.points[0]
+        const offset = first ? new Date(`${first.start_at.slice(0, 10)}T00:00:00Z`).getUTCDay() : 0
+        const months = []
+        let previousMonth
+        data.points.forEach((point, index) => {
+          const date = point.start_at.slice(0, 10), month = date.slice(0, 7)
+          if (month !== previousMonth) {
+            months.push({ date: new Date(`${date}T00:00:00Z`), column: Math.floor((index + offset) / 7) + 1 })
+            previousMonth = month
+          }
+        })
+        const visibleMonths = months.filter((month, index) => !months[index + 1] || months[index + 1].column - month.column >= 3)
+        const columns = Math.max(1, Math.ceil((data.points.length + offset) / 7))
+        content = h(React.Fragment, null,
+          h('dl', { className: 'dshUsageOverview' },
+            ...[[creditsLabel, credits, creditsHelp], [t('totalTokens'), tokenAmount(data.totals.total_tokens)], [t('totalMessages'), amount(data.totals.message_count)]].map(([label, count, help], index) => h('div', { key: index, title: help }, h('dt', null, label), h('dd', null, count ?? t('unavailable'))))),
+          first && h('p', { className: 'dshSettingsHint dshUsagePeriod' }, t('period', { start: first.start_at.slice(0, 10), end: data.points[data.points.length - 1].start_at.slice(0, 10) })),
+          h('section', { className: 'dshUsageModel' },
+            h('header', { className: 'dshUsageHeader' }, h('h3', null, t('activity')), h(SegmentedControl, { id, value: metric, label: t('modelUsage'), options: [{ value: 'tokens', label: t('tokens') }, { value: 'messages', label: t('messages') }], onChange: setMetric })),
+            h('div', { id: `${id}-${metric}-panel`, role: 'tabpanel', 'aria-labelledby': `${id}-${metric}`, tabIndex: 0 },
+              h('div', { className: 'dshUsageCalendarScroll' },
+                h('div', { className: 'dshUsageMonths', style: { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }, 'aria-hidden': true }, ...visibleMonths.map(({ date, column }) => h('span', { key: date.toISOString(), style: { gridColumn: `${column} / span ${Math.min(3, columns - column + 1)}`, gridRow: 1 } }, new Intl.DateTimeFormat(locale, { month: 'short', timeZone: 'UTC' }).format(date)))),
+                h('div', { className: 'dshUsageGrid', role: 'list', 'aria-label': t(metric), style: { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` } }, ...data.points.map((point, index) => {
+                  const count = value(point)
+                  const label = `${point.start_at.slice(0, 10)} · ${t(metric)}: ${metric === 'tokens' ? tokenAmount(count) : count == null ? t('unavailable') : count.toLocaleString(locale)}`
+                  return h(Tooltip, { key: point.start_at, label, side: 'top', portal: true },
+                    h('div', { role: 'listitem', tabIndex: 0, 'aria-label': label, className: 'dshUsageDay', 'data-level': count == null ? 'unknown' : count === 0 ? 0 : Math.max(1, Math.ceil(count / max * 4)), style: { gridColumn: Math.floor((index + offset) / 7) + 1, gridRow: (index + offset) % 7 + 1 } }))
+                }))),
+              !data.points.some(point => (value(point) || 0) > 0) && h('p', { className: 'dshSettingsHint' }, t('noUsage')),
+              h('div', { className: 'dshUsageFooter' },
+                h('p', { className: 'dshSettingsHint', style: { visibility: metric === 'tokens' ? 'visible' : 'hidden' }, 'aria-hidden': metric !== 'tokens' }, t('breakdown', { input: tokenAmount(data.totals.input_tokens), output: tokenAmount(data.totals.output_tokens) })),
+                h('div', { className: 'dshUsageLegend', 'aria-hidden': true }, t('less'), ...[0, 1, 2, 3, 4].map(level => h('span', { key: level, className: 'dshUsageDay', 'data-level': level })), t('more'))),
+              data.totals.missing_usage_count > 0 && h('p', { role: 'status', className: 'dshSettingsHint' }, t('missingUsage', { count: data.totals.missing_usage_count })))),
+        )
+      }
+      return h('section', { className: 'dshSettingsSection dshUsage', 'aria-busy': current.phase === 'loading' },
+        content,
+        models,
+        storage?.status === 'error' ? failure('storageError') : storage?.status === 'ready' && h(React.Fragment, null,
+          h('div', { className: 'dshUsageStorage' }, h('span', null, t('storage')), h('span', null, quota ? t('storageValue', { used: size(quota.used, unit), limit: quota.limit === -1 ? t('unlimited') : size(quota.limit, unit) }) : t('unavailable'))),
+          quota && quota.limit !== -1 && h('progress', { className: 'dshUsageProgress', value: quota.limit > 0 ? Math.min(1, quota.used / quota.limit) : 1, max: 1, 'aria-label': t('storage') })))
+    }
+
+    function AiAccess({ t, close, focusShell }) { return h('section', { className: 'dshSettingsSection' }, h('h2', null, t('ai')), h(RemoteSettings, { section: 'ai-access', t, close, focusShell })) }
+    const APPROVAL_SECTIONS = [['my-tasks', 'tasks'], ['my-requests', 'requests'], ['notifications', 'notifications']]
+
+    function approvalsIcon(id) {
+      if (id === 'my-requests') return h(IconPaperPlaneOutlineMedium, { className: 'dshApprovalsNavIcon', size: 16 })
+      if (id === 'notifications') return h(IconAlarmClockOutlineMedium, { className: 'dshApprovalsNavIcon', size: 16 })
+      return h(IconChecklistOutlineMedium, { className: 'dshApprovalsNavIcon', size: 16 })
+    }
+
+    function ApprovalsPanel({ onClose, t }) {
+      const titleId = React.useId()
+      const refs = useRef({})
+      const closeButton = useRef(null)
+      const [section, setSection] = useState('my-tasks')
+      const focusShell = useCallback(direction => {
+        if (direction === 'previous') refs.current[section]?.focus()
+        else if (direction === 'next') closeButton.current?.focus()
+      }, [section])
+      return h('div', { 'data-dsh-approvals': '', className: 'dshApprovalsPanel' },
+        h('nav', { 'data-dsh-approvals-nav': '', className: 'dshApprovalsNav', 'aria-labelledby': titleId },
+          h('div', { className: 'dshApprovalsNavTitle', id: titleId }, t('approvals')),
+          h('div', { className: 'dshApprovalsNavList', onKeyDown: event => navigateSections(event, APPROVAL_SECTIONS.map(([id]) => id), section, setSection, refs) },
+            ...APPROVAL_SECTIONS.map(([id, key]) => h('button', { key: id, ref: node => { refs.current[id] = node }, type: 'button', className: 'dshApprovalsNavCell', 'aria-current': section === id ? 'true' : undefined, 'data-modal-autofocus': section === id ? '' : undefined, onClick: () => setSection(id) },
+              approvalsIcon(id), h('span', { className: 'dshApprovalsNavLabel' }, t(key)))))),
+        h('div', { className: 'dshApprovalsContent' },
+          h('div', { className: 'dshApprovalsHeader' },
+            h('button', { ref: closeButton, type: 'button', className: 'dshApprovalsClose', 'data-dsh-approvals-close': '', 'aria-label': t('close'), onClick: onClose }, h(IconCloseOutlineRegular, { size: 14 }))),
+          h('div', { 'data-dsh-approvals-content': '', className: 'dshApprovalsOptions' }, h(RemoteSettings, { key: section, section, t, close: onClose, focusShell }))))
+    }
+
+    function desktopSettingsCapability(name) {
+      const owner = [window.dshDesktopEnterprise, window.dshDesktop].find(bridge => typeof bridge?.[name] === 'function')
+      return owner ? (...args) => owner[name](...args) : undefined
+    }
+
+    function bindDesktopSettingsEvents() {
+      const bridge = window.dshDesktopEnterprise
+      const close = bridge?.onSettingsClose?.(() => {
+        window.dispatchEvent(new CustomEvent('dsh-desktop:close-settings'))
+      })
+      const sections = ['desktop-usage', 'ai-access', 'my-tasks', 'my-requests', 'notifications']
+      const focus = bridge?.onSettingsFocus?.(value => {
+        if (!value || !sections.includes(value.section) || !['previous', 'next'].includes(value.direction)) return
+        window.dispatchEvent(new CustomEvent('dsh-desktop:settings-focus', { detail: { section: value.section, direction: value.direction } }))
+      })
+      return () => { close?.(); focus?.() }
+    }
+
+    function About({ t }) {
+      const settingsInfo = desktopSettingsCapability('settingsInfo')
+      const settingsAction = desktopSettingsCapability('settingsAction')
+      const [info, setInfo] = useState()
+      const alive = useRef(true)
+      const [error, setError] = useState('')
+      const [busy, setBusy] = useState(false)
+      useEffect(() => {
+        let disposed = false
+        alive.current = true
+        if (settingsInfo) void Promise.resolve().then(() => settingsInfo()).then(value => { if (!disposed) setInfo(value) }).catch(() => { if (!disposed) setError('infoError') })
+        return () => { disposed = true; alive.current = false }
+      }, [])
+      const run = async action => {
+        setBusy(true); setError('')
+        try { await settingsAction(action) }
+        catch { if (alive.current) setError('actionError') }
+        finally { if (alive.current) setBusy(false) }
+      }
+      return h('section', { className: 'dshSettingsSection' },
+        h('h2', null, t('about')),
+        settingsInfo && h('dl', { className: 'dshSettingsVersions' }, ...[['desktopVersion', info?.desktopVersion], ['harnessVersion', info?.harnessVersion]].flatMap(([key, value]) => [h('dt', { key: `${key}:label` }, t(key)), h('dd', { key }, value || '—')])),
+        settingsAction && h('div', { className: 'dshSettingsButtons' },
+          ...[['check-for-updates', 'update'], ['show-harness-log', 'logs'], ['safe-mode', 'recovery']].map(([action, label]) => h('button', { key: action, type: 'button', disabled: busy, onClick: () => run(action) }, t(label)))),
+        error && h('p', { role: 'alert' }, t(error)))
+    }
+
+    async function accountRequest(operation, signal) {
+      const path = operation === 'logout' ? '/api/enterprise.logout' : '/api/enterprise.state'
+      const response = await fetch(path, { credentials: 'same-origin', signal, ...(operation === 'logout' ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' } : {}) })
+      const result = await response.json()
+      if (!response.ok || !result || typeof result !== 'object' || typeof result.connected !== 'boolean' || result.ok === false || (operation === 'logout' && result.connected)) throw new Error('Enterprise account request failed')
+      return result
+    }
+
+    function useAccountIdentity() {
+      const [account, setAccount] = useState()
+      const [error, setError] = useState(false)
+      const [busy, setBusy] = useState(false)
+      const lifetime = useRef({ alive: true, revision: 0, request: undefined })
+      const refresh = useCallback(async () => {
+        const current = lifetime.current
+        current.request?.abort()
+        const request = new AbortController(), revision = ++current.revision
+        current.request = request
+        try {
+          const next = await accountRequest('state', request.signal)
+          if (current.alive && revision === current.revision) { setAccount(next); setError(false) }
+        } catch {
+          if (current.alive && revision === current.revision && !request.signal.aborted) setError(true)
+        }
+      }, [])
+      useEffect(() => {
+        lifetime.current.alive = true
+        const changed = () => { void refresh() }
+        let identity
+        const unsubscribe = window.dshEnterpriseChat?.subscribe(next => {
+          const key = `${next.epoch}:${next.connected}`
+          if (key === identity) return
+          identity = key
+          if (!next.connected) setAccount({ connected: false })
+          void refresh()
+        })
+        window.addEventListener('dsh-desktop:enterprise-account-changed', changed)
+        void refresh()
+        return () => {
+          lifetime.current.alive = false; lifetime.current.revision++; lifetime.current.request?.abort(); lifetime.current.action?.abort()
+          unsubscribe?.(); window.removeEventListener('dsh-desktop:enterprise-account-changed', changed)
+        }
+      }, [refresh])
+      const logout = async () => {
+        const current = lifetime.current
+        current.request?.abort(); current.revision++
+        const request = new AbortController()
+        current.action = request
+        setBusy(true)
+        try {
+          const next = await accountRequest('logout', request.signal)
+          if (current.alive) { setAccount(next); setError(false); window.dispatchEvent(new CustomEvent('dsh-desktop:enterprise-account-changed')) }
+        } finally { if (current.alive) setBusy(false) }
+      }
+      return { account, error, busy, refresh, logout }
+    }
+
+    function ApprovalsDialog({ open, onClose, t }) {
+      useEffect(() => {
+        window.dispatchEvent(new CustomEvent('dsh-desktop:approvals-visibility', { detail: { open } }))
+        return () => window.dispatchEvent(new CustomEvent('dsh-desktop:approvals-visibility', { detail: { open: false } }))
+      }, [open])
+      return h(Modal, { open, onClose, title: t('approvals'), headless: true, className: 'dshApprovalsDialog' },
+        open && h(ApprovalsPanel, { onClose, t }))
+    }
+
+    function AccountAvatar({ name }) {
+      return h('span', { className: 'dshAccountAvatar', 'aria-hidden': 'true' }, name ? Array.from(name).slice(0, 2).join('').toLocaleUpperCase() : h('svg', { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5 }, h('circle', { cx: 12, cy: 8, r: 4 }), h('path', { d: 'M4 22v-2a8 8 0 0 1 16 0v2' })))
+    }
+
+    function AccountMenuIcon({ kind }) {
+      const frame = { width: 18, height: 18, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, 'aria-hidden': 'true' }
+      if (kind === 'phone') return h('svg', frame, h('rect', { x: 6, y: 2, width: 12, height: 20, rx: 2 }), h('path', { d: 'M10 5h4M11 19h2' }))
+      if (kind === 'account') return h('svg', frame, h('circle', { cx: 12, cy: 8, r: 3.5 }), h('path', { d: 'M5 21a7 7 0 0 1 14 0' }))
+      return h('svg', frame, h('path', { d: kind === 'login' ? 'M15 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M10 8l4 4-4 4M3 12h11' : 'M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M13 7l5 5-5 5M8 12h13' }))
+    }
+
+    function AccountBadge({ count }) {
+      return h('span', { className: 'dshAccountBadge' }, count > 99 ? '99+' : String(count))
+    }
+
+    function useApprovalsPending() {
+      const [pending, setPending] = useState(0)
+      useEffect(() => {
+        const bridge = window.dshEnterpriseChat
+        if (!bridge) return undefined
+        let disposed = false
+        const read = next => {
+          if (disposed) return
+          const value = next?.connected ? next.navigation?.approvals?.pending : 0
+          setPending(Number.isInteger(value) && value > 0 ? value : 0)
+        }
+        const unsubscribe = bridge.subscribe(read)
+        void bridge.state().then(read).catch(() => {})
+        return () => { disposed = true; unsubscribe() }
+      }, [])
+      return pending
+    }
+
+    function LogoutDialog({ open, busy, failed, onCancel, onConfirm, t }) {
+      useEffect(() => {
+        if (!open) return undefined
+        const publish = value => window.dispatchEvent(new CustomEvent('dsh-desktop:account-dialog-visibility', { detail: { open: value } }))
+        publish(true)
+        return () => publish(false)
+      }, [open])
+      return h(Modal, {
+        open, title: t('logout'), closeLabel: t('close'), description: t('logoutBody'), className: 'dshAccountDialog',
+        onClose: () => { if (!busy) onCancel() },
+        footer: h('div', { className: 'dshAccountDialogActions' },
+          h('button', { type: 'button', 'data-modal-autofocus': '', disabled: busy, onClick: onCancel }, t('cancel')),
+          h('button', { type: 'button', className: 'dshAccountDialogDanger', 'data-dsh-logout-confirm': '', disabled: busy, onClick: onConfirm }, t(busy ? 'loggingOut' : 'logout')))
+      }, failed && h('p', { className: 'dshAccountDialogError', role: 'alert' }, t('logoutFailed')))
+    }
+
+    function AccountLauncher({ wide, settingsOpen, openSettings, openSettingsSection, settingsShortcut, t }) {
+      const identity = useAccountIdentity()
+      const pending = useApprovalsPending()
+      const [menuOpen, setMenuOpen] = useState(false)
+      const [approvalsOpen, setApprovalsOpen] = useState(false)
+      const [logoutOpen, setLogoutOpen] = useState(false)
+      const [logoutFailed, setLogoutFailed] = useState(false)
+      const [actionBusy, setActionBusy] = useState(false)
+      const [actionError, setActionError] = useState(false)
+      const alive = useRef(true)
+      const trigger = useRef(null)
+      const closeApprovals = useCallback(() => { setApprovalsOpen(false); trigger.current?.focus() }, [])
+      const closeLogout = useCallback(() => { setLogoutOpen(false); setLogoutFailed(false); trigger.current?.focus() }, [])
+      useEffect(() => {
+        alive.current = true
+        return () => { alive.current = false }
+      }, [])
+      const openSection = useCallback(id => {
+        if (!['enterprise-account', 'desktop-ai-access', 'desktop-about', 'plugins'].includes(id)) return
+        setMenuOpen(false); setApprovalsOpen(false)
+        if (typeof openSettingsSection === 'function') openSettingsSection(id)
+        else openSettings()
+      }, [openSettingsSection, openSettings])
+      useEffect(() => {
+        const open = event => { openSection(event.detail?.id) }
+        window.addEventListener(OPEN_SETTINGS_SECTION_EVENT, open)
+        const unsubscribe = window.dshDesktopEnterprise?.onLoginLink?.(() => openSection(ENTERPRISE_SECTION_ID))
+        return () => { window.removeEventListener(OPEN_SETTINGS_SECTION_EVENT, open); unsubscribe?.() }
+      }, [openSection])
+      useEffect(() => {
+        const publish = open => window.dispatchEvent(new CustomEvent('dsh-desktop:settings-visibility', { detail: { open } }))
+        publish(settingsOpen === true)
+        return () => publish(false)
+      }, [settingsOpen])
+      useEffect(() => { if (settingsOpen) { setMenuOpen(false); setApprovalsOpen(false); setLogoutOpen(false); setLogoutFailed(false) } }, [settingsOpen])
+      useEffect(() => {
+        if (identity.account?.connected === false) { setApprovalsOpen(false); setLogoutOpen(false) }
+      }, [identity.account?.connected])
+      const name = [identity.account?.user?.display_name, identity.account?.user?.username, identity.account?.user?.id].find(value => typeof value === 'string' && value.trim())
+      const label = name || t(identity.account ? 'signedOut' : identity.error ? 'identityError' : 'identityLoading')
+      const connected = identity.account?.connected === true
+      const quota = identity.account?.usage
+      const credits = !identity.error && quota && quota.source !== 'unavailable' && quota.quota_state !== 'unavailable'
+        && Number.isFinite(quota.limit) && Number.isFinite(quota.used)
+        ? new Intl.NumberFormat(t('numberLocale'), { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(Math.max(0, quota.limit - quota.used) / 1_000_000)
+        : null
+      const busy = actionBusy || identity.busy
+      useEffect(() => {
+        if (!menuOpen || busy) return undefined
+        const close = () => setMenuOpen(false)
+        window.addEventListener('blur', close)
+        return () => window.removeEventListener('blur', close)
+      }, [menuOpen, busy])
+      const failure = actionError ? 'actionError' : identity.error ? 'identityError' : undefined
+      const pairPhone = async () => {
+        if (busy) return
+        setActionBusy(true); setActionError(false)
+        try {
+          await window.dshDesktop.openMobilePairing()
+          if (alive.current) { setMenuOpen(false); setApprovalsOpen(false) }
+        } catch { if (alive.current) { setActionError(true); setMenuOpen(true) } }
+        finally { if (alive.current) setActionBusy(false) }
+      }
+      const openAccountSettings = () => openSection(ENTERPRISE_SECTION_ID)
+      const confirmLogout = async () => {
+        if (busy) return
+        setActionBusy(true); setLogoutFailed(false)
+        try {
+          await identity.logout()
+          if (alive.current) { setLogoutOpen(false); setApprovalsOpen(false); trigger.current?.focus() }
+        } catch { if (alive.current) setLogoutFailed(true) }
+        finally { if (alive.current) setActionBusy(false) }
+      }
+      const badge = pending > 0 ? h(AccountBadge, { count: pending }) : null
+      const triggerLabel = `${t('accountMenu')}: ${label}${pending > 0 ? ` · ${t('approvalsPending')} ${pending}` : ''}`
+      return h('div', { className: 'dshAccountLauncher', 'data-dsh-account-launcher': '' },
+        h(Menu, { open: menuOpen, onClose: () => { if (!busy) setMenuOpen(false) }, side: 'top', align: 'start', portal: true, autoFocus: true, className: 'dshAccountMenuAnchor', listClassName: `dshAccountMenu${wide ? ' dshAccountMenuWide' : ''}`,
+          anchor: h('button', { ref: trigger, type: 'button', className: `dshAccountTrigger${wide ? '' : ' dshAccountTriggerRail'}`, 'aria-label': triggerLabel, title: wide ? undefined : label, 'aria-haspopup': 'menu', 'aria-expanded': menuOpen, disabled: settingsOpen || busy, onClick: () => { setMenuOpen(previous => !previous); setActionError(false); void identity.refresh() } },
+            h('span', { className: 'dshAccountAvatarWrap' }, h(AccountAvatar, { name }), badge),
+            wide && h('span', { className: 'dshAccountTriggerCopy' }, h('span', null, label)), wide && h(IconChevronDownOutlineRegular)) },
+          h('div', { className: 'dshAccountMenuIdentity' }, h(AccountAvatar, { name }), h('div', null, h('strong', null, label), h('small', null, t(connected ? 'enterpriseAccount' : 'signInHint'))),
+            connected && h('div', { className: 'dshAccountMenuCredits', role: 'status' }, h('strong', null, credits ?? '—'), h('small', null, t(credits === null ? 'creditsUnavailable' : 'creditsRemaining')))),
+          h(MenuItemButton, { icon: h(IconSettingsOutlineRegular), shortcut: settingsShortcut, disabled: busy, onSelect: () => { setMenuOpen(false); openSettings() } }, t('settings')),
+          connected && h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'account' }), disabled: busy, onSelect: openAccountSettings }, t('accountSettings')),
+          Boolean(window.dshEnterpriseChat) && h(MenuItemButton, { icon: h(IconChecklistOutlineRegular), disabled: busy || !connected, onSelect: () => { setMenuOpen(false); setApprovalsOpen(true) } },
+            h('span', { className: 'dshAccountMenuRow' }, t('approvals'), badge)),
+          typeof window.dshDesktop?.openMobilePairing === 'function' && h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'phone' }), disabled: busy, onSelect: () => { void pairPhone() } }, t('phone')),
+          connected
+            ? h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'logout' }), separatorBefore: true, danger: true, disabled: busy, onSelect: () => { setMenuOpen(false); setLogoutFailed(false); setLogoutOpen(true) } }, t('logout'))
+            : h(MenuItemButton, { icon: h(AccountMenuIcon, { kind: 'login' }), separatorBefore: true, disabled: busy, onSelect: openAccountSettings }, t('login')),
+          failure && h('p', { className: 'dshAccountMenuError', role: 'alert' }, t(failure)),
+          failure && h(MenuItemButton, { disabled: busy, onSelect: () => { if (actionError) { void pairPhone(); return } setActionError(false); void identity.refresh() } }, t('again'))),
+        Boolean(window.dshEnterpriseChat) && h(ApprovalsDialog, { open: approvalsOpen, onClose: closeApprovals, t }),
+        h(LogoutDialog, { open: logoutOpen, busy, failed: logoutFailed, onCancel: closeLogout, onConfirm: () => { void confirmLogout() }, t }))
+    }
+
+    const DESKTOP_SETTINGS_CSS = `
+      .dshUsage{min-width:0}.dshUsageStorage{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;font-size:14px}.dshUsageStorage>span:last-child,.dshUsage .dshSettingsHint{color:var(--dsw-alias-label-secondary)}.dshUsageProgress{width:100%;height:6px;margin-top:10px;accent-color:var(--dsw-alias-state-business-primary)}
+      .dshUsageModel{margin-top:28px}.dshUsageHeader{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px}.dshUsageHeader h3{margin:0;font-size:16px;font-weight:600}.dshUsageCalendarScroll{overflow-x:auto;padding-bottom:4px}.dshUsageMonths{display:grid;min-width:440px;gap:3px;margin-bottom:8px;color:var(--dsw-alias-label-secondary);font-size:12px}.dshUsageMonths span{white-space:nowrap;min-width:0;overflow:hidden;text-overflow:clip}.dshUsageMonths span:last-child{text-align:right}.dshUsageGrid{display:grid;grid-template-rows:repeat(7,1fr);min-width:440px;gap:3px}.dshUsageDay{aspect-ratio:1;border-radius:2px;background:var(--dsw-alias-interactive-bg-hover)}.dshUsageDay[data-level='1']{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 25%,var(--dsw-alias-interactive-bg-hover))}.dshUsageDay[data-level='2']{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 45%,var(--dsw-alias-interactive-bg-hover))}.dshUsageDay[data-level='3']{background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 70%,var(--dsw-alias-interactive-bg-hover))}.dshUsageDay[data-level='4']{background:var(--dsw-alias-state-business-primary)}.dshUsageDay[data-level='unknown']{outline:1px dashed var(--dsw-alias-border-l2);outline-offset:-1px;background:transparent}.dshUsageTotals{margin:26px 0 12px}.dshUsageTotals dt{font-size:14px;color:var(--dsw-alias-label-secondary)}.dshUsageTotals dd{margin:8px 0 0;font-size:24px;font-weight:600;font-variant-numeric:tabular-nums}.dshUsage .dshSettingsHint{font-size:12px;line-height:1.6}
+      .dshUsageOverview{display:flex;margin:0;border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:14px 0;gap:0}.dshUsageOverview>div{flex:1;min-width:0;text-align:center;padding:0 10px;display:flex;flex-direction:column-reverse;gap:6px}.dshUsageOverview>div+div{border-left:1px solid var(--dsw-alias-border-l2)}.dshUsageOverview dt{font-size:12px;color:var(--dsw-alias-label-secondary)}.dshUsageOverview dd{margin:0;font-size:18px;font-weight:500;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.dshUsagePeriod{margin:10px 0 0}.dshUsageCalendarScroll{display:flex;flex-direction:column}.dshUsageMonths{order:1;margin:8px 0 0}.dshUsageFooter{display:flex;align-items:center;justify-content:space-between;gap:8px 16px;flex-wrap:wrap;margin-top:10px}.dshUsageFooter>.dshSettingsHint{margin:0}.dshUsageLegend{display:flex;align-items:center;justify-content:flex-end;flex:none;margin-left:auto;gap:4px;font-size:11px;color:var(--dsw-alias-label-secondary)}.dshUsageLegend .dshUsageDay{width:9px;height:9px}.dshUsageStorage{margin-top:24px;padding-top:20px;border-top:1px solid var(--dsw-alias-border-l2)}
+      .dshSettingsSection{color:var(--dsw-alias-label-primary)}.dshSettingsSection h2{font-size:18px;font-weight:600;margin:0 0 20px}.dshSettingsRemote{height:max(360px,calc(min(800px,100vh - 80px) - 220px));position:relative;min-width:0}
+      .dshSettingsStatus{padding:24px 0;font-size:14px}.dshSettingsTabs{display:flex;gap:8px;border-bottom:1px solid var(--dsw-alias-border-l2);padding-bottom:12px;margin-bottom:8px}
+      .dshSettingsSection button:not([role=tab]),.dshSettingsStatus button{font:inherit;color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);border-radius:var(--dsw-radius-md);padding:7px 12px;cursor:pointer}
+      .dshSettingsSection button:not([role=tab]):hover,.dshSettingsStatus button:hover{background:var(--dsw-alias-interactive-bg-hover)}.dshSettingsSection button:not([role=tab])[aria-selected=true]{background:var(--dsw-alias-interactive-bg-hover);font-weight:600}.dshSettingsSection button:not([role=tab]):disabled{opacity:.5;cursor:default}
+      .dshSettingsVersions{display:grid;grid-template-columns:1fr auto;gap:20px;padding:20px 0;border-bottom:1px solid var(--dsw-alias-border-l2);font-size:14px}.dshSettingsVersions dd{margin:0;color:var(--dsw-alias-label-secondary)}.dshSettingsButtons{display:flex;gap:12px;padding:20px 0;flex-wrap:wrap}
+      .dshAccountLauncher,.dshAccountMenuAnchor{display:block;width:100%;min-width:0}.dshAccountTrigger{anchor-name:--dsh-desktop-account-trigger;display:flex;align-items:center;gap:10px;width:100%;min-width:0;height:48px;box-sizing:border-box;padding:6px 10px;border:0;border-radius:var(--dsw-radius-md);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;text-align:left;cursor:pointer}.dshAccountTrigger:hover,.dshAccountTrigger[aria-expanded=true]{background:var(--dsw-alias-interactive-bg-hover)}.dshAccountTrigger:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:-2px}.dshAccountTrigger:disabled{cursor:default}.dshAccountTriggerRail{width:36px;height:36px;padding:4px;margin:auto;justify-content:center}.dshAccountTrigger>svg{flex:none;color:var(--dsw-alias-label-tertiary)}
+      .dshAccountAvatar{display:flex;align-items:center;justify-content:center;flex:none;width:28px;height:28px;border-radius:50%;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-size:11px;font-weight:600}.dshAccountAvatarWrap{position:relative;display:flex;flex:none}.dshAccountBadge{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--dsw-alias-state-error-primary);color:#fff;font-size:10px;font-weight:600;line-height:1}.dshAccountAvatarWrap>.dshAccountBadge{position:absolute;top:-4px;right:-6px}.dshAccountMenuRow{display:flex;align-items:center;gap:8px;min-width:0}.dshAccountTriggerCopy{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;font-size:13px}.dshAccountTriggerCopy>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dshAccountTriggerCopy small,.dshAccountMenuIdentity small{color:var(--dsw-alias-label-secondary);font-size:11px;font-weight:400}
+      .dshAccountMenu{min-width:248px;max-width:min(320px,calc(100vw - 24px))}.dshAccountMenuWide{position-anchor:--dsh-desktop-account-trigger;box-sizing:border-box;width:anchor-size(width);min-width:0;max-width:none;left:anchor(left)!important}.dshAccountMenuIdentity{display:flex;align-items:center;gap:12px;padding:10px 10px 14px;margin-bottom:4px;border-bottom:1px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary)}.dshAccountMenuIdentity>div{display:flex;flex-direction:column;gap:4px;min-width:0}.dshAccountMenuIdentity strong{font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dshAccountMenuError{font-size:12px;line-height:1.5;padding:4px 10px;color:var(--dsw-alias-label-secondary)}
+      .dshAccountMenuIdentity>.dshAccountMenuCredits{flex:none;margin-left:auto;text-align:right;max-width:48%}.dshAccountMenuCredits strong{font-variant-numeric:tabular-nums}.dshAccountMenuIdentity>div:not(.dshAccountMenuCredits){flex:1;min-width:0}
+      .dshAccountDialog{width:min(420px,100%)}.dshAccountDialogActions{display:flex;justify-content:flex-end;gap:8px}.dshAccountDialogActions button{font:inherit;color:var(--dsw-alias-label-primary);border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-2);border-radius:var(--dsw-radius-md);padding:7px 14px;cursor:pointer}.dshAccountDialogActions button:hover{background:var(--dsw-alias-interactive-bg-hover)}.dshAccountDialogActions button:disabled{opacity:.5;cursor:default}.dshAccountDialogActions .dshAccountDialogDanger{border-color:transparent;background:var(--dsw-alias-state-error-primary);color:#fff}.dshAccountDialogActions .dshAccountDialogDanger:hover{background:var(--dsw-alias-state-error-primary);opacity:.9}.dshAccountDialogError{margin:0;font-size:13px;line-height:1.5;color:var(--dsw-alias-state-error-primary)}
+      .dshApprovalsDialog{width:min(1080px,100%);height:min(800px,100%);max-height:100%;padding:0;gap:0}.dshApprovalsPanel{display:flex;flex:1;min-height:0;min-width:0}
+      .dshApprovalsNav{box-sizing:border-box;display:flex;flex-direction:column;flex:none;gap:18px;width:188px;min-height:0;padding:22px 12px;overflow-y:auto}.dshApprovalsNavTitle{padding:0 12px;color:var(--dsw-alias-label-primary);font-size:16px;font-weight:500;line-height:24px}.dshApprovalsNavList{display:flex;flex-direction:column;gap:4px;overflow-y:auto}
+      .dshApprovalsNavCell{box-sizing:border-box;display:flex;align-items:center;gap:8px;height:40px;padding:9px 16px 9px 12px;border:0;border-radius:var(--dsw-radius-md);background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:14px;font-weight:400;line-height:22px;text-align:left;cursor:pointer}.dshApprovalsNavCell:hover{background:var(--dsw-specific-sidebar-nav-item-hover)}.dshApprovalsNavCell[aria-current=true]{background:var(--dsw-specific-sidebar-nav-item-active)}.dshApprovalsNavIcon{flex:none}.dshApprovalsNavLabel{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .dshApprovalsContent{display:flex;flex-direction:column;flex:1;min-width:0}.dshApprovalsHeader{box-sizing:border-box;display:flex;flex:none;align-items:flex-start;justify-content:flex-end;gap:8px;height:54px;padding:20px 14px 8px 10px}.dshApprovalsClose{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:0;border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);cursor:pointer}.dshApprovalsClose:hover{background:var(--dsw-alias-interactive-bg-hover)}
+      .dshApprovalsOptions{display:flex;flex-direction:column;flex:1;min-height:0;padding:0 24px 24px}.dshApprovalsOptions .dshSettingsRemote{flex:1;min-height:0;height:auto}
+      @media(max-width:640px){.dshSettingsRemote{height:max(300px,calc(100vh - 280px))}.dshApprovalsNav{width:152px;gap:14px;padding:18px 8px}.dshApprovalsOptions{padding:0 16px 16px}}
+    `
+
+    const CLAIMED_ECHO_EMPTY = []
+    const CLAIMED_ECHO_CSS = `
+      .dshClaimedEcho{display:flex;flex-direction:column;align-items:flex-end;gap:6px;width:100%}
+      .dshClaimedEchoStack{box-sizing:border-box;width:min(calc(var(--dsh-chat-content-width, 748px) * 0.702), 82%);max-width:82%;margin-left:auto}
+      .dshClaimedEchoBubble{box-sizing:border-box;background:var(--dsw-specific-bubble);border-radius:var(--dsw-radius-xl);padding:10px 16px;font-size:var(--dsh-content-font-size, 14px);line-height:calc(22px + var(--dsh-content-font-delta, 0px));color:var(--dsw-alias-label-primary);white-space:pre-wrap;word-break:break-word}
+    `
+
+    function claimedEchoApi() {
+      try {
+        const loaded = require('dsh-desktop-enterprise/claimed-echo')
+        if (typeof loaded?.claimedUserMessages === 'function' && typeof loaded?.visibleClaimedMessages === 'function') return loaded
+      } catch {}
+      return { claimedUserMessages: claimedUserMessagesFallback, visibleClaimedMessages: visibleClaimedMessagesFallback }
+    }
+
+    function claimedUserMessagesFallback(priorPending, splice) {
+      if (splice == null || typeof splice !== 'object') return []
+      const removed = splice.removedCount ?? 0
+      if (!(removed > 0) || splice.outcome === 'canceled') return []
+      const pending = materializeClaimedPending(priorPending)
+      const start = Number.isInteger(splice.start) ? splice.start : 0
+      const messages = []
+      for (const message of pending.slice(start, start + removed)) {
+        if (message == null || message.source?.kind !== 'user') continue
+        const text = claimedMessageText(message.content)
+        if (text === '') continue
+        messages.push(claimedEchoRow(message.id, message.source?.rpcId, text))
+      }
+      return messages
+    }
+
+    function materializeClaimedPending(pending) {
+      if (pending == null || typeof pending !== 'object') return []
+      const splices = []
+      let current = pending
+      while (current && current.kind === 'splice') {
+        splices.push(current)
+        current = current.previous
+      }
+      const messages = Array.isArray(current?.ids) ? [...current.ids] : []
+      for (const splice of splices.reverse()) {
+        const start = Number.isInteger(splice.start) ? splice.start : 0
+        const removed = Number.isInteger(splice.removedCount) ? splice.removedCount : 0
+        const inserted = Array.isArray(splice.inserted) ? splice.inserted : []
+        messages.splice(start, removed, ...inserted)
+      }
+      return messages
+    }
+
+    function claimedMessageText(content) {
+      if (typeof content === 'string') return content.trim()
+      if (!Array.isArray(content)) return ''
+      let text = ''
+      for (const block of content) {
+        if (typeof block === 'string') text += block
+        else if (block != null && block.type === 'text' && typeof block.text === 'string') text += block.text
+      }
+      return text.trim()
+    }
+
+    function claimedEchoRow(id, rpcId, text) {
+      const row = { text }
+      const present = presentClaimedId(id)
+      const requestId = presentClaimedId(rpcId)
+      if (present !== undefined) row.id = present
+      if (requestId !== undefined) row.rpcId = requestId
+      return row
+    }
+
+    function presentClaimedId(value) {
+      if (value == null || value === '') return undefined
+      const id = String(value)
+      return id === '' ? undefined : id
+    }
+
+    function visibleClaimedMessagesFallback(messages, entries, options) {
+      if (!Array.isArray(messages)) return []
+      const loggedIds = new Set()
+      const loggedRpcIds = new Set()
+      if (Array.isArray(entries)) {
+        for (const entry of entries) {
+          const event = entry?.event ?? entry
+          if (event == null || event.type !== 'user/message' || event.data == null) continue
+          const data = event.data
+          const message = data.message != null && typeof data.message === 'object' ? data.message : data
+          const source = message.source ?? data.source
+          if (source?.kind !== 'user') continue
+          const id = presentClaimedId(message.id ?? data.id)
+          const rpcId = presentClaimedId(source.rpcId)
+          if (id !== undefined) loggedIds.add(id)
+          if (rpcId !== undefined) loggedRpcIds.add(rpcId)
+        }
+      }
+      if (Array.isArray(options?.matches)) {
+        for (const match of options.matches) {
+          if (match == null || typeof match !== 'object') continue
+          const id = presentClaimedId(match.id)
+          const rpcId = presentClaimedId(match.rpcId)
+          if (id !== undefined) loggedIds.add(id)
+          if (rpcId !== undefined) loggedRpcIds.add(rpcId)
+        }
+      }
+      const localRequestIds = new Set()
+      const values = options?.localRequestIds
+      if (values != null && typeof values !== 'string' && typeof values[Symbol.iterator] === 'function') {
+        for (const id of values) {
+          const requestId = presentClaimedId(id)
+          if (requestId !== undefined) localRequestIds.add(requestId)
+        }
+      }
+      return messages.filter((message) => {
+        if (message == null || typeof message.text !== 'string' || message.text === '') return false
+        const id = presentClaimedId(message.id)
+        const rpcId = presentClaimedId(message.rpcId)
+        if (id === undefined && rpcId === undefined) return false
+        if (rpcId !== undefined && localRequestIds.has(rpcId)) return false
+        if (id !== undefined && loggedIds.has(id)) return false
+        if (rpcId !== undefined && loggedRpcIds.has(rpcId)) return false
+        return true
+      })
+    }
+
+    function installClaimedEcho(ctx) {
+      if (typeof ctx.uiConversation?.events?.register !== 'function' || typeof ctx.slots?.inject !== 'function') return
+      const echo = claimedEchoApi()
+      const rememberedLocalRequests = new Set()
+      const localRequestSnapshots = new WeakMap()
+      const chatSources = new Map()
+      const snapshotLocalRequestIds = (session) => {
+        if (session == null) return CLAIMED_ECHO_EMPTY
+        const submissions = session.getSnapshot?.()?.pendingSubmissions
+        const ids = []
+        if (Array.isArray(submissions)) {
+          for (const item of submissions) {
+            const id = item?.requestId
+            // Queued sends are not drawn by the composer, so their echo is the only early bubble.
+            if (item?.placement === 'queued' || typeof id !== 'string' || id === '') continue
+            rememberedLocalRequests.add(id)
+            ids.push(id)
+          }
+        }
+        const key = ids.join('\n')
+        const cached = localRequestSnapshots.get(session)
+        if (cached?.key === key) return cached.ids
+        const next = { key, ids }
+        localRequestSnapshots.set(session, next)
+        return ids
+      }
+      const chatSourceFor = (sessionId) => {
+        if (typeof sessionId !== 'string') return undefined
+        const cached = chatSources.get(sessionId)
+        if (cached !== undefined) return cached
+        if (typeof ctx.uiConversation?.binding !== 'function') return undefined
+        try {
+          const source = ctx.uiConversation.binding(sessionId).target('chat')
+          chatSources.set(sessionId, source)
+          return source
+        } catch {
+          return undefined
+        }
+      }
+      const claimedEchoNodeMatches = (snapshot) => {
+        const order = snapshot?.order
+        const nodes = snapshot?.nodes
+        if (!Array.isArray(order) || nodes == null || typeof nodes.get !== 'function') return CLAIMED_ECHO_EMPTY
+        const matches = []
+        for (const key of order) {
+          const node = nodes.get(key)
+          if (node == null || (node.kind !== 'user' && node.kind !== 'steering')) continue
+          const data = node.data
+          if (data == null || typeof data !== 'object') continue
+          const id = data.messageId ?? data.id
+          const rpcId = data.source?.rpcId
+          if ((id == null || id === '') && (typeof rpcId !== 'string' || rpcId === '')) continue
+          matches.push({ id, rpcId })
+        }
+        return matches
+      }
+      const ClaimedEchoView = function ClaimedEchoView({ node, claimedSessionId, renderFactorySlot }) {
+        const binding = typeof claimedSessionId === 'string' && typeof ctx.sessions?.binding === 'function'
+          ? ctx.sessions.binding(claimedSessionId)
+          : undefined
+        const source = binding?.eventSource
+        const session = binding?.session
+        const entries = useSyncExternalStore(
+          (onStoreChange) => (typeof source?.subscribe === 'function' ? source.subscribe(onStoreChange) : () => {}),
+          () => source?.getSnapshot?.().entries ?? CLAIMED_ECHO_EMPTY,
+          () => source?.getSnapshot?.().entries ?? CLAIMED_ECHO_EMPTY
+        )
+        useSyncExternalStore(
+          (onStoreChange) => (typeof session?.subscribe === 'function' ? session.subscribe(onStoreChange) : () => {}),
+          () => snapshotLocalRequestIds(session),
+          () => CLAIMED_ECHO_EMPTY
+        )
+        const chatSource = chatSourceFor(claimedSessionId)
+        const chatSnapshot = useSyncExternalStore(
+          (onStoreChange) => (typeof chatSource?.subscribe === 'function' ? chatSource.subscribe(onStoreChange) : () => {}),
+          () => chatSource?.getSnapshot?.() ?? null,
+          () => null
+        )
+        const visible = echo.visibleClaimedMessages(node?.data?.messages, entries, {
+          localRequestIds: rememberedLocalRequests,
+          matches: claimedEchoNodeMatches(chatSnapshot)
+        })
+        if (!Array.isArray(visible) || visible.length === 0) return null
+        return h('div', { className: 'dshClaimedEcho' }, visible.map((message, index) => {
+          const prepared = { text: message.text, attachments: [], extraBlocks: [] }
+          const slotted = typeof renderFactorySlot === 'function'
+            ? renderFactorySlot('conversation.chat.user.content', { content: prepared, interactive: false })
+            : null
+          return h('div', { className: 'dshClaimedEchoStack', key: message.id || String(index) },
+            slotted || h('div', { className: 'dshClaimedEchoBubble' }, message.text))
+        }))
+      }
+      const registerTarget = (target) => ctx.uiConversation.events.register({
+        kind: `claimed-echo-${target}`,
+        target: 'chat',
+        match: (event) => {
+          if (event?.type !== 'agent/inbox/spliced') return null
+          const data = event.data
+          if (data == null || data.target !== target) return null
+          const removed = data.removedCount ?? 0
+          if (!(removed > 0) || data.outcome === 'canceled') return null
+          return { id: String(event.seq), role: 'start' }
+        },
+        start: (_context, match, reader) => {
+          try {
+            const prior = reader.previous(`inbox-${target}`)
+            return { messages: echo.claimedUserMessages(prior?.state?.pending, match.event?.data) }
+          } catch {
+            return { messages: [] }
+          }
+        },
+        update: (context) => context.state,
+        buildViewNode: (context) => {
+          const messages = context.state?.messages
+          if (!Array.isArray(messages) || messages.length === 0) return null
+          return {
+            key: context.key,
+            kind: 'claimed-echo',
+            id: context.id,
+            target: 'chat',
+            anchorSeq: context.matches?.[0]?.event?.seq ?? 0,
+            location: context.start?.location,
+            visibility: 'visible',
+            groupTree: 'input',
+            data: { messages }
+          }
+        }
+      })
+      ctx.effect(() => {
+        const stops = [
+          registerTarget('next-step'),
+          registerTarget('next-turn'),
+          ctx.slots.inject('conversation.chat.node', () => ctx.slots.register({
+            name: 'conversation.chat.node',
+            key: 'claimed-echo',
+            inject: (sessionId) => ({ claimedSessionId: sessionId })
+          }, ClaimedEchoView))
+        ]
+        let style
+        if (typeof document !== 'undefined') {
+          style = document.createElement('style')
+          style.dataset.plugin = 'dsh-desktop-enterprise'
+          style.dataset.pluginCss = 'dsh-claimed-echo'
+          style.textContent = CLAIMED_ECHO_CSS
+          document.head.appendChild(style)
+        }
+        return () => {
+          for (const stop of stops) if (typeof stop === 'function') stop()
+          style?.remove()
+        }
+      }, 'enterprise: claimed inbox echo')
+    }
+
     function apply(ctx) {
+      if (typeof ctx.provide === 'function') {
+        ctx.provide('enterpriseLauncher', { accountSectionId: ENTERPRISE_SECTION_ID })
+        ctx.provide('enterpriseWorkResources', { enabled: true })
+      }
+      ctx.effect(() => {
+        if (typeof ctx.inject !== 'function') return undefined
+        return ctx.inject(['uiConversation', 'sessions', 'slots'], installClaimedEcho)
+      }, 'enterprise: claimed inbox echo')
       ctx.effect(bindWorkToolChanges, 'enterprise: refresh saved tool availability')
+      ctx.effect(bindDesktopSettingsEvents, 'enterprise: desktop settings events')
       installStyles()
       installMarketStyles()
       ctx.effect(
@@ -1478,19 +2492,109 @@ window.__ModuleLoader__.load({
       ctx.effect(() => bindEnterpriseModelSync(pricingHints.ingest), 'enterprise: foreground model catalog sync')
       ctx.effect(() => bindModelPricingLabel(ctx.locale, pricingHints), 'enterprise: credit ratio in the Work model picker')
       ctx.effect(() => bindEnterpriseMarketTab(ctx), 'enterprise-market: account-bound plugins tab')
-      ctx.effect(() => {
-        const bridge = window.dshDesktopEnterprise
-        if (!bridge?.onLoginLink) return undefined
-        return bridge.onLoginLink(() => openEnterpriseSettingsSection())
-      }, 'dsh-desktop-enterprise: open settings on login link')
+      ctx.effect(() => bindEnterpriseWorkbenchCollection(ctx), 'enterprise-workbench: market collection')
+      ctx.effect(() => bindEnterpriseWorkUi(ctx), 'enterprise: Chat and Work composition')
+      ctx.effect(() => ctx.inject?.(['connection', 'remote', 'remote.agentPresets', 'desktopOffice', 'desktopPresentation'], scoped => bindEnterpriseWelcomeCases(scoped)), 'enterprise-welcome: example tasks')
       ctx.slots.inject('settings.section', () => ctx.slots.register({
         name: 'settings.section',
         id: ENTERPRISE_SECTION_ID,
-        order: 15,
+        order: -10,
         label: () => t('nav'),
         children: { 'desktop.account.usage': { kind: 'single', scope: 'root' } },
         inject: () => ({ t })
       }, EnterpriseSection))
+
+      ctx.effect(
+        () => ctx.locale.register(DESKTOP_SETTINGS_NS, DESKTOP_SETTINGS_COPY),
+        'enterprise: settings copy'
+      )
+      const settingsT = ctx.locale.bind(DESKTOP_SETTINGS_NS)
+      settingsTranslate = settingsT
+
+      ctx.effect(() => {
+        const style = document.createElement('style')
+        style.dataset.plugin = 'dsh-desktop-enterprise'
+        style.dataset.pluginCss = 'dsh-desktop-enterprise-settings'
+        style.textContent = DESKTOP_SETTINGS_CSS
+        document.head.appendChild(style)
+        return () => style.remove()
+      }, 'enterprise: settings styles')
+
+      const registerSlot = (scope, name, id, Component, extra = {}) => {
+        return scope.slots.inject(name, () => {
+          try {
+            if (scope.slots.entries?.(name)?.some(entry => entry.options?.id === id)) {
+              return undefined
+            }
+            return scope.slots.register({
+              name,
+              id,
+              locale: DESKTOP_SETTINGS_NS,
+              ...extra,
+              inject: () => ({ t: settingsT })
+            }, Component)
+          } catch {
+            return undefined
+          }
+        })
+      }
+
+      registerSlot(ctx, 'desktop.account.usage', 'desktop-usage', Usage, { priority: 10 })
+      registerSlot(ctx, 'settings.launcher', 'desktop-account-menu', AccountLauncher)
+      const hasDesktopSettings = Boolean(desktopSettingsCapability('settingsInfo') || desktopSettingsCapability('settingsAction'))
+      if (hasDesktopSettings) registerSlot(ctx, 'settings.section', 'desktop-about', About, {
+        order: 90,
+        label: () => settingsT('about')
+      })
+
+      if (typeof ctx.slots?.entries === 'function') {
+        ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+          name: 'settings.section.icon',
+          id: ENTERPRISE_SECTION_ID,
+          inject: () => ({})
+        }, ({ size }) => h(IconUserOutlineMedium, { size: size || 18 })))
+
+        if (hasDesktopSettings) ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+          name: 'settings.section.icon',
+          id: 'desktop-about',
+          inject: () => ({})
+        }, ({ size }) => h(IconInfoOutlineMedium, { size: size || 18 })))
+
+        ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
+          name: 'settings.section.icon',
+          id: 'desktop-ai-access',
+          inject: () => ({})
+        }, ({ size }) => h(IconApiOutlineMedium, { size: size || 18 })))
+      }
+
+      ctx.effect(() => {
+        let disposed = false, disposeEntry, revision = 0
+        const sync = (state) => {
+          revision++
+          const allowed = state?.connected && state?.navigation?.settings?.aiAccess === true
+          if (allowed && !disposeEntry) {
+            disposeEntry = registerSlot(ctx, 'settings.section', 'desktop-ai-access', AiAccess, {
+              order: 80,
+              label: () => settingsT('ai')
+            })
+          }
+          if (!allowed) {
+            disposeEntry?.()
+            disposeEntry = undefined
+          }
+        }
+        const unsubscribe = window.dshEnterpriseChat?.subscribe(sync)
+        const request = revision
+        void window.dshEnterpriseChat?.state().then((state) => {
+          if (!disposed && request === revision) sync(state)
+        }).catch(() => {})
+        return () => {
+          disposed = true
+          unsubscribe?.()
+          disposeEntry?.()
+        }
+      }, 'enterprise: account capabilities')
+
     }
 
     exports.apply = apply

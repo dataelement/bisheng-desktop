@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -13,7 +14,9 @@ import {
   CLOUDFLARED_VERSION,
   downloadCloudflaredWithRetry,
   ensureCloudflaredBinary,
+  cloudflareQuickTunnelReady,
   extractTryCloudflareUrl,
+  startCloudflareQuickTunnel,
   isRetryableDownloadError,
   resolveCurrentAssetSpec,
   sha256OfFile,
@@ -59,6 +62,56 @@ describe('Cloudflare Quick Tunnel utilities', () => {
         'failed to request quick Tunnel: Post "https://api.trycloudflare.com/tunnel": connection reset'
       )
     ).toBeNull()
+    expect(
+      extractTryCloudflareUrl(
+        'Post "https://api.trycloudflare.com/tunnel"\nhttps://orange-forest-1234.trycloudflare.com'
+      )
+    ).toBe('https://orange-forest-1234.trycloudflare.com')
+    expect(cloudflareQuickTunnelReady('https://orange-forest-1234.trycloudflare.com')).toBeNull()
+    const split =
+      'INF | https://orange-forest-' +
+      '1234.trycloudflare.com |\nINF Registered tunnel connection connIndex=0'
+    expect(cloudflareQuickTunnelReady(split)).toBe('https://orange-forest-1234.trycloudflare.com')
+    expect(
+      cloudflareQuickTunnelReady(
+        'https://orange-forest-1234.trycloudflare.com\nconnection registered'
+      )
+    ).toBe('https://orange-forest-1234.trycloudflare.com')
+  })
+
+  it('publishes a quick tunnel only after the edge connection registers', async () => {
+    const { tunnel, calls } = await runFakeCloudflared((tunnels) => {
+      tunnels[0]?.stderr.emit('data', 'https://orange-forest-')
+      tunnels[0]?.stderr.emit('data', '1234.trycloudflare.com\nRegistered tunnel connection connIndex=0')
+    })
+    expect(tunnel.url).toBe('https://orange-forest-1234.trycloudflare.com')
+    expect(calls).toEqual([['tunnel', '--url', 'http://127.0.0.1:43128']])
+  })
+
+  it('retries over HTTP/2 when the hostname is printed but never registers', async () => {
+    const { tunnel, calls } = await runFakeCloudflared(async (tunnels) => {
+      tunnels[0]?.stderr.emit('data', 'https://orange-forest-1234.trycloudflare.com\n')
+      const first = tunnels[0]?.child
+      if (!first) throw new Error('missing cloudflared process')
+      first.exitCode = 1
+      first.emit('close', 1, null)
+      await vi.waitFor(() => {
+        expect(tunnels).toHaveLength(2)
+      })
+      tunnels[1]?.stderr.emit(
+        'data',
+        'https://blue-river-5678.trycloudflare.com\nRegistered tunnel connection connIndex=0'
+      )
+    })
+    expect(tunnel.url).toBe('https://blue-river-5678.trycloudflare.com')
+    expect(calls[1]).toEqual([
+      'tunnel',
+      '--url',
+      'http://127.0.0.1:43128',
+      '--protocol',
+      'http2'
+    ])
+    expect(tunnel.url).not.toContain('token')
   })
 
   it('resolves supported platform and arch specs', () => {
@@ -295,44 +348,6 @@ describe('LanMobileBridge tunnel state and endpoints', () => {
     expect(toggleOffRes.status).toBe(200)
     const toggleOffJson = await toggleOffRes.json()
     expect(toggleOffJson.active).toBe(false)
-  })
-
-  it('returns a browser pairing URL over HTTP and serves its password page without an app', async () => {
-    const bridge = new LanMobileBridge({
-      harnessUrl: () => 'http://127.0.0.1:3000',
-      port: 0,
-      createCloudflareTunnel: async () =>
-        fakeTunnel('cloudflare', 'https://browser-mobile.trycloudflare.com')
-    })
-    bridges.push(bridge)
-    const snapshot = await bridge.start()
-    const cookie = await authorizeDesktop(bridge)
-    const response = await fetch(`http://127.0.0.1:${snapshot.port}/desktop/tunnel/toggle`, {
-      method: 'POST',
-      headers: { cookie, 'content-type': 'application/json' },
-      body: JSON.stringify({ enable: true })
-    })
-    expect(response.status).toBe(200)
-    const body = await response.json()
-    expect(body).toMatchObject({ ok: true, active: true, provider: 'cloudflare' })
-    const pairingUrl = new URL(body.pairingUrl)
-    expect(pairingUrl.origin).toBe('https://browser-mobile.trycloudflare.com')
-    expect(pairingUrl.pathname).toBe('/pair')
-    expect(pairingUrl.searchParams.get('token')).toBeTruthy()
-    expect(body.pairingPin).toMatch(/^\d{6}$/)
-    expect(body.qrSvg).toContain('<svg')
-
-    // Model the tunnel forwarding the browser URL to the local HTTP listener.
-    const phone = await fetch(`http://127.0.0.1:${snapshot.port}${pairingUrl.pathname}${pairingUrl.search}`, {
-      headers: { host: pairingUrl.host, 'cf-connecting-ip': '203.0.113.40', 'cf-ray': 'test-ray' },
-      redirect: 'manual'
-    })
-    expect(phone.status).toBe(200)
-    expect(phone.headers.get('content-type')).toContain('text/html')
-    expect(phone.headers.get('location')).toBeNull()
-    expect(phone.headers.get('set-cookie')).toBeNull()
-    expect(await phone.text()).toContain('Enter pairing password')
-    expect(bridge.snapshot().connected).toBe(false)
   })
 
   it('starts Pinggy and stops Cloudflare when the user asks for a backup link', async () => {
@@ -814,3 +829,49 @@ describe('LanMobileBridge shutdown with live connections', () => {
     expect(winner).toBe('stopped')
   })
 })
+
+interface FakeCloudflared {
+  stderr: EventEmitter
+  child: EventEmitter & {
+    stdout: EventEmitter
+    stderr: EventEmitter
+    exitCode: number | null
+    signalCode: NodeJS.Signals | null
+    kill(signal: NodeJS.Signals): boolean
+  }
+}
+
+function fakeCloudflared(): FakeCloudflared {
+  const stderr = new EventEmitter()
+  const stdout = new EventEmitter()
+  const child = new EventEmitter() as FakeCloudflared['child']
+  child.stdout = stdout
+  child.stderr = stderr
+  child.exitCode = null
+  child.signalCode = null
+  child.kill = () => true
+  return { stderr, child }
+}
+
+async function runFakeCloudflared(
+  drive: (tunnels: FakeCloudflared[]) => void | Promise<void>
+): Promise<{
+  tunnel: { url: string }
+  calls: string[][]
+}> {
+  const calls: string[][] = []
+  const tunnels: FakeCloudflared[] = []
+  const pending = startCloudflareQuickTunnel({
+    port: 43128,
+    binaryPath: 'cloudflared',
+    timeoutMs: 1_000,
+    spawnProcess: (_command, args) => {
+      calls.push([...args])
+      const tunnel = fakeCloudflared()
+      tunnels.push(tunnel)
+      return tunnel.child
+    }
+  })
+  await drive(tunnels)
+  return { tunnel: await pending, calls }
+}

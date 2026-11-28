@@ -1,0 +1,40 @@
+name: Downstream Boundary Gatekeeper
+
+on:
+  pull_request:
+    branches: [main, V1.3.1, codex/bisheng-unified]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boundary-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-boundary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # The boundary gate compares raw bytes against reviewed Git objects.
+      - name: Preserve repository bytes on checkout
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+      - name: Fetch the reviewed upstream baseline
+        run: |
+          git remote add upstream https://github.com/dataelement/dsh-desktop.git
+          baseline_commit=$(node -e "const b=require('./ops/ci/upstream-baseline.json');if(!/^[a-f0-9]{40}$/.test(b.commit))process.exit(1);process.stdout.write(b.commit)")
+          git fetch --no-tags upstream "$baseline_commit"
+          git update-ref refs/remotes/upstream/V0.14.1 "$baseline_commit"
+          git rev-parse --verify upstream/V0.14.1
+      - name: Verify downstream changes
+        run: npm run verify:boundary
+        env:
+          UPSTREAM_BASE: upstream/V0.14.1

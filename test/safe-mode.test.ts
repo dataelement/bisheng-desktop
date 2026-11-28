@@ -4,22 +4,40 @@ import { describe, expect, it } from 'vitest'
 import {
   buildSafeModeViewModel,
   safeModeBlockingGroupCount,
+  normalRelaunchArguments,
+  relaunchArguments,
   safeModeExitConfirmation,
   shouldStartInSafeMode
 } from '../src/main/safe-mode'
-import type { ProfileCompatibilityIssue } from '../src/main/state/profile-compatibility'
+import type { ProfileCompatibilityIssue } from '../src/main/profile/profile-compatibility'
 import {
   ensureSafeModeProfile,
   extractSafeModePatch,
   SAFE_MODE_BUNDLES,
   SAFE_MODE_MODEL_ENTRY_IDS,
   SAFE_MODE_PROFILE
-} from '../src/main/state/safe-mode-profile'
+} from '../src/main/recovery/safe-mode-profile'
 
 describe('Safe Mode', () => {
+  it('uses the resolved product name in both languages', () => {
+    for (const locale of ['zh', 'en'] as const) {
+      const model = buildSafeModeViewModel({ locale, plugins: [], productName: 'BISHENG Dev' })
+      expect(model.brand).toBe('BISHENG Dev')
+      expect(model.quitLabel).toBe(locale === 'zh' ? '退出 BISHENG Dev' : 'Quit BISHENG Dev')
+    }
+  })
   it('is opt-in through an exact command-line switch', () => {
     expect(shouldStartInSafeMode(['DSH Desktop', '--safe-mode'])).toBe(true)
     expect(shouldStartInSafeMode(['DSH Desktop', '--safe-mode=false'])).toBe(false)
+    expect(relaunchArguments(['/Electron', '/app', '--user-data-dir=/tmp/dsh', '--safe-mode'])).toEqual([
+      '/app',
+      '--user-data-dir=/tmp/dsh',
+      '--safe-mode'
+    ])
+    expect(normalRelaunchArguments(['/Electron', '/app', '--user-data-dir=/tmp/dsh', '--safe-mode'])).toEqual([
+      '/app',
+      '--user-data-dir=/tmp/dsh'
+    ])
   })
 
   it('marks plugins as still being checked until the market check answers', () => {
@@ -32,23 +50,7 @@ describe('Safe Mode', () => {
       healthReports: [{ packageName: 'dsh-a', installedVersion: '1.0.0', latestVersion: '1.1.0', healthStatus: 'upgrade-available', healthLabel: '有更新', upgradeReady: true, upgradeVersion: '1.1.0' }]
     })
     expect(answered.pluginItems[0]?.statusLabel).toBe('（有更新）')
-    expect(answered.pluginItems[0]?.upgradeButtonLabel).toBeUndefined()
-  })
-
-  it('treats installed Profile plugins uniformly as Safe Mode targets', () => {
-    const model = buildSafeModeViewModel({
-      locale: 'zh', plugins: ['dsh-image-generation'],
-      suspectedPlugins: ['dsh-image-generation'], healthPending: true
-    })
-    expect(model.pluginItems[0]).toMatchObject({
-      name: 'dsh-image-generation', suspected: true,
-      statusLabel: '（本次启动日志推断，正在检查更新…）',
-      actionLabel: '停用插件（不删除）'
-    })
-    const disabled = buildSafeModeViewModel({
-      locale: 'en', plugins: ['dsh-image-generation'], disabledPlugins: ['dsh-image-generation']
-    })
-    expect(disabled.pluginItems[0]).toMatchObject({ disabled: true, enableButtonLabel: 'Re-enable' })
+    expect(answered.pluginItems[0]?.upgradeButtonLabel).toBe('升级至 v1.1.0')
   })
 
   it('treats installed Profile plugins uniformly as Safe Mode targets', () => {
@@ -95,13 +97,13 @@ describe('Safe Mode', () => {
     })
     expect(model.badge).toBe('安全模式')
     expect(model.heading).toBe('')
-    expect(model.summary).toBe('安全模式暂时跳过第三方插件。停用有问题的插件后重启；插件和数据都会保留。')
+    expect(model.summary).toBe('当前处于安全模式，尚未恢复正常启动。可能由插件导致，可在此停用后重启验证；插件和数据都会保留。')
     expect(model.plugins).toEqual(['plugin-a', '@example/plugin-b'])
     expect(model.pluginItems).toEqual([
       { name: 'plugin-a', actionLabel: '停用插件（不删除）', incompatible: false, suspected: false, disabled: false },
       { name: '@example/plugin-b', actionLabel: '停用插件（不删除）', incompatible: false, suspected: false, disabled: false }
     ])
-    expect(model.safetyNote).toBe('停用不会删除任何内容：插件、工作区、会话和模型配置都会保留。需要继续使用时，请联系管理员从企业插件市场安装。')
+    expect(model.safetyNote).toBe('停用不会删除任何内容：插件、工作区、会话和模型配置都会保留，可在这里或插件市场中重新启用。')
   })
 
   it('provides complete English labels for every Safe Mode action', () => {
@@ -112,8 +114,8 @@ describe('Safe Mode', () => {
       selectionHint: 'Select plugins to disable',
       applyLabel: 'Disable selected plugins',
       agentLabel: 'Close',
-      restartLabel: 'Exit Safe Mode and restart',
-      quitLabel: 'Quit BISHENG'
+      restartLabel: 'Restart and verify',
+      quitLabel: 'Quit DSH Desktop'
     })
   })
 
@@ -159,7 +161,7 @@ describe('Safe Mode', () => {
       disabled: false
     })
     expect(model.issueGroups).toEqual([])
-    expect(model.restartLabel).toBe('退出安全模式并重启')
+    expect(model.restartLabel).toBe('重启并验证')
     expect(model.restartConfirm).toContain('仍有 1 组阻断问题')
   })
 
@@ -342,7 +344,7 @@ describe('Safe Mode', () => {
     })
   })
 
-  it('keeps a disabled community plugin off without a re-enable action', () => {
+  it('shows a disabled plugin as off with a re-enable action instead of a selection', () => {
     const model = buildSafeModeViewModel({ locale: 'zh', plugins: ['plugin-a', 'plugin-b'], disabledPlugins: ['plugin-b'] })
     expect(model.pluginItems[1]).toEqual({
       name: 'plugin-b',
@@ -350,24 +352,11 @@ describe('Safe Mode', () => {
       actionLabel: '已停用，退出安全模式后也不会加载',
       incompatible: false,
       suspected: false,
-      disabled: true
-    })
-    expect(model.pluginItems[0]).toMatchObject({ name: 'plugin-a', disabled: false })
-    expect(model.pluginItems[0]).not.toHaveProperty('enableButtonLabel')
-    expect(model.pluginItems[1]).not.toHaveProperty('enableButtonLabel')
-  })
-
-  it('offers re-enable for a disabled protected bundle and not for a community plugin', () => {
-    const model = buildSafeModeViewModel({
-      locale: 'zh',
-      plugins: ['dsh-image-generation', 'community-plugin'],
-      disabledPlugins: ['dsh-image-generation', 'community-plugin']
-    })
-    expect(model.pluginItems.find((item) => item.name === 'dsh-image-generation')).toMatchObject({
       disabled: true,
       enableButtonLabel: '重新启用'
     })
-    expect(model.pluginItems.find((item) => item.name === 'community-plugin')).not.toHaveProperty('enableButtonLabel')
+    expect(model.pluginItems[0]).toMatchObject({ name: 'plugin-a', disabled: false })
+    expect(model.pluginItems[0]).not.toHaveProperty('enableButtonLabel')
   })
 
   it('extracts only model configurations and drops third-party plugins in safe mode patch', () => {
@@ -399,45 +388,6 @@ describe('Safe Mode', () => {
     expect(result).toContain('id: agent-default-model')
     expect(result).not.toContain('dsh-market')
     expect(result).not.toContain('ui-settings-general')
-  })
-
-  it('inherits only a valid language preference without trusting locale entry metadata', () => {
-    const result = extractSafeModePatch(`- id: locale
-  name: malicious-plugin
-  disabled: true
-  config:
-    preference: en
-    other: unsafe
-- id: third-party
-  config: { preference: zh }
-`)
-    expect(result).toContain('preference: en')
-    expect(result).not.toContain('malicious-plugin')
-    expect(result).not.toContain('disabled')
-    expect(result).not.toContain('unsafe')
-    expect(result).not.toContain('third-party')
-    for (const preference of ['""', '123', 'en_US']) {
-      expect(extractSafeModePatch(`- id: locale\n  config:\n    preference: ${preference}\n`)).toContain('[]')
-    }
-  })
-
-  it('rebuilds safe mode with the normal profile language without modifying it', async () => {
-    const dshHome = join(__dirname, '.temp-safe-mode-language')
-    try {
-      const web = join(dshHome, 'profiles', 'web')
-      const { mkdir } = await import('node:fs/promises')
-      await mkdir(web, { recursive: true })
-      const source = '- id: locale\n  config:\n    preference: en\n'
-      await writeFile(join(web, 'cordis.patch.yml'), source)
-      const safe = await ensureSafeModeProfile(dshHome)
-      expect(await readFile(join(safe, 'cordis.patch.yml'), 'utf8')).toContain('preference: en')
-      await writeFile(join(safe, 'cordis.patch.yml'), '- id: locale\n  config: { preference: zh }\n')
-      await ensureSafeModeProfile(dshHome)
-      expect(await readFile(join(safe, 'cordis.patch.yml'), 'utf8')).toContain('preference: en')
-      expect(await readFile(join(web, 'cordis.patch.yml'), 'utf8')).toBe(source)
-    } finally {
-      await rm(dshHome, { recursive: true, force: true })
-    }
   })
 
   it('inherits model configuration from the normal profile into safe mode profile', async () => {
@@ -497,6 +447,25 @@ describe('Safe Mode', () => {
     }
   })
 
+  it('always ensures agent-default-model is present in safe mode patch even if web profile patch is empty or omitted', async () => {
+    const dshHome = join(__dirname, '.temp-safe-mode-empty-patch')
+    try {
+      const webProfileDir = join(dshHome, 'profiles', 'web')
+      const { mkdir } = await import('node:fs/promises')
+      await mkdir(webProfileDir, { recursive: true })
+      await writeFile(join(webProfileDir, 'cordis.patch.yml'), '[]\n')
+
+      const directory = await ensureSafeModeProfile(dshHome)
+      const safePatch = await readFile(join(directory, 'cordis.patch.yml'), 'utf8')
+      expect(safePatch).toContain('id: agent-default-model')
+      expect(safePatch).toContain('provider: deepseek-official')
+      expect(safePatch).toContain('model: deepseek-flash')
+      expect(safePatch).toContain('disabled: false')
+    } finally {
+      await rm(dshHome, { recursive: true, force: true })
+    }
+  })
+
   it('creates a managed core-only profile and repairs later modifications', async () => {
     const dshHome = join(__dirname, '.temp-safe-mode-profile')
     try {
@@ -506,7 +475,7 @@ describe('Safe Mode', () => {
       const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
       expect(manifest.dependencies).toEqual({})
       expect(manifest.dsh.profile.bundles).toEqual(SAFE_MODE_BUNDLES)
-      expect(await readFile(join(directory, 'cordis.patch.yml'), 'utf8')).toContain('[]')
+      expect(await readFile(join(directory, 'cordis.patch.yml'), 'utf8')).toContain('agent-default-model')
 
       manifest.dependencies['third-party-plugin'] = '1.0.0'
       manifest.dsh.profile.bundles.push('third-party-plugin')
@@ -546,12 +515,12 @@ describe('Safe Mode', () => {
       ]
     })
     expect(model.upgradeReadyCount).toBe(1)
-    expect(model.upgradeAllLabel).toBeUndefined()
+    expect(model.upgradeAllLabel).toBe('一键升级 1 个有更新的插件')
     const itemA = model.pluginItems.find((p) => p.name === 'plugin-a')
     expect(itemA?.upgradeReady).toBe(true)
     expect(itemA?.statusLabel).toContain('兼容性未确认')
     expect(itemA?.upgradeVersion).toBe('2.0.0')
-    expect(itemA?.upgradeButtonLabel).toBeUndefined()
+    expect(itemA?.upgradeButtonLabel).toBe('升级至 v2.0.0')
     const itemB = model.pluginItems.find((p) => p.name === 'plugin-b')
     expect(itemB?.upgradeReady).toBe(false)
     expect(itemB?.upgradeButtonLabel).toBeUndefined()

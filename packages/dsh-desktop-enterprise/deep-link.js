@@ -1,8 +1,17 @@
 export const ENTERPRISE_LOGIN_PROTOCOL = 'bisheng'
 export const ENTERPRISE_LOGIN_DEV_PROTOCOL = 'bisheng-dev'
 
-function isEnterpriseLoginProtocol(protocol) {
-  return protocol === `${ENTERPRISE_LOGIN_PROTOCOL}:` || protocol === `${ENTERPRISE_LOGIN_DEV_PROTOCOL}:`
+function acceptedProtocols(options = {}) {
+  const protocols = options.protocols
+  if (protocols === undefined) return [ENTERPRISE_LOGIN_PROTOCOL, ENTERPRISE_LOGIN_DEV_PROTOCOL]
+  if (!Array.isArray(protocols) || protocols.length === 0 || protocols.some(value => typeof value !== 'string' || !/^[a-z][a-z0-9+.-]{1,62}$/.test(value))) {
+    throw new Error('The enterprise login protocol configuration is invalid.')
+  }
+  return [...new Set(protocols)]
+}
+
+function isEnterpriseLoginProtocol(protocol, options) {
+  return acceptedProtocols(options).some(value => protocol === `${value}:`)
 }
 
 function isLoopbackHost(hostname) {
@@ -56,7 +65,7 @@ export function parseEnterpriseLoginDeepLink(value, options = {}) {
     throw new Error('The enterprise login link is not a valid URL.')
   }
   if (
-    !isEnterpriseLoginProtocol(url.protocol) ||
+    !isEnterpriseLoginProtocol(url.protocol, options) ||
     url.hostname !== 'login' ||
     url.pathname !== '' ||
     url.username ||
@@ -76,12 +85,10 @@ export function parseEnterpriseLoginDeepLink(value, options = {}) {
 }
 
 export function enterpriseLoginDeepLinkFromArgv(argv, options = {}) {
+  const protocols = acceptedProtocols(options)
   for (const argument of argv) {
     const lower = argument.toLowerCase()
-    if (
-      !lower.startsWith(`${ENTERPRISE_LOGIN_PROTOCOL}://`) &&
-      !lower.startsWith(`${ENTERPRISE_LOGIN_DEV_PROTOCOL}://`)
-    ) continue
+    if (!protocols.some(protocol => lower.startsWith(`${protocol}://`))) continue
     try {
       return parseEnterpriseLoginDeepLink(argument, options)
     } catch {

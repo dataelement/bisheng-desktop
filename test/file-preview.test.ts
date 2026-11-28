@@ -1,7 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import vm from 'node:vm'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { patchPath, projectRoot } from './patch-path'
 
 async function packageClient(name: string, file = 'lib/client.js'): Promise<string> {
@@ -9,6 +8,62 @@ async function packageClient(name: string, file = 'lib/client.js'): Promise<stri
 }
 
 describe('uploaded file preview', () => {
+  it('finds only file receipts in the exact Session with the 0.2.2 attachment union', async () => {
+    const source = await packageClient('dsh-client-file-upload', 'lib/index.js')
+    const method = source.match(/findStagedFile\(agent, attachmentId\) \{[\s\S]*?\n\t\t\}/)?.[0]
+    expect(method).toBeDefined()
+    const find = new Function(`return ({ ${method} }).findStagedFile`)() as (this: unknown, agent: { session: object }, id: string) => unknown
+    const session = {}
+    const file = { attachmentId: 'same-id', name: 'report.pdf' }
+    const stagedFiles = new WeakMap([[session, new Map([
+      ['image', { attachment: { type: 'image', attachment: { attachmentId: 'same-id', mimeType: 'image/png' } } }],
+      ['file', { attachment: { type: 'file', attachment: file } }]
+    ])]])
+    const host = { stagedFiles, assertOrdinaryAgent() {} }
+    expect(find.call(host, { session }, 'same-id')).toBe(file)
+    expect(find.call(host, { session: {} }, 'same-id')).toBeUndefined()
+    expect(find.call(host, { session }, 'missing')).toBeUndefined()
+    expect(() => find.call({ ...host, assertOrdinaryAgent() { throw new Error('subagent cannot upload') } }, { session }, 'same-id')).toThrow('subagent cannot upload')
+  })
+
+  it('opens relative links in the live working directory and keeps attachment-name precedence', async () => {
+    const source = await packageClient('dsh-client-ui-chat')
+    const helpersStart = source.indexOf('const FILE_ADDRESS_PREFIX =')
+    const helpersEnd = source.indexOf('\n\t\t//#endregion', helpersStart)
+    const callbackStart = source.indexOf('openFile: async (path, options) => {') + 'openFile: '.length
+    // rc.1 inserts resolveFilePath between openFile and openExternalLink.
+    const callbackEnd = source.lastIndexOf(',', source.indexOf('resolveFilePath:', callbackStart))
+    expect(callbackEnd).toBeGreaterThan(callbackStart)
+    let workingDirectory = '/workspace/nested'
+    let attached = false
+    const opened: unknown[] = []
+    const revealed: unknown[] = []
+    const session = {
+      projections: { faceOf: () => ({ getSnapshot: () => workingDirectory }) },
+      readFileHostPath: async () => attached ? { ok: true, value: { path: '/uploads/report.txt' } } : { ok: false }
+    }
+    const ctx = {
+      sessions: { list: { getSnapshot: () => ({ byId: { session: { cwd: '/workspace' } } }) } },
+      sidebarRightTabs: { candidates: () => ['preview'] },
+      sidebarRight: { openResource: (...args: unknown[]) => opened.push(args) },
+      remote: { session: { openWorkspacePath: async (request: unknown) => { revealed.push(request); return { ok: true } } } }
+    }
+    const open = new Function('ctx', 'session', 'sessionId', `${source.slice(helpersStart, helpersEnd)}; return (${source.slice(callbackStart, callbackEnd)});`)(ctx, session, 'session') as (path: string, options?: { line?: number; revealInFileManager?: boolean }) => Promise<void>
+    await open('./report.txt', { line: 7 })
+    // Preserve the Host path when renderer session.cwd still names the old root.
+    expect(opened.pop()).toEqual(['dsh-resource://file/session/session//workspace/nested/report.txt', { params: { line: 7 } }])
+    workingDirectory = '/workspace/changed'
+    await open('report.txt')
+    expect(opened.pop()).toEqual(['dsh-resource://file/session/session//workspace/changed/report.txt'])
+    await open('/workspace/nested/report.txt')
+    expect(opened.pop()).toEqual(['dsh-resource://file/session/session//workspace/nested/report.txt'])
+    attached = true
+    await open('report.txt', { line: 7 })
+    expect(opened.pop()).toEqual(['dsh-resource://file/session/session//uploads/report.txt'])
+    await open('./folder/', { revealInFileManager: true })
+    expect(revealed).toEqual([{ path: '/workspace/changed/folder/' }])
+  })
+
   it('propagates native opener failures and preserves preview line options', async () => {
     const chat = await packageClient('dsh-client-ui-chat')
     const start = chat.indexOf('async function openResolvedHostFile(')
@@ -69,7 +124,7 @@ describe('uploaded file preview', () => {
     expect(chat).toContain('ctx.remote.session.openWorkspacePath({ path: hostPath })')
     expect(chat).toContain('ctx.sidebarRight.openResource')
     expect(chat).toContain('"sidebarRightTabs"')
-    expect(chat).toContain('opener.open(sessionId, attachmentId)')
+    expect(chat).toContain('ctx.get("openUploadedAttachment").open(sessionId, attachmentId)')
     expect(chat).toContain('onOpenUploadedFile(attachment.file.attachmentId)')
     expect(chat).not.toContain('openFile(attachment.file.name)')
     expect(chat).not.toContain('openFile(attachment.name)')
@@ -158,399 +213,20 @@ describe('uploaded file preview', () => {
     expect(deliverablesPatch).toContain('@[^\\\\/@\\s]+\\/[^\\\\/@\\s]+(?:@[^\\\\/\\s]+)?')
   })
 
-  it('offers a local-open action when sidebar preview cannot render the file', async () => {
+  it('uses the upstream open-in-app contribution for unpreviewable files', async () => {
     const preview = await packageClient('dsh-client-ui-sidebar-documentpreview')
+    const openInApp = await packageClient('dsh-client-ui-open-in-app')
     const desktop = await readFile(
       path.join(projectRoot, 'packages', 'dsh-desktop-client-ui', 'client.js'),
       'utf8'
     )
 
-    expect(preview).toContain('renderSlot("sidebar.right.tab.document.unpreviewable", fileOwner)')
-    expect(desktop).toContain("ctx.slots.inject('sidebar.right.tab.document.unpreviewable'")
-    expect(desktop).toContain("'data-textpreview-open-local': true")
-    expect(desktop).toContain("const remote = ctx.remote")
-    expect(desktop).toContain('openWorkspacePath: (request) => remote.session.openWorkspacePath(request)')
-    expect(desktop).toContain('locale: LOCAL_OPEN_NS')
-    expect(desktop).toContain("action: 'reveal'")
-    expect(desktop).toContain('Open with local app')
-    expect(desktop).toContain('用本地应用打开')
-    expect(desktop).toContain('已在访达中显示')
-    expect(desktop).toContain('已在文件资源管理器中显示')
-    expect(desktop).toContain('已在文件管理器中显示')
-    expect(desktop).toContain('Shown in Finder')
-    expect(desktop).toContain('Shown in File Explorer')
-    expect(desktop).toContain('Shown in the file manager')
-    expect(desktop).toContain('无法用本地应用打开')
-    expect(desktop).toContain('Could not open with a local app')
-    expect(desktop).toContain('background:var(--dsw-alias-bg-base)')
-    expect(desktop).toContain('border:.5px solid var(--dsw-alias-border-l2)')
-    expect(desktop).toContain('border-radius:var(--dsw-radius-md)')
-    expect(desktop).toContain('height:36px')
-    expect(desktop).toContain('padding:6px 14px')
-    expect(desktop).toContain('font-size:14px')
-    expect(desktop).toContain('background:var(--dsw-alias-interactive-bg-hover)')
-    expect(desktop).toContain('[data-textpreview-open-local]:focus-visible')
-    expect(desktop).toContain('align-items:center')
-    expect(desktop).toContain('[data-textpreview-open-local-sizer] { visibility:hidden; }')
-    expect(desktop).toContain('[data-textpreview-open-local]:disabled { cursor:default; }')
-    expect(desktop).toContain('color:var(--dsw-alias-state-error-primary)')
-  })
-
-  it('reveals archives, opens other files in the default app, and reports failures', async () => {
-    const copy = {
-      zh: {
-        label: '用本地应用打开',
-        pending: '正在打开…',
-        revealedDarwin: '已在访达中显示',
-        revealedWindows: '已在文件资源管理器中显示',
-        revealedOther: '已在文件管理器中显示',
-        failed: '无法用本地应用打开'
-      },
-      en: {
-        label: 'Open with local app',
-        pending: 'Opening…',
-        revealedDarwin: 'Shown in Finder',
-        revealedWindows: 'Shown in File Explorer',
-        revealedOther: 'Shown in the file manager',
-        failed: 'Could not open with a local app'
-      }
-    }
-    const opened = vi.fn(async (request: { path: string; action?: string }) => {
-      if (request.path.endsWith('missing.zip')) return { ok: false, error: { message: 'Path does not exist: missing.zip' } }
-      if (request.path.endsWith('denied.pptx')) return Promise.reject(new Error('permission denied'))
-      if (request.path.endsWith('blank.zip')) return { ok: false, error: { message: '   ' } }
-      return { ok: true, value: { opened: true } }
-    })
-    const mounted = await mountLocalOpen({
-      absolutePath: '/workspace/notes.zip',
-      openWorkspacePath: opened,
-      copy
-    })
-
-    expect(mounted.label()).toBe('用本地应用打开')
-
-    const zipButton = mounted.button()
-    expect(zipButton?.props.disabled).toBe(false)
-    mounted.click()
-    expect(opened).toHaveBeenCalledWith({ path: '/workspace/notes.zip', action: 'reveal' })
-    expect(mounted.button()?.props.disabled).toBe(true)
-    expect(mounted.label()).toBe('正在打开…')
-    expect(mounted.sizer()).toBe('用本地应用打开')
-    await flushMicrotasks()
-    expect(mounted.button()?.props.disabled).toBe(false)
-    expect(mounted.label()).toBe('用本地应用打开')
-    expect(mounted.feedback()?.props.children).toContain('已在访达中显示')
-    expect(mounted.feedback()?.props.role).toBe('status')
-    mounted.runTimers()
-    expect(mounted.feedback()).toBeUndefined()
-
-    mounted.setPath('/workspace/notes.tar.gz')
-    mounted.click()
-    await flushMicrotasks()
-    expect(opened).toHaveBeenCalledWith({ path: '/workspace/notes.tar.gz', action: 'reveal' })
-
-    mounted.setPath('/workspace/Deck.PPTX')
-    mounted.click()
-    await flushMicrotasks()
-    expect(opened).toHaveBeenLastCalledWith({ path: '/workspace/Deck.PPTX' })
-    expect(opened.mock.lastCall?.[0]).not.toHaveProperty('action')
-    expect(mounted.feedback()).toBeUndefined()
-    expect(mounted.label()).toBe('用本地应用打开')
-
-    mounted.setPath('/workspace/missing.zip')
-    mounted.click()
-    await flushMicrotasks()
-    expect(mounted.feedback()?.props['data-kind']).toBe('error')
-    expect(mounted.feedback()?.props.role).toBe('alert')
-    expect(mounted.feedback()?.props.children).toContain('Path does not exist: missing.zip')
-
-    mounted.setPath('/workspace/denied.pptx')
-    mounted.click()
-    await flushMicrotasks()
-    expect(mounted.feedback()?.props.children).toContain('permission denied')
-
-    mounted.setPath('/workspace/blank.zip')
-    mounted.click()
-    await flushMicrotasks()
-    expect(mounted.feedback()?.props.children).toContain('无法用本地应用打开')
-
-    let finishLate: ((result: { ok: boolean; error: { message: string } }) => void) | undefined
-    mounted.setPath('/workspace/late.zip')
-    opened.mockImplementationOnce(() => new Promise((resolve) => { finishLate = resolve }))
-    mounted.click()
-    mounted.unmount()
-    finishLate?.({ ok: false, error: { message: 'late failure' } })
-    await flushMicrotasks()
-    expect(mounted.feedback()?.props.children ?? []).not.toContain('late failure')
-    mounted.dispose()
+    expect(preview).toContain('renderSlot(`sidebar.right.tab.document.unpreviewable`,fileOwner)')
+    expect(openInApp).toContain('sidebar.right.tab.document.unpreviewable')
+    expect(openInApp).toContain('OpenPathEmptyAction')
+    expect(openInApp).toContain('open-in-app.toast')
+    expect(desktop).not.toContain("ctx.slots.inject('sidebar.right.tab.document.unpreviewable'")
+    expect(desktop).not.toContain('desktop-open-local')
+    expect(desktop).not.toContain('OpenUnpreviewableFile')
   })
 })
-
-interface PreviewNode {
-  type: unknown
-  props: Record<string, unknown> & { children: unknown[] }
-}
-
-function findPreviewNodes(
-  node: unknown,
-  predicate: (node: PreviewNode) => boolean,
-  found: PreviewNode[] = []
-): PreviewNode[] {
-  if (!node || typeof node !== 'object') return found
-  const element = node as PreviewNode
-  if (typeof element.type === 'string' && element.props && predicate(element)) found.push(element)
-  const children = element.props?.children
-  if (Array.isArray(children)) {
-    for (const child of children) findPreviewNodes(child, predicate, found)
-  }
-  return found
-}
-
-async function flushMicrotasks(): Promise<void> {
-  await Promise.resolve()
-  await Promise.resolve()
-  await Promise.resolve()
-  await Promise.resolve()
-}
-
-function markedText(node: PreviewNode | undefined, marker: string): unknown {
-  const children = node?.props.children
-  if (!Array.isArray(children)) return undefined
-  const match = children.find((child) => {
-    return !!child && typeof child === 'object' && (child as PreviewNode).props[marker] === true
-  }) as PreviewNode | undefined
-  const text = match?.props.children
-  return Array.isArray(text) ? text[0] : text
-}
-
-async function mountLocalOpen(initial: {
-  absolutePath: string
-  openWorkspacePath: (request: { path: string; action?: string }) => Promise<unknown>
-  copy: { zh: Record<string, string>; en: Record<string, string> }
-}) {
-  const source = await readFile(
-    path.join(projectRoot, 'packages', 'dsh-desktop-client-ui', 'client.js'),
-    'utf8'
-  )
-  let definition: {
-    factory: (require: (id: string) => unknown) => {
-      apply: (ctx: unknown) => void
-    }
-  } | undefined
-  const timers = new Map<number, () => void>()
-  let timerId = 0
-  vm.runInNewContext(source, {
-    window: {
-      __ModuleLoader__: {
-        load: (value: typeof definition) => {
-          definition = value
-        }
-      },
-      setTimeout: (callback: () => void) => {
-        timerId += 1
-        timers.set(timerId, callback)
-        return timerId
-      },
-      clearTimeout: (id: number) => {
-        timers.delete(id)
-      }
-    },
-    document: {
-      documentElement: { lang: 'zh-CN', dataset: { platform: 'darwin' } },
-      getElementById: () => null,
-      createElement: () => ({ id: '', textContent: '', dataset: {}, remove() {} }),
-      head: { appendChild() {} }
-    }
-  })
-
-  const hook = {
-    states: [] as unknown[],
-    cursor: 0,
-    effects: [] as Array<{ deps?: readonly unknown[]; cleanup?: () => void } | undefined>,
-    effectCursor: 0,
-    pending: [] as Array<() => void>
-  }
-  let view: PreviewNode | undefined
-  let activeLocale: 'zh' | 'en' = 'zh'
-  let localeSnapshot: { active: 'zh' | 'en'; revision: number } = { active: activeLocale, revision: 0 }
-  const localeListeners = new Set<() => void>()
-  const translate = (key: string) => initial.copy[activeLocale][key] ?? key
-  let currentProps: Record<string, unknown> = {
-    absolutePath: initial.absolutePath,
-    openWorkspacePath: initial.openWorkspacePath,
-    t: translate,
-    subscribeLocale: (listener: () => void) => {
-      localeListeners.add(listener)
-      return () => {
-        localeListeners.delete(listener)
-      }
-    },
-    getLocaleSnapshot: () => localeSnapshot
-  }
-  let component: (props: Record<string, unknown>) => PreviewNode = () => {
-    throw new Error('Local open component is not registered')
-  }
-  let rendering = false
-
-  function rerender(): void {
-    hook.cursor = 0
-    hook.effectCursor = 0
-    hook.pending = []
-    rendering = true
-    view = component(currentProps)
-    rendering = false
-    const runs = hook.pending.splice(0)
-    for (const run of runs) run()
-  }
-
-  const React = {
-    Fragment: Symbol.for('react.fragment'),
-    createElement(type: unknown, props: Record<string, unknown> | null, ...children: unknown[]) {
-      return { type, props: { ...(props ?? {}), children } }
-    },
-    useState(initialState: unknown) {
-      const index = hook.cursor++
-      if (hook.states.length <= index) {
-        hook.states.push(typeof initialState === 'function' ? (initialState as () => unknown)() : initialState)
-      }
-      const setState = (value: unknown) => {
-        const next = typeof value === 'function'
-          ? (value as (previous: unknown) => unknown)(hook.states[index])
-          : value
-        if (Object.is(next, hook.states[index])) return
-        hook.states[index] = next
-        if (!rendering) rerender()
-      }
-      return [hook.states[index], setState] as const
-    },
-    useRef(initialValue: unknown) {
-      const index = hook.cursor++
-      if (hook.states.length <= index) hook.states.push({ current: initialValue })
-      return hook.states[index] as { current: unknown }
-    },
-    useSyncExternalStore(subscribe: (listener: () => void) => () => void, getSnapshot: () => unknown) {
-      const index = hook.cursor++
-      if (hook.states.length <= index) {
-        hook.states.push(getSnapshot())
-        const stateIndex = index
-        subscribe(() => {
-          const next = getSnapshot()
-          if (Object.is(next, hook.states[stateIndex])) return
-          hook.states[stateIndex] = next
-          if (!rendering) rerender()
-        })
-      }
-      return hook.states[index]
-    },
-    useEffect(effect: () => void | (() => void), deps?: readonly unknown[]) {
-      const index = hook.effectCursor++
-      const previous = hook.effects[index]
-      const changed = !previous
-        || deps === undefined
-        || (previous.deps?.length ?? -1) !== (deps?.length ?? -1)
-        || (deps?.some((dep, depIndex) => !Object.is(dep, previous.deps?.[depIndex])) ?? false)
-      if (!changed) return
-      hook.pending.push(() => {
-        previous?.cleanup?.()
-        const cleanup = effect()
-        hook.effects[index] = {
-          deps,
-          cleanup: typeof cleanup === 'function' ? cleanup : undefined
-        }
-      })
-    }
-  }
-
-  const plugin = definition!.factory((id) => {
-    if (id === 'react') return React
-    if (id === '@deepseek-ai/dsh-client-ui-primitives') return { MenuItemButton() { return null } }
-    throw new Error(`Unexpected client dependency: ${id}`)
-  })
-  const disposers: Array<() => void> = []
-  const registrations: Array<{
-    config: { id?: string; inject?: () => Record<string, unknown> }
-    component: (props: Record<string, unknown>) => PreviewNode
-  }> = []
-  plugin.apply({
-    slots: {
-      inject: (_name: string, callback: () => unknown) => callback(),
-      register: (
-        config: (typeof registrations)[number]['config'],
-        registered: (typeof registrations)[number]['component']
-      ) => {
-        registrations.push({ config, component: registered })
-        return () => undefined
-      }
-    },
-    locale: {
-      register: () => () => undefined,
-      bind: () => translate,
-      subscribe: (listener: () => void) => {
-        localeListeners.add(listener)
-        return () => {
-          localeListeners.delete(listener)
-        }
-      },
-      getSnapshot: () => localeSnapshot
-    },
-    effect: (setup: () => (() => void) | undefined) => {
-      const dispose = setup()
-      if (dispose) disposers.push(dispose)
-    },
-    remote: {
-      session: {
-        openWorkspacePath: initial.openWorkspacePath
-      }
-    },
-    get: () => undefined
-  })
-  const registration = registrations.find(({ config }) => config.id === 'desktop-open-local')
-  if (!registration) throw new Error('desktop-open-local slot is missing')
-  component = registration.component
-  rerender()
-
-  return {
-    wrap: () => findPreviewNodes(view, (node) => node.props['data-textpreview-open-local-wrap'] === true)[0],
-    button: () => findPreviewNodes(view, (node) => node.props['data-textpreview-open-local'] === true)[0],
-    label: () => markedText(
-      findPreviewNodes(view, (node) => node.props['data-textpreview-open-local'] === true)[0],
-      'data-textpreview-open-local-label'
-    ),
-    sizer: () => markedText(
-      findPreviewNodes(view, (node) => node.props['data-textpreview-open-local'] === true)[0],
-      'data-textpreview-open-local-sizer'
-    ),
-    selectLocale: (next: 'zh' | 'en') => {
-      activeLocale = next
-      localeSnapshot = { active: next, revision: localeSnapshot.revision + 1 }
-      for (const listener of localeListeners) listener()
-    },
-    feedback: () => findPreviewNodes(
-      view,
-      (node) => node.props['data-textpreview-open-local-feedback'] === true
-    )[0],
-    click: () => {
-      const onClick = view?.props
-        ? findPreviewNodes(view, (node) => node.props['data-textpreview-open-local'] === true)[0]?.props.onClick
-        : undefined
-      if (typeof onClick !== 'function') throw new Error('local open button has no click handler')
-      onClick()
-    },
-    setPath: (absolutePath: string) => {
-      currentProps = { ...currentProps, absolutePath }
-      rerender()
-    },
-    runTimers: () => {
-      const callbacks = [...timers.values()]
-      timers.clear()
-      for (const callback of callbacks) callback()
-    },
-    unmount: () => {
-      for (const effect of hook.effects) effect?.cleanup?.()
-      hook.effects = []
-    },
-    dispose: () => {
-      for (const dispose of disposers) dispose()
-    }
-  }
-}

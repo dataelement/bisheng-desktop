@@ -14,11 +14,13 @@ import { SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection'
 import { AgentRegistry } from '@deepseek-ai/dsh-agent'
 import { AgentLoop } from '@deepseek-ai/dsh-agent-loop'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { ToolRuntime } from '@deepseek-ai/dsh-tools'
 import { LlmRuntime } from '@deepseek-ai/dsh-llm'
 import { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import { FileUploads } from '@deepseek-ai/dsh-client-file-upload'
 import { SessionController } from '@deepseek-ai/dsh-api-session-controller'
+import { TypertGatewayService } from '@deepseek-ai/dsh-api-gateway'
 import { TypertRegistry } from '@deepseek-ai/dsh-typert-registry'
 import * as React from 'react'
 import * as jsx from 'react/jsx-runtime'
@@ -131,7 +133,7 @@ async function createFixture({ queueProtocol } = {}) {
   await context.plugin(Loader, { baseUrl: pathToFileURL(join(home, 'profile') + '/').href })
   await context.plugin(connectionPlugin)
   if (queueProtocol) {
-    for (const plugin of [SessionStore, SessionProjectionRegistry, AgentRegistry, SystemPrompt, ToolRuntime, LlmRuntime, AgentLoop]) {
+    for (const plugin of [SessionStore, SessionProjectionRegistry, AgentRegistry, SystemPrompt, ToolRuntime, NativeToolExecutor, LlmRuntime, AgentLoop]) {
       await context.plugin(plugin)
     }
     context.on('session/event', (_session, event) => { if (event.type === 'turn/end') turnEnds.push(event.data) })
@@ -158,6 +160,7 @@ async function createFixture({ queueProtocol } = {}) {
     context.provide('remoteAccess', {})
     context.provide('sessionQuery', {})
     await context.plugin(TypertRegistry)
+    await context.plugin(TypertGatewayService)
     context.provide('workspaceRegistry', { archivedSessionIds: [] })
     await context.plugin(SessionController, { nativeOpen: false })
     context.connection.fetch.register({
@@ -196,7 +199,10 @@ async function createFixture({ queueProtocol } = {}) {
         || route.kind === 'exact' && request.url === route.path)
       if (route) await route.handler(request, response)
       else { response.writeHead(404); response.end() }
-    } catch { response.writeHead(500); response.end('Synthetic fixture request failed') }
+    } catch (error) {
+      console.error('Synthetic fixture request failed', error)
+      response.writeHead(500); response.end('Synthetic fixture request failed')
+    }
   })
   const origin = await listen(host)
   const login = await fetch(context.connection.authenticatedUrl(origin + '/'), { redirect: 'manual' })
@@ -278,20 +284,8 @@ function safeFirstResponse(protocol) {
     JSON.stringify({ ...event, sequence_number }) + '\n\n').join('')
 }
 
-// Pin the server-side fallback, not the independent renderer locale exercised below.
-// Node's navigator otherwise inherits the machine locale and invalid-cookie tests
-// can accidentally reuse the older Chinese driver locale without detecting it.
-beforeEach(async () => {
-  vi.stubGlobal('navigator', { language: 'en' })
-  fixture = await createFixture()
-})
-afterEach(async () => {
-  try { await fixture?.dispose() } finally {
-    fixture = undefined
-    vi.unstubAllEnvs()
-    vi.unstubAllGlobals()
-  }
-})
+beforeEach(async () => { fixture = await createFixture() })
+afterEach(async () => { try { await fixture?.dispose() } finally { fixture = undefined; vi.unstubAllEnvs() } })
 
 function expected(code, language) { return CONTENT_SAFETY_ERROR_COPY[code][language] }
 function encoded(messages, owner = '16e16958-4444-4444-8444-444444444444') { return encodeURIComponent(JSON.stringify({ owner, messages })) }

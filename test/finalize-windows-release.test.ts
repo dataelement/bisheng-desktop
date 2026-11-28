@@ -9,7 +9,7 @@ describe('signed Windows release finalizer', () => {
   it('rebuilds the blockmap and updater metadata after signing', async () => {
     const releaseDir = await mkdtemp(path.join(tmpdir(), 'dsh-windows-release-'))
     try {
-      const installerName = 'bisheng-windows-x64-setup.exe'
+      const installerName = 'dsh-desktop-windows-x64-setup.exe'
       const installer = path.join(releaseDir, installerName)
       const content = Buffer.from('signed Windows installer fixture')
       await writeFile(installer, content)
@@ -18,7 +18,7 @@ describe('signed Windows release finalizer', () => {
 
       const result = spawnSync(
         process.execPath,
-        [path.join(process.cwd(), 'scripts', 'finalize-windows-release.mjs'), releaseDir, '1.2.3'],
+        [path.join(process.cwd(), 'scripts', 'release', 'finalize-windows-release.mjs'), releaseDir, '1.2.3'],
         { encoding: 'utf8' }
       )
       expect(result.status, result.stderr).toBe(0)

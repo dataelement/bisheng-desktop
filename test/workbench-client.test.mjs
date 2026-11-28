@@ -20,8 +20,8 @@ const sessionStorage = {
   removeItem: key => sessionValues.delete(key),
   clear: () => sessionValues.clear()
 }
-// These behavior tests use an explicit enabled preference. Fresh-install and
-// explicit opt-out behavior is covered separately.
+// The Workbench feature is off by default; these behavior tests run as a user
+// who switched it on. The default itself is covered by its own test.
 const WORKBENCH_ENABLED = 'dsh-workbench-enabled'
 const enabledStorage = {
   getItem: key => key === WORKBENCH_ENABLED ? 'true' : null,
@@ -32,11 +32,11 @@ const clientWindow = { sessionStorage, localStorage: {
   getItem: key => sessionValues.has(key) ? sessionValues.get(key) : key === WORKBENCH_ENABLED ? 'true' : null,
   setItem: (key, value) => sessionValues.set(key, String(value)),
   removeItem: key => sessionValues.delete(key)
-}, addEventListener() {}, removeEventListener() {}, __ModuleLoader__: { load({ factory }) {
+}, __ModuleLoader__: { load({ factory }) {
   const client = factory((name) => {
     if (name === 'react') return { createElement() {}, Component: class {} }
     if (name === '@deepseek-ai/cordis') return { Service }
-    if (name === '@deepseek-ai/dsh-client-ui-primitives') return { Switch: () => null }
+    if (name === '@deepseek-ai/dsh-client-ui-primitives') return { Button: ({ children, icon, variant, ...props }) => React.createElement('button', props, icon, children), IconDownloadOutlineRegular: () => null, Menu: ({ anchor }) => anchor, Switch: () => null }
     throw new Error(`Unexpected module ${name}`)
   })
   apply = client.apply
@@ -71,7 +71,7 @@ function marketCard(service, tab = 'market') {
     useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot()
   }
   vm.runInNewContext(code, { window: { sessionStorage, localStorage: enabledStorage, __ModuleLoader__: { load({ factory }) {
-    renderMarket = factory(name => name === 'react' ? testReact : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null, Toast: function Toast() {} }).Market
+    renderMarket = factory(name => name === 'react' ? testReact : name === '@deepseek-ai/cordis' ? { Service } : { Button: ({ children, icon, variant, ...props }) => React.createElement('button', props, icon, children), IconDownloadOutlineRegular: () => null, Menu: ({ anchor }) => anchor, Switch: () => null, Toast: function Toast() {} }).Market
   } } }, document, setTimeout, clearTimeout, AbortController })
   const tree = renderMarket({ service })
   const find = (node, predicate) => {
@@ -94,7 +94,7 @@ function cardButtons(card) {
   return buttons.map(button => button.props.children.flat().filter(child => typeof child === 'string').join(''))
 }
 
-function interactiveMarket(service, tab = 'market', clipboard, enterpriseSnapshot) {
+function interactiveMarket(service, tab = 'market', clipboard) {
   let renderMarket
   let stateIndex = 0
   const state = []
@@ -111,8 +111,8 @@ function interactiveMarket(service, tab = 'market', clipboard, enterpriseSnapsho
       useRef: () => ({ current: null }),
     useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot()
   }
-  vm.runInNewContext(code, { window: { sessionStorage, localStorage: enabledStorage, navigator: clipboard && { clipboard }, ...(enterpriseSnapshot ? { __dshEnterpriseWorkbenchSnapshot: enterpriseSnapshot } : {}), __ModuleLoader__: { load({ factory }) {
-    renderMarket = factory(name => name === 'react' ? testReact : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null, Toast: function Toast() {} }).Market
+  vm.runInNewContext(code, { window: { sessionStorage, localStorage: enabledStorage, navigator: clipboard && { clipboard }, __ModuleLoader__: { load({ factory }) {
+    renderMarket = factory(name => name === 'react' ? testReact : name === '@deepseek-ai/cordis' ? { Service } : { Button: ({ children, icon, variant, ...props }) => React.createElement('button', props, icon, children), IconDownloadOutlineRegular: () => null, Menu: ({ anchor }) => anchor, Switch: () => null, Toast: function Toast() {} }).Market
   } } }, document, setTimeout, clearTimeout, AbortController })
   const find = (node, predicate) => {
     if (Array.isArray(node)) return node.flatMap(item => find(item, predicate))
@@ -127,10 +127,11 @@ function interactiveMarket(service, tab = 'market', clipboard, enterpriseSnapsho
   }
 }
 
-function sidebarSwitcher({ pinned = [], active = null, title = '工作台', workbenchId = 'writer', enterprise = { known: false, connected: false } } = {}) {
+function sidebarSwitcher({ pinned = [], active = null, title = '工作台', workbenchId = 'writer' } = {}) {
   let renderSidebar
   let stateIndex = 0
   const state = []
+  const layoutEffects = []
   const react = {
     createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
     Component: class {},
@@ -140,14 +141,16 @@ function sidebarSwitcher({ pinned = [], active = null, title = '工作台', work
       return [state[index], value => { state[index] = typeof value === 'function' ? value(state[index]) : value }]
     },
     useRef: initial => ({ current: initial }),
-    useLayoutEffect: () => {},
-      useRef: () => ({ current: null }),
+    useLayoutEffect: effect => { layoutEffects.push(effect) },
     useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot()
   }
-  const sandbox = { window: { sessionStorage, __dshEnterpriseWorkbenchSnapshot: enterprise, localStorage: clientWindow.localStorage, __ModuleLoader__: { load({ factory }) {
-    factory(name => name === 'react' ? react : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null })
+  const sandbox = { window: { sessionStorage, localStorage: clientWindow.localStorage, __ModuleLoader__: { load({ factory }) {
+    factory(name => name === 'react' ? react : name === '@deepseek-ai/cordis' ? { Service } : { Button: ({ children, icon, variant, ...props }) => React.createElement('button', props, icon, children), IconDownloadOutlineRegular: () => null, Menu: ({ anchor }) => anchor, Switch: () => null })
   } } }, document, setTimeout, clearTimeout, AbortController }
   vm.runInNewContext(code.replace('    function MetaItem(', '    globalThis.__testSidebarSwitcher = WorkbenchSidebarSwitcher\n    function MetaItem('), sandbox)
+  sandbox.window.innerHeight = 800
+  sandbox.window.addEventListener = vi.fn()
+  sandbox.window.removeEventListener = vi.fn()
   renderSidebar = sandbox.__testSidebarSwitcher
   const entry = { id: workbenchId, title, icon: '✦' }
   const service = {
@@ -166,7 +169,7 @@ function sidebarSwitcher({ pinned = [], active = null, title = '工作台', work
     if (!node || typeof node !== 'object') return []
     return [...(predicate(node) ? [node] : []), ...find(node.props?.children, predicate)]
   }
-  return { render, find, service, selectPanel: id => { activePanelId = id } }
+  return { render, find, service, window: sandbox.window, runMenuLayout: () => layoutEffects.at(-1)(), selectPanel: id => { activePanelId = id } }
 }
 
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); sidebarWide = false; sidebarCollapsed = false; sessionStorage.clear() })
@@ -212,7 +215,6 @@ async function fixture(initial = emptyState()) {
   let service
   const ctx = {
     fiber: { name: 'fixture', entry: { options: { name: 'fixture' } } },
-    locale: { bind: () => key => ({ title: '从你的想法开始', description: '新会话将预填在线规范网址。', starter: '我想做一个【工作台名称或用途】，主要给【谁使用】。', instructionBody: '请访问在线开发规范：{guideUrl}，先梳理需求并判断本地、云端或混合部署。', create: '创建工作台', creating: '正在创建…', copy: '复制指令给其他 AI 助手', remove: '卸载', removeHelp: '仅卸载这台客户端中的工作台入口，云端应用和数据会保留。', cloud: '云端', add: '加载到工作台', open: '打开工作台' })[key] || key },
     sessions: {
       list: { getSnapshot: () => list },
       refresh: vi.fn(async () => {}),
@@ -278,222 +280,102 @@ const boundState = () => ({ ...emptyState(), added: ['writer', 'research'],
   recentSessions: { writer: 'writer-1', research: 'research-1' }, notes: { writer: 'Retained business draft' } })
 
 describe('desktop workbench client navigation', () => {
-  it.each([
-    { language: 'zh', connected: false, policy: false, copy: 'open' },
-    { language: 'zh', connected: true, policy: true, copy: 'open' },
-    { language: 'zh', connected: true, policy: false, copy: 'closed' },
-    { language: 'en', connected: false, policy: false, copy: 'open' },
-    { language: 'en', connected: true, policy: true, copy: 'open' },
-    { language: 'en', connected: true, policy: false, copy: 'closed' }
-  ])('uses the existing settings copy for $language connected=$connected policy=$policy', async ({ language, connected, policy, copy }) => {
-    const expected = {
-      zh: {
-        open: '列表来自网络工作台市场，也可以安装本机开发的工作台。企业上传的工作台在「来自企业」中安装。',
-        closed: '当前企业未开放网络工作台市场。工作台市场展示本企业上传的工作台，可以直接安装；已安装里保留本机已安装和本地开发的工作台。'
-      },
-      en: {
-        open: 'The list comes from the network workbench market. Locally developed workbenches can also be installed. Enterprise uploads can be installed from From enterprise.',
-        closed: 'This enterprise has not opened the network workbench market. The workbench market shows workbenches uploaded by your enterprise, and they can be installed directly. Installed keeps local and previously installed workbenches.'
-      }
-    }
-    let client
-    const testReact = {
-      ...React,
-      useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot()
-    }
-    const testWindow = {
-      sessionStorage, localStorage: enabledStorage,
-      __dshEnterpriseWorkbenchSnapshot: { known: true, connected, allowThirdPartyWorkbenches: policy },
-      __ModuleLoader__: { load({ factory }) {
-        client = factory(name => name === 'react' ? testReact : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null })
-      } }
-    }
-    // Expose the private settings component only inside this test's module VM.
-    vm.runInNewContext(code.replace('return { apply, inject:', 'return { WorkbenchSettingsTab, apply, inject:'), {
-      window: testWindow, document, setTimeout, clearTimeout, AbortController
-    })
-    const { ctx, service } = await fixture()
-    ctx.locale = { bind: () => key => key, getSnapshot: () => ({ active: language }) }
-    ctx.effect = () => {}
-    ctx.slots = { inject() {} }
-    try {
-      client.apply(ctx)
-      const markup = renderToStaticMarkup(React.createElement(client.WorkbenchSettingsTab))
-      expect(markup).toContain(`<p class="dshWbMuted">${expected[language][copy]}</p>`)
-    } finally {
-      service.dispose()
-    }
-  })
-
-  it('waits for tenant policy before public reads and applies close, reopen, and logout transitions', async () => {
-    const original = await fixture()
-    original.service.dispose()
-    const { ctx } = original
-    let service, applyLocal
-    let account = {
-      connected: true, connectionKey: 'a'.repeat(16), allowThirdPartyWorkbenches: false,
-      sessionExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString()
-    }
-    const initialAccount = deferred()
-    const fetchImpl = vi.fn(async (url, options) => {
-      if (url === '/api/enterprise.state') {
-        await initialAccount.promise
-        return Response.json(account)
-      }
-      if (String(url).startsWith('/api/enterprise.workbenches/catalog')) return Response.json({ status: 'empty', data: [] })
-      return original.request(url, options)
-    })
-    const listeners = new Map()
-    const testWindow = {
-      localStorage: enabledStorage, sessionStorage,
-      addEventListener(type, listener) {
-        if (!listeners.has(type)) listeners.set(type, new Set())
-        listeners.get(type).add(listener)
-      },
-      removeEventListener(type, listener) { listeners.get(type)?.delete(listener) },
-      __ModuleLoader__: { load({ factory }) {
-        applyLocal = factory(name => name === 'react' ? { createElement() {}, Component: class {} } : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null }).apply
-      } }
-    }
-    vm.runInNewContext(code, { window: testWindow, document, fetch: fetchImpl, setTimeout, clearTimeout, AbortController })
-    const cleanups = []
-    ctx.reflect = { provide: (_name, value) => { service = value } }
-    ctx.slots = { inject() {}, register() {} }
-    ctx.effect = (callback, label) => {
-      if (!['workbenches: service', 'workbenches: enterprise capability', 'workbenches: lifecycle'].includes(label)) return
-      const cleanup = callback()
-      if (typeof cleanup === 'function') cleanups.push(cleanup)
-    }
-    const syncAccount = () => { for (const listener of listeners.get('focus') || []) listener() }
-    const publicReads = () => fetchImpl.mock.calls.filter(([url]) => String(url).startsWith('/api/desktop-workbenches/catalog'))
-    try {
-      applyLocal(ctx)
-      await vi.waitFor(() => expect(service.ready).toBe(true))
-      expect(publicReads()).toHaveLength(0)
-      initialAccount.resolve()
-      await vi.waitFor(() => expect(service.enterpriseCatalogStatus).toBe('empty'))
-      expect(service.networkMarketAllowed).toBe(false)
-      await service.load()
-      await service.refreshCatalog()
-      expect(publicReads()).toHaveLength(0)
-
-      account = { ...account, allowThirdPartyWorkbenches: true }
-      syncAccount()
-      await vi.waitFor(() => expect(service.remoteCatalog).toHaveLength(2))
-      expect(service.networkMarketAllowed).toBe(true)
-      expect(publicReads().length).toBeGreaterThan(0)
-      service.state.favorites = ['writer']
-      const catalog = service.remoteCatalog
-      const readsBeforeLogout = publicReads().length
-      account = { connected: false }
-      syncAccount()
-      await vi.waitFor(() => expect(service.enterpriseAccountKey).toBe(''))
-      expect(service.networkMarketAllowed).toBe(true)
-      expect(service.remoteCatalog).toBe(catalog)
-      expect(service.state.favorites).toEqual(['writer'])
-      expect(publicReads()).toHaveLength(readsBeforeLogout)
-
-      account = {
-        connected: true, connectionKey: 'a'.repeat(16), allowThirdPartyWorkbenches: false,
-        sessionExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString()
-      }
-      syncAccount()
-      await vi.waitFor(() => expect(service.networkMarketAllowed).toBe(false))
-      expect(service.remoteCatalog).toEqual([])
-      expect(service.state.favorites).toEqual(['writer'])
-      await service.refreshCatalog()
-      expect(publicReads()).toHaveLength(readsBeforeLogout)
-    } finally {
-      initialAccount.resolve()
-      for (const cleanup of cleanups.reverse()) cleanup()
-    }
-  })
-
-  it.each([false, true])('discards stale public refresh outcomes after policy closes and reopens (fails=%s)', async fails => {
+  it('composes source tabs with one replacement favorites tab and restores defaults on disposal', async () => {
     const { service } = await fixture()
-    const stale = deferred()
-    const fresh = deferred()
-    service.readCatalog = vi.fn().mockReturnValueOnce(stale.promise).mockReturnValueOnce(fresh.promise)
-    const oldRefresh = service.refreshCatalog()
-    service.closePublicMarket()
-    expect(service.remoteCatalog).toEqual([])
-    service.networkMarketAllowed = true
-    const newRefresh = service.refreshCatalog()
-    if (fails) stale.resolve(Promise.reject(new Error('Old catalog failed')))
-    else stale.resolve({ entries: [{ id: 'old/public' }], categories: [], stale: false })
-    await oldRefresh
-    expect(service.remoteCatalog).toEqual([])
-    expect(service.catalogError).toBe('')
-    expect(service.catalogRefresh).toBe(newRefresh)
-    expect(service.catalogRefreshing).toBe(true)
-    fresh.resolve({ entries: [], categories: [], stale: false })
-    await newRefresh
-    expect(service.readCatalog).toHaveBeenCalledTimes(2)
-    expect(service.catalogRefreshing).toBe(false)
-    service.dispose()
+    const render = vi.fn(() => 'Combined favorites')
+    const disposeA = service.registerMarketCollection({ id: 'source-a', label: 'Source A', order: -20, render: () => null })
+    const disposeB = service.registerMarketCollection({ id: 'source-b', label: 'Source B', order: -10, render: () => null })
+    expect(() => service.registerMarketCollection({ id: 'favorites', label: 'Favorites', render })).toThrow('reserved')
+    const disposeFavorites = service.registerMarketCollection({ id: 'favorites', replace: true, label: 'Combined favorites', render })
+    expect(service.getMarketTabs().map(item => item.id)).toEqual(['source-a', 'source-b', 'market', 'favorites', 'mine'])
+    const ui = interactiveMarket(service, 'favorites')
+    const tree = ui.render()
+    expect(ui.find(tree, node => node.props?.role === 'tab')).toHaveLength(5)
+    expect(render).toHaveBeenCalledWith({ service, renderDefault: expect.any(Function), search: '' })
+    disposeFavorites(); disposeA(); disposeB()
+    expect(service.getMarketTabs().map(item => item.id)).toEqual(['market', 'favorites', 'mine'])
+    expect(service.getMarketTabs().find(item => item.id === 'favorites').render).toBeUndefined()
   })
 
-  it('renders an installed cloud shortcut with the shared card layout and shortcut-only actions', async () => {
+  it('composes default cards inside a custom collection and explicitly controls host filters', async () => {
     const { service } = await fixture()
-    const item = { id: 'b'.repeat(32), name: 'Team board', description: 'Shared enterprise records', version_id: 'c'.repeat(32) }
-    service.syncCloudIdentity('0123456789abcdef')
-    await service.addCloud(item, '0123456789abcdef')
-    const id = `cloud:0123456789abcdef:${item.id}`
     const ui = interactiveMarket(service, 'mine')
-    const component = ui.find(ui.render(), node => node.type?.name === 'CloudInstalledCard')[0]
-    const card = component.type(component.props)
-    expect(card.props.className).toBe('dshWbCard')
-    expect(ui.find(card, node => node.type?.name === 'Preview')).toHaveLength(1)
-    expect(ui.find(card, node => node.props?.className === 'dshWbCardBody')).toHaveLength(1)
-    expect(ui.find(card, node => node.props?.className === 'dshWbCardTitle')).toHaveLength(1)
-    expect(ui.find(card, node => node.props?.className === 'dshWbCardControls')).toHaveLength(1)
-    expect(ui.find(card, node => node.props?.className === 'dshWbMediaOpen')).toHaveLength(1)
-    expect(ui.find(card, node => node.props?.className === 'dshWbAuthorRow')).toHaveLength(1)
-    expect(ui.find(card, node => node.props?.className === 'dshWbCardVersionActions')).toHaveLength(1)
-    expect(ui.find(card, node => node.props?.role === 'switch')).toHaveLength(0)
-    service.open = vi.fn(async () => {})
-    service.remove = vi.fn(async () => {})
-    const open = ui.find(card, node => node.type?.name === 'Button' && node.props.primary)[0]
-    const remove = ui.find(card, node => node.type === 'button' && node.props.className === 'dshWbUninstall')[0]
-    expect(remove.props.children).toEqual(['卸载'])
-    expect(remove.props.title).toContain('云端应用和数据会保留')
-    open.props.onClick()
-    remove.props.onClick()
-    expect(service.open).toHaveBeenCalledWith(id)
-    expect(service.remove).toHaveBeenCalledWith(id)
-    service.dispose()
+    const before = ui.render()
+    const cards = ui.find(before, node => node.props?.className === 'dshWbCard').length
+    const dispose = service.registerMarketCollection({ id: 'mine', label: 'Installed', replace: true, controls: false,
+      render: ({ renderDefault }) => React.createElement(React.Fragment, null, renderDefault(), React.createElement('aside', { id: 'product-entries' }, 'Product entries')) })
+    const composed = ui.render()
+    expect(ui.find(composed, node => node.props?.id === 'product-entries')).toHaveLength(1)
+    expect(ui.find(composed, node => node.props?.className === 'dshWbCard')).toHaveLength(cards)
+    expect(ui.find(composed, node => node.props?.className === 'dshWbBrowseTools')).toHaveLength(0)
+    expect(ui.find(composed, node => node.props?.className === 'dshWbSearch')).toHaveLength(0)
+    dispose()
+    expect(ui.find(ui.render(), node => node.props?.className === 'dshWbBrowseTools')).toHaveLength(1)
+    expect(() => service.registerMarketCollection({ id: 'mine', label: 'Installed', replace: true, controls: 'hidden' })).toThrow('controls')
   })
 
-  it('loads a cloud app into native navigation and preserves metadata when removing its shortcut', async () => {
-    const { service, saved } = await fixture()
-    const item = { id: 'a'.repeat(32), name: 'Shared cloud board', description: 'Team data', version_id: 'b'.repeat(32) }
-    const connectionKey = 'c'.repeat(16)
-    const id = `cloud:${connectionKey}:${item.id}`
-    service.syncCloudIdentity(connectionKey)
-    await service.addCloud(item, connectionKey)
-    expect(service.catalog.get(id).customFrame).toBe(true)
-    expect(service.pluginFor(service.catalog.get(id))).toBe(null)
-    await service.open(id)
-    expect(saved().state.active).toBe(id)
-    expect(saved().state.added).toContain(id)
-    const sessionId = await service.ensureCloudDevelopmentSession(id, { folder: '/cloud/development' })
-    expect(service.cloudConversationId).toBe(id)
-    expect(saved().state.sessionBindings[sessionId]).toBe(id)
-    await service.open(id)
-    expect(service.cloudConversationId).toBe(null)
-    await service.open(id, sessionId)
-    expect(service.cloudConversationId).toBe(id)
-    const release = vi.fn(async () => {})
-    clientWindow.dshDesktopEnterprise = { releaseCloudWorkbench: release }
-    try { await service.remove(id) } finally { delete clientWindow.dshDesktopEnterprise }
-    expect(release).toHaveBeenCalledExactlyOnceWith(item.id, connectionKey)
-    expect(saved().state.added).not.toContain(id)
-    expect(saved().state.cloudWorkbenches[id].appId).toBe(item.id)
+  it('ignores retained search on collections without controls and restores it on return', async () => {
+    const { service } = await fixture(boundState())
+    const ui = interactiveMarket(service, 'mine')
+    const cards = tree => ui.find(tree, node => node.props?.className === 'dshWbCard').length
+    const baseline = cards(ui.render())
+    expect(baseline).toBeGreaterThan(0)
+    ui.find(ui.render(), node => node.props?.id === 'dsh-workbench-market-tab')[0].props.onClick()
+    ui.find(ui.render(), node => node.props?.type === 'search')[0].props.onChange({ target: { value: 'no-such-workbench' } })
+    const dispose = service.registerMarketCollection({ id: 'mine', label: 'Installed', replace: true, controls: false,
+      render: ({ renderDefault }) => renderDefault() })
+    ui.find(ui.render(), node => node.props?.id === 'dsh-workbench-mine-tab')[0].props.onClick()
+    expect(cards(ui.render())).toBe(baseline)
+    expect(ui.find(ui.render(), node => node.props?.type === 'search')).toHaveLength(0)
+    ui.find(ui.render(), node => node.props?.id === 'dsh-workbench-market-tab')[0].props.onClick()
+    expect(ui.find(ui.render(), node => node.props?.type === 'search')[0].props.value).toBe('no-such-workbench')
+    expect(cards(ui.render())).toBe(0)
+    dispose()
+  })
+
+  it('ignores retained category when controls are hidden and restores it on disposal', async () => {
+    const { service } = await fixture(boundState())
+    const ui = interactiveMarket(service, 'mine')
+    const cards = tree => ui.find(tree, node => node.props?.className === 'dshWbCard').length
+    const baseline = cards(ui.render())
+    expect(baseline).toBeGreaterThan(0)
+    ui.find(ui.render(), node => node.props?.['aria-label'] === '按分类筛选')[0].props.onChange({ target: { value: 'unavailable-category' } })
+    expect(cards(ui.render())).toBe(0)
+    const dispose = service.registerMarketCollection({ id: 'mine', label: 'Installed', replace: true, controls: false,
+      render: ({ renderDefault }) => renderDefault() })
+    expect(cards(ui.render())).toBe(baseline)
+    dispose()
+    expect(cards(ui.render())).toBe(0)
+    expect(ui.find(ui.render(), node => node.props?.['aria-label'] === '按分类筛选')[0].props.value).toBe('unavailable-category')
+  })
+
+  it('uses visible tab order for selection and falls back when the selected collection disappears', async () => {
+    const { service } = await fixture()
+    const disposeSource = service.registerMarketCollection({ id: 'source', label: 'Source', order: -10, render: () => null })
+    const restoreMarket = service.registerMarketCollection({ id: 'market', replace: true, label: 'Market', visible: false })
+    const ui = interactiveMarket(service, null)
+    let tabs = ui.find(ui.render(), node => node.props?.role === 'tab')
+    expect(tabs.map(item => item.props.id)).toEqual(['dsh-workbench-source-tab', 'dsh-workbench-favorites-tab', 'dsh-workbench-mine-tab'])
+    expect(tabs[0].props['aria-selected']).toBe(true)
+    disposeSource()
+    tabs = ui.find(ui.render(), node => node.props?.role === 'tab')
+    expect(tabs[0].props['aria-selected']).toBe(true)
+    expect(tabs[0].props.id).toBe('dsh-workbench-favorites-tab')
+    restoreMarket()
+    expect(service.getMarketTabs()).toHaveLength(3)
+  })
+
+  it('supports product-owned Market collection tabs with lifecycle cleanup', async () => {
+    const { service } = await fixture()
+    const render = vi.fn()
+    const dispose = service.registerMarketCollection({ id: 'enterprise', label: '企业工作台', order: 10, render })
+    expect(service.getMarketCollections()).toEqual([expect.objectContaining({ id: 'enterprise', label: '企业工作台' })])
+    dispose()
+    expect(service.getMarketCollections()).toEqual([])
   })
 
   it('declares the native plugin manager injection and keeps the market available when access fails', async () => {
     expect(clientInject).toContain('remote.pluginManager')
-    expect(clientInject).not.toContain('conversation')
     const { service, ctx } = await fixture()
     Object.defineProperty(ctx, 'remote', { configurable: true, get() { throw new Error('cannot get property "remote.pluginManager" without inject') } })
     await expect(service.refreshNative()).resolves.toBeUndefined()
@@ -664,199 +546,6 @@ describe('desktop workbench client navigation', () => {
     await service.openNative(startSession)
 
     expect(startSession).toHaveBeenCalledWith('project-2')
-  })
-
-  it('returns to the remembered native session without creating one when logout closes the workbench', async () => {
-    const { service, ctx, list } = await fixture(boundState())
-    const workspaces = ctx.workspaces.list.getSnapshot().items
-    workspaces.push({ workspaceId: 'project-2', title: 'Other project', sessionIds: ['native-2'] })
-    list.ids.push('native-2')
-    list.byId['native-2'] = { sessionId: 'native-2', displayTitle: 'Native session' }
-    selectIn(list, 'native-2')
-    service.selectionChanged()
-    await service.open('writer')
-    const startSession = vi.fn()
-    ctx.uiWorkspace.startSession = startSession
-
-    await service.returnToNativeSession()
-
-    expect(ctx.uiWorkspace.openSession).toHaveBeenLastCalledWith('native-2')
-    expect(currentOf(list)).toBe('native-2')
-    expect(service.state.active).toBeNull()
-    expect(startSession).not.toHaveBeenCalled()
-    expect(ctx.sessions.create).not.toHaveBeenCalled()
-  })
-
-  it('clears the active workbench without creating a session when the remembered native session is gone', async () => {
-    const { service, ctx, list } = await fixture(boundState())
-    ctx.workspaces.list.getSnapshot().items.push({ workspaceId: 'project-2', title: 'Other project', sessionIds: ['native-2'] })
-    list.ids.push('native-2')
-    list.byId['native-2'] = { sessionId: 'native-2', displayTitle: 'Native session' }
-    selectIn(list, 'native-2')
-    service.selectionChanged()
-    await service.open('writer')
-    delete list.byId['native-2']
-    list.ids = list.ids.filter(id => id !== 'native-2')
-    ctx.uiWorkspace.openSession.mockClear()
-    const startSession = vi.fn()
-    ctx.uiWorkspace.startSession = startSession
-
-    await expect(service.returnToNativeSession()).resolves.toBeUndefined()
-
-    expect(service.state.active).toBeNull()
-    expect(startSession).not.toHaveBeenCalled()
-    expect(ctx.sessions.create).not.toHaveBeenCalled()
-    expect(ctx.uiWorkspace.openSession).not.toHaveBeenCalled()
-  })
-
-  it('leaves the workbench when the account change event reports logout and stops binding new sessions', async () => {
-    let signedIn = true
-    let stored = { revision: 0, state: structuredClone(boundState()) }
-    const fetchImpl = vi.fn(async (url, options = {}) => {
-      const path = String(url)
-      if (path.startsWith('/api/enterprise.state')) {
-        return Response.json(signedIn ? {
-          connected: true,
-          sessionExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-          connectionKey: 'account-1',
-          allowThirdPartyWorkbenches: true
-        } : { connected: false })
-      }
-      if (path.startsWith('/api/enterprise.workbenches/catalog')) return Response.json({ status: 'empty', data: [] })
-      if (path.startsWith('/api/desktop-workbenches/catalog')) return Response.json({
-        stale: false,
-        catalog: { schemaVersion: 2, kind: 'catalog', categories: [], workbenches: [
-          { id: 'writer', owner: 'test', repository: 'writer', url: 'https://github.com/test/writer', name: 'Writer', category: 'other', description: { zh: 'Writer' }, screenshots: [], version: '1.0.0', distribution: { name: 'writer' } }
-        ] }
-      })
-      if (path.startsWith('/api/desktop-workbenches/market-installs')) return Response.json({ installs: { writer: { pluginName: 'writer', version: '1.0.0' } } })
-      if (path === '/api/desktop-workbenches/state' && options.method !== 'POST') return Response.json(stored)
-      if (options.method === 'POST') {
-        const payload = JSON.parse(options.body)
-        if (payload.revision !== stored.revision) return Response.json({ error: 'Conflict' }, { status: 409 })
-        stored = { revision: stored.revision + 1, state: structuredClone(payload.state) }
-        return Response.json(stored)
-      }
-      return Response.json({ error: 'unexpected' }, { status: 404 })
-    })
-    const listeners = new Map()
-    let nativeChanged, expiryCallback
-    const nativeUnsubscribe = vi.fn()
-    const storage = new Map([[WORKBENCH_ENABLED, 'true']])
-    const testWindow = {
-      localStorage: {
-        getItem: key => storage.has(key) ? storage.get(key) : null,
-        setItem: (key, value) => storage.set(key, String(value)),
-        removeItem: key => storage.delete(key)
-      },
-      sessionStorage,
-      dshEnterpriseChat: { subscribe: fn => { nativeChanged = fn; return nativeUnsubscribe } },
-      setInterval: vi.fn(() => 0),
-      clearInterval: () => {},
-      addEventListener(type, fn) {
-        const list = listeners.get(type) ?? []
-        list.push(fn)
-        listeners.set(type, list)
-      },
-      removeEventListener(type, fn) {
-        listeners.set(type, (listeners.get(type) ?? []).filter(item => item !== fn))
-      },
-      dispatchEvent(event) {
-        for (const fn of [...(listeners.get(event.type) ?? [])]) fn(event)
-      }
-    }
-    let applyLocal
-    vm.runInNewContext(code, {
-      window: Object.assign(testWindow, { __ModuleLoader__: { load({ factory }) {
-        applyLocal = factory(name => name === 'react' ? { createElement() {}, Component: class {} } : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null }).apply
-      } } }),
-      document, fetch: fetchImpl, setTimeout: (fn, delay) => { if (delay > 100_000) { expiryCallback = fn; return 0 } return setTimeout(fn, delay) }, clearTimeout, AbortController
-    })
-    const list = { ids: ['old', 'writer-1', 'writer-2', 'research-1'], byId: {} }
-    for (const id of list.ids) list.byId[id] = { sessionId: id, displayTitle: id }
-    const projects = [{ workspaceId: 'project-1', title: 'User project', sessionIds: [...list.ids] }]
-    let sessionCount = 0
-    let navigation = new AbortController()
-    let service
-    let starter
-    const cleanups = []
-    const ctx = {
-      fiber: { name: 'writer', entry: { options: { name: 'writer' } } },
-      locale: { register: vi.fn(), bind: () => () => '', getSnapshot: () => ({ active: 'zh' }) },
-      reflect: { provide: (name, value) => { if (name === 'desktopWorkbenches') service = value } },
-      effect: (callback, label) => {
-        if (label === 'workbenches: styles' || label === 'workbenches: lifecycle') return
-        const cleanup = callback()
-        if (typeof cleanup === 'function') cleanups.push(cleanup)
-      },
-      slots: { inject: (_name, callback) => callback(), register: vi.fn() },
-      sessions: {
-        list: { getSnapshot: () => list, subscribe: vi.fn(() => () => {}) },
-        refresh: vi.fn(async () => {}),
-        create: vi.fn(async ({ workspaceId }) => {
-          const id = `fresh-${++sessionCount}`
-          list.ids.push(id)
-          list.byId[id] = { sessionId: id, displayTitle: id }
-          projects.find(item => item.workspaceId === workspaceId).sessionIds.push(id)
-          return id
-        })
-      },
-      layout: {
-        selectPanel: vi.fn(),
-        beginNavigation: vi.fn(() => { navigation.abort(); navigation = new AbortController(); return navigation.signal })
-      },
-      uiWorkspace: {
-        openSession: vi.fn(id => { selectIn(list, id); service?.selectionChanged() }),
-        registerSessionStarter: vi.fn(handler => { starter = handler; return () => {} }),
-        registerSessionFilter: vi.fn(),
-        registerWorkspaceFilter: vi.fn(),
-        registerWorkspaceDeleteHandler: vi.fn(),
-        registerSessionReuseFilter: vi.fn(),
-        registerSessionOpener: vi.fn()
-      },
-      workspaces: {
-        list: { getSnapshot: () => ({ items: projects }) },
-        create: vi.fn()
-      }
-    }
-    applyLocal(ctx)
-    setFiberPackage(ctx, 'writer')
-    service.register({ title: 'Writer' }, () => null)
-    await service.load()
-    await vi.waitFor(() => expect(service.getSnapshot().enterpriseCatalogStatus).toBe('empty'))
-    await service.catalogRefresh
-    expect(service.remoteCatalog.map(entry => entry.id)).toContain('writer')
-    expect(service.getSnapshot().catalog.map(entry => entry.id)).toContain('writer')
-    expect(testWindow.setInterval).not.toHaveBeenCalled()
-    projects.push({ workspaceId: 'project-2', title: 'Other project', sessionIds: ['native-2'] })
-    list.ids.push('native-2')
-    list.byId['native-2'] = { sessionId: 'native-2', displayTitle: 'Native session' }
-    selectIn(list, 'native-2')
-    service.selectionChanged()
-    await service.open('writer')
-
-    expect(starter('project-1')).toBe(true)
-    await vi.waitFor(() => expect(service.state.sessionBindings[list.ids.at(-1)]).toBe('writer'))
-    const created = ctx.sessions.create.mock.calls.length
-
-    signedIn = false
-    nativeChanged({ connected: false, epoch: 2 })
-    await vi.waitFor(() => expect(service.state.active).toBeNull())
-    expect(ctx.uiWorkspace.openSession).toHaveBeenLastCalledWith('native-2')
-    expect(currentOf(list)).toBe('native-2')
-    expect(starter('project-1')).toBe(false)
-    expect(ctx.sessions.create).toHaveBeenCalledTimes(created)
-    signedIn = true
-    testWindow.dispatchEvent({ type: 'focus' })
-    await vi.waitFor(() => expect(service.networkMarketAllowed).toBe(true))
-    expect(expiryCallback).toBeTypeOf('function')
-    signedIn = false
-    expiryCallback()
-    await vi.waitFor(() => expect(service.networkMarketAllowed).toBe(true))
-    for (const cleanup of cleanups) cleanup()
-    expect(nativeUnsubscribe).toHaveBeenCalledOnce()
-    expect(listeners.get('focus')).toHaveLength(0)
-    service.dispose()
   })
 
   it('removes a shared workspace only from the active workbench while keeping both session groups', async () => {
@@ -1036,6 +725,21 @@ describe('desktop workbench client navigation', () => {
     service.dispose()
   })
 
+  it('does not restore the market after navigating to an ordinary session', async () => {
+    const { service, ctx, request, list } = await fixture()
+    service.showMarket()
+    selectIn(list, 'old')
+    service.selectionChanged()
+    expect(sessionStorage.getItem('dsh-desktop-workbenches.market-open.v1')).toBeNull()
+    expect(service.getSnapshot().marketOpen).toBe(false)
+
+    const reloaded = new Workbenches(ctx, request)
+    await reloaded.load()
+    expect(reloaded.getSnapshot().marketOpen).toBe(false)
+    service.dispose()
+    reloaded.dispose()
+  })
+
   it('refreshes the catalog without changing navigation or persisted workbench state', async () => {
     const { service, request } = await fixture(boundState())
     service.setMarketOpen(true)
@@ -1053,6 +757,64 @@ describe('desktop workbench client navigation', () => {
     expect(service.state).toEqual(before)
     expect(service.getSnapshot()).toMatchObject({ marketOpen: true, catalogRefreshing: false, catalogError: '' })
     expect(service.getSnapshot().catalog.some(entry => entry.catalogId === 'owner/new')).toBe(true)
+  })
+
+  it('prioritizes a matching repair intent over both active workbench and market on reload', async () => {
+    const first = await fixture({ ...boundState(), active: 'writer' })
+    first.service.showMarket()
+    selectIn(first.list, 'old') // Native startup restored the repair session.
+    clientWindow.localStorage.setItem('dsh.sessions.current', JSON.stringify({ sessionId: 'old' }))
+    clientWindow.localStorage.setItem('dsh.desktop.repair-navigation.v1', JSON.stringify({ sessionId: 'old', createdAt: Date.now() }))
+    first.ctx.uiWorkspace.openSession.mockClear()
+    const reloaded = new Workbenches(first.ctx, first.request)
+    await reloaded.load()
+    expect(reloaded.state.active).toBeNull()
+    expect(first.saved().state.active).toBeNull()
+    expect(reloaded.getSnapshot().marketOpen).toBe(false)
+    expect(first.ctx.layout.selectPanel).toHaveBeenLastCalledWith(null)
+    expect(first.ctx.uiWorkspace.openSession).not.toHaveBeenCalled()
+    expect(currentOf(first.list)).toBe('old')
+    expect(sessionStorage.getItem('dsh-desktop-workbenches.market-open.v1')).toBeNull()
+    expect(clientWindow.localStorage.getItem('dsh.desktop.repair-navigation.v1')).toBeNull()
+    first.service.dispose()
+    reloaded.dispose()
+  })
+
+  it.each(['malformed', 'expired', 'future', 'different-target', 'different-selection'])('ignores and removes %s repair intent without changing normal reload restoration', async kind => {
+    const first = await fixture({ ...boundState(), active: 'writer' })
+    first.service.showMarket()
+    selectIn(first.list, kind === 'different-selection' ? 'writer-1' : 'old')
+    clientWindow.localStorage.setItem('dsh.sessions.current', JSON.stringify({ sessionId: kind === 'different-target' ? 'other' : 'old' }))
+    clientWindow.localStorage.setItem('dsh.desktop.repair-navigation.v1', kind === 'malformed' ? '{' : JSON.stringify({ sessionId: 'old', createdAt: Date.now() + (kind === 'expired' ? -300001 : kind === 'future' ? 60000 : 0) }))
+    const reloaded = new Workbenches(first.ctx, first.request)
+    await reloaded.load()
+    expect(reloaded.getSnapshot().marketOpen).toBe(true)
+    expect(clientWindow.localStorage.getItem('dsh.desktop.repair-navigation.v1')).toBeNull()
+    first.service.dispose()
+    reloaded.dispose()
+  })
+
+  it('retains repair intent after a failed write and consumes it on retry', async () => {
+    const first = await fixture({ ...boundState(), active: 'writer' })
+    first.service.showMarket()
+    selectIn(first.list, 'old')
+    clientWindow.localStorage.setItem('dsh.sessions.current', JSON.stringify({ sessionId: 'old' }))
+    clientWindow.localStorage.setItem('dsh.desktop.repair-navigation.v1', JSON.stringify({ sessionId: 'old', createdAt: Date.now() }))
+    const failingRequest = (url, options = {}) => options.method === 'POST' ? Promise.resolve(Response.json({ error: 'write failed' }, { status: 500 })) : first.request(url, options)
+    const reloaded = new Workbenches(first.ctx, failingRequest)
+    first.ctx.uiWorkspace.openSession.mockClear()
+    await reloaded.load()
+    expect(reloaded.error).toContain('write failed')
+    expect(clientWindow.localStorage.getItem('dsh.desktop.repair-navigation.v1')).not.toBeNull()
+    expect(first.ctx.uiWorkspace.openSession).not.toHaveBeenCalled()
+    const retried = new Workbenches(first.ctx, first.request)
+    await retried.load()
+    expect(first.saved().state.active).toBeNull()
+    expect(clientWindow.localStorage.getItem('dsh.desktop.repair-navigation.v1')).toBeNull()
+    expect(first.ctx.uiWorkspace.openSession).not.toHaveBeenCalled()
+    first.service.dispose()
+    reloaded.dispose()
+    retried.dispose()
   })
 
   it('restores the market after a renderer reload and clears the marker after leaving it', async () => {
@@ -1167,78 +929,6 @@ describe('desktop workbench client navigation', () => {
     service.dispose()
   })
 
-  it.each(['private-workbench', '@private/workbench'])('loads and reopens the repository-free package %s with its stable local identity', async name => {
-    const { service, ctx, saved } = await fixture()
-    const id = `local:${name}`
-    setFiberPackage(ctx, name, 'generated-fiber')
-    const unregister = service.register({ title: 'Private workbench' }, () => null)
-    await service.queue
-    expect(service.getSnapshot().catalog).toContainEqual(expect.objectContaining({ id, sourcePackage: name, local: true, installed: true, listed: false }))
-    expect(saved().state.added).toContain(id)
-    expect(saved().state.pinned).toContain(id)
-    await service.open(id)
-    expect(service.isActive()).toBe(true)
-    const session = await service.ensureSession({ folder: '/chosen/private-project' })
-    expect(saved().state.sessionBindings[session]).toBe(id)
-    unregister()
-    setFiberPackage(ctx, name, 'another-fiber')
-    service.register({ title: 'Updated private workbench', version: '2.0.0' }, () => null)
-    await service.load()
-    await service.queue
-    expect(service.state.active).toBe(id)
-    expect(service.state.sessionBindings[session]).toBe(id)
-    expect(service.catalog.get(id).title).toBe('Updated private workbench')
-    service.dispose()
-  })
-
-  it('does not reidentify saved local sessions when a market listing appears after clearing the provider cache', async () => {
-    const { service, ctx, saved } = await fixture()
-    const id = 'local:private-workbench'
-    setFiberPackage(ctx, 'private-workbench')
-    service.register({ title: 'Private workbench' }, () => null)
-    await service.queue
-    await service.open(id)
-    const session = await service.ensureSession({ folder: '/chosen/private-project' })
-    service.knownProviders = {}
-    service.native = { status: 'ready', bundles: { 'private-workbench': { installed: true, enabled: true } } }
-    service.remoteCatalog = [{ id: 'owner/published', name: 'Published workbench', categoryName: 'Other', description: { zh: 'Published' }, screenshots: [], distribution: { name: 'private-workbench' } }]
-    service.rebuildProviders({ preserveActive: true })
-    service.migrateLegacyWorkbenchIds()
-    await service.queue
-    expect(service.catalog.has(id)).toBe(true)
-    expect(service.catalog.has('owner/published')).toBe(false)
-    expect(saved().state.active).toBe(id)
-    expect(saved().state.sessionBindings[session]).toBe(id)
-    service.dispose()
-  })
-
-  it('preserves a saved repository identity when a later descriptor omits its repository', async () => {
-    const { service, ctx, saved } = await fixture()
-    const id = 'owner/private'
-    setFiberPackage(ctx, 'private-workbench')
-    const unregister = service.register({ title: 'Private', repository: 'https://github.com/owner/private' }, () => null)
-    await service.queue
-    await service.open(id)
-    unregister()
-    service.register({ title: 'Private updated' }, () => null)
-    await service.queue
-    expect(service.catalog.has(id)).toBe(true)
-    expect(service.catalog.has('local:private-workbench')).toBe(false)
-    expect(saved().state.active).toBe(id)
-    service.dispose()
-  })
-
-  it('does not fall back to a local identity when installed and declared repositories conflict', async () => {
-    const { service, ctx } = await fixture()
-    service.installs['owner/original'] = { catalogId: 'owner/original', pluginName: 'private-workbench', version: '1.0.0' }
-    setFiberPackage(ctx, 'private-workbench')
-    service.register({ title: 'Conflicting', repository: 'https://github.com/owner/other' }, () => null)
-    expect(service.catalog.has('local:private-workbench')).toBe(false)
-    expect(service.catalog.has('owner/other')).toBe(false)
-    expect(() => service.identityForSource('private-workbench', 'https://github.com/owner/other')).toThrow('multiple workbenches')
-    service.dispose()
-  })
-
   it('pins an existing local provider and keeps explicit removal after reload', async () => {
     const id = 'owner/local'
     const { service, ctx, saved } = await fixture({ ...emptyState(), added: [id] })
@@ -1342,7 +1032,7 @@ describe('desktop workbench client navigation', () => {
       reflect: { provide: (name, value) => { if (name === 'desktopWorkbenches') service = value } },
       effect: (callback, label) => {
         // Exercise registration effects without mounting DOM styles or starting network I/O.
-        if (!['workbenches: styles', 'workbenches: lifecycle'].includes(label)) callback()
+        if (!['workbenches: styles', 'workbenches: global session entry', 'workbenches: lifecycle'].includes(label)) callback()
       },
       slots: { inject: (_name, callback) => callback(), register: vi.fn() },
       sessions: { list: { subscribe: vi.fn() } },
@@ -1366,7 +1056,7 @@ describe('desktop workbench client navigation', () => {
     }
     let applyLocal
     vm.runInNewContext(code, { window: { sessionStorage, localStorage: enabledStorage, __ModuleLoader__: { load({ factory }) {
-      applyLocal = factory(name => name === 'react' ? { createElement() {}, Component: class {} } : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null }).apply
+      applyLocal = factory(name => name === 'react' ? { createElement() {}, Component: class {} } : name === '@deepseek-ai/cordis' ? { Service } : { Button: ({ children, icon, variant, ...props }) => React.createElement('button', props, icon, children), IconDownloadOutlineRegular: () => null, Menu: ({ anchor }) => anchor, Switch: () => null }).apply
     } } }, document: testDocument, setTimeout, clearTimeout, AbortController })
     let styleEffect
     applyLocal({ effect: (callback, label) => { if (label === 'workbenches: styles') styleEffect = callback }, slots: { inject: () => {} } })
@@ -1393,7 +1083,7 @@ describe('desktop workbench client navigation', () => {
     const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>')
     let applyLocal
     vm.runInNewContext(code, { window: { localStorage: enabledStorage, __ModuleLoader__: { load({ factory }) {
-      applyLocal = factory(name => name === 'react' ? { createElement() {}, Component: class {} } : name === '@deepseek-ai/cordis' ? { Service } : { Switch: () => null }).apply
+      applyLocal = factory(name => name === 'react' ? { createElement() {}, Component: class {} } : name === '@deepseek-ai/cordis' ? { Service } : { Button: ({ children, icon, variant, ...props }) => React.createElement('button', props, icon, children), IconDownloadOutlineRegular: () => null, Menu: ({ anchor }) => anchor, Switch: () => null }).apply
     } } }, document: dom.window.document, MutationObserver: dom.window.MutationObserver, setTimeout, clearTimeout, AbortController })
     let styleEffect
     applyLocal({ effect: (callback, label) => { if (label === 'workbenches: styles') styleEffect = callback }, slots: { inject: () => {} } })
@@ -1448,6 +1138,24 @@ describe('desktop workbench client navigation', () => {
     service.dispose()
   })
 
+  it('prepares the original development instruction through the primary action and keeps clipboard available', async () => {
+    const { service } = await fixture()
+    service.createWorkbench = vi.fn(async () => {})
+    const clipboard = { writeText: vi.fn(async () => {}) }
+    const market = interactiveMarket(service, 'submit', clipboard)
+    const tree = market.render()
+    const create = market.button(tree, '创建工作台')
+    const copy = market.button(tree, '复制指令给其他 AI 助手')
+    expect(create.props.primary).toBe(true)
+    create.props.onClick()
+    await service.queue
+    expect(service.createWorkbench).toHaveBeenCalledWith(developmentWorkbenchAgentPrompt())
+    await copy.props.onClick()
+    expect(clipboard.writeText.mock.calls[0][0]).toContain(developmentWorkbenchAgentPrompt())
+    expect(clipboard.writeText.mock.calls[0][0]).toContain('【工作台名称或用途】')
+    service.dispose()
+  })
+
   it('renders workbench creation as a separate action instead of a collection tab', () => {
     const source = Market.toString()
     expect(source).not.toContain("'aria-selected': tab === 'submit'")
@@ -1455,45 +1163,31 @@ describe('desktop workbench client navigation', () => {
     expect(source).toContain("id: 'dsh-workbench-submit-panel'")
     expect(source).toContain('制作我的工作台')
     expect(source).toContain('dshWbCreate')
-    expect(source).toContain("'aria-selected': visibleTab === 'favorites'")
+    expect(source).toContain("'aria-selected': tab === collection.id")
     expect(source).toContain('我的收藏')
     expect(source).toContain('已安装')
     expect(source).toContain("createText('title')")
-    expect(source).toContain('service.createWorkbench()')
-    expect(source).toContain('dshWbStartCreate')
-    expect(source).toContain('由 Agent 部署，自测确认能用')
-    expect(source).toContain('云端工作台在对话确认后提交审核和部署，无需另点发布按钮')
-    expect(source).toContain('想上架，再按验收规范提交')
+    expect(source).toContain("createText('hint')")
+    expect(source).toContain('重启 Harness，试试你的工作台')
+    expect(source).toContain('安装完成后，仅当提示需要重启时')
+    expect(source).toContain('试试你平时会用到的功能，看看是否符合预期')
+    expect(source).toContain('想上架？把提交指令发给 AI 助手')
     // The website is the only visible document entry point in this flow.
-    expect(source).toContain('href: service.developmentGuideUrl()')
+    expect(source).toContain('href: developmentPageUrl()')
     expect(source).toContain('href: acceptancePageUrl()')
     expect(source).not.toContain('离线查看')
+    expect(source).toContain('service.createWorkbench(developmentPrompt)')
     expect(source).toContain("createText('copy')")
-    expect(source).not.toContain("openPrompt === 'development'")
-    expect(source).toContain('复制投稿指令')
+    expect(source).toContain('复制提交指令')
     // Self-use must not read as a parallel alternative to submitting.
     expect(source).not.toContain('选择交付方式')
     expect(source).not.toContain('提交到工作台广场')
     expect(source).not.toContain('submitMode')
     expect(source).toContain("tab !== 'submit' && h('div', { className: 'dshWbToolbar'")
-    expect(source).toContain("tab !== 'submit' && !collectionBlocked && h('section'")
+    expect(source).toContain("tab !== 'submit' && h('section'")
     expect(source).not.toContain('showSubmit')
     expect(source).not.toContain("'aria-expanded'")
     expect(source).not.toContain('setGuideOpen')
-  })
-
-  it('omits the install-local-workbench button when third-party workbenches are closed', async () => {
-    const { service } = await fixture()
-    service.ctx.locale = { bind: () => () => '来自企业' }
-    const headerLabels = (allowThirdPartyWorkbenches) => {
-      const ui = interactiveMarket(service, 'market', undefined, { known: true, connected: true, allowThirdPartyWorkbenches })
-      const tree = ui.render()
-      const header = ui.find(tree, node => node.props?.className === 'dshWbMarketHeaderActions')[0]
-      return ui.find(header, node => node.type?.name === 'Button').map(button => button.props.children.flat().filter(child => typeof child === 'string').join(''))
-    }
-    expect(headerLabels(false)).toEqual(['制作我的工作台'])
-    expect(headerLabels(true)).toEqual(['制作我的工作台'])
-    service.dispose()
   })
 
   it('provides one prompt for local development and one for submission', () => {
@@ -1502,7 +1196,7 @@ describe('desktop workbench client navigation', () => {
     expect(development).toContain('scripts/check-workbench-package.mjs')
     expect(development).toContain('已安装的工作台')
     expect(development).toContain('左侧入口')
-    expect(development).toContain('本地、云端或混合部署')
+    expect(development).toContain('不需要上传或投稿')
     expect(development).toContain('这条通用指令没有提供业务需求')
     expect(development).toContain('每次只问一个必要问题')
     expect(development).toContain('不重复已提供的信息')
@@ -1515,7 +1209,7 @@ describe('desktop workbench client navigation', () => {
     expect(development).toContain('业务意图或范围仍不清楚时')
     expect(development).toContain('此前不要创建或修改业务代码、界面或包文件，也不要构建、打包、安装或投稿')
     expect(development).toContain('空目录且没有业务目标时，到提问为止')
-    expect(development.indexOf('等待我回答')).toBeLessThan(development.indexOf('本地方案按规范第 3 节'))
+    expect(development.indexOf('等待我回答')).toBeLessThan(development.indexOf('再按规范第 3 节'))
     expect(development).toContain('第 8 节“本地自测清单”')
     expect(development).toContain('不要要求普通用户确认')
     expect(development).toContain('整页展示业务内容，需要时再打开 AI 对话')
@@ -1529,8 +1223,8 @@ describe('desktop workbench client navigation', () => {
     expect(development).toContain('不要声称已加载')
     // Prompts give the website as the one link; the bundled copies are for offline reading.
     expect(development).toContain('https://dshdesktop.com/workbench/docs/development.md')
-    expect(development).toContain('cloud_workbench guide')
-    expect(development).toContain('判断采用本地、云端或混合部署')
+    expect(development).not.toContain('/api/desktop-workbenches/')
+    expect(development).toContain('不需要处理市场投稿或发布')
     expect(development).not.toContain('dataelement/awesome-dsh-workbench')
     expect(development).not.toContain('CONTRIBUTING.md')
     // The preset-package document describes Agent presets, not workbench packages.
@@ -1562,6 +1256,23 @@ describe('desktop workbench client navigation', () => {
     expect(submissionAgentPrompt('submission')).toBe(submission)
   })
 
+  it.each([false, true])('ends the copied development prompt with a truthful three-point usage handoff (English: %s)', english => {
+    const prompt = developmentWorkbenchAgentPrompt(english)
+    const heading = english ? 'After every workbench development handoff' : '每次完成工作台开发后'
+    const handoff = prompt.slice(prompt.indexOf(heading))
+    expect(prompt).toContain('installBundle')
+    expect(prompt).toContain('restart-required')
+    expect(prompt.indexOf(heading)).toBeGreaterThan(prompt.indexOf(english ? 'Report changed files' : '报告修改的文件'))
+    expect(handoff).toContain(english ? 'after all change descriptions, self-test results, file links, and technical appendices' : '放在所有修改说明、自测结果、文件链接和技术附录之后')
+    expect(handoff).toContain(english ? 'do not append any content after these three points' : '不能在这三点之后追加内容')
+    const required = english
+      ? ['1. Development result:', 'actual workbench name', 'installation failed', 'Do not claim it loaded', '2. How to restart:', 'click “Restart now” in the top banner', 'Harness → Restart Harness', 'normally only Harness needs restarting', 'current task finishes', '3. Where to open it:', 'upper left', 'Workbench Market → Installed', 'marked “Local,”', 'Restart complete', 'returning to the conversation is not required']
+      : ['1. 开发结果：', '工作台实际名称', '安装失败', '不得声称已加载', '2. 如何重启：', '点击顶部提示中的「立即重启」', 'Harness → 重启 Harness', '通常只需重启 Harness', '当前任务结束后', '3. 去哪里打开：', '左上角「工作台」', '工作台市场 → 已安装', '带「本地」标识', '重启好了', '不必返回对话才能使用']
+    for (const phrase of required) expect(handoff).toContain(phrase)
+    expect(handoff.indexOf(required[0])).toBeLessThan(handoff.indexOf(english ? '2. How to restart:' : '2. 如何重启：'))
+    expect(prompt.endsWith(english ? 'If installation is incomplete, state that this entry remains unconfirmed until installation and loading succeed.' : '安装未完成时明确此入口仍待安装和加载后确认。')).toBe(true)
+  })
+
   it('provides English Agent prompts and English documentation URLs in English mode', () => {
     const development = developmentWorkbenchAgentPrompt(true)
     expect(development).toContain('https://dshdesktop.com/workbench/docs/development-en.md')
@@ -1574,8 +1285,6 @@ describe('desktop workbench client navigation', () => {
     expect(development).toContain('business intent or scope is unclear')
     expect(development).toContain('wait for my answer')
     expect(development).not.toContain('工作台开发规范')
-    expect(development).not.toContain('local development and installation only')
-    expect(development).toContain('cloud_workbench publish')
     const submission = submissionWorkbenchAgentPrompt({ english: true, category: { id: 'other', name: '其他', names: { en: 'Other' } }, suggestion: 'Legal' })
     expect(submission).toContain('https://dshdesktop.com/workbench/docs/market-acceptance-en.md')
     expect(submission).toContain('category to other (Other)')
@@ -1599,7 +1308,7 @@ describe('desktop workbench client navigation', () => {
 
   it('offers the category picker only when the market list is available', () => {
     expect(code).toContain("marketCategories.length > 0 && h('div', { className: 'dshWbSubmitCategory' }")
-    expect(code).toContain("h('option', { value: '' }, tr('让 Agent 按规范选择'))")
+    expect(code).toContain("h('option', { value: '' }, tr('让 AI 助手帮我选'))")
     expect(code).toContain("submitCategory === 'other' && h('label'")
   })
 
@@ -1622,7 +1331,7 @@ describe('desktop workbench client navigation', () => {
     expect(code).toContain('.dshWbMarketHeader :is(button,a,input,select,textarea){-webkit-app-region:no-drag}')
   })
 
-  it.each([['复制指令给其他 AI 助手', 'https://dshdesktop.com/workbench/docs/development.md'], ['复制投稿指令', '市场验收']])('shows the same success toast after %s', async (label, promptFragment) => {
+  it.each([['复制指令给其他 AI 助手', '本地开发'], ['复制提交指令', '市场验收']])('shows the same success toast after %s', async (label, promptFragment) => {
     const { service } = await fixture()
     const writeText = vi.fn(async () => {})
     const ui = interactiveMarket(service, 'submit', { writeText })
@@ -1631,13 +1340,6 @@ describe('desktop workbench client navigation', () => {
     await ui.button(tree, label).props.onClick()
     expect(writeText).toHaveBeenCalledOnce()
     expect(writeText.mock.calls[0][0]).toContain(promptFragment)
-    if (label === '复制指令给其他 AI 助手') {
-      expect(writeText.mock.calls[0][0]).toContain('【工作台名称或用途】')
-      expect(writeText.mock.calls[0][0]).toContain('云端或混合部署')
-      expect(writeText.mock.calls[0][0]).toBe(service.creationPrompt())
-      expect(writeText.mock.calls[0][0]).toContain('scripts/check-workbench-package.mjs')
-      expect(writeText.mock.calls[0][0]).toContain('不要把常驻会话区当作默认产品设计')
-    }
     const toast = ui.find(ui.render(), node => node.type?.name === 'Toast')[0]
     expect(toast.props).toMatchObject({ text: '已复制', tone: 'success' })
     toast.props.onDone()
@@ -2138,7 +1840,7 @@ describe('desktop workbench client navigation', () => {
     dom.window.close()
   })
 
-  it('keeps catalog refresh and failure notices out of normal workbench sessions while preserving local notices', async () => {
+  it('keeps catalog and global error notices out of the workbench session layout', async () => {
     const { JSDOM } = await import('jsdom')
     const ReactDOM = await import('react-dom')
     const { createRoot } = await import('react-dom/client')
@@ -2162,12 +1864,11 @@ describe('desktop workbench client navigation', () => {
         expect(dom.window.document.querySelector('.dshWbNotice')).toBeNull()
         expect(dom.window.document.querySelector('.dshWbConversation').textContent).toContain('Native session')
       }
-      await React.act(async () => { service.restartNeeded = true; service.publish() })
-      expect(dom.window.document.querySelector('.dshWbNotice').textContent).toContain('工作台安装变更需要重启 Harness')
+      await React.act(async () => { service.recordApplication('writer', { application: 'restart-required' }); service.publish() })
+      expect(dom.window.document.querySelector('.dshWbNotice')).toBeNull() // Restart guidance now lives in the global sidebar slot.
       await React.act(async () => { service.error = 'Local state failed'; service.publish() })
-      expect(dom.window.document.querySelector('.dshWbNotice').getAttribute('role')).toBe('alert')
-      expect(dom.window.document.querySelector('.dshWbNotice').textContent).toContain('Local state failed')
-      await React.act(async () => { service.error = ''; service.restartNeeded = false; service.ready = false; service.publish() })
+      expect(dom.window.document.querySelector('.dshWbNotice')).toBeNull()
+      await React.act(async () => { service.error = ''; service.applicationOutcomes.clear(); service.ready = false; service.publish() })
       expect(dom.window.document.querySelector('.dshWbNotice').textContent).toBe('正在读取本地工作台…')
     } finally {
       if (root) await React.act(async () => root.unmount())
@@ -2354,7 +2055,6 @@ describe('desktop workbench client navigation', () => {
     const { service, ctx } = await fixture(boundState())
     await service.open('writer')
     service.setEnabled(false)
-    expect(service.getSnapshot().enabled).toBe(false)
     await service.queue
     expect(service.state.active).toBeNull()
     expect(service.sessionVisible('old')).toBe(true)
@@ -2362,7 +2062,6 @@ describe('desktop workbench client navigation', () => {
     expect(ctx.layout.selectPanel).toHaveBeenLastCalledWith(null)
     await expect(service.open('writer')).rejects.toThrow('工作台功能已关闭')
     service.setEnabled(true)
-    expect(service.getSnapshot().enabled).toBe(true)
   })
 
   it('persists favorites independently from installation and lets an unavailable favorite be removed', async () => {
@@ -2757,6 +2456,28 @@ describe('workbench market screenshot and metadata display', () => {
     expect(fullSource).not.toContain('未安装')
   })
 
+  it('fits the mode menu below its anchor and updates and cleans up on window resize', () => {
+    const fixture = sidebarSwitcher({ pinned: ['writer'] })
+    let tree = fixture.render()
+    fixture.find(tree, node => node.props?.className === 'dshWbModeSwitch')[0].props.onClick()
+    tree = fixture.render()
+    const menu = fixture.find(tree, node => node.props?.className === 'dshWbModeMenu')[0]
+    const element = { style: {}, getBoundingClientRect: () => ({ top: 205 }) }
+    menu.props.ref.current = element
+    const cleanup = fixture.runMenuLayout()
+    expect(element.style.maxHeight).toBe('587px')
+    const [event, resize] = fixture.window.addEventListener.mock.calls[0]
+    expect(event).toBe('resize')
+    fixture.window.innerHeight = 400
+    resize()
+    expect(element.style.maxHeight).toBe('187px')
+    fixture.window.innerHeight = 100
+    resize()
+    expect(element.style.maxHeight).toBe('0px')
+    cleanup()
+    expect(fixture.window.removeEventListener).toHaveBeenCalledWith('resize', resize)
+  })
+
   it('renders a persistent Workbench home area beside the current mode and switch button', () => {
     expect(fullSource).toContain('function WorkbenchSidebarSwitcher({ service, wide, startSession, usePanelInfo })')
     expect(fullSource).toContain("'data-dsh-workbench-switcher': ''")
@@ -2780,7 +2501,7 @@ describe('workbench market screenshot and metadata display', () => {
     expect(fullSource).toContain("ctx.slots.inject('sidebar.quickSwitcher'")
     expect(fullSource).not.toContain('function WorkbenchDock(')
     expect(fullSource).not.toContain('dshWbDockWrap')
-    expect(fullSource).not.toContain("ctx.slots.inject('sidebar.footer.action'")
+    expect(fullSource).toContain("id: 'desktop-restart-notice'")
     expect(fullSource).not.toContain('dshWbNavItems')
   })
 
@@ -2897,8 +2618,7 @@ describe('workbench market screenshot and metadata display', () => {
     expect(fullSource).not.toContain('workbenchDockPreference')
     expect(fullSource).not.toContain('显示工作台快捷栏')
     expect(fullSource).toContain('if (!enabled || !wide) return null')
-    expect(fullSource).not.toContain('WorkbenchEnableSetting')
-    expect(fullSource).not.toContain("label: tr('启用工作台功能')")
+    expect(fullSource).toContain("h(Switch, { checked: enabled, onChange: (next) => service.setEnabled(next), label: tr('启用工作台功能') })")
     expect(fullSource).toContain('if (!workbenchEnabled) return conversation')
   })
 
@@ -2906,7 +2626,7 @@ describe('workbench market screenshot and metadata display', () => {
     const source = Market.toString()
     expect(source).toContain("const [search, setSearch] = React.useState('')")
     expect(source).toContain("const [category, setCategory] = React.useState('all')")
-    expect(source).toContain("visibleTab === 'mine' ? service.checkUpdates() : showingEnterprise ? service.refreshEnterpriseCatalog() : showingCloud ? service.refreshCloudCatalog() : service.refreshCatalog()")
+    expect(source).toContain("tab === 'mine' ? service.checkUpdates() : service.refreshCatalog()")
     expect(source).toContain("tab === 'mine' ? tr('检查更新') : tr('刷新目录')")
     expect(source).toContain("h(MarketIcon, { name: 'refresh', size: 17 })")
     expect(fullSource).toContain('.dshWbRefresh[aria-busy=true] svg{animation:dshWbSpin .8s linear infinite}')
@@ -3053,6 +2773,16 @@ describe('workbench market screenshot and metadata display', () => {
   })
 
 
+  it('retains failed install semantics while exposing an earlier pending package restart', async () => {
+    const { service } = await fixture()
+    service.request = async () => Response.json({ application: 'failed', error: 'Pending generation update', result: { application: 'failed' }, restartRequired: true, restartPackages: ['pending-plugin'] }, { status: 409 })
+    await expect(service.marketPackage('/api/desktop-workbenches/market-install', 'o/helper')).rejects.toThrow('Pending generation update')
+    expect(service.restartNeeded).toBe(true)
+    expect(service.restartReasons()).toContain('pending-plugin')
+    expect(service.applicationOutcomes.size).toBe(0)
+    expect(service.installing).toBeNull()
+  })
+
   const listed = (patch = {}) => ({ id: 'o/helper', owner: 'o', repository: 'helper', url: 'https://github.com/o/helper', name: 'Helper', categoryName: '效率',
     description: { zh: '整理资料。' }, screenshots: [], version: '1.0.0', distribution: { type: 'npm', name: 'helper', version: '1.0.0' }, ...patch })
   function withMarket(service, routes) {
@@ -3064,6 +2794,372 @@ describe('workbench market screenshot and metadata display', () => {
     }
     return calls
   }
+
+
+  function lifecycleMarket(service, initial = {}) {
+    const snapshot = { installs: {}, packages: {}, lifecycle: { bundles: [], plugins: [] }, ...initial }
+    const original = service.request
+    service.request = vi.fn((url, options) => String(url).startsWith('/api/desktop-workbenches/market-installs')
+      ? Promise.resolve(Response.json(snapshot)) : original(url, options))
+    return snapshot
+  }
+  const changeEnvelope = (application, install, extra = {}) => ({
+    result: { changed: true, application, ...extra }, application,
+    restartRequired: application === 'restart-required', reloadRequired: false,
+    actionRequired: application === 'restart-required' ? 'restart' : 'none', ...(install ? { install } : {})
+  })
+
+  it('reconciles pending results from authoritative manager snapshots after external operations', async () => {
+    const { service } = await fixture(boundState())
+    const snapshot = lifecycleMarket(service, {
+      installs: { 'o/helper': { catalogId: 'o/helper', pluginName: 'helper' } },
+      lifecycle: { bundles: [{ name: 'helper', installed: true, enabled: true }], plugins: [], applications: [{ bundle: 'helper', target: 'helper', stage: 'enable', application: 'restart-required', restartReason: 'module-comparison' }] }
+    })
+    await service.refreshNative()
+    expect(service.restartNeeded).toBe(true)
+    expect(service.pendingRestart.has('o/helper')).toBe(true)
+    snapshot.lifecycle.applications = [{ target: 'helper', stage: 'enable', application: 'applied' }]
+    await service.refreshNative()
+    expect(service.restartNeeded).toBe(false)
+    expect(service.pendingRestart.size).toBe(0)
+    snapshot.lifecycle.applications = []
+    await service.refreshNative()
+    expect(service.applicationOutcomes.size).toBe(0)
+  })
+
+  it('applies market installs immediately without inventing pending restart or reload state', async () => {
+    const { service, ctx, saved } = await fixture(boundState())
+    service.remoteCatalog = [listed()]
+    const snapshot = lifecycleMarket(service)
+    const install = { catalogId: 'o/helper', pluginName: 'helper', version: '1.0.0' }
+    withMarket(service, { '/api/desktop-workbenches/market-install': () => {
+      snapshot.installs = { 'o/helper': install }
+      snapshot.packages = { helper: { origin: 'market', version: '1.0.0' } }
+      snapshot.lifecycle.bundles = [{ name: 'helper', installed: true, enabled: true, version: '1.0.0' }]
+      setFiberPackage(ctx, 'helper')
+      service.register({ title: 'Helper' }, () => null)
+      return Response.json(changeEnvelope('applied', install))
+    } })
+    await service.installFromMarket('o/helper')
+    expect(service.getSnapshot()).toMatchObject({ installing: null, restartNeeded: false, reloadNeeded: false })
+    expect(service.pendingRestart.size).toBe(0)
+    expect(service.pendingReload.size).toBe(0)
+    expect(service.getSnapshot().catalog.find(entry => entry.catalogId === 'o/helper')).toMatchObject({ installed: true, pendingRestart: false, pendingReload: false, loadFailure: '' })
+    expect(service.originFor(service.getSnapshot().catalog[0])).toBe('market')
+    expect(saved().state.notes).toEqual(boundState().notes)
+    expect(saved().state.sessionBindings).toEqual(boundState().sessionBindings)
+    expect(saved().state.pinned).toContain('o/helper')
+    expect(ctx.uiWorkspace.openSession).not.toHaveBeenCalled()
+  })
+
+  it('does not hide a missing applied provider behind an invented pending state', async () => {
+    const { service } = await fixture()
+    service.remoteCatalog = [listed()]
+    const install = { catalogId: 'o/helper', pluginName: 'helper', version: '1.0.0' }
+    lifecycleMarket(service, { installs: { 'o/helper': install }, lifecycle: { bundles: [{ name: 'helper', installed: true, enabled: true }], plugins: [] } })
+    withMarket(service, { '/api/desktop-workbenches/market-install': () => Response.json(changeEnvelope('applied', install)) })
+    await service.installFromMarket('o/helper')
+    expect(service.getSnapshot().catalog.find(entry => entry.catalogId === 'o/helper')).toMatchObject({ pendingRestart: false, pendingReload: false, failureKind: 'load' })
+    expect(service.getSnapshot().catalog.find(entry => entry.catalogId === 'o/helper').loadFailure).not.toBe('')
+    expect(service.getSnapshot().restartNeeded).toBe(false)
+  })
+
+  it('reports a retryable service error for a plain-text proxy failure', async () => {
+    const { service } = await fixture()
+    service.remoteCatalog = [listed()]
+    withMarket(service, {
+      '/api/desktop-workbenches/market-install': () => new Response('Harness proxy failed', { status: 502 })
+    })
+    await expect(service.installFromMarket('o/helper')).rejects.toThrow('工作台服务暂时无法响应，请稍后重试。 (HTTP 502)')
+    expect(service.getSnapshot().installing).toBeNull()
+    expect(service.installFailures.get('o/helper')).toMatchObject({ kind: 'install' })
+  })
+
+  it('shows a hidden operation diagnostic when the response only names the error code', async () => {
+    const { service } = await fixture()
+    service.remoteCatalog = [listed()]
+    lifecycleMarket(service)
+    const result = { changed: false, application: 'failed', error: { code: 'operation-error', diagnostic: 'staging log\nERR_PNPM_GIT_NOT_FOUND: git is not installed' } }
+    withMarket(service, { '/api/desktop-workbenches/market-install': () => Response.json({ ...changeEnvelope('failed'), result, error: 'operation-error', code: 'operation-error' }, { status: 409 }) })
+    await expect(service.installFromMarket('o/helper')).rejects.toThrow('ERR_PNPM_GIT_NOT_FOUND: git is not installed')
+    expect(service.installFailures.get('o/helper')).toMatchObject({ kind: 'install', message: 'ERR_PNPM_GIT_NOT_FOUND: git is not installed' })
+  })
+
+  it.each(['failed', 'cancelled'])('preserves the full HTTP 409 %s result without changing local state or navigation', async application => {
+    const initial = { ...boundState(), active: 'writer', pinned: ['writer'] }
+    const { service, ctx, saved } = await fixture(initial)
+    ctx.uiWorkspace.openSession.mockClear()
+    ctx.layout.selectPanel.mockClear()
+    service.remoteCatalog = [listed()]
+    const result = { changed: false, application, error: { code: 'activation_failed', diagnostic: 'Activation declined' }, revision: 19 }
+    lifecycleMarket(service)
+    withMarket(service, { '/api/desktop-workbenches/market-install': () => Response.json({ ...changeEnvelope(application), result, error: 'Activation declined' }, { status: 409 }) })
+    await expect(service.installFromMarket('o/helper')).rejects.toMatchObject({ message: 'Activation declined', application, result })
+    expect(service.getSnapshot()).toMatchObject({ installing: null, restartNeeded: false, reloadNeeded: false })
+    expect(service.installFailures.get('o/helper')).toMatchObject({ kind: 'install', message: 'Activation declined' })
+    expect(saved().state).toEqual(initial)
+    expect(ctx.uiWorkspace.openSession).not.toHaveBeenCalled()
+    expect(ctx.layout.selectPanel).not.toHaveBeenCalled()
+    await service.refreshNative()
+    expect(service.installFailures.get('o/helper').message).toBe('Activation declined')
+  })
+
+  it('keeps an unconfirmed first install out of the switcher even if its package and provider arrive before the response', async () => {
+    const { service, ctx, saved } = await fixture()
+    const id = 'o/helper'
+    service.remoteCatalog = [listed()]
+    const snapshot = lifecycleMarket(service)
+    const result = deferred()
+    withMarket(service, { '/api/desktop-workbenches/market-install': () => result.promise })
+    const attempt = service.installFromMarket(id)
+    const rejection = expect(attempt).rejects.toThrow('Install response failed')
+
+    // The backend may finish activation while the install response is still
+    // in flight. Inventory and live registration alone do not confirm it.
+    const install = { catalogId: id, pluginName: 'helper', version: '1.0.0' }
+    snapshot.installs[id] = install
+    snapshot.lifecycle.bundles = [{ name: 'helper', installed: true, enabled: true }]
+    setFiberPackage(ctx, 'helper')
+    service.register({ title: 'Helper' }, () => null)
+    await service.refreshNative()
+    await service.queue
+
+    const nav = sidebarSwitcher({ workbenchId: id })
+    nav.service.getSnapshot = () => service.getSnapshot()
+    nav.service.catalog = service.catalog
+    nav.service.activationFor = entry => service.activationFor(entry)
+    const switcher = () => nav.find(nav.render(), node => node.props?.className === 'dshWbModeSwitch')
+    expect(service.state.pinned).not.toContain(id)
+    expect(saved().state.added).not.toContain(id)
+    expect(switcher()).toHaveLength(0)
+    expect(cardButtons(marketCard(service))).toContain('正在安装…')
+
+    result.resolve(Response.json({ error: 'Install response failed' }, { status: 502 }))
+    await rejection
+    await service.refreshNative()
+    expect(service.getSnapshot().catalog[0]).toMatchObject({ installed: false, failureKind: 'install', loadFailure: 'Install response failed' })
+    expect(switcher()).toHaveLength(0)
+    expect(saved().state.pinned).not.toContain(id)
+    const market = interactiveMarket(service)
+    const card = market.find(market.render(), node => node.type === 'article')[0]
+    expect(market.find(card, node => node.props?.className === 'dshWbInstalled')).toHaveLength(0)
+    expect(market.find(card, node => node.props?.['aria-label'] === '重试安装Helper')).toHaveLength(1)
+
+    withMarket(service, { '/api/desktop-workbenches/market-install': () => Response.json(changeEnvelope('applied', install)) })
+    await service.installFromMarket(id)
+    expect(service.getSnapshot().catalog[0]).toMatchObject({ installed: true, loadFailure: '' })
+    expect(saved().state.pinned).toContain(id)
+    expect(switcher()).toHaveLength(1)
+    expect(JSON.stringify(marketCard(service))).toContain('已安装')
+  })
+
+  it('clears an unavailable notice when that workbench finishes installing', async () => {
+    const { service, ctx } = await fixture()
+    const id = 'o/helper'
+    service.remoteCatalog = [listed()]
+    const snapshot = lifecycleMarket(service)
+    const response = deferred()
+    withMarket(service, { '/api/desktop-workbenches/market-install': () => response.promise })
+    const attempt = service.installFromMarket(id)
+
+    service.run(service.add(id))
+    await Promise.resolve()
+    expect(service.getSnapshot().error).toBe('工作台当前不可用。')
+
+    const install = { catalogId: id, pluginName: 'helper', version: '1.0.0' }
+    snapshot.installs[id] = install
+    snapshot.lifecycle.bundles = [{ name: 'helper', installed: true, enabled: true }]
+    setFiberPackage(ctx, 'helper')
+    service.register({ title: 'Helper' }, () => null)
+    expect(service.getSnapshot().error).toBe('工作台当前不可用。')
+
+    response.resolve(Response.json(changeEnvelope('applied', install)))
+    await attempt
+    expect(service.getSnapshot().catalog[0]).toMatchObject({ installed: true })
+    expect(service.getSnapshot().error).toBe('')
+
+    service.run(service.toggleFavorite('o/missing'))
+    await Promise.resolve()
+    expect(service.getSnapshot().error).toBe('工作台当前不可用。')
+    await service.refreshNative()
+    expect(service.getSnapshot().error).toBe('工作台当前不可用。')
+  })
+
+  it('recovers a failed first activation from the native inventory after a page reload', async () => {
+    const { service, ctx, saved } = await fixture()
+    const id = 'o/helper'
+    service.remoteCatalog = [listed()]
+    lifecycleMarket(service, {
+      installs: { [id]: { catalogId: id, pluginName: 'helper', version: '1.0.0' } },
+      lifecycle: {
+        bundles: [{ name: 'helper', installed: true, enabled: true }],
+        plugins: [],
+        applications: [{ bundle: 'helper', target: 'helper', stage: 'enable', application: 'failed', error: { diagnostic: 'Activation failed' } }]
+      }
+    })
+    await service.refreshNative()
+    const entry = () => service.getSnapshot().catalog[0]
+    expect(entry()).toMatchObject({ installed: false, failureKind: 'install', loadFailure: 'Activation failed' })
+    expect(service.activationFor(entry())).toBe('unknown')
+    expect(JSON.stringify(marketCard(service))).not.toContain('已安装')
+
+    setFiberPackage(ctx, 'helper')
+    service.register({ title: 'Helper' }, () => null)
+    await service.refreshNative()
+    await service.queue
+    expect(entry()).toMatchObject({ installed: false, failureKind: 'install' })
+    expect(saved().state.pinned).not.toContain(id)
+    await expect(service.add(id)).rejects.toThrow('工作台当前不可用')
+  })
+
+
+  it('replaces restart-required with the latest applied install result for the same package', async () => {
+    const { service } = await fixture()
+    service.remoteCatalog = [listed()]
+    const install = { catalogId: 'o/helper', pluginName: 'helper', version: '1.0.0' }
+    const snapshot = lifecycleMarket(service)
+    let application = 'restart-required'
+    withMarket(service, { '/api/desktop-workbenches/market-install': () => {
+      snapshot.installs = { 'o/helper': install }
+      snapshot.lifecycle.bundles = [{ name: 'helper', installed: true, enabled: true, version: '1.0.0' }]
+      return Response.json(changeEnvelope(application, install, { restartReason: application === 'restart-required' ? 'server-code-changed' : undefined }))
+    } })
+    await service.installFromMarket('o/helper')
+    expect(service.getSnapshot()).toMatchObject({ restartNeeded: true, reloadNeeded: false })
+    expect(service.pendingRestart.has('o/helper')).toBe(true)
+    application = 'applied'
+    await service.installFromMarket('o/helper')
+    expect(service.getSnapshot()).toMatchObject({ restartNeeded: false, reloadNeeded: false })
+    expect(service.pendingRestart.size).toBe(0)
+    expect(service.pendingReload.size).toBe(0)
+    expect(service.getSnapshot().catalog.find(entry => entry.catalogId === 'o/helper')).toMatchObject({ pendingRestart: false, pendingReload: false })
+  })
+
+  it('clears a prior package restart outcome when its removal is applied, preserving business data', async () => {
+    const initial = { ...boundState(), added: [...boundState().added, 'o/helper'], pinned: ['o/helper'], notes: { 'o/helper': 'Retain after uninstall' }, sessionBindings: { old: 'o/helper' } }
+    const { service, saved } = await fixture(initial)
+    service.remoteCatalog = [listed()]
+    const install = { catalogId: 'o/helper', pluginName: 'helper', version: '1.0.0' }
+    const snapshot = lifecycleMarket(service, { installs: { 'o/helper': install }, lifecycle: { bundles: [{ name: 'helper', installed: true, enabled: true }], plugins: [] } })
+    await service.refreshNative()
+    withMarket(service, {
+      '/api/desktop-workbenches/market-enabled': () => Response.json(changeEnvelope('restart-required', install)),
+      '/api/desktop-workbenches/market-uninstall': () => {
+        snapshot.installs = {}
+        snapshot.lifecycle = { bundles: [], plugins: [] }
+        return Response.json(changeEnvelope('applied'))
+      }
+    })
+    await service.setPluginEnabled('helper', true)
+    expect(service.restartNeeded).toBe(true)
+    await service.removeWorkbench('o/helper')
+    expect(service.getSnapshot()).toMatchObject({ restartNeeded: false, reloadNeeded: false, installs: {} })
+    expect(saved().state.added).not.toContain('o/helper')
+    expect(saved().state.pinned).not.toContain('o/helper')
+    expect(saved().state.notes).toEqual(initial.notes)
+    expect(saved().state.sessionBindings).toEqual(initial.sessionBindings)
+  })
+
+  it('ignores an older install/lifecycle snapshot arriving after a newer refresh', async () => {
+    const { service } = await fixture()
+    const older = deferred()
+    const newer = deferred()
+    const original = service.request
+    let count = 0
+    service.request = (url, options) => String(url).startsWith('/api/desktop-workbenches/market-installs')
+      ? (++count === 1 ? older.promise : newer.promise) : original(url, options)
+    const first = service.refreshNative()
+    const second = service.refreshNative()
+    newer.resolve(Response.json({ installs: {}, packages: {}, lifecycle: { bundles: [{ name: 'helper', installed: true, enabled: false, version: '2.0.0' }], plugins: [] } }))
+    await second
+    older.resolve(Response.json({ installs: { stale: { pluginName: 'old' } }, packages: { old: { origin: 'market' } }, lifecycle: { bundles: [{ name: 'old', installed: true, enabled: true }], plugins: [] } }))
+    await first
+    expect(service.installs).toEqual({})
+    expect(service.packageEvidence).toEqual({})
+    expect(Object.keys(service.native.bundles)).toEqual(['helper'])
+    expect(service.native.bundles.helper).toMatchObject({ enabled: false, version: '2.0.0' })
+  })
+
+  it('falls back to the native manager when lifecycle is null while retaining fresh market records', async () => {
+    const { service, ctx } = await fixture()
+    const install = { catalogId: 'o/helper', pluginName: 'helper', version: '1.0.0' }
+    lifecycleMarket(service, { installs: { 'o/helper': install }, packages: { helper: { origin: 'market' } }, lifecycle: null })
+    ctx.remote = { pluginManager: {
+      listBundles: vi.fn(async () => ({ ok: true, value: [{ name: 'helper', installed: true, enabled: false }] })),
+      listPlugins: vi.fn(async () => ({ ok: true, value: [{ id: 'helper:main', name: 'helper' }] }))
+    } }
+    await service.refreshNative()
+    expect(service.installs).toEqual({ 'o/helper': install })
+    expect(service.packageEvidence).toEqual({ helper: { origin: 'market' } })
+    expect(service.native).toMatchObject({ status: 'ready', bundles: { helper: { enabled: false } }, plugins: [{ id: 'helper:main', name: 'helper' }] })
+    expect(ctx.remote.pluginManager.listBundles).toHaveBeenCalledOnce()
+    expect(ctx.remote.pluginManager.listPlugins).toHaveBeenCalledOnce()
+  })
+
+  it('uses market-enabled with repository identity and retains local notes and session bindings', async () => {
+    const initial = { ...boundState(), active: null }
+    const { service, ctx, saved } = await fixture(initial)
+    service.remoteCatalog = [listed()]
+    const install = { catalogId: 'o/helper', pluginName: 'helper', version: '1.0.0' }
+    const snapshot = lifecycleMarket(service, { installs: { 'o/helper': install }, lifecycle: { bundles: [{ name: 'helper', installed: true, enabled: true }], plugins: [] } })
+    ctx.remote = { pluginManager: { setBundleEnabled: vi.fn() } }
+    await service.refreshNative()
+    const bodies = []
+    withMarket(service, { '/api/desktop-workbenches/market-enabled': options => {
+      bodies.push(JSON.parse(options.body))
+      snapshot.lifecycle.bundles[0].enabled = false
+      return Response.json(changeEnvelope('applied', install))
+    } })
+    await service.setPluginEnabled('helper', false)
+    expect(bodies).toEqual([{ id: 'o/helper', enabled: false }])
+    expect(ctx.remote.pluginManager.setBundleEnabled).not.toHaveBeenCalled()
+    expect(service.activationFor(service.getSnapshot().catalog[0])).toBe('off')
+    expect(service.getSnapshot()).toMatchObject({ restartNeeded: false, reloadNeeded: false, togglingPlugin: null })
+    expect(saved().state).toEqual(initial)
+  })
+
+  it('refreshes market records and manager lifecycle on change/reset events and cleans up subscriptions', async () => {
+    const fixtureResult = await fixture(boundState())
+    const handlers = new Map()
+    const cleanup = []
+    const disposeChanged = vi.fn(() => handlers.delete('plugin-manager/changed'))
+    const disposeReset = vi.fn(() => handlers.delete('connection/reset'))
+    let service
+    const ctx = { ...fixtureResult.ctx,
+      reflect: { provide: (_name, value) => { service = value } },
+      remote: { $on: vi.fn((name, callback) => { handlers.set(name, callback); return disposeChanged }) },
+      on: vi.fn((name, callback) => { handlers.set(name, callback); return disposeReset }),
+      effect: (callback, label) => { if (['workbenches: service', 'workbenches: native plugin status'].includes(label)) cleanup.push(callback()) },
+      slots: { inject: () => {} }
+    }
+    apply(ctx)
+    service.request = fixtureResult.service.request
+    service.state = structuredClone(boundState())
+    service.ready = true
+    service.remoteCatalog = [listed()]
+    const snapshot = lifecycleMarket(service)
+    const before = structuredClone(service.state)
+    snapshot.installs = { 'o/helper': { catalogId: 'o/helper', pluginName: 'helper', version: '2.0.0' } }
+    snapshot.packages = { helper: { origin: 'market', version: '2.0.0' } }
+    snapshot.lifecycle = { bundles: [{ name: 'helper', installed: true, enabled: false, version: '2.0.0' }], plugins: [{ id: 'helper:main', name: 'helper' }] }
+    handlers.get('plugin-manager/changed')()
+    await vi.waitFor(() => expect(service.getSnapshot().installs['o/helper']?.version).toBe('2.0.0'))
+    expect(service.native).toMatchObject({ status: 'ready', bundles: { helper: { enabled: false, version: '2.0.0' } }, plugins: snapshot.lifecycle.plugins })
+    expect(service.packageEvidence).toEqual(snapshot.packages)
+    expect(service.state).toEqual(before)
+    snapshot.installs = {}
+    snapshot.packages = {}
+    snapshot.lifecycle = { bundles: [], plugins: [] }
+    handlers.get('connection/reset')()
+    await vi.waitFor(() => expect(service.installs).toEqual({}))
+    expect(service.native.bundles).toEqual({})
+    expect(service.packageEvidence).toEqual({})
+    expect(ctx.uiWorkspace.openSession).not.toHaveBeenCalled()
+    cleanup.forEach(dispose => dispose?.())
+    expect(disposeChanged).toHaveBeenCalledOnce()
+    expect(disposeReset).toHaveBeenCalledOnce()
+    service.dispose()
+  })
 
   it('shows one installed card for old and market IDs of the same package without changing stored state', async () => {
     const initial = { ...emptyState(), added: ['o/old', 'o/new'], pinned: ['o/old'],
@@ -3119,7 +3215,7 @@ describe('workbench market screenshot and metadata display', () => {
     expect(ui.find(ui.render(), node => node.type === 'article' && node.props.key === 'o/old')).toHaveLength(1)
   })
 
-  it('migrates an old-only installed ID to its unique live market provider and preserves owned data', async () => {
+  it('does not infer an unauthorized repository migration from a shared package name', async () => {
     const initial = { ...emptyState(), added: ['o/old'], pinned: ['o/old'], favorites: ['o/old'], active: 'o/old',
       notes: { 'o/old': 'Keep notes' }, sessionBindings: { old: 'o/old' }, recentSessions: { 'o/old': 'old' } }
     const { service, ctx, saved } = await fixture(initial)
@@ -3130,13 +3226,15 @@ describe('workbench market screenshot and metadata display', () => {
     service.register({ title: 'Helper', repository: 'https://github.com/o/new' }, () => null)
     await service.queue
 
-    expect(saved().state).toMatchObject({ added: ['o/new'], pinned: ['o/new'], favorites: ['o/new'], active: 'o/new',
-      notes: { 'o/new': 'Keep notes' }, sessionBindings: { old: 'o/new' }, recentSessions: { 'o/new': 'old' } })
+    expect(saved().state).toEqual(initial)
+    service.migrateLegacyWorkbenchIds()
+    await service.queue
+    expect(saved().state).toEqual(initial)
     expect(service.knownProviders['o/old'].sourcePackage).toBe('helper')
     const ui = interactiveMarket(service, 'mine')
-    expect(ui.find(ui.render(), node => node.type === 'article' && node.props.key === 'o/old')).toHaveLength(0)
+    expect(ui.find(ui.render(), node => node.type === 'article' && node.props.key === 'o/old')).toHaveLength(1)
     expect(ui.find(ui.render(), node => node.type === 'article' && node.props.key === 'o/new')).toHaveLength(1)
-    await expect(service.open('o/new')).resolves.toBeUndefined()
+    await expect(service.open('o/new')).rejects.toThrow() // No automatic add or ownership transfer.
   })
 
   it('defaults market cards to descending stars and offers downloads, update time and name sorting', async () => {
@@ -3346,8 +3444,15 @@ describe('workbench market screenshot and metadata display', () => {
     expect(switches[0].props['aria-checked']).toBe(true)
     expect(switches[0].props['aria-label']).toContain('运行状态')
     expect(cardButtons(card)).toEqual([])
+    const bodies = []
+    withMarket(service, { '/api/desktop-workbenches/market-enabled': options => {
+      bodies.push(JSON.parse(options.body))
+      enabled = false
+      return Response.json(changeEnvelope('applied'))
+    } })
     switches[0].props.onClick()
-    await vi.waitFor(() => expect(ctx.remote.pluginManager.setBundleEnabled).toHaveBeenCalledWith('helper', false))
+    await vi.waitFor(() => expect(bodies).toEqual([{ id: 'o/helper', enabled: false }]))
+    expect(ctx.remote.pluginManager.setBundleEnabled).not.toHaveBeenCalled()
     await vi.waitFor(() => expect(service.activationFor(service.getSnapshot().catalog[0])).toBe('off'))
     card = ui.find(ui.render(), node => node.type === 'article')[0]
     switches = ui.find(card, node => node.props?.role === 'switch')
@@ -3433,6 +3538,29 @@ describe('workbench market screenshot and metadata display', () => {
     expect(service.getSnapshot().catalog.find(entry => entry.catalogId === 'o/helper')).toMatchObject({ installed: false, pendingRestart: true, loadFailure: '' })
     expect(JSON.stringify(marketCard(service))).toContain('已安装')
     expect(cardButtons(marketCard(service))).not.toContain('打开工作台')
+  })
+
+  it('installs a pure-client workbench requesting reload rather than restart', async () => {
+    const { service } = await fixture()
+    service.remoteCatalog = [listed()]
+    withMarket(service, {
+      '/api/desktop-workbenches/market-install': () => Response.json({
+        install: { catalogId: 'o/helper', pluginName: 'helper', version: '1.0.0' },
+        restartRequired: false,
+        reloadRequired: true,
+        actionRequired: 'reload'
+      })
+    })
+    await service.installFromMarket('o/helper')
+    expect(service.getSnapshot()).toMatchObject({
+      installing: null,
+      restartNeeded: false,
+      reloadNeeded: true,
+      installs: { 'o/helper': { pluginName: 'helper' } }
+    })
+    const card = service.getSnapshot().catalog.find(entry => entry.catalogId === 'o/helper')
+    expect(card).toMatchObject({ installed: false, pendingRestart: false, pendingReload: true })
+    expect(JSON.stringify(marketCard(service))).toContain('刷新后生效')
   })
 
   it('merges the installed provider through its caller package identity', async () => {
@@ -4080,6 +4208,8 @@ describe('workbench market screenshot and metadata display', () => {
     await expect(service.installFromMarket('o/helper')).rejects.toThrow('安装记录无效')
     expect(calls).toEqual(['/api/desktop-workbenches/market-install'])
     expect(service.getSnapshot().installs).toEqual({})
+    expect(service.getSnapshot()).toMatchObject({ restartNeeded: false, reloadNeeded: false })
+    expect(service.pendingRestart.size).toBe(0)
     expect(saved().state.added).toEqual([])
     await expect(service.installFromMarket('o/gone')).rejects.toThrow('已不在工作台市场')
   })
@@ -4119,21 +4249,6 @@ describe('workbench market screenshot and metadata display', () => {
     expect(service.getSnapshot().restartNeeded).toBe(true)
     const ui = interactiveMarket(service, 'mine')
     expect(ui.find(ui.render(), node => node.type === 'article' && node.props.key === 'owner/local')).toHaveLength(0)
-  })
-
-  it('leaves an active workbench before uninstalling its native bundle', async () => {
-    const { service, ctx, saved } = await fixture({ ...emptyState(), added: ['owner/local'], pinned: ['owner/local'], active: 'owner/local' })
-    setFiberPackage(ctx, 'local-package')
-    service.register({ title: 'Local', repository: 'https://github.com/owner/local' }, () => null)
-    let installed = true
-    ctx.remote = { pluginManager: {
-      listBundles: vi.fn(async () => ({ ok: true, value: installed ? [{ name: 'local-package', installed: true, enabled: true, removable: true }] : [] })),
-      removeBundle: vi.fn(async () => { installed = false; return { ok: true, value: { changed: true, application: 'restart-required' } } })
-    } }
-    await service.refreshNative()
-    await service.removeWorkbench('owner/local')
-    expect(saved().state.active).toBe(null)
-    expect(ctx.remote.pluginManager.removeBundle).toHaveBeenCalledWith('local-package')
   })
 
   it('keeps a local workbench when native removal fails or is not applied', async () => {
@@ -4202,22 +4317,6 @@ describe('workbench market screenshot and metadata display', () => {
     expect(typeof service.removeWorkbench).toBe('function')
   })
 
-  it('closes the uninstall confirmation before a slow removal finishes', async () => {
-    const { service } = await fixture({ ...emptyState(), added: ['o/helper'], pinned: ['o/helper'] })
-    service.remoteCatalog = [listed()]
-    service.installs = { 'o/helper': { catalogId: 'o/helper', pluginName: 'helper', version: '1.0.0' } }
-    service.publish()
-    let finish
-    service.removeWorkbench = vi.fn(() => new Promise(resolve => { finish = resolve }))
-    const ui = interactiveMarket(service, 'mine')
-    ui.find(ui.render(), node => node.props?.className === 'dshWbUninstall')[0].props.onClick()
-    const modal = ui.modal(ui.render())
-    modal.props.onConfirm()
-    expect(ui.modal(ui.render())).toBeUndefined()
-    finish()
-    await vi.waitFor(() => expect(service.removeWorkbench).toHaveBeenCalledWith('o/helper'))
-  })
-
   it('offers local native uninstall but disables unknown failed Installed cards', async () => {
     const { service, ctx } = await fixture({ ...emptyState(), added: ['owner/local', 'o/helper'] })
     service.remoteCatalog = [listed()]
@@ -4254,7 +4353,8 @@ describe('workbench market screenshot and metadata display', () => {
     expect(source).not.toContain('SubmitSuccess')
     expect(source).not.toContain('localDrafts')
     expect(fullSource).not.toContain('投稿已保存到本机')
-    expect(source).toContain('提交 PR 就是进入审核')
+    expect(source).toContain('PR 是 GitHub 上的提交审核请求')
+    expect(source).toContain('审核通过、PR 合并并且市场目录更新后，工作台才会上架')
     expect(source).toContain('工作台市场仓库')
   })
   it('uses a focused confirmation dialog for removal instead of inline card copy', () => {
@@ -4273,8 +4373,7 @@ describe('workbench market screenshot and metadata display', () => {
     expect(source).toContain("event.key === 'ArrowLeft'")
     expect(source).toContain("event.key === 'Home'")
     expect(source).toContain("event.key === 'End'")
-    expect(source).toContain("tabIndex: visibleTab === 'favorites' ? 0 : -1")
-    expect(source).toContain("tabIndex: visibleTab === 'mine' ? 0 : -1")
+    expect(source).toContain("tabIndex: tab === collection.id ? 0 : -1")
     expect(source).not.toContain("tabIndex: tab === 'local' ? 0 : -1")
     expect(source).not.toContain("'来源未知'")
   })
@@ -4287,7 +4386,6 @@ describe('workbench host localization', () => {
     let snapshot = { active: 'en', revision: 1 }
     const listeners = new Set()
     ctx.locale = {
-      bind: () => key => ({ create: snapshot.active === 'en' ? 'Create workbench' : '创建工作台', copy: snapshot.active === 'en' ? 'Copy instructions' : '复制指令' })[key] || key,
       getSnapshot: () => snapshot,
       subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener) },
       setActive: active => { snapshot = { active, revision: snapshot.revision + 1 }; for (const listener of listeners) listener() }
@@ -4313,7 +4411,7 @@ describe('workbench host localization', () => {
 
   it('localizes the creation workflow and installed-state actions', async () => {
     const { service, ctx } = await fixture({ ...emptyState(), added: ['o/a'] })
-    ctx.locale = { bind: () => key => ({ create: 'Create workbench', copy: 'Copy instructions' })[key] || key, getSnapshot: () => ({ active: 'en', revision: 1 }), subscribe: () => () => {} }
+    ctx.locale = { getSnapshot: () => ({ active: 'en', revision: 1 }), subscribe: () => () => {} }
     service.remoteCatalog = [bilingualEntry()]
     service.publish()
     const ui = interactiveMarket(service)
@@ -4323,7 +4421,6 @@ describe('workbench host localization', () => {
     tree = ui.render()
     expect(ui.find(tree, node => node.type === 'h1')[0].props.children).toEqual(['Build your own workbench'])
     expect(ui.button(tree, 'Create workbench')).toBeDefined()
-    expect(ui.button(tree, 'Copy instructions')).toBeDefined()
     expect(ui.button(tree, 'Copy submission instructions')).toBeDefined()
     ui.button(tree, 'Back to Workbench Market').props.onClick()
     ui.find(ui.render(), node => node.props?.id === 'dsh-workbench-mine-tab')[0].props.onClick()
@@ -4335,147 +4432,6 @@ describe('workbench host localization', () => {
 
 
 describe('sidebar central panel selection', () => {
-  it('separates cloud apps from enterprise packages and preserves native card actions', async () => {
-    const { service } = await fixture()
-    const connectionKey = 'a'.repeat(16)
-    const item = { id: 'b'.repeat(32), name: 'Team cloud board', description: 'Shared data' }
-    service.enterpriseCatalog = [{ id: 'package-board', displayName: 'Enterprise package', packageName: 'team-package' }]
-    service.cloudCatalog = [item]
-    service.cloudAccountKey = connectionKey
-    service.cloudCatalogStatus = 'ready'
-    service.publish()
-    const ui = interactiveMarket(service, 'enterprise', undefined, { known: true, connected: true, connectionKey, allowThirdPartyWorkbenches: false })
-    let tree = ui.render()
-    expect(ui.find(tree, node => node.props?.role === 'tab')).toHaveLength(3)
-    expect(ui.find(tree, node => node.type?.name === 'CloudInstalledCard')).toHaveLength(0)
-    ui.find(tree, node => node.props?.id === 'dsh-workbench-cloud-tab')[0].props.onClick()
-    tree = ui.render()
-    expect(ui.find(tree, node => node.props?.className === 'dshWbGrid')).toHaveLength(1)
-    expect(ui.find(tree, node => node.type === 'article' && node.props.key === 'package-board')).toHaveLength(0)
-    const component = ui.find(tree, node => node.type?.name === 'CloudInstalledCard')[0]
-    let card = component.type(component.props)
-    expect(ui.find(card, node => node.props?.className === 'dshWbCategory')[0].props.children).toEqual(['云端'])
-    expect(ui.find(card, node => node.props?.className === 'dshWbUninstall')).toHaveLength(0)
-    service.open = vi.fn(async () => {})
-    ui.button(card, '加载到工作台').props.onClick()
-    const id = `cloud:${connectionKey}:${item.id}`
-    await vi.waitFor(() => expect(service.open).toHaveBeenCalledWith(id))
-    expect(service.state.added).toContain(id)
-    tree = ui.render()
-    card = ui.find(tree, node => node.type?.name === 'CloudInstalledCard')[0]
-    expect(ui.button(card.type(card.props), '打开工作台')).toBeDefined()
-    ui.find(tree, node => node.type === 'input' && node.props.type === 'search')[0].props.onChange({ target: { value: 'cloud' } })
-    tree = ui.render()
-    expect(ui.find(tree, node => node.type === 'article')).toHaveLength(0)
-    expect(ui.find(tree, node => node.type?.name === 'CloudInstalledCard')).toHaveLength(1)
-    service.refreshCloudCatalog = vi.fn(async () => {})
-    ui.find(tree, node => node.props?.className === 'dshWbBtn dshWbRefresh')[0].props.onClick()
-    expect(service.refreshCloudCatalog).toHaveBeenCalledOnce()
-    service.dispose()
-  })
-
-  it('keeps enterprise packages usable if the cloud list fails and never shows another account’s cloud apps', async () => {
-    const { service } = await fixture()
-    service.enterpriseCatalog = [{ id: 'package-board', displayName: 'Enterprise package' }]
-    service.cloudCatalog = [{ id: 'b'.repeat(32), name: 'Another account' }]
-    service.cloudAccountKey = 'a'.repeat(16)
-    service.cloudCatalogStatus = 'error'
-    service.cloudCatalogError = 'unavailable'
-    service.publish()
-    const ui = interactiveMarket(service, 'enterprise', undefined, { known: true, connected: true, connectionKey: 'c'.repeat(16), allowThirdPartyWorkbenches: false })
-    const tree = ui.render()
-    expect(ui.find(tree, node => node.type === 'article')).toHaveLength(1)
-    expect(ui.find(tree, node => node.type?.name === 'CloudInstalledCard')).toHaveLength(0)
-    expect(ui.find(tree, node => node.props?.role === 'alert')).toHaveLength(0)
-    ui.find(tree, node => node.props?.id === 'dsh-workbench-cloud-tab')[0].props.onClick()
-    expect(ui.find(ui.render(), node => node.type?.name === 'CloudInstalledCard')).toHaveLength(0)
-    expect(ui.find(ui.render(), node => node.props?.role === 'alert')).toHaveLength(1)
-    service.dispose()
-  })
-
-  it('keeps the separate cloud login panel discoverable', async () => {
-    const { service } = await fixture()
-    service.networkMarketAllowed = false
-    const ui = interactiveMarket(service, 'cloud', undefined, { known: true, connected: false, allowThirdPartyWorkbenches: false })
-    const tree = ui.render()
-    expect(ui.find(tree, node => node.props?.id === 'dsh-workbench-cloud-panel')).toHaveLength(1)
-    expect(ui.find(tree, node => node.props?.id === 'dsh-workbench-market-panel')).toHaveLength(0)
-    expect(ui.find(tree, node => node.props?.className === 'dshWbBrowseTools')).toHaveLength(0)
-    expect(ui.find(tree, node => node.props?.className === 'dshWbSearch')).toHaveLength(0)
-  })
-  it.each([false, true])('keeps public cards and favorites when permitted or signed out (connected=%s)', async connected => {
-    const { service } = await fixture()
-    service.remoteCatalog = [{
-      id: 'o/a', owner: 'o', name: 'Public workbench', version: '1.2.3',
-      description: { zh: '完整市场介绍', en: 'Market description' },
-      screenshots: [{ url: 'https://example.test/workbench.png' }], url: 'https://github.com/o/a',
-      metrics: { githubStars: { value: 17 }, npmDownloads30d: { value: 120 } }
-    }]
-    service.enterpriseCatalog = [{ id: 'enterprise-board', displayName: 'Enterprise board' }]
-    service.publish()
-    const ui = interactiveMarket(service, 'market', undefined, {
-      known: true, connected, allowThirdPartyWorkbenches: connected
-    })
-    let tree = ui.render()
-    expect(ui.find(tree, node => node.props?.role === 'tab').map(node => node.props.id)).toEqual([
-      'dsh-workbench-market-tab', 'dsh-workbench-favorites-tab',
-      ...(connected ? ['dsh-workbench-enterprise-tab'] : []),
-      'dsh-workbench-mine-tab', 'dsh-workbench-cloud-tab'
-    ])
-    expect(ui.find(tree, node => node.type === 'article').map(node => node.props.key)).toEqual(['o/a'])
-    const preview = ui.find(tree, node => node.type?.name === 'Preview')[0]
-    expect(preview.props.entry.screenshots).toEqual(['https://example.test/workbench.png'])
-    expect(ui.find(tree, node => node.props?.className === 'dshWbRoundButton')[0].props.href).toBe('https://github.com/o/a')
-    expect(ui.find(tree, node => node.type?.name === 'EntryMetrics')[0].props.entry.metrics).toMatchObject({
-      githubStars: { value: 17 }, npmDownloads30d: { value: 120 }
-    })
-    expect(ui.find(tree, node => node.props?.className === 'dshWbCardVersion')).toHaveLength(1)
-    const favorite = () => ui.find(tree, node => node.props?.className === 'dshWbFavorite')[0]
-    favorite().props.onClick()
-    await vi.waitFor(() => expect(service.state.favorites).toEqual(['o/a']))
-    tree = ui.render()
-    ui.find(tree, node => node.props?.id === 'dsh-workbench-favorites-tab')[0].props.onClick()
-    tree = ui.render()
-    expect(ui.find(tree, node => node.type === 'article').map(node => node.props.key)).toEqual(['o/a'])
-    expect(favorite().props['aria-pressed']).toBe(true)
-    favorite().props.onClick()
-    await vi.waitFor(() => expect(service.state.favorites).toEqual([]))
-    expect(ui.find(ui.render(), node => node.type === 'article')).toHaveLength(0)
-    service.dispose()
-  })
-
-
-  it.each([false, undefined])('uses only enterprise distribution when public policy is %s', async policy => {
-    const { service } = await fixture()
-    service.remoteCatalog = [{ id: 'o/a', owner: 'o', name: 'Cached public workbench', description: { zh: '缓存目录', en: 'Cached catalog' }, screenshots: [], url: 'https://github.com/o/a' }]
-    service.enterpriseCatalog = [{ id: 'enterprise-board', displayName: 'Enterprise board' }]
-    service.publish()
-    const ui = interactiveMarket(service, 'market', undefined, { known: true, connected: true, allowThirdPartyWorkbenches: policy })
-    let tree = ui.render()
-    expect(ui.find(tree, node => node.type === 'article')).toHaveLength(1)
-    expect(ui.find(tree, node => node.type === 'article' && node.props.key === 'enterprise-board')).toHaveLength(1)
-    for (const tab of ['favorites', 'enterprise']) expect(ui.find(tree, node => node.props?.id === `dsh-workbench-${tab}-tab`)).toHaveLength(0)
-    expect(ui.find(tree, node => node.props?.role === 'tab').map(node => node.props.id)).toEqual([
-      'dsh-workbench-market-tab', 'dsh-workbench-mine-tab', 'dsh-workbench-cloud-tab'
-    ])
-    expect(ui.button(tree, '工作台市场')).toBeDefined()
-    expect(ui.find(tree, node => node.props?.className === 'dshWbFavorite')).toHaveLength(0)
-    expect(ui.button(tree, '安装本地工作台')).toBeUndefined()
-    expect(ui.button(tree, '登录毕昇账号')).toBeUndefined()
-    ui.button(tree, '制作我的工作台').props.onClick()
-    tree = ui.render()
-    expect(ui.find(tree, node => node.props?.className?.includes('dshWbStartCreate'))).toHaveLength(1)
-    expect(ui.button(tree, '复制投稿指令')).toBeUndefined()
-    expect(ui.find(tree, node => node.type?.name === 'SubmissionStatus')).toHaveLength(0)
-    expect(ui.find(tree, node => node.props?.className === 'dshWbMuted dshWbSubmitOutcome')).toHaveLength(0)
-    service.dispose()
-  })
-
-  it('keeps the Workbench entrance visible before enterprise login', () => {
-    const ui = sidebarSwitcher({ enterprise: { known: true, connected: false } })
-    expect(ui.render()).not.toBe(null)
-    expect(ui.find(ui.render(), node => node.props?.['aria-label'] === '打开工作台主页')).toHaveLength(1)
-  })
   it('highlights the entire row for an active workbench frame, but not other panels', () => {
     const ui = sidebarSwitcher({ pinned: ['writer'], active: 'writer', title: '装修工作台' })
     const selected = () => ui.find(ui.render(), node => node.props?.['data-dsh-workbench-switcher'] === '')[0].props['data-selected']
@@ -4532,167 +4488,297 @@ describe('workbench feature default', () => {
     }
   }
 
-  it('enables workbenches only with an explicit stored true preference', async () => {
-    expect(await openError(undefined)).toBe('工作台功能已关闭。')
-    expect(await openError('invalid')).toBe('工作台功能已关闭。')
-    expect(await openError('false')).toBe('工作台功能已关闭。')
+  it('keeps workbenches on unless the user switches the feature off', async () => {
+    expect(await openError(undefined)).not.toBe('工作台功能已关闭。')
     expect(await openError('true')).not.toBe('工作台功能已关闭。')
+    expect(await openError('false')).toBe('工作台功能已关闭。')
   })
 })
 
-describe('enterprise workbench Manager outcomes', () => {
-  it.each(['applied', 'restart-required'])('uses the %s outcome without inventing a restart', async application => {
+describe('local workbench installation restart notice', () => {
+  it('polls immediately and every five seconds, rehydrates after page refresh, and never restarts automatically', async () => {
+    vi.useFakeTimers()
+    const { service, ctx, request } = await fixture()
+    const restart = vi.fn()
+    ctx.remote = { harness: { restart } }
+    let pending = false
+    request.mockImplementation(async () => Response.json({ restartRequired: pending }))
+    request.mockClear()
+    const stop = service.watchRestartStatus()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(request.mock.calls.map(([url]) => url)).toEqual(['/api/desktop-workbenches/restart-status'])
+    expect(service.getSnapshot().restartNeeded).toBe(false)
+    pending = true
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(request.mock.calls.map(([url]) => url)).toEqual([
+      '/api/desktop-workbenches/restart-status',
+      '/api/desktop-workbenches/restart-status'
+    ])
+    expect(service.getSnapshot().restartNeeded).toBe(true)
+    expect(restart).not.toHaveBeenCalled()
+    const reloaded = new Workbenches(ctx, request)
+    await reloaded.refreshRestartStatus()
+    expect(reloaded.getSnapshot().restartNeeded).toBe(true)
+    stop()
+    const calls = request.mock.calls.length
+    await vi.advanceTimersByTimeAsync(15000)
+    expect(request).toHaveBeenCalledTimes(calls)
+    reloaded.dispose()
+    service.dispose()
+  })
+
+  it('does not republish an unchanged pending restart notice', async () => {
     const { service, request } = await fixture()
-    const id = 'a'.repeat(32)
-    request.mockImplementation(async url => url === '/api/desktop-workbenches/enterprise-install'
-      ? Response.json({ application, install: { id }, restartRequired: application === 'restart-required' })
-      : Response.json({ installs: {}, packages: {} }))
-    await service.installEnterpriseWorkbench(id)
-    expect(service.pendingRestart.has(id)).toBe(application === 'restart-required')
-    expect(Boolean(service.restartNeeded)).toBe(application === 'restart-required')
-    expect(service.installing).toBeNull()
+    const listener = vi.fn()
+    const unsubscribe = service.subscribe(listener)
+    request.mockImplementation(async () => Response.json({ restartRequired: true, runtimeId: 'same-runtime' }))
+    await service.refreshRestartStatus()
+    expect(listener).toHaveBeenCalledTimes(1)
+    await service.refreshRestartStatus()
+    expect(listener).toHaveBeenCalledTimes(1)
+    unsubscribe()
+    service.dispose()
   })
-  it('does not accept a failed activation even when package bytes were installed', async () => {
+
+  it('clears the notice after a Harness restart even if the page stays mounted', async () => {
     const { service, request } = await fixture()
-    const id = 'a'.repeat(32)
-    request.mockResolvedValue(Response.json({ application: 'failed', install: { id }, error: 'activation failed' }, { status: 409 }))
-    await expect(service.installEnterpriseWorkbench(id)).rejects.toThrow('activation failed')
-    expect(service.pendingRestart.has(id)).toBe(false)
-    expect(service.installing).toBeNull()
+    request.mockResolvedValue(Response.json({ restartRequired: true, runtimeId: 'before' }))
+    await service.refreshRestartStatus()
+    expect(service.restartNeeded).toBe(true)
+    request.mockResolvedValue(Response.json({ restartRequired: false, runtimeId: 'after' }))
+    await service.refreshRestartStatus()
+    expect(service.getSnapshot().restartNeeded).toBe(false)
+    service.dispose()
   })
-})
-describe('enterprise catalog request lifecycle', () => {
-  it('shares an in-flight read and allows another refresh after settlement', async () => {
-    let finish
-    const service = Object.create(Workbenches.prototype)
-    service.readEnterpriseCatalog = vi.fn(() => new Promise(resolve => { finish = resolve }))
-    const first = service.refreshEnterpriseCatalog()
-    expect(service.refreshEnterpriseCatalog()).toBe(first)
-    expect(service.readEnterpriseCatalog).toHaveBeenCalledOnce()
-    finish()
-    await first
-    const second = service.refreshEnterpriseCatalog()
-    expect(second).not.toBe(first)
-    expect(service.readEnterpriseCatalog).toHaveBeenCalledTimes(2)
-    finish()
-    await second
+
+  it('combines host restart status with local outcomes and clears only restart outcomes on runtime replacement', async () => {
+    const { service, request } = await fixture()
+    service.recordApplication('local', { application: 'restart-required' }, 'local', 'install')
+    service.recordApplication('reload', { application: 'reload-required' }, 'reload', 'install')
+    request.mockResolvedValue(Response.json({ restartRequired: false, runtimeId: 'before' }))
+    await service.refreshRestartStatus()
+    expect(service.restartNeeded).toBe(true)
+    request.mockResolvedValue(Response.json({ restartRequired: false, runtimeId: 'after' }))
+    await service.refreshRestartStatus()
+    expect(service.restartNeeded).toBe(false)
+    expect(service.reloadNeeded).toBe(true)
+    service.dispose()
+  })
+
+  it('persists image changes arriving before the first runtime snapshot and clears them after restart', async () => {
+    const { service, ctx, request } = await fixture()
+    service.extraRestartSources.add('image')
+    service.publish()
+    request.mockResolvedValue(Response.json({ restartRequired: false, runtimeId: 'before' }))
+    await service.refreshRestartStatus()
+    const reloaded = new Workbenches(ctx, request)
+    expect(reloaded.restartNeeded).toBe(true)
+    request.mockResolvedValue(Response.json({ restartRequired: false, runtimeId: 'after' }))
+    await reloaded.refreshRestartStatus()
+    expect(reloaded.restartNeeded).toBe(false)
+    reloaded.dispose(); service.dispose()
+  })
+
+  it('preserves current notice on older hosts/errors and ignores late results after disposal', async () => {
+    const { service, request } = await fixture()
+    request.mockResolvedValue(Response.json({ restartRequired: true, runtimeId: 'before' }))
+    await service.refreshRestartStatus()
+    request.mockResolvedValue(new Response('', { status: 404 }))
+    await service.refreshRestartStatus()
+    expect(service.restartNeeded).toBe(true)
+    request.mockResolvedValue(Response.json({ restartRequired: false, runtimeId: 'after' }))
+    await service.refreshRestartStatus()
+    const response = deferred()
+    request.mockReturnValue(response.promise)
+    const reading = service.refreshRestartStatus()
+    service.dispose()
+    response.resolve(Response.json({ restartRequired: true }))
+    await reading
+    expect(service.restartNeeded).toBe(false)
   })
 })
 
+describe('repository-free local registration', () => {
+  it('registers the verified current install when historical receipts reuse its package name', async () => {
+    const source = 'dsh-deck-workbench'
+    const current = 'owner/deck'
+    const previous = 'former-owner/deck'
+    const initial = { ...emptyState(), added: [previous], pinned: [previous],
+      sessionBindings: { old: previous, 'writer-1': current }, notes: { [previous]: 'Keep with its original workbench' } }
+    const { service, ctx, saved } = await fixture(initial)
+    service.remoteCatalog.push(...[previous, current].map(id => ({ id, name: 'Deck', description: { zh: '' }, screenshots: [], distribution: { name: source } })))
+    service.installs = {
+      [previous]: { catalogId: previous, pluginName: source, version: '1.0.0', fingerprint: `v2:${'a'.repeat(64)}` },
+      [current]: { catalogId: current, pluginName: source, version: '1.0.0', fingerprint: `v2:${'b'.repeat(64)}` }
+    }
+    service.packageEvidence = { [source]: { contentVerified: true, version: '1.0.0', fingerprint: service.installs[current].fingerprint } }
+    service.knownProviders[previous] = { id: previous, sourcePackage: source, title: 'Previous Deck' }
+    service.native = { status: 'ready', bundles: { [source]: { installed: true, enabled: true } } }
+    setFiberPackage(ctx, source)
+    service.register({ title: 'Deck' }, () => null)
+    await service.queue
 
-it('keeps the published guide URL in the editable draft instead of a local attachment', async () => {
-  const { service, ctx } = await fixture()
-  ctx.locale.bind = () => key => ({ instructionBody: 'Read {guideUrl} and assess local, cloud or hybrid hosting.', starter: 'My 【idea】' })[key] || key
-  // The market view sees the same bound service used by its create action.
-  expect(service.creationPrompt()).toContain('https://dshdesktop.com/workbench/docs/development.md')
-  expect(service.creationPrompt()).not.toContain('.md 的附件')
-  expect(service.creationInstructions()).toBe(developmentWorkbenchAgentPrompt(false, service.developmentGuideUrl()))
-  expect(service.creationInstructions()).not.toContain('My 【idea】')
-  expect(service.creationPrompt()).toContain('My 【idea】')
+    expect(service.catalog.get(current)?.sourcePackage).toBe(source)
+    expect(service.catalog.has(previous)).toBe(false)
+    expect(service.getSnapshot().registrationFailures).toEqual([])
+    expect(service.ownsSession('old')).toBe(false)
+    expect(service.ownsSession('writer-1')).toBe(true)
+    expect(saved().state.sessionBindings).toEqual(initial.sessionBindings)
+    expect(saved().state.notes).toEqual(initial.notes)
+    service.dispose()
+  })
+
+  it('uses the canonical repository to select among matching catalog package aliases', async () => {
+    const { service, ctx } = await fixture()
+    const source = 'deck-repository-fixture'
+    const current = 'owner/deck-repository-fixture'
+    service.remoteCatalog.push(...['other/deck-repository-fixture', current].map(id => ({
+      id, name: 'Deck', description: { zh: '' }, screenshots: [], distribution: { name: source }
+    })))
+    setFiberPackage(ctx, source)
+    service.register({ title: 'Deck', repository: `https://github.com/${current}` }, () => null)
+    expect(service.catalog.get(current)?.sourcePackage).toBe(source)
+    expect(service.catalog.has('other/deck-repository-fixture')).toBe(false)
+    expect(service.getSnapshot().registrationFailures).toEqual([])
+    service.dispose()
+  })
+
+  it('registers and pins scoped package identity, preserves it across market discovery and reload', async () => {
+    const { service, ctx, saved, request } = await fixture()
+    setFiberPackage(ctx, '@team/local-review')
+    const unregister = service.register({ title: 'Local review' }, () => null)
+    await service.queue
+    const id = 'local:@team/local-review'
+    expect(service.catalog.get(id)?.sourcePackage).toBe('@team/local-review')
+    expect(saved().state.added).toContain(id)
+    expect(saved().state.pinned).toContain(id)
+    expect(service.getSnapshot().catalog.find(entry => entry.id === id)).toMatchObject({ local: true, installed: true })
+    service.remoteCatalog.push(...['owner/published', 'fork/published'].map(id => ({ id, name: 'Published', description: { zh: '' }, screenshots: [], distribution: { name: '@team/local-review' } })))
+    service.rebuildProviders()
+    expect(service.catalog.has(id)).toBe(true)
+    service.native = { status: 'ready', bundles: { '@team/local-review': { name: '@team/local-review', installed: true, enabled: true } } }
+    const cards = service.marketCatalog()
+    expect(cards.find(entry => entry.id === id)).toMatchObject({ installed: true, local: true, listed: false })
+    expect(cards.find(entry => entry.id === 'owner/published')).toMatchObject({ installed: false, local: false, listed: true, loadFailure: '' })
+    await service.commit(state => { state.sessionBindings.old = id })
+    expect(service.ownsSession('old')).toBe(true)
+    unregister()
+    service.dispose()
+    const restored = new Workbenches(ctx, request)
+    restored.register({ title: 'Local review', repository: 'https://github.com/owner/published' }, () => null)
+    await restored.load()
+    await restored.queue
+    expect(restored.catalog.has(id)).toBe(true)
+    expect(saved().state.sessionBindings.old).toBe(id)
+    restored.dispose()
+  })
+
+  it('keeps a fresh local installation separate from a same-package market listing at startup', async () => {
+    const { service, ctx, saved } = await fixture()
+    const source = '@team/startup-local'
+    service.packageEvidence = { [source]: { origin: 'local' } }
+    service.remoteCatalog.push({ id: 'owner/startup-market', name: 'Published', description: { zh: '' }, screenshots: [], distribution: { name: source } })
+    setFiberPackage(ctx, source)
+    service.register({ title: 'Local startup' }, () => null)
+    await service.queue
+    expect(service.catalog.has('local:@team/startup-local')).toBe(true)
+    expect(service.catalog.has('owner/startup-market')).toBe(false)
+    expect(saved().state.added).toContain('local:@team/startup-local')
+    expect(saved().state.added).not.toContain('owner/startup-market')
+    service.dispose()
+  })
+
+  it('shows actionable registration diagnostics without hiding healthy providers and clears them after correction/disposal', async () => {
+    const { service, ctx } = await fixture()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    setFiberPackage(ctx, 'broken-local')
+    expect(() => service.register({ title: 'Broken', repository: 'invalid' }, () => null)).toThrow()
+    expect(service.getSnapshot().registrationFailures).toEqual([expect.objectContaining({ sourcePackage: 'broken-local', stage: 'register', message: expect.stringContaining('GitHub URL') })])
+    ctx.locale = { bind: vi.fn(namespace => key => `${namespace}:${key}`) }
+    const ui = interactiveMarket(service, 'mine')
+    // Diagnostics now belong to the global notification, never the market row.
+    // The mounted notification behavior is covered by harness-restart-notice.
+    expect(ui.find(ui.render(), node => node.props?.role === 'alert')).toHaveLength(0)
+    expect(service.catalog.has('writer')).toBe(true)
+    const dispose = service.register({ title: 'Fixed' }, () => null)
+    expect(service.getSnapshot().registrationFailures).toEqual([])
+    expect(() => service.register({ title: 'Duplicate' }, () => null)).toThrow('Duplicate')
+    expect(service.getSnapshot().registrationFailures[0]).toMatchObject({ sourcePackage: 'broken-local', stage: 'register' })
+    expect(ui.find(ui.render(), node => node.props?.role === 'alert')).toHaveLength(0)
+    dispose()
+    expect(service.catalog.has('local:broken-local')).toBe(false)
+    expect(service.registrationFailures.size).toBe(0)
+    delete ctx.fiber.entry
+    expect(() => service.register({ title: 'Missing source' }, () => null)).toThrow('client package entry name')
+    expect(service.getSnapshot().registrationFailures[0]).toMatchObject({ sourcePackage: '(unknown package)', stage: 'register' })
+    expect(ui.find(ui.render(), node => node.props?.role === 'alert')).toHaveLength(0)
+    warn.mockRestore()
+    service.dispose()
+  })
+
+  it('reports ambiguity without breaking other providers, recovers on rebuild, and rejects invalid source names', async () => {
+    const { service, ctx } = await fixture()
+    setFiberPackage(ctx, 'conflict-local')
+    service.remoteCatalog.push({ id: 'owner/two', name: 'Two', description: { zh: '' }, screenshots: [], distribution: { name: 'conflict-local' } }, { id: 'owner/one', name: 'One', description: { zh: '' }, screenshots: [], distribution: { name: 'conflict-local' } })
+    const dispose = service.register({ title: 'Conflict' }, () => null)
+    expect(service.catalog.has('writer')).toBe(true)
+    expect(service.getSnapshot().registrationFailures[0]).toMatchObject({
+      stage: 'identity', sourcePackage: 'conflict-local', message: expect.stringContaining('owner/one, owner/two')
+    })
+    service.remoteCatalog = service.remoteCatalog.filter(entry => entry.id !== 'owner/two')
+    service.rebuildProviders()
+    expect(service.catalog.has('owner/one')).toBe(true)
+    expect(service.registrationFailures.size).toBe(0)
+    dispose()
+    for (const source of ['Bad', '../bad', '/Users/alice/private/foo', '@team/Bad', 'constructor', 'x'.repeat(215)]) {
+      setFiberPackage(ctx, source)
+      expect(() => service.register({ title: 'Invalid' }, () => null)).toThrow('Invalid local workbench package name')
+      const failures = service.getSnapshot().registrationFailures
+      expect(failures.find(failure => failure.stage === 'register').sourcePackage).toBe('(invalid package identity)')
+      expect(JSON.stringify(failures)).not.toContain('/Users/alice/private/foo')
+    }
+    service.dispose()
+  })
+})
+
+it('keeps opt-in collection search in the host header and forwards changes across collection tabs', async () => {
+  const { service } = await fixture()
+  const first = vi.fn(() => null), second = vi.fn(() => null)
+  const dispose = service.registerMarketCollection({ id: 'custom-one', label: 'One', controls: false, search: true, render: first })
+  service.registerMarketCollection({ id: 'custom-two', label: 'Two', controls: false, search: true, render: second })
+  expect(service.collectionSearch).toBe(true)
+  const ui = interactiveMarket(service, 'custom-one')
+  const find = predicate => ui.find(ui.render(), predicate)[0]
+  const input = find(node => node.type === 'input' && node.props.type === 'search')
+  expect(input).toBeDefined()
+  input.props.onChange({ target: { value: 'sample' } })
+  ui.render()
+  expect(first).toHaveBeenLastCalledWith(expect.objectContaining({ search: 'sample' }))
+  find(node => node.props?.id === 'dsh-workbench-custom-two-tab').props.onClick()
+  ui.render()
+  expect(second).toHaveBeenLastCalledWith(expect.objectContaining({ search: 'sample' }))
+  expect(ui.find(ui.render(), node => node.props?.className === 'dshWbBrowseTools')).toHaveLength(0)
+  dispose()
+  expect(() => service.registerMarketCollection({ id: 'invalid', label: 'Invalid', search: 'yes', render: first })).toThrow('search must be a boolean')
   service.dispose()
 })
 
-
-it.each([false, true])('preserves the full development instructions with an enterprise guide URL (English=%s)', async english => {
-  const { service, ctx } = await fixture()
-  const guideUrl = 'https://enterprise.example/proxy/api/v1/dev-toolkit/workbench-guide' + (english ? '-en' : '') + '.md'
-  service.developmentGuideUrl = () => guideUrl
-  const text = developmentWorkbenchAgentPrompt(english, guideUrl)
-  expect(text).toContain(guideUrl)
-  expect(text).not.toContain('https://dshdesktop.com/workbench/docs/development')
-  expect(text).not.toContain('This task is for local development and installation only')
-  expect(text).toContain('customFrame')
-  expect(text).toContain('scripts/check-workbench-package.mjs')
-  expect(text).toContain('cloud_workbench publish')
-  if (!english) {
-    ctx.locale.bind = () => key => ({ starter: 'My 【idea】' })[key] || key
-    expect(service.creationInstructions()).toBe(text)
-    expect(service.creationPrompt()).toBe(text + '\n\nMy 【idea】')
-  }
-  service.dispose()
-})
-
-it('cloud uninstall releases the native page before removing the local shortcut', async () => {
-  const { service } = await fixture()
-  const key = 'a'.repeat(16)
-  const appId = 'b'.repeat(32)
-  await service.addCloud({ id: appId, name: 'Cloud' }, key)
-  const id = `cloud:${key}:${appId}`
-  const release = vi.fn(async () => { expect(service.state.added).toContain(id) })
-  clientWindow.dshDesktopEnterprise = { releaseCloudWorkbench: release }
-  try {
-    await service.remove(id)
-    expect(release).toHaveBeenCalledExactlyOnceWith(appId, key)
-    expect(service.state.added).not.toContain(id)
-  } finally { delete clientWindow.dshDesktopEnterprise }
-})
-
-
-it('uninstalls an old-account shortcut after identity switching without dropping current-account entries', async () => {
-  const { service } = await fixture()
-  const oldKey = 'a'.repeat(16), newKey = 'c'.repeat(16), appId = 'b'.repeat(32)
-  await service.addCloud({ id: appId, name: 'Old account' }, oldKey)
-  await service.addCloud({ id: appId, name: 'Current account' }, newKey)
-  service.syncCloudIdentity(newKey)
-  const release = vi.fn(async () => {})
-  clientWindow.dshDesktopEnterprise = { releaseCloudWorkbench: release }
-  try {
-    await service.remove(`cloud:${oldKey}:${appId}`)
-    expect(release).toHaveBeenCalledExactlyOnceWith(appId, oldKey)
-    expect(service.state.added).not.toContain(`cloud:${oldKey}:${appId}`)
-    expect(service.state.added).toContain(`cloud:${newKey}:${appId}`)
-  } finally { delete clientWindow.dshDesktopEnterprise }
-})
-
-describe('revoked enterprise workbenches (F022)', () => {
-  async function revokedFixture() {
-    const base = await fixture({ ...boundState(), pinned: ['writer'], active: null })
-    const host = { enabled: false, revoked: ['writer'], status: 200 }
-    base.ctx.remote = { pluginManager: {
-      listBundles: vi.fn(async () => ({ ok: true, value: [{ name: 'writer', enabled: host.enabled, installed: true, rows: [] }] })),
-      setBundleEnabled: vi.fn(async (_name, next) => { host.enabled = next; return { ok: true, value: { changed: true, application: 'applied' } } })
-    } }
-    base.service.installs = { writer: { pluginName: 'writer' } }
-    const original = base.request.getMockImplementation()
-    base.request.mockImplementation(async (url, options = {}) => url === '/api/desktop-workbenches/enterprise-access-check'
-      ? Response.json(host.status === 200 ? { status: 'checked', revoked: host.revoked } : { error: 'unavailable' }, { status: host.status })
-      : original(url, options))
-    await base.service.refreshNative()
-    return { ...base, host }
-  }
-
-  it('refuses to turn a revoked workbench back on until access returns', async () => {
-    const { service, ctx, host } = await revokedFixture()
-    await service.checkEnterpriseAccess()
-    expect(service.revokedPlugins.has('writer')).toBe(true)
-    expect(service.activationFor(service.catalog.get('writer'))).toBe('off')
-    await expect(service.setPluginEnabled('writer', true)).rejects.toThrow('管理员已收回使用权限')
-    expect(ctx.remote.pluginManager.setBundleEnabled).not.toHaveBeenCalled()
-
-    host.revoked = []
-    await service.setPluginEnabled('writer', true)
-    expect(ctx.remote.pluginManager.setBundleEnabled).toHaveBeenCalledWith('writer', true)
-    expect(service.revokedPlugins.size).toBe(0)
-    expect(service.activationFor(service.catalog.get('writer'))).toBe('on')
-  })
-
-  it('asks the host to record catalog-listed enterprise workbenches installed earlier', async () => {
-    const { service, request } = await revokedFixture()
-    service.enterpriseCatalog = [
-      { id: 'a'.repeat(32), packageName: 'mind-workbench', currentVersion: { id: 'v'.repeat(32), version: '1.2.0' } },
-      { id: 'malformed' }
-    ]
-    await service.adoptEnterpriseInstalls()
-    const call = request.mock.calls.find(([url]) => url === '/api/desktop-workbenches/enterprise-installs/adopt')
-    expect(JSON.parse(call[1].body)).toEqual({ items: [{ id: 'a'.repeat(32), pluginName: 'mind-workbench', version: '1.2.0' }] })
-  })
-
-  it('keeps the last confirmed revocation when the access check fails', async () => {
-    const { service, host } = await revokedFixture()
-    await service.checkEnterpriseAccess()
-    host.status = 503
-    // The client logs and keeps its state; the check itself never rejects.
-    await expect(service.checkEnterpriseAccess()).resolves.toBeUndefined()
-    expect(service.revokedPlugins.has('writer')).toBe(true)
-  })
+it('renders product collection labels with unfiltered native counts and restores the built-in label', async () => {
+  const { service } = await fixture(boundState())
+  const ui = interactiveMarket(service, 'mine')
+  const renderLabel = vi.fn(({ count }) => `Combined (${count + 2})`)
+  const dispose = service.registerMarketCollection({ id: 'mine', replace: true, label: 'Installed', renderLabel })
+  const before = ui.render()
+  expect(service.collectionLabels).toBe(true)
+  const count = renderLabel.mock.calls.at(-1)[0].count
+  expect(count).toBeGreaterThan(0)
+  const tab = ui.find(before, node => node.props?.id === 'dsh-workbench-mine-tab')[0]
+  expect(tab.props.children).toContain(`Combined (${count + 2})`)
+  const search = ui.find(before, node => node.type === 'input' && node.props.type === 'search')[0]
+  search.props.onChange({ target: { value: 'no match' } })
+  ui.render()
+  expect(renderLabel.mock.calls.at(-1)[0]).toMatchObject({ count })
+  dispose()
+  expect(service.getMarketTabs().find(item => item.id === 'mine').renderLabel).toBeUndefined()
+  expect(() => service.registerMarketCollection({ id: 'bad-label', label: 'Bad', render: () => null, renderLabel: 'text' })).toThrow('renderLabel')
 })

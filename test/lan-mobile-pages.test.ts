@@ -8,51 +8,28 @@ import {
   type PendingCreatedSession
 } from '../src/main/mobile/lan-mobile-pages'
 
-interface PairingPageApi {
-  poll(): Promise<void>
-  switchMode(enabled: boolean): Promise<void>
-  state(): { pairingUrl: string; tunnelActive: boolean; pinConsent: boolean }
-}
-
-async function runPairingPage(
-  locale: 'en' | 'zh',
-  fetch: (input: string) => Promise<{ ok: boolean; json(): Promise<unknown> }>,
-  reload: () => void
-): Promise<PairingPageApi> {
-  const html = renderDesktopPairingPage({
-    qrSvg: '<svg></svg>',
-    pairingUrl: 'http://192.168.1.2/pair?token=test',
-    expiresAt: Date.now() + 60_000,
-    locale,
-    connected: false,
-    pinConsent: true
-  })
-  const script = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1]
-  if (!script) throw new Error('Pairing page is missing its script')
-  const element = () => ({
-    classList: { add() {}, remove() {}, toggle() {} },
-    style: { width: '' },
-    textContent: '',
-    hidden: false,
-    checked: false,
-    disabled: false,
-    innerHTML: ''
-  })
-  const run = new Function(
-    'document', 'fetch', 'location', 'setInterval', 'clearInterval', 'setTimeout',
-    `return (async()=>{${script};await poll();return {poll,switchMode,state:()=>({pairingUrl,tunnelActive,pinConsent})}})()`
-  )
-  return run(
-    { body: element(), getElementById: element },
-    fetch,
-    { reload },
-    () => 0,
-    () => undefined,
-    (callback: () => void) => { callback(); return 0 }
-  ) as Promise<PairingPageApi>
-}
-
 describe('LAN mobile page', () => {
+  it('renders product identity safely across all mobile surfaces', () => {
+    const productName = `Acme & <img src=x onerror='bad'>`
+    const escaped = 'Acme &amp; &lt;img src=x onerror=&#39;bad&#39;&gt;'
+    const home = renderMobilePage({ locale: 'en', productName })
+    const reconnect = renderMobileReconnectPage('zh', 'lan', { productName })
+    const pin = renderPairingPinPage('en', productName)
+    const desktop = renderDesktopPairingPage({ locale: 'en', productName, qrSvg: '', pairingUrl: '', expiresAt: 0, connected: false })
+    for (const page of [home, reconnect, pin, desktop]) {
+      expect(page).toContain(escaped)
+      expect(page).not.toContain(productName)
+      for (const match of page.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
+        expect(() => new Function(match[1] ?? '')).not.toThrow()
+      }
+    }
+    const pinData = /const T=(.*?);\s*async function submitPin/s.exec(pin)?.[1]
+    expect(JSON.parse(pinData ?? '{}').unavailable).toContain(productName)
+    expect(renderMobilePage({ locale: 'en' })).toContain('<title>DSH Mobile</title>')
+    expect(renderPairingPinPage('en')).toContain('<title>Pairing DSH</title>')
+    expect(renderMobileReconnectPage('en')).toContain('<title>Reconnect DSH</title>')
+  })
+
   it('emits parseable browser JavaScript', () => {
     const html = renderMobilePage({ locale: 'zh' })
     const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]!)
@@ -60,18 +37,13 @@ describe('LAN mobile page', () => {
     for (const script of scripts) expect(() => new Function(script)).not.toThrow()
   })
 
-  it('uses the BISHENG brand color and follows system dark mode', () => {
+  it('uses the DSH brand color and follows system dark mode', () => {
     const html = renderMobilePage({ locale: 'en' })
-    expect(html).toContain('--brand:#034FE5')
+    expect(html).toContain('--brand:#4d6bfe')
     expect(html).toContain('prefers-color-scheme:dark')
     expect(html).toContain('content="#ffffff" media="(prefers-color-scheme:light)"')
     expect(html).toContain('content="#141416" media="(prefers-color-scheme:dark)"')
     expect(html).toContain('/brand-logo/light')
-    expect(html).toContain('.brand img{width:28px;height:28px')
-    expect(html).toContain('src="/brand-logo/light" alt="BISHENG"')
-    expect(html).toContain('<span>BISHENG</span>')
-    expect(html).toContain('content="BISHENG"')
-    expect(html).toContain('<title>BISHENG</title>')
     expect(html).not.toContain('id="chatTitle"')
     expect(html).toContain('body.chat-open header{display:none}')
     expect(html).toContain('body.chat-open .shell{padding:env(safe-area-inset-top) 14px 0}')
@@ -273,57 +245,7 @@ describe('LAN mobile page', () => {
     }
   })
 
-  it('uses the enterprise mobile presentation only for product=bisheng', () => {
-    const session = renderMobilePage({ locale: 'zh', product: 'bisheng' })
-    expect(session).not.toContain('<header>')
-    expect(session).not.toContain('/brand-logo/')
-    expect(session).toContain('<title>BISHENG</title>')
-    expect(session).toContain('content="BISHENG"')
-    expect(session).toContain('继续对话')
-    expect(session).toContain('请先在 BISHENG 中创建第一个工作区。')
-    expect(session).toContain("location.replace('/disconnected?product=bisheng')")
-    expect(session).toContain('if(status)')
-
-    const branded = renderMobilePage({ locale: 'zh' })
-    expect(branded).toContain('src="/brand-logo/light" alt="BISHENG"')
-    expect(branded).toContain('<span>BISHENG</span>')
-    expect(branded).toContain('id="status"')
-    expect(branded).toContain('<title>BISHENG</title>')
-    expect(branded).not.toContain('product=bisheng')
-    expect(branded).not.toContain('DSH')
-
-    const pin = renderPairingPinPage('zh', 'bisheng')
-    expect(pin).not.toContain('class="logo"')
-    expect(pin).not.toContain('/brand-logo/')
-    expect(pin).toContain('<title>连接 BISHENG</title>')
-    expect(pin).toContain('输入连接密码')
-    expect(pin).toContain("location.replace('/?product=bisheng')")
-    expect(pin).toContain('请先启动 BISHENG。')
-    expect(pin).toContain('.note:empty{display:none}')
-
-    const reconnect = renderMobileReconnectPage('zh', 'lan', { product: 'bisheng' })
-    expect(reconnect).not.toContain('class="brand"')
-    expect(reconnect).not.toContain('BISHENG')
-    expect(reconnect).toContain('<title>重新连接</title>')
-    expect(reconnect).toContain('连接已断开')
-    expect(reconnect).toContain('href="/reconnect?product=bisheng"')
-
-    const brandedPin = renderPairingPinPage('zh')
-    expect(brandedPin).toContain('class="logo"')
-    expect(brandedPin).toContain('alt="BISHENG"')
-    expect(brandedPin).toContain('<title>连接 BISHENG</title>')
-    expect(brandedPin).toContain("location.replace('/')")
-
-    const brandedReconnect = renderMobileReconnectPage('zh')
-    expect(brandedReconnect).toContain('class="brand"')
-    expect(brandedReconnect).toContain('<span>BISHENG</span>')
-    expect(brandedReconnect).toContain('<title>重新连接 BISHENG</title>')
-    expect(brandedReconnect).toContain('href="/reconnect">')
-    expect(brandedReconnect).not.toContain('product=bisheng')
-    expect(brandedReconnect).not.toContain('DSH')
-  })
-
-  it('uses BISHENG styling on both pairing surfaces', () => {
+  it('uses DSH styling on both pairing surfaces', () => {
     const desktop = renderDesktopPairingPage({
       qrSvg: '<svg></svg>',
       pairingUrl: 'http://192.168.1.2/pair?token=test',
@@ -333,37 +255,20 @@ describe('LAN mobile page', () => {
     })
     const phone = renderPairingPinPage('en')
     for (const html of [desktop, phone]) {
+      expect(html).toContain('/brand-logo/light')
       for (const script of [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(
         (match) => match[1]!
       ))
         expect(() => new Function(script)).not.toThrow()
     }
-    expect(phone).toContain('/brand-logo/light')
-    expect(phone).toContain('.note:empty{display:none}')
-    expect(desktop).not.toContain('/brand-logo/')
     expect(desktop).toContain('/desktop/disconnect')
     expect(desktop).toContain('class="pin-panel')
     expect(desktop).not.toContain('--request-bg:#f5f7ff')
     expect(desktop).toContain('prefers-color-scheme:dark')
-    expect(desktop).not.toContain(
-      '.brand{display:flex;align-items:center;justify-content:center;gap:9px;font-size:16px;font-weight:600;margin-bottom:14px}'
-    )
-    expect(renderMobilePage({ locale: 'en' })).toContain(
-      '.brand{font-size:15px;font-weight:600;letter-spacing:-.01em'
-    )
-    expect(renderMobileReconnectPage('en')).toContain(
-      '.brand{display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:22px;font-size:13px;font-weight:600}'
-    )
-    expect(renderMobileReconnectPage('en')).toContain(
-      '.brand img{width:28px;height:28px;object-fit:contain}'
-    )
-    expect(desktop).not.toContain('.brand img{width:20px;height:20px;object-fit:contain}')
+    expect(desktop).toContain('/brand-logo/dark')
     expect(desktop).toContain('--bg:#141416')
     expect(desktop).toContain('.qr{display:inline-flex;background:#fff')
     expect(desktop).toContain('Creating a global network link')
-    expect(desktop).toContain(
-      'Control remotely over the internet, including 4G/5G or other WiFi networks, with moderate real-time responsiveness.'
-    )
     expect(desktop).toContain('Copied')
     expect(desktop).not.toContain('Link copied')
     expect(desktop).not.toContain('id="copyToast"')
@@ -376,13 +281,13 @@ describe('LAN mobile page', () => {
     expect(desktop).toContain('class="tunnel-progress" aria-hidden="true"')
     expect(desktop).toContain('id="tunnelProgressValue" class="loading-value">0%</span>')
     expect(desktop).toContain('id="tunnelProgressBar"')
-    expect(desktop).toContain('</div></div><div class="url-row">')
+    expect(desktop).toContain('id="urlRow" class="url-row"')
     expect(desktop).toContain('id="pinPanel" class="pin-panel')
     expect(desktop).toContain("Can't open? Try another link")
     expect(desktop).toContain('id="fallbackLink" class="fallback-link hide"')
     expect(desktop).toContain("fetch('/desktop/tunnel/fallback'")
     expect(desktop).toContain('async function switchFallback()')
-    expect(desktop).toContain("fetch('/desktop/pin/consent'")
+    expect(desktop).toContain("pinAction('/desktop/pin/consent'")
     expect(desktop).toContain('duration=enableTunnel?4500:800')
     expect(desktop).toContain('Math.min(99,(Date.now()-tunnelProgressStartedAt)/duration*100)')
     expect(desktop).toContain('setTunnelProgress(100)')
@@ -391,9 +296,9 @@ describe('LAN mobile page', () => {
     expect(desktop).not.toContain('animation:tunnelProgress')
     expect(desktop).not.toContain('<div class="spinner">')
     expect(desktop).toContain('id="qrCode"><svg></svg></div>')
-    expect(desktop).toContain("document.getElementById('qrCode').innerHTML=j.qrSvg")
+    expect(desktop).toContain("byId('qrCode').innerHTML=j.qrSvg")
     expect(desktop).not.toContain("document.getElementById('qrContainer').innerHTML=j.qrSvg")
-    expect(desktop).toContain('if(phoneConnected||modeSwitching)return')
+    expect(desktop).toContain('if(phoneConnected||modeSwitching||tunnelLoading||pinBusy)return')
     expect(desktop).toContain('if(selectedTunnelTab===enableTunnel&&tunnelActive===enableTunnel)return')
     expect(desktop).toContain('await finishTunnelProgress(completed,progressDuration)')
     expect(desktop).toContain('Phone connected')
@@ -408,13 +313,13 @@ describe('LAN mobile page', () => {
     expect(desktop).not.toContain('🌐')
     const modePanel = desktop.slice(
       desktop.indexOf('class="mode-panel"'),
-      desktop.indexOf('<div id="connection"')
+      desktop.indexOf('<div id="pinPanel"')
     )
     expect(modePanel.indexOf('class="mode-switch"')).toBeLessThan(
       modePanel.indexOf('class="hint" id="modeHint"')
     )
     expect(phone).toContain('prefers-color-scheme:dark')
-    expect(phone).toContain('--brand:#034FE5')
+    expect(phone).toContain('--brand:#4d6bfe')
     expect(phone).toContain('--bg:#141416')
     expect(phone).toContain('/brand-logo/dark')
     expect(phone).toContain('background:var(--panel)')
@@ -422,7 +327,7 @@ describe('LAN mobile page', () => {
     expect(phone).toContain("fetch('/pair/verify'")
     expect(phone).toContain('Enter pairing password')
     expect(phone).toContain('Show password on the computer')
-    expect(phone).toContain('Cannot reach the desktop. Start BISHENG and try again.')
+    expect(phone).toContain('Cannot reach the desktop. Start DSH Desktop and try again.')
     expect(phone).toContain("location.replace('/')")
     expect(phone).not.toContain("location.href='/'")
   })
@@ -469,7 +374,15 @@ describe('LAN mobile page', () => {
       'pinConsent',
       'pinActions',
       'connection',
-      'expires'
+      'expires',
+      'qrPanel',
+      'qrContainer',
+      'urlRow',
+      'retryTunnel',
+      'noLink',
+      'pinInstruction',
+      'pinPrivacy',
+      'pinReset'
     ]
     const elements = Object.fromEntries(
       ids.map((id) => [
@@ -480,6 +393,7 @@ describe('LAN mobile page', () => {
           disabled: false,
           hidden: false,
           checked: false,
+          setAttribute: (_name: string, _value: string) => undefined,
           textContent: '',
           innerHTML: '',
           offsetWidth: 152,
@@ -498,7 +412,8 @@ describe('LAN mobile page', () => {
         pairingUrl: 'https://example.trycloudflare.com/pair?token=test',
         qrSvg: '<svg id="tunnel"></svg>',
         expiresAt: Date.now() + 60_000,
-        pairingPin: '123456'
+        pairingPin: '123456',
+        pinRevealed: true
       },
       {
         ok: true,
@@ -546,7 +461,8 @@ describe('LAN mobile page', () => {
     const loadingNode = elements.qrLoading
 
     await api.switchMode(true)
-    expect(elements.pinPanel?.classList.contains('show')).toBe(true)
+    expect(elements.pinPanel?.hidden).toBe(false)
+    expect(elements.qrPanel?.hidden).toBe(true)
     expect(elements.pinValue?.textContent).toBe('123456')
     expect(elements.qrCode?.innerHTML).toBe('<svg id="tunnel"></svg>')
     expect(elements.qrLoading).toBe(loadingNode)
@@ -554,13 +470,60 @@ describe('LAN mobile page', () => {
     expect(elements.tunnelLoadingText?.textContent).toBe('Creating a global network link')
     expect(elements.tunnelProgressValue?.textContent).toBe('0%')
     expect(elements.tunnelProgressBar?.style.width).toBe('0%')
+    expect(elements.url?.textContent).toBe('https://example.trycloudflare.com/pair?token=test')
 
     await api.switchMode(false)
     expect(elements.qrCode?.innerHTML).toBe('<svg id="lan"></svg>')
+    expect(elements.pinPanel?.hidden).toBe(true)
+    expect(elements.qrPanel?.hidden).toBe(false)
     expect(elements.qrLoading).toBe(loadingNode)
     expect(elements.qrLoading?.classList.contains('show')).toBe(false)
     expect(elements.tunnelLoadingText?.textContent).toBe('Switching to WiFi connection mode')
+    expect(elements.url?.textContent).toBe('http://192.168.1.2/pair?token=next')
     expect(toggleResults).toHaveLength(0)
+  })
+
+  it('does not offer the LAN address as the internet pairing link', async () => {
+    const desktop = renderDesktopPairingPage({
+      qrSvg: '<svg id="lan"></svg>',
+      pairingUrl: 'http://192.168.1.2/pair?token=test',
+      expiresAt: Date.now() + 60_000,
+      locale: 'zh',
+      connected: false
+    })
+    expect(desktop).toContain('公网链接生成后会显示在这里')
+    const script = /<script>([\s\S]*?)<\/script>/.exec(desktop)?.[1]
+    expect(script).toBeTruthy()
+    const elements = pairingPageElements()
+    elements.url.textContent = 'http://192.168.1.2/pair?token=test'
+    elements.qrCode.innerHTML = '<svg id="lan"></svg>'
+    let release: (value: { ok: boolean; error?: string }) => void = () => undefined
+    const fetch = async (input: string) => {
+      if (input === '/desktop/tunnel/toggle') {
+        const value = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+          release = resolve
+        })
+        return { ok: true, json: async () => value }
+      }
+      if (input === '/desktop/status') {
+        return { ok: true, json: async () => ({ connected: false }) }
+      }
+      if (input === '/desktop/tunnel/status') {
+        return { ok: true, json: async () => ({ active: false }) }
+      }
+      throw new Error(`Unexpected request: ${input}`)
+    }
+    const api = runPairingScript(script ?? '', elements, fetch)
+
+    const switching = api.switchMode(true)
+    expect(elements.url.textContent).toBe('公网链接生成后会显示在这里')
+    expect(elements.qrCode.innerHTML).toBe('')
+    expect(elements.url.textContent).not.toContain('192.168')
+    release({ ok: false, error: 'Unable to create an internet tunnel.' })
+    await switching
+    expect(elements.url.textContent).toBe('公网链接生成后会显示在这里')
+    expect(elements.tunnelError.textContent).toContain('隧道建立失败')
+    expect(elements.url.textContent).not.toContain('192.168')
   })
 
   it('localizes both pairing surfaces from the desktop preference', () => {
@@ -579,11 +542,11 @@ describe('LAN mobile page', () => {
     expect(desktop).toContain('移动设备与电脑需连接至同一 WiFi，同步实时性高')
     expect(desktop).toContain('正在创建全球网络链接')
     expect(desktop).toContain('扫码即可连接')
-    expect(desktop).toContain('生成长期有效的连接密码')
-    expect(desktop).toContain('id="pinActions" class="pin-actions" hidden')
-    expect(desktop).toContain('.pin-actions[hidden]{display:none}')
+    expect(desktop).toContain('生成长期密码')
+    expect(desktop).toContain('id="pinPanel" class="pin-panel" hidden')
+    expect(desktop).toContain('[hidden]{display:none!important}')
     expect(desktop).toContain(
-      '移动设备通过互联网（如 4G/5G 或其他WiFi网络等）均可远程操控，同步实时性中等'
+      '请确认移动设备已联网。打开相机扫描下方二维码，或在移动设备上打开链接。'
     )
     expect(desktop).toContain('断开连接')
     expect(desktop).toContain('现在可以关闭此窗口。')
@@ -597,70 +560,7 @@ describe('LAN mobile page', () => {
     expect(desktop).not.toContain('id="copyToast"')
     expect(phone).toContain('输入连接密码')
     expect(phone).toContain('在电脑上查看密码')
-    expect(phone).toContain('暂时无法连接桌面端，请先启动 BISHENG。')
-  })
-
-  it.each(['en', 'zh'] as const)('refreshes an open %s pairing page only for a supported changed locale', async (locale) => {
-    let reportedLocale: unknown = locale
-    let reloads = 0
-    const api = await runPairingPage(locale, async (input) => ({
-      ok: true,
-      json: async () => input === '/desktop/status'
-        ? { connected: false, locale: reportedLocale }
-        : { active: false, pinConsent: true }
-    }), () => { reloads += 1 })
-
-    for (const unchanged of [undefined, null, 'auto', 'fr', { locale: 'zh' }, locale]) {
-      reportedLocale = unchanged
-      await api.poll()
-      expect(reloads).toBe(0)
-    }
-    reportedLocale = locale === 'en' ? 'zh' : 'en'
-    await api.poll()
-    expect(reloads).toBe(1)
-    expect(api.state()).toEqual({
-      pairingUrl: 'http://192.168.1.2/pair?token=test',
-      tunnelActive: false,
-      pinConsent: true
-    })
-  })
-
-  it('defers a locale refresh until an in-flight mode switch finishes', async () => {
-    let reportedLocale = 'en'
-    let reloads = 0
-    let completeSwitch: ((value: object) => void) | undefined
-    const switched = new Promise<object>((resolve) => { completeSwitch = resolve })
-    const api = await runPairingPage('en', async (input) => ({
-      ok: true,
-      json: async () => input === '/desktop/status'
-        ? { connected: false, locale: reportedLocale }
-        : input === '/desktop/tunnel/toggle'
-          ? switched
-          : { active: false, pinConsent: true }
-    }), () => { reloads += 1 })
-
-    const switching = api.switchMode(true)
-    reportedLocale = 'zh'
-    await api.poll()
-    expect(reloads).toBe(0)
-    if (!completeSwitch) throw new Error('Mode switch was not initialized')
-    completeSwitch({
-      ok: true,
-      active: true,
-      pairingUrl: 'https://example.trycloudflare.com/pair?token=test',
-      pairingPin: '123456',
-      pinConsent: true
-    })
-    await switching
-    expect(reloads).toBe(0)
-    expect(api.state()).toEqual({
-      pairingUrl: 'https://example.trycloudflare.com/pair?token=test',
-      tunnelActive: true,
-      pinConsent: true
-    })
-    await api.poll()
-    expect(reloads).toBe(1)
-    expect(api.state().tunnelActive).toBe(true)
+    expect(phone).toContain('暂时无法连接桌面端，请先启动 DSH Desktop。')
   })
 
   it('renders the temporary pin hint with remaining seconds from one helper', () => {
@@ -673,13 +573,14 @@ describe('LAN mobile page', () => {
       tunnelActive: true,
       pairingPin: '123456',
       pinConsent: false,
+      pinRevealed: true,
       pinExpiresAt: Date.now() + 258_000
     })
-    expect(desktop).toMatch(/5 分钟内有效，过期后需重新扫码。 \(\d+s\)/)
-    expect(desktop).toContain('function renderPinHint()')
-    expect(desktop).toMatch(/renderPinHint\(\);if\(actions\)/)
-    expect(desktop).toMatch(/location\.reload\(\);renderPinHint\(\)/)
-    expect(desktop).not.toContain('if(hint)hint.textContent=pinConsent?T.pinHintDurable:T.pinHintTemp')
+    expect(desktop).toMatch(/id="pinHint" class="pin-hint">\d+ 秒后失效/)
+    expect(desktop).toContain('id="pinValue" class="pin-value">123456</div>')
+    expect(desktop).toContain('id="qrPanel" hidden')
+    expect(desktop).toContain('重新扫码')
+    expect(desktop).toContain('生成长期密码')
   })
 
   it('renders a compact management state when a phone is already connected', () => {
@@ -692,7 +593,6 @@ describe('LAN mobile page', () => {
     })
     expect(desktop).toContain('class="phone-connected manage-connected"')
     expect(desktop).toContain('Manage phone connection')
-    expect(desktop).toContain('Your phone is currently connected to BISHENG.')
     expect(desktop).toContain('.manage-connected .connection-hint,.manage-connected .done{display:none}')
     expect(desktop).toContain(
       'onclick="switchMode(false)" disabled>WiFi Connection Mode</button>'
@@ -724,11 +624,11 @@ describe('LAN mobile page', () => {
       tunnelProvider: 'cloudflare',
       tunnelError: 'Unable to create an internet tunnel. Cloudflare: reset'
     })
-    expect(wifi).toContain('id="tunnelError" class="tunnel-err"></div>')
+    expect(wifi).toContain('id="tunnelError" class="tunnel-err" role="status"></div>')
     expect(wifi).not.toContain('id="tunnelError" class="tunnel-err show"')
     expect(wifi).toContain('selectedTunnelTab=false')
     expect(internet).toContain(
-      'id="tunnelError" class="tunnel-err show">隧道建立失败：Unable to create an internet tunnel. Cloudflare: reset</div>'
+      'id="tunnelError" class="tunnel-err show" role="status">隧道建立失败：Unable to create an internet tunnel. Cloudflare: reset</div>'
     )
     expect(internet).toContain('selectedTunnelTab=true')
   })
@@ -775,7 +675,15 @@ describe('LAN mobile page', () => {
       'pinConsent',
       'pinActions',
       'connection',
-      'expires'
+      'expires',
+      'qrPanel',
+      'qrContainer',
+      'urlRow',
+      'retryTunnel',
+      'noLink',
+      'pinInstruction',
+      'pinPrivacy',
+      'pinReset'
     ]
     const elements = Object.fromEntries(
       ids.map((id) => [
@@ -786,6 +694,7 @@ describe('LAN mobile page', () => {
           disabled: false,
           hidden: false,
           checked: false,
+          setAttribute: (_name: string, _value: string) => undefined,
           textContent: '',
           innerHTML: '',
           offsetWidth: 152,
@@ -857,9 +766,7 @@ describe('LAN mobile page', () => {
     expect(elements.tunnelError?.classList.contains('show')).toBe(true)
     expect(elements.tunnelError?.textContent).toContain('隧道建立失败：')
     expect(elements.tunnelError?.textContent).toContain('Unable to create an internet tunnel')
-    expect(elements.modeHint?.textContent).toBe(
-      '移动设备通过互联网（如 4G/5G 或其他WiFi网络等）均可远程操控，同步实时性中等'
-    )
+    expect(elements.modeHint?.textContent).toContain('请确认移动设备已联网')
 
     await api.switchMode(false)
     expect(api.selectedTunnelTab()).toBe(false)
@@ -959,7 +866,7 @@ describe('desktop pairing page QR expiry self-healing', () => {
       tunnelUrl: undefined,
       tunnelError: undefined
     })
-    const countdown = /setInterval\(\(\)=>\{const n=[\s\S]*?\},1000\)/.exec(html)?.[0]
+    const countdown = /function updateCountdown\(\)\{[\s\S]*?\n  \}/.exec(html)?.[0]
     expect(countdown).toBeTruthy()
     expect(countdown).toContain('T.expired')
     expect(countdown).toContain('location.reload()')
@@ -986,3 +893,106 @@ describe('desktop pairing page expiry copy', () => {
     expect(html).not.toContain('Reopen this window')
   })
 })
+
+interface PairingElement {
+  id: string
+  setAttribute: (name: string, value: string) => void
+  classList: {
+    add: (...names: string[]) => void
+    remove: (...names: string[]) => void
+    toggle: (name: string, force?: boolean) => boolean
+    contains: (name: string) => boolean
+  }
+  disabled: boolean
+  hidden: boolean
+  checked: boolean
+  textContent: string
+  innerHTML: string
+  offsetWidth: number
+  style: { width: string }
+}
+
+function pairingPageElements(): {
+  get(id: string): PairingElement
+  url: PairingElement
+  qrCode: PairingElement
+  tunnelError: PairingElement
+} {
+  const store = new Map<string, PairingElement>()
+  const get = (id: string): PairingElement => {
+    const existing = store.get(id)
+    if (existing) return existing
+    const values = new Set<string>()
+    const element: PairingElement = {
+      id,
+      setAttribute: () => undefined,
+      classList: {
+        add: (...names: string[]) => names.forEach((name) => values.add(name)),
+        remove: (...names: string[]) => names.forEach((name) => values.delete(name)),
+        toggle: (name: string, force?: boolean) => {
+          const next = force ?? !values.has(name)
+          if (next) values.add(name)
+          else values.delete(name)
+          return next
+        },
+        contains: (name: string) => values.has(name)
+      },
+      disabled: false,
+      hidden: false,
+      checked: false,
+      textContent: '',
+      innerHTML: '',
+      offsetWidth: 152,
+      style: { width: '' }
+    }
+    store.set(id, element)
+    return element
+  }
+  return { get, url: get('url'), qrCode: get('qrCode'), tunnelError: get('tunnelError') }
+}
+
+function runPairingScript(
+  script: string,
+  elements: { get(id: string): PairingElement },
+  fetch: (input: string) => Promise<{ ok: boolean; json: () => Promise<unknown> }>
+): { switchMode: (enabled: boolean) => Promise<void> } {
+  const classList = () => {
+    const values = new Set<string>()
+    return {
+      add: (...names: string[]) => names.forEach((name) => values.add(name)),
+      remove: (...names: string[]) => names.forEach((name) => values.delete(name)),
+      toggle: (name: string, force?: boolean) => {
+        const next = force ?? !values.has(name)
+        if (next) values.add(name)
+        else values.delete(name)
+        return next
+      },
+      contains: (name: string) => values.has(name)
+    }
+  }
+  const run = new Function(
+    'document',
+    'fetch',
+    'navigator',
+    'setInterval',
+    'setTimeout',
+    'location',
+    'window',
+    `${script};return {switchMode}`
+  )
+  return run(
+    {
+      body: { classList: classList() },
+      getElementById: (id: string) => elements.get(id)
+    },
+    fetch,
+    { clipboard: { writeText: () => undefined } },
+    () => 0,
+    (callback: () => void) => {
+      callback()
+      return 0
+    },
+    { reload: () => undefined },
+    { close: () => undefined }
+  ) as { switchMode: (enabled: boolean) => Promise<void> }
+}

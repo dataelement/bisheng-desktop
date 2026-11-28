@@ -2,6 +2,9 @@ import { readFile, lstat } from 'node:fs/promises'
 import { join, resolve, sep } from 'node:path'
 import { createHash } from 'node:crypto'
 
+export const MAX_PERSONAL_OFFICE_BYTES = 16 * 1024 * 1024
+export const MAX_OFFICE_REQUEST_BYTES = 24 * 1024 * 1024
+
 export const digest = bytes => createHash('sha256').update(bytes).digest('hex')
 const safe = value => typeof value === 'string' && /^[a-zA-Z0-9._/-]+$/.test(value)
   && value.split('/').every(part => part && part !== '.' && part !== '..')
@@ -41,12 +44,9 @@ export async function createTemplateLibrary(root) {
   }
   return {
     entry, asset,
-    // Phone sheets only render names. Desktop cards still request the images.
-    async list({ thumbnails = true } = {}) {
-      return Promise.all(catalog.map(async ({ files, sampleFile, ...item }) => {
-        if (!thumbnails) return item
-        return { ...item, thumbnail: `data:image/webp;base64,${(await asset(item.id, 'thumbnail.webp')).toString('base64')}` }
-      }))
+    async list() {
+      return Promise.all(catalog.map(async ({ files, sampleFile, ...item }) => ({ ...item,
+        thumbnail: `data:image/webp;base64,${(await asset(item.id, 'thumbnail.webp')).toString('base64')}` })))
     },
     async preview(id, page) {
       const item = entry(id)

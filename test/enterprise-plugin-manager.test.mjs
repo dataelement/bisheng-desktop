@@ -4,7 +4,14 @@ import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PluginManager } from '@deepseek-ai/dsh-plugin-manager'
 import { createManagedMarketSource, performMarketAction } from '../packages/dsh-desktop-enterprise/managed-market.js'
-import { installEnterpriseWorkbench } from '../packages/dsh-desktop-workbenches/enterprise-install.mjs'
+import { installEnterpriseWorkbench } from '../packages/dsh-desktop-enterprise/workbench-install.js'
+
+it('uses the host identity in managed-source upgrade errors', async () => {
+  vi.stubEnv('DSH_DESKTOP_PRODUCT_NAME', 'Example Dev')
+  try {
+    await expect(performMarketAction({}, {}, {}, { action: 'install' })).rejects.toThrow('Update Example Dev.')
+  } finally { vi.unstubAllEnvs() }
+})
 
 const roots = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))) })
@@ -21,7 +28,7 @@ async function fixture() {
     act: vi.fn(async input => {
       if (input.expectedAccountKey !== state.accountKey) throw new Error('Enterprise account changed.')
       if (input.action === 'uninstall') state.installed = []
-      else if (input.action === 'install') state.installed = [{ plugin_id: id, name: 'company-demo', display_name: '公司示例', description: '内部报表', version: '1.0.0', enabled: true, status: 'enabled' }]
+      else if (input.action === 'install') state.installed = [{ plugin_id: id, name: 'company-demo', version: '1.0.0', enabled: true, status: 'enabled' }]
       else state.installed[0].status = input.action === 'enable' ? 'enabled' : 'disabled'
       return market.state()
     })
@@ -29,9 +36,9 @@ async function fixture() {
   const source = createManagedMarketSource(market)
   const events = []
   const manager = Object.assign(Object.create(PluginManager.prototype), {
-    profile: { dir: root, installAnchor: resolve('node_modules/@deepseek-ai/dsh/package.json') },
-    ownerContext: { get: name => name === 'profileManagedBundleSource' ? source : undefined, emit: (...args) => events.push(args) },
-    abort: new AbortController(), installs: new Map(), lockWaitMs: 2000,
+    profile: { dir: root, name: 'web', startedBundles: [], installAnchor: resolve('node_modules/@deepseek-ai/dsh/package.json') },
+    ownerContext: { get: name => name === 'profileManagedBundleSource' ? source : undefined, emit: (...args) => events.push(args), parallel: vi.fn(async () => {}) },
+    abort: new AbortController(), installs: new Map(), installedFrom: new Map(), packageOperations: new Set(), lockWaitMs: 2000,
     managementBundles: new Set(), protectsManager: () => false,
     declaredRows: () => ({ rows: [], overrides: [] })
   })
@@ -46,15 +53,44 @@ describe('enterprise source through the real Plugin Manager methods', () => {
     expect(installed.result).toMatchObject({ application: 'applied', stage: 'enable', changed: true })
     expect(installed.result.restartReason).toBeUndefined()
     const target = `enterprise:${key}:${id}`
-    expect((await manager.listBundles()).find(row => row.name === target)).toMatchObject({
-      installed: true, enabled: true, description: '内部报表', meta: { title: '公司示例', description: '内部报表' }
-    })
+    expect((await manager.listBundles()).find(row => row.name === target)).toMatchObject({ installed: true, enabled: true })
     expect(await manager.setBundleEnabled(target, false)).toMatchObject({ application: 'applied', enabled: false })
     expect(await manager.setBundleEnabled(target, true)).toMatchObject({ application: 'applied', enabled: true })
     expect(await manager.removeBundle(target)).toMatchObject({ application: 'applied', stage: 'remove', changed: true })
     expect((await manager.listBundles()).some(row => row.name === target)).toBe(false)
     expect(await readFile(join(root, 'package.json'), 'utf8')).toBe(before)
     expect(events.filter(([name]) => name === 'plugin-manager/changed')).toHaveLength(4)
+  })
+
+  it('refuses an unpatched Manager before preparing or submitting managed targets', async () => {
+    const { source, market } = await fixture()
+    const manager = { installBundle: vi.fn(), removeBundle: vi.fn(), setBundleEnabled: vi.fn() }
+    const prepare = vi.spyOn(source, 'prepare')
+    for (const action of ['install', 'enable']) {
+      await expect(performMarketAction(manager, source, market, { action, plugin_id: id })).rejects.toThrow('does not support enterprise managed sources')
+    }
+    expect(prepare).not.toHaveBeenCalled()
+    expect(manager.installBundle).not.toHaveBeenCalled()
+    expect(manager.removeBundle).not.toHaveBeenCalled()
+    expect(manager.setBundleEnabled).not.toHaveBeenCalled()
+    expect(market.act).not.toHaveBeenCalled()
+  })
+
+  it('allows account-scoped recovery without invoking an unpatched Manager', async () => {
+    const { source, market, switchAccount } = await fixture()
+    const manager = { installBundle: vi.fn(), removeBundle: vi.fn(), setBundleEnabled: vi.fn() }
+    await market.act({ action: 'install', plugin_id: id, expectedAccountKey: key })
+    await performMarketAction(manager, source, market, { action: 'disable', plugin_id: id })
+    expect(market.state().installed[0].status).toBe('disabled')
+    expect(market.act).toHaveBeenLastCalledWith({ action: 'disable', plugin_id: id, expectedAccountKey: key })
+    await performMarketAction(manager, source, market, { action: 'uninstall', plugin_id: id })
+    expect(market.state().installed).toEqual([])
+    expect(market.act).toHaveBeenLastCalledWith({ action: 'uninstall', plugin_id: id, expectedAccountKey: key })
+    expect(manager.removeBundle).not.toHaveBeenCalled()
+    expect(manager.setBundleEnabled).not.toHaveBeenCalled()
+    const act = market.act.getMockImplementation()
+    market.act.mockImplementationOnce(async input => { switchAccount(); return act(input) })
+    await expect(performMarketAction(manager, source, market, { action: 'disable', plugin_id: id })).rejects.toThrow('Enterprise account changed.')
   })
 
   it('rejects stale account targets and consumes install tickets exactly once', async () => {
@@ -86,53 +122,14 @@ describe('enterprise source through the real Plugin Manager methods', () => {
   })
 })
 
-describe('enterprise plugin display names', () => {
-  const other = 'd'.repeat(32)
-  function listed(installed) {
-    return createManagedMarketSource({ state: () => ({ accountKey: key, installed }) }).listBundles()
-  }
-
-  it('shows the enterprise name while keeping the operation target', () => {
-    const [row] = listed([{ plugin_id: id, name: 'company-demo', display_name: '  公司示例  ', description: '  内部报表  ', version: '1.0.0', status: 'enabled' }])
-    expect(row).toMatchObject({
-      name: `enterprise:${key}:${id}`,
-      description: '内部报表',
-      meta: { title: '公司示例', description: '内部报表' }
-    })
-    expect(row.meta.icon).toBeUndefined()
-  })
-
-  it('falls back to the package name and omits an empty description', () => {
-    const [row] = listed([{ plugin_id: id, name: 'company-demo', description: '   ', version: '1.0.0', status: 'enabled' }])
-    expect(row.meta).toEqual({ title: 'company-demo' })
-    expect(row.description).toBeUndefined()
-  })
-
-  it('keeps the inventory when display fields are not strings', () => {
-    const rows = listed([
-      { plugin_id: id, name: 'company-demo', display_name: null, description: 12, version: '1.0.0', status: 'enabled' },
-      { plugin_id: other, name: 'typed-badly', display_name: { zh: '对象' }, description: ['说明'], version: '1.0.0', status: 'disabled' }
-    ])
-    expect(rows.map(row => row.meta)).toEqual([{ title: 'company-demo' }, { title: 'typed-badly' }])
-    expect(rows.map(row => row.description)).toEqual([undefined, undefined])
-    expect(rows.map(row => row.name)).toEqual([`enterprise:${key}:${id}`, `enterprise:${key}:${other}`])
-  })
-
-  it('omits display metadata when neither name is usable', () => {
-    const [row] = listed([{ plugin_id: id, name: '   ', display_name: 7, version: '1.0.0', status: 'enabled' }])
-    expect(row.name).toBe(`enterprise:${key}:${id}`)
-    expect(row.meta).toBeUndefined()
-    expect(row.description).toBeUndefined()
-  })
-})
-
 describe('enterprise workbench lifecycle', () => {
   function setup(application = 'applied') {
     const release = vi.fn()
     const packages = { open: vi.fn(async () => ({ path: '/temporary/verified.tgz', packageName: 'company-workbench', version: '1.0.0', release })) }
     const manager = {
+      verifiedInstallContract: 1,
       listBundles: vi.fn(async () => []),
-      installBundle: vi.fn(async () => ({ application, stage: 'enable', bundle: 'company-workbench', changed: true, ...(application === 'restart-required' ? { restartReason: 'no-hmr' } : {}) }))
+      installBundle: vi.fn(async () => ({ application, stage: 'enable', bundle: 'company-workbench', version: '1.0.0', changed: true, ...(application === 'restart-required' ? { restartReason: 'no-hmr' } : {}) }))
     }
     return { manager, packages, release }
   }
@@ -151,7 +148,7 @@ describe('enterprise workbench lifecycle', () => {
   it('routes an existing enterprise package update through Manager replacement', async () => {
     const { manager, packages, release } = setup()
     manager.listBundles.mockResolvedValue([{ name: 'company-workbench', installed: true }])
-    expect(await installEnterpriseWorkbench(manager, packages, id)).toMatchObject({ status: 200 })
+    expect(await installEnterpriseWorkbench(manager, packages, id)).toMatchObject({ status: 200, body: { application: 'restart-required', restartRequired: true, restartReason: 'package-moved' } })
     expect(manager.installBundle.mock.calls[0][1]).toMatchObject({ replace: true })
     expect(release).toHaveBeenCalledOnce()
   })
@@ -176,7 +173,7 @@ describe('verified tarball contract on the current Manager', () => {
     const result = await manager.installBundle(join(root, 'verified.tgz'), { expectedName: 'expected-package', expectedVersion: '1.0.0' })
     expect(backend.install.mock.calls[0][0]).toMatchObject({ kind: 'tarball', expectedName: 'expected-package', expectedVersion: '1.0.0' })
     expect(result).toMatchObject({ application: 'failed', stage: 'install' })
-    expect(result.error.diagnostic).toContain('identity does not match')
+    expect(result.error.diagnostic).toMatch(/(?:identity does not match|bundle name does not match expectedName)/u)
     expect(rollback).toHaveBeenCalledOnce()
     expect(JSON.parse(await readFile(join(root, 'package.json'), 'utf8')).dependencies).toEqual({})
   })

@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { mountWindowsMenuBar } from '../src/preload/windows-menu-bar'
 
@@ -11,6 +13,12 @@ const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 
 const host = (): HTMLElement | null => document.querySelector('[data-dsh-windows-menu]')
 const button = (name: string): HTMLButtonElement | null =>
   host()?.shadowRoot?.querySelector<HTMLButtonElement>(`button[data-menu="${name}"]`) ?? null
+
+it('marks the Windows caption from the shell preload before the page paints', async () => {
+  const preload = await readFile(resolve(import.meta.dirname, '../src/preload/app.ts'), 'utf8')
+  expect(preload).toContain('markWindowsTitlebar(document)')
+  expect(preload).toContain('mountWindowsTitlebarLayout(')
+})
 
 it('waits for the Harness shell overlay before taking the caption seat', async () => {
   const invoke = vi.fn(async () => undefined)
@@ -53,6 +61,22 @@ it('opens the native popup under the pressed button and labels it in the page la
   menu.dispose()
 })
 
+it('updates Windows caption labels across all eight UI languages', async () => {
+  document.body.innerHTML = '<div data-shell-overlay></div>'
+  const menu = mountWindowsMenuBar({ document, ipcRenderer: { invoke: vi.fn(async () => undefined) } })
+  for (const [locale, application, edit] of [
+    ['en', 'Application', 'Edit'], ['zh', '应用', '编辑'], ['ja', 'アプリケーション', '編集'],
+    ['es', 'Aplicación', 'Editar'], ['fr', 'Application', 'Édition'], ['de', 'Anwendung', 'Bearbeiten'],
+    ['ru', 'Приложение', 'Правка'], ['pt', 'Aplicativo', 'Editar']
+  ]) {
+    document.documentElement.lang = locale ?? ''
+    await flush()
+    expect(button('application')?.textContent).toBe(application)
+    expect(button('edit')?.textContent).toBe(edit)
+  }
+  menu.dispose()
+})
+
 it('mounts only once per document', () => {
   document.body.append(document.createElement('div'))
   document.body.lastElementChild?.setAttribute('data-shell-overlay', '')
@@ -72,4 +96,16 @@ it('marks <html> as soon as the parser creates it when preload runs first', asyn
   await flush()
   expect(html.hasAttribute('data-windows-titlebar')).toBe(true)
   expect(html.style.getPropertyValue('--dsh-windows-titlebar-height')).toBe('40px')
+})
+
+it('leaves the Harness caption seat owned by AppFrame in normal and safe repair sessions', async () => {
+  const { mountWindowsTitlebarLayout } = await import('../src/preload/windows-titlebar')
+  vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: vi.fn() }))
+  document.body.innerHTML = '<div id="root"><div data-shell-overlay></div></div>'
+  mountWindowsTitlebarLayout({ document, ipcRenderer: { invoke: vi.fn(async () => undefined) } })
+  expect(document.body.hasAttribute('data-dsh-standalone-titlebar')).toBe(false)
+  expect(getComputedStyle(document.body).paddingTop).toBe('0px')
+  expect(host()).not.toBeNull()
+  expect(document.getElementById('dsh-desktop-windows-drag-region')).toBeNull()
+  vi.unstubAllGlobals()
 })

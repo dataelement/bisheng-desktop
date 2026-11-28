@@ -1,29 +1,41 @@
 import { createRequire } from 'node:module'
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { isAbsolute, join, relative } from 'node:path'
+import path, { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { create } from 'tar'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, onTestFailed } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { mountRootInclude } from '@deepseek-ai/dsh-app-boot'
 import { Loader } from '@deepseek-ai/cordis-plugin-loader'
 import { createMarketRuntime } from '../packages/dsh-desktop-enterprise/market-runtime.js'
 import { isMarketVersionCompatible } from '../packages/dsh-desktop-enterprise/market.js'
-import { installOfflineBundle, sha256, verifyInstalledBundle } from '../packages/dsh-desktop-enterprise/offline-bundle.js'
+import { assertEnterpriseGenerationPath, installOfflineBundle, sha256, verifyInstalledBundle } from '../packages/dsh-desktop-enterprise/offline-bundle.js'
 import { readCommunityPackage } from '../packages/dsh-desktop-enterprise/community-package.js'
-import { isolatePackage } from './helpers/isolated-package-tree.mjs'
-import { zipEntries } from '../scripts/pack-enterprise-plugin.mjs'
+import { isolatePackage } from './enterprise-isolated-package-tree.mjs'
+import { zipEntries } from './enterprise-bundle-fixture.mjs'
 
 const paths: string[] = []
 const target = `${process.platform}-${process.arch}`
-afterEach(async () => { for (const path of paths.splice(0)) await rm(path, { recursive: true, force: true }) })
+// The isolation fixture copies the full peer closure. Windows removal can exceed
+// Vitest's 10-second default; await cleanup just as enterprise-market does.
+afterEach(async () => { for (const path of paths.splice(0)) await rm(path, { recursive: true, force: true }) }, 120_000)
 
 async function home() {
-  const directory = await mkdtemp(join(tmpdir(), 'enterprise-community-'))
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'enterprise-community-')))
   paths.push(directory)
   await mkdir(join(directory, 'profiles/node_modules'), { recursive: true })
   return directory
+}
+
+// Only synthetic local packages are installed here. Retain the pnpm phase and
+// missing path on fixture failure; production errors intentionally redact them.
+async function installFixtureBundle(...args: Parameters<typeof installOfflineBundle>) {
+  const traces: string[] = []
+  onTestFailed(() => console.error(traces.join('\n')))
+  const options = { ...args[4], installOptions: { onTrace: (line: string) => traces.push(line) } }
+  args[4] = options
+  return installOfflineBundle(...args)
 }
 
 function communityZip(files: Record<string, Buffer>, name = 'company-demo', version = '1.0.0') {
@@ -39,9 +51,8 @@ describe('community npm packages', () => {
     const require = createRequire(join(isolated.entry, 'package.json'))
     for (const name of ['pnpm', 'tar', '@deepseek-ai/dsh-app-boot', '@deepseek-ai/cordis-plugin-group']) {
       const resolved = await realpath(require.resolve(name))
-      const within = relative(canonical, resolved)
-      expect(isAbsolute(within), `${name}: ${resolved}`).toBe(false)
-      expect(within, `${name}: ${resolved}`).not.toMatch(/^\.\.(?:[/\\]|$)/u)
+      const relative = path.relative(canonical, resolved)
+      expect(relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative), resolved).toBe(false)
     }
   })
 
@@ -59,7 +70,7 @@ describe('community npm packages', () => {
       'package.json': Buffer.from(JSON.stringify({ name: 'company-demo', version: '1.0.0', type: 'module', main: 'index.js' })),
       'index.js': source
     })
-    await expect(installOfflineBundle(root, packed.bytes, packed.expected, target, {
+    await expect(installFixtureBundle(root, packed.bytes, packed.expected, target, {
       dshEntryPath: join(root, 'missing-host.js')
     })).rejects.toThrow(/Enterprise host entry was not found/)
   })
@@ -95,8 +106,12 @@ describe('community npm packages', () => {
     await create({ cwd: stage, file: archive, gzip: true, portable: true }, ['package'])
     const bytes = await readFile(archive)
     const expected = { name: 'company-demo', version: '1.2.3', digest: sha256(bytes) }
-    const generation = await installOfflineBundle(root, bytes, expected, target, { dshEntryPath: join(process.cwd(), 'node_modules/@deepseek-ai/dsh/lib/bin.js') })
-    expect(generation.directory).toContain('.enterprise-generations')
+    const generation = await installFixtureBundle(root, bytes, expected, target, { dshEntryPath: join(process.cwd(), 'node_modules/@deepseek-ai/dsh/lib/bin.js') })
+    expect(generation.directory).toBe(join(root, 'profiles', '.enterprise-generations', generation.id))
+    expect(() => assertEnterpriseGenerationPath(root, { ...generation, generation_id: generation.id })).not.toThrow()
+    expect(() => assertEnterpriseGenerationPath(root, { ...generation, generation_id: generation.id, directory: join(root, 'profiles', '.generations', 'live', generation.id), integrity: undefined })).toThrow('Invalid enterprise generation path.')
+    expect(() => assertEnterpriseGenerationPath(root, { ...generation, generation_id: '../escape' })).toThrow('Invalid enterprise generation path.')
+    expect(() => assertEnterpriseGenerationPath(root, { ...generation, generation_id: generation.id, directory: join(root, 'elsewhere', generation.id) })).toThrow('Invalid enterprise generation path.')
     expect(generation.integrity).toMatch(/^[a-f0-9]{64}$/)
     const installed = createRequire(join(generation.directory, 'node_modules/company-demo/package.json'))
     expect(installed.resolve('company-helper')).toContain('company-helper')
@@ -113,7 +128,7 @@ describe('community npm packages', () => {
       'index.js': Buffer.from(source),
       'cordis.patch.yml': Buffer.from('- insert:\n    - id: community-entry\n      name: ./index.js\n')
     })
-    const generation = await installOfflineBundle(root, packed.bytes, packed.expected, target, { dshEntryPath: join(process.cwd(), 'node_modules/@deepseek-ai/dsh/lib/bin.js') })
+    const generation = await installFixtureBundle(root, packed.bytes, packed.expected, target, { dshEntryPath: join(process.cwd(), 'node_modules/@deepseek-ai/dsh/lib/bin.js') })
     const context = new Context()
     const loaderFiber = context.plugin(Loader, { baseUrl: pathToFileURL(`${root}/`).href })
     await loaderFiber
@@ -133,7 +148,7 @@ describe('community npm packages', () => {
         'index.js': Buffer.from('export function apply() { throw new Error("bundle child failed") }\n'),
         'cordis.patch.yml': Buffer.from('- insert:\n    - id: community-entry\n      name: ./index.js\n')
       }, 'company-demo', '1.0.1')
-      const failed = await installOfflineBundle(root, broken.bytes, broken.expected, target, { dshEntryPath: join(process.cwd(), 'node_modules/@deepseek-ai/dsh/lib/bin.js') })
+      const failed = await installFixtureBundle(root, broken.bytes, broken.expected, target, { dshEntryPath: join(process.cwd(), 'node_modules/@deepseek-ai/dsh/lib/bin.js') })
       await expect(runtime!({ ...failed, name: broken.expected.name, config: {} })).rejects.toThrow(/bundle child failed|did not activate|not ready/)
     } finally { await context.loader.remove(ownerId); await loaderFiber.dispose() }
   })

@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import vm from 'node:vm'
+import { JSDOM } from 'jsdom'
 import React from 'react'
 import * as jsxRuntime from 'react/jsx-runtime'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -12,7 +13,7 @@ const conversationPath = new URL('../node_modules/@deepseek-ai/dsh-client-ui-con
 function loadSidebar() {
   let exports
   const document = {
-    documentElement: { hasAttribute: () => false },
+    documentElement: { hasAttribute: (name) => name === 'data-platform' },
     querySelector: () => null,
     createElement: () => ({ dataset: {} }),
     head: { appendChild: () => {} }
@@ -26,7 +27,7 @@ function loadSidebar() {
         if (name === 'react/jsx-runtime') return jsxRuntime
         if (name === '@deepseek-ai/dsh-client-store') return { createSnapshotStore: initial => ({ getSnapshot: () => initial, set: () => {} }) }
         if (name === '@deepseek-ai/dsh-client-ui-slots') return { resolveSlotLabel: value => value }
-        if (name === '@deepseek-ai/dsh-client-ui-primitives') return new Proxy({ isDarwinDesktop: () => false, Tooltip: ({ children }) => children }, { get: (target, key) => target[key] ?? (() => null) })
+        if (name === '@deepseek-ai/dsh-client-ui-primitives') return new Proxy({ isDarwinDesktop: () => false, Tooltip: ({ children }) => children, Menu: ({ anchor, children }) => React.createElement(React.Fragment, null, anchor, children) }, { get: (target, key) => target[key] ?? (() => null) })
         throw new Error(`Unexpected module ${name}`)
       })
     } }
@@ -37,8 +38,22 @@ function loadSidebar() {
   })
 }
 
-describe('rc.2 workbench patch slots', () => {
-  it('declares and renders the quick switcher between New Session and the native panel navigation with the native action', async () => {
+describe('0.2.2 workbench patch slots', () => {
+  it('gives the workbench switcher its own sidebar grid row', async () => {
+    const source = await readFile(sidebarPath, 'utf8')
+    expect(source).toContain('grid-template-rows:8px max-content max-content 2px max-content')
+    expect(source).toContain('.hHd-Xa_quickSwitcher{grid-area:2/2;min-width:0}')
+    expect(source).toContain('.hHd-Xa_panelList{flex-direction:column;flex:none;grid-area:3/2;')
+    expect(source).toContain('.hHd-Xa_scrollArea:after{grid-row:4}')
+    expect(source).toContain('.hHd-Xa_regionArea{flex-direction:column;grid-area:5/2;')
+  })
+
+  it.each([
+    { panels: [], unpinned: [], hasActions: false, collapsed: true },
+    { panels: [], unpinned: [], hasActions: false, collapsed: false },
+    { panels: [{ id: 'plugins', label: 'Plugins' }], unpinned: [], hasActions: false },
+    { panels: [{ id: 'plugins', label: 'Plugins' }, { id: 'schedules', label: 'Schedules' }, { id: 'custom', label: 'Custom panel' }], unpinned: ['plugins', 'schedules'], hasActions: true }
+  ])('keeps one quick switcher and its native action alongside upstream panel pinning: $hasActions / $unpinned', async ({ panels, unpinned, hasActions, collapsed = false }) => {
     const sidebar = await loadSidebar()
     const registrations = []
     const startSession = vi.fn()
@@ -55,40 +70,92 @@ describe('rc.2 workbench patch slots', () => {
       layout: { toggleSidebar: () => {}, selectPanel: () => {} }
     }
     sidebar.apply(ctx)
+    const leading = registrations.find(item => item.options.name === 'shell.leading')
+    const headerMarkup = renderToStaticMarkup(React.createElement(leading.Component, {
+      toggleSidebar: () => {}, startSession, trackEntryClick: () => {}, useRemoteAccess: () => true, useShortcuts: () => [], t: key => key
+    }))
+    expect(headerMarkup.match(/data-dsh-sidebar-new-session=""/g)).toHaveLength(1)
     const shell = registrations.find(item => item.options.name === 'sidebar')
-    expect(shell.options.children['sidebar.primaryNavigation']).toEqual({ kind: 'single', scope: 'root' })
     expect(shell.options.children['sidebar.quickSwitcher']).toEqual({ kind: 'single', scope: 'root' })
+    expect(shell.options.children['sidebar.panellist.actions']).toEqual({ kind: 'list', scope: 'root' })
+    expect(shell.options.children['sidebar.settings']).toEqual({ kind: 'single', scope: 'root' })
+    expect(shell.options.children['sidebar.settings.action']).toEqual({ kind: 'list', scope: 'root' })
+    const selectPanel = vi.fn()
+    const setPinned = vi.fn()
+    const trackEntryClick = vi.fn()
     const rendered = []
     const markup = renderToStaticMarkup(React.createElement(shell.Component, {
-      collapsed: false, width: 250, startSession, toggleSidebar: () => {}, selectPanel: () => {},
-      usePanels: () => [{ id: 'plugins', label: '插件' }], useShortcuts: () => [], usePanelInfo: () => ({}), t: key => key,
+      collapsed, width: 250, startSession, toggleSidebar: () => {}, selectPanel, setPinned, trackEntryClick,
+      usePanels: () => panels, useEntryPins: () => unpinned, useEntryActions: () => hasActions,
+      useRemoteAccess: () => true,
+      useShortcuts: () => [], usePanelInfo: selector => selector({ activePanelId: 'schedules' }), t: key => key,
       renderSlot: (name, owner, options) => {
         rendered.push({ name, owner })
-        return name === 'sidebar.quickSwitcher' ? React.createElement('span', null, 'Workbench switcher') : options?.fallback ?? null
+        if (name === 'sidebar.quickSwitcher') return React.createElement('span', null, 'Workbench switcher')
+        if (name === 'sidebar.settings') return React.createElement('button', null, 'Settings contribution')
+        if (name === 'sidebar.settings.action') return React.createElement('button', null, 'Recovery contribution')
+        return options?.fallback ?? null
       }
     }))
+    expect(markup.match(/data-dsh-sidebar-new-session=""/g)).toHaveLength(1)
+    const workbenchCode = await readFile(new URL('../packages/dsh-desktop-workbenches/client.js', import.meta.url), 'utf8')
+    const visibilityRule = workbenchCode.match(/html\[data-dsh-workbench-active\] \[data-dsh-sidebar-new-session\]\{[^}]+\}/)[0]
+    const dom = new JSDOM(`<html><head><style>${visibilityRule}</style></head><body>${markup}${headerMarkup}</body></html>`)
+    const buttons = dom.window.document.querySelectorAll('[data-dsh-sidebar-new-session]')
+    expect(buttons).toHaveLength(2)
+    for (const active of [true, false, true, false]) {
+      dom.window.document.documentElement.toggleAttribute('data-dsh-workbench-active', active)
+      for (const button of buttons) expect(dom.window.getComputedStyle(button).display === 'none').toBe(active)
+    }
+    dom.window.close()
+
     expect(markup).toContain('Workbench switcher')
+    const placed = new JSDOM(`<body>${markup}</body>`)
+    const scrollArea = placed.window.document.querySelector('.hHd-Xa_scrollArea')
+    const switcher = scrollArea?.querySelector('[data-dsh-sidebar-quick-switcher]')
+    expect(switcher?.textContent ?? '').toContain('Workbench switcher')
+    const panelList = scrollArea?.querySelector('.hHd-Xa_panelList')
+    if (panelList) {
+      expect(panelList.compareDocumentPosition(switcher) & placed.window.Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy()
+    }
+    placed.window.close()
+    expect(markup).toContain('<div data-dsh-sidebar-settings-content=""><button>Settings contribution</button></div>')
+    expect(markup).toContain('<div data-dsh-sidebar-settings-actions=""><button>Recovery contribution</button></div>')
+    expect(markup.match(/data-dsh-sidebar-settings=""/g)).toHaveLength(1)
+    expect(markup.match(/data-dsh-sidebar-settings-content=""/g)).toHaveLength(1)
+    expect(markup.match(/data-dsh-sidebar-settings-actions=""/g)).toHaveLength(1)
+    for (const name of ['sidebar.settings', 'sidebar.settings.action']) {
+      const contributions = rendered.filter(item => item.name === name)
+      expect(contributions).toHaveLength(1)
+      expect(contributions[0].owner).toEqual({ wide: !collapsed })
+    }
     expect(markup.indexOf('Workbench switcher')).toBeGreaterThan(markup.indexOf('class="hHd-Xa_newSession"'))
-    expect(markup.indexOf('Workbench switcher')).toBeLessThan(markup.indexOf('class="hHd-Xa_panelList"'))
-    expect(rendered.find(item => item.name === 'sidebar.quickSwitcher')?.owner).toEqual({ wide: true, startSession })
-    expect(rendered.findIndex(item => item.name === 'sidebar.quickSwitcher')).toBeGreaterThan(-1)
-    const primary = rendered.find(item => item.name === 'sidebar.primaryNavigation').owner
-    expect(primary.panels).toEqual([{ id: 'plugins', label: '插件' }])
-    expect(primary.startSession).toBe(startSession)
-    const customized = renderToStaticMarkup(React.createElement(shell.Component, {
-      collapsed: false, width: 250, startSession, toggleSidebar: () => {}, selectPanel: () => {},
-      usePanels: () => [{ id: 'plugins', label: 'Plugins' }, { id: 'custom', label: 'A long third-party panel name' }],
-      useShortcuts: () => [], usePanelInfo: () => ({}), t: key => key,
-      renderSlot: (name, owner, options) => name === 'sidebar.primaryNavigation'
-        ? React.createElement('nav', null, owner.panels.map(panel => React.createElement('button', { key: panel.id }, panel.label)))
-        : options?.fallback ?? null
-    }))
-    expect(customized).toContain('A long third-party panel name')
-    expect(customized.match(/>Plugins</g)).toHaveLength(1)
-    expect(customized.match(/class="hHd-Xa_newSession"/g)).toHaveLength(1)
-    const action = renderToStaticMarkup(primary.renderAction({ id: 'more', label: 'More', icon: null, expanded: true, active: true, onClick: () => {} }))
-    expect(action).toContain('hHd-Xa_panelRow hHd-Xa_panelActive')
-    expect(action).toContain('aria-expanded="true"')
+    if (panels.length) expect(markup.indexOf('Workbench switcher')).toBeLessThan(markup.indexOf('class="hHd-Xa_panelList"'))
+    const switchers = rendered.filter(item => item.name === 'sidebar.quickSwitcher')
+    expect(switchers).toHaveLength(1)
+    expect(switchers[0].owner).toEqual({ wide: !collapsed, startSession })
+    switchers[0].owner.startSession('workspace-test')
+    expect(startSession).toHaveBeenCalledWith('workspace-test')
+    expect(trackEntryClick).not.toHaveBeenCalled()
+    const more = rendered.filter(item => item.name === 'sidebar.panellist.actions')
+    expect(more).toHaveLength(hasActions && panels.length ? 1 : 0)
+    if (hasActions) {
+      expect(markup).toContain('aria-label="Plugins"')
+      expect(markup).toContain('aria-label="Custom panel"')
+      expect(markup).not.toContain('aria-label="Schedules"')
+      expect(more[0].owner.entries).toEqual([
+        { id: 'schedules', label: 'Schedules', pinned: false, active: true },
+        { id: 'custom', label: 'Custom panel', pinned: true, active: false }
+      ])
+      more[0].owner.onPinnedChange('schedules', true)
+      expect(setPinned).toHaveBeenCalledWith('schedules', true)
+      more[0].owner.onOpen('schedules')
+      expect(selectPanel).toHaveBeenCalledWith('schedules')
+      expect(trackEntryClick).toHaveBeenCalledExactlyOnceWith({ menu_name: 'cron', position: 'sidebar_more' })
+      more[0].owner.onOpen('custom')
+      expect(selectPanel).toHaveBeenLastCalledWith('custom')
+      expect(trackEntryClick).toHaveBeenCalledTimes(1)
+    }
   })
 
   it('isolates a failed optional workbench without hiding a failed core entry', async () => {

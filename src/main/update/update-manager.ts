@@ -1,6 +1,14 @@
-import { app, BrowserWindow, ipcMain, powerMonitor } from 'electron'
+import type { DesktopLocale } from '../../shared/desktop-locale'
+import { encodePopupNotesMetadata } from '../../shared/update-release-notes'
+import { join } from 'node:path'
+import { ApplicationRollback, type ApplicationRollbackStatus } from './application-rollback'
+import { checkDesktopUpdate } from '../desktop-service'
+import { isPrereleaseVersion, isVersion } from '../desktop-service/service'
+import { app, BrowserWindow, ipcMain, net, powerMonitor } from 'electron'
+import { readPackageUpdateConfig } from './package-update-config'
+import { stableFeedUrl, type DesktopUpdateConfig } from './update-config'
 import electronUpdater from 'electron-updater'
-import type { UpdateStatus } from '../../shared/contracts'
+import type { AvailableRelease, UpdateStatus } from '../../shared/contracts'
 import {
   AUTO_INSTALL_ON_APP_QUIT,
   shouldCheckAfterResume,
@@ -21,29 +29,26 @@ import {
   skippedVersionPath,
   writeSkippedVersion
 } from './skipped-version'
+import {
+  archiveFeedUrl,
+  compareVersions,
+  fetchAvailableReleases,
+  type VersionIndexRequest
+} from './version-catalog'
 
-const TRANSIENT_STATUS_MS = 8_000
-const UPDATES_UNAVAILABLE_MESSAGE = 'Online updates are unavailable in this build.'
+const { autoUpdater } = electronUpdater
 
-// Enterprise Chat imports the card only to keep this one view above the page.
-// Reading autoUpdater or app.getVersion during that import constructs the
-// platform updater before startUpdateManager, and before Electron app exists.
-let sharedUpdater: typeof electronUpdater.autoUpdater | undefined
-let status: UpdateStatus | undefined
+// Default-session Chromium fetch follows that session's proxy configuration.
+const requestVersionIndex: VersionIndexRequest = (url, init) => net.fetch(url, init)
 
-function autoUpdater(): typeof electronUpdater.autoUpdater {
-  // The library getter creates one NsisUpdater or MacUpdater, then returns it.
-  // Later checks, downloads, and installs must keep using that same instance.
-  sharedUpdater ??= electronUpdater.autoUpdater
-  return sharedUpdater
+function fetchDesktopReleases(): Promise<AvailableRelease[]> {
+  return fetchAvailableReleases(app.getVersion(), requestVersionIndex, readPackageUpdateConfig(app.getAppPath()))
 }
 
-function currentStatus(): UpdateStatus {
-  if (status === undefined) status = initialUpdateStatus(app.getVersion())
-  return status
-}
-
+let status = initialUpdateStatus(app.getVersion())
 let prepareToInstall: (() => Promise<void>) | undefined
+let installFailed: (() => Promise<void>) | undefined
+let canCheckAutomatically: (() => boolean) | undefined
 let startupTimer: NodeJS.Timeout | undefined
 let intervalTimer: NodeJS.Timeout | undefined
 let checkPromise: Promise<unknown> | undefined
@@ -52,24 +57,84 @@ let installing = false
 let downloading = false
 let started = false
 let handlersRegistered = false
-let updateLocale: (() => 'en' | 'zh') | undefined
+let updateLocale: (() => DesktopLocale) | undefined
 let skippedVersion: string | undefined
 let skipLoaded = false
 let manualCheck = false
 let manualCheckRequested = false
-let presentationSerial = 0
-let presentUpdateCard: ((status: UpdateStatus) => void) | undefined
+let presentationId = 0
+let pendingDowngrade = false
+let selectedUpdateVersion: string | undefined
+let checkingFeed = false
+let rollbackLedger: ApplicationRollback | undefined
+let rollbackPromise: Promise<UpdateStatus> | undefined
+let rollbackTarget: string | undefined
+const ROLLBACK_OWNER = Symbol('application-rollback')
+let rollbackOwnsUpdater = false
+let rollbackCompatibility: ((targetVersion: string) => Promise<{ compatible: boolean; reason?: string }>) | undefined
 
-/** The desktop card view is not a BrowserWindow, so status has to be handed over. */
-export function bindUpdateCardPresenter(present: (status: UpdateStatus) => void): void {
-  presentUpdateCard = present
+function applicationRollback(): ApplicationRollback {
+  return rollbackLedger ??= new ApplicationRollback(join(app.getPath('userData'), 'application-rollback.json'), {
+    version: app.getVersion(), platform: process.platform, arch: process.arch, packaged: app.isPackaged
+  })
+}
+
+export async function getApplicationRollbackStatus(): Promise<ApplicationRollbackStatus> {
+  try {
+    const result = await applicationRollback().status()
+    if (!result.available || !result.targetVersion) return result
+    if (!rollbackCompatibility) return { ...result, available: false, reason: 'data-compatibility-unverified' }
+    const compatibility = await rollbackCompatibility(result.targetVersion)
+    if (!compatibility.compatible) return { ...result, available: false, reason: compatibility.reason ?? 'data-compatibility-unverified' }
+    const releases = await fetchDesktopReleases()
+    if (!releases.some(release => release.version === result.targetVersion)) {
+      return { ...result, available: false, reason: 'previous-version-archive-unavailable' }
+    }
+    return result
+  } catch (error) {
+    return { available: false, reason: errorMessage(error) }
+  }
+}
+
+/** No renderer-supplied version: recovery can only return to the actual prior installation. */
+export async function rollbackApplication(): Promise<UpdateStatus> {
+  if (rollbackPromise) return rollbackPromise
+  rollbackPromise = (async () => {
+    const available = await getApplicationRollbackStatus()
+    if (!available.available) throw new Error(available.reason ?? 'rollback-unavailable')
+    if (checkPromise || downloading || installing || ['checking', 'downloading', 'downloaded'].includes(status.phase)) {
+      throw new Error('updater-busy')
+    }
+    try {
+      rollbackOwnsUpdater = true
+      rollbackTarget = await applicationRollback().begin()
+      const result = await installSpecificVersionOwned(rollbackTarget, ROLLBACK_OWNER)
+      if (result.phase !== 'downloaded' || result.availableVersion !== rollbackTarget) {
+        throw new Error(result.message ?? 'rollback-download-failed')
+      }
+      const requested = await installDownloadedUpdateOwned(ROLLBACK_OWNER)
+      if (!requested) throw new Error(status.message ?? 'rollback-install-not-requested')
+      if (status.phase === 'error') throw new Error(status.message ?? 'rollback-install-failed')
+      return getUpdateStatus()
+    } catch (error) {
+      try { await applicationRollback().fail(errorMessage(error)) }
+      catch (journalError) {
+        throw new Error(`${errorMessage(error)}; rollback journal write failed: ${errorMessage(journalError)}`)
+      }
+      throw error
+    } finally {
+      rollbackTarget = undefined
+      rollbackOwnsUpdater = false
+    }
+  })()
+  try { return await rollbackPromise } finally { rollbackPromise = undefined }
 }
 
 export function getUpdateStatus(): UpdateStatus {
-  return { ...currentStatus(), locale: updateLocale?.() }
+  return { ...status, locale: updateLocale?.() }
 }
 
-export function registerUpdateHandlers(options: { locale?: () => 'en' | 'zh' } = {}): void {
+export function registerUpdateHandlers(options: { locale?: () => DesktopLocale } = {}): void {
   updateLocale = options.locale ?? updateLocale
   if (handlersRegistered) return
   handlersRegistered = true
@@ -78,6 +143,10 @@ export function registerUpdateHandlers(options: { locale?: () => 'en' | 'zh' } =
   ipcMain.handle('updates:install', () => installDownloadedUpdate())
   ipcMain.handle('updates:skip', (_event, version: unknown) => skipUpdate(version))
   ipcMain.handle('updates:download', () => downloadAvailableUpdate())
+  ipcMain.handle('updates:list-versions', () => fetchDesktopReleases())
+  ipcMain.handle('updates:install-version', (_event, version: unknown) =>
+    installSpecificVersion(version)
+  )
 }
 
 function skipFile(): string {
@@ -99,16 +168,8 @@ function currentSkippedVersion(): string | undefined {
  * version they skipped.
  */
 export function skipUpdate(version: unknown): UpdateStatus {
+  if (rollbackOwnsUpdater || installing) return getUpdateStatus()
   if (typeof version !== 'string' || !version) return getUpdateStatus()
-  // Consent already started the fetch. Skipping here would erase that update
-  // and remember the version as permanently declined. The ready-to-install
-  // card may appear before downloadUpdate() settles, and skip is allowed then.
-  const current = currentStatus()
-  const downloadInProgress = current.phase === 'downloading' || (downloading && current.phase === 'available')
-  if (downloadInProgress) return getUpdateStatus()
-  // This check has been answered. A repeated available event must not open the
-  // card again for the version the user just skipped.
-  manualCheck = false
   skippedVersion = version
   skipLoaded = true
   writeSkippedVersion(skipFile(), version)
@@ -116,15 +177,23 @@ export function skipUpdate(version: unknown): UpdateStatus {
   return getUpdateStatus()
 }
 
-export function startUpdateManager(options: { prepareToInstall: () => Promise<void> }): void {
+export function startUpdateManager(options: {
+  prepareToInstall: () => Promise<void>
+  installFailed?: () => Promise<void>
+  canCheckAutomatically?: () => boolean
+  rollbackCompatibility?: (targetVersion: string) => Promise<{ compatible: boolean; reason?: string }>
+}): void {
   prepareToInstall = options.prepareToInstall
+  installFailed = options.installFailed
+  canCheckAutomatically = options.canCheckAutomatically
+  rollbackCompatibility = options.rollbackCompatibility
   if (started) return
   started = true
 
   if (!supportsUpdates()) {
     transition({
       type: 'unsupported',
-      message: UPDATES_UNAVAILABLE_MESSAGE
+      message: 'Updates are available in installed macOS and Windows builds.'
     })
     return
   }
@@ -139,13 +208,13 @@ export function startUpdateManager(options: { prepareToInstall: () => Promise<vo
 }
 
 export async function checkForUpdates(manual = false, source: UpdateStatus['source'] = manual ? 'manual' : 'runtime'): Promise<UpdateStatus> {
-  // Development builds never start this manager. Their menu/IPC entry points
-  // must not initialize an updater against the production feed.
-  if (!started || !supportsUpdates()) {
+  if (rollbackOwnsUpdater || installing || (!manual && canCheckAutomatically?.() === false)) return getUpdateStatus()
+  if (manual) status.presentationId = ++presentationId
+  if (!supportsUpdates()) {
     transition(
       {
         type: 'unsupported',
-        message: UPDATES_UNAVAILABLE_MESSAGE
+        message: 'Update checks are only available in installed macOS and Windows builds.'
       },
       manual
     )
@@ -154,41 +223,78 @@ export async function checkForUpdates(manual = false, source: UpdateStatus['sour
 
   if (checkPromise) {
     if (manual) {
-      // The check already running may be a background one. Remember that the
-      // user asked, or a skipped version would be dropped when it returns.
       manualCheckRequested = true
-      transition({ type: 'present-manual', presentationId: nextPresentationId() })
+      transition({ type: 'present-manual' })
     }
     await checkPromise
     return getUpdateStatus()
   }
-  // An offer, download, or finished package is already the answer. Show that
-  // instead of starting another check whose corner card is easy to miss.
-  const current = currentStatus()
-  if (current.phase === 'downloading' || current.phase === 'downloaded' || current.phase === 'available') {
+  if (['downloading', 'downloaded'].includes(status.phase) || (!manual && status.phase === 'available')) {
     if (manual) {
       manualCheck = true
-      transition({ type: 'present-manual', presentationId: nextPresentationId() })
+      transition({ type: 'present-manual' })
     }
     return getUpdateStatus()
   }
 
-  const presentationId = manual ? nextPresentationId() : undefined
-  transition({ type: 'check', manual, source, ...(presentationId === undefined ? {} : { presentationId }) })
+  transition({ type: 'check', manual, source })
   manualCheck = manual
   manualCheckRequested = manual
   lastCheckedAt = Date.now()
+  selectedUpdateVersion = undefined
   checkPromise = (async () => {
-    await autoUpdater().checkForUpdates()
+    try {
+      const config = readPackageUpdateConfig(app.getAppPath())
+      if (config.strategy === 'feed') {
+        checkingFeed = true
+        autoUpdater.setFeedURL({ provider: 'generic', url: stableFeedUrl(config) })
+        autoUpdater.allowPrerelease = isPrereleaseVersion(app.getVersion())
+        autoUpdater.allowDowngrade = false
+        await autoUpdater.checkForUpdates()
+        return
+      }
+      let requestManual = manual
+      while (true) {
+        manualCheck = requestManual
+        const policy = await checkDesktopUpdate(requestManual, config)
+        // A manual request during the automatic policy check must get its own
+        // decision; showing the automatic cohort miss would be misleading.
+        if (!requestManual && manualCheckRequested) {
+          requestManual = true
+          status.presentationId = presentationId
+          transition({ type: 'check', manual: true })
+          continue
+        }
+        if (!policy.updateAvailable) {
+          transition({ type: 'not-available' })
+          return
+        }
+        selectedUpdateVersion = policy.version
+        autoUpdater.setFeedURL({ provider: 'generic', url: policy.feedUrl })
+        autoUpdater.allowPrerelease = isPrereleaseVersion(policy.version)
+        autoUpdater.allowDowngrade = false
+        const result = await autoUpdater.checkForUpdates()
+        if (result?.updateInfo.version !== policy.version) throw new Error('Update archive does not match the selected version')
+        if (!requestManual && manualCheckRequested) {
+          // The archive check also runs under the same lock. Re-evaluate the
+          // manual policy before releasing it, without starting a download.
+          requestManual = true
+          status.presentationId = presentationId
+          transition({ type: 'check', manual: true })
+          continue
+        }
+        return
+      }
+    } catch (error) {
+      // A synchronous metadata failure must release the lock after its promise is assigned.
+      await Promise.resolve()
+      transition({ type: 'error', message: errorMessage(error) })
+    } finally {
+      checkingFeed = false
+      checkPromise = undefined
+    }
   })()
-  try {
-    await checkPromise
-  } catch (error) {
-    manualCheckRequested = false
-    transition({ type: 'error', message: errorMessage(error) })
-  } finally {
-    checkPromise = undefined
-  }
+  await checkPromise
 
   return getUpdateStatus()
 }
@@ -198,31 +304,23 @@ export async function checkForUpdates(manual = false, source: UpdateStatus['sour
  * action — an update sits at `available` until it is taken.
  */
 export async function downloadAvailableUpdate(): Promise<UpdateStatus> {
-  const current = currentStatus()
-  if (current.phase !== 'available' || downloading) return getUpdateStatus()
-  const expectedVersion = current.availableVersion
-  // Lock skip before the first await. Progress may not have moved the phase
-  // off "available" yet, and that is exactly when the card used to stay clickable.
-  downloading = true
-  try {
-    // A queued manual check can replace an automatic offer. Consent to A must
-    // not download B; history installs already own this lock and cannot await it.
-    if (checkPromise) await checkPromise
-  } catch (error) {
-    downloading = false
-    throw error
-  }
-  const latest = currentStatus()
-  if (latest.phase !== 'available' || latest.availableVersion !== expectedVersion) {
-    downloading = false
+  return downloadAvailableUpdateOwned()
+}
+
+async function downloadAvailableUpdateOwned(owner?: symbol): Promise<UpdateStatus> {
+  if ((rollbackOwnsUpdater && owner !== ROLLBACK_OWNER) || installing) return getUpdateStatus()
+  if (status.phase !== 'available' || downloading) return getUpdateStatus()
+  const expectedVersion = status.availableVersion
+  // A queued manual check can replace an automatic offer. Consent to A must
+  // not download B; history installs already own this lock and cannot await it.
+  if (checkPromise && !pendingDowngrade) await checkPromise
+  if (status.phase !== 'available' || status.availableVersion !== expectedVersion || downloading) {
     return getUpdateStatus()
   }
+  downloading = true
 
-  // Stay on one visible phase. downloadUpdate() repeats check and available
-  // events, and those used to hide the card and unlock skip.
-  transition({ type: 'progress', percent: 0 })
   try {
-    await autoUpdater().downloadUpdate()
+    await autoUpdater.downloadUpdate()
   } catch (error) {
     transition({ type: 'error', message: errorMessage(error) })
   } finally {
@@ -232,16 +330,103 @@ export async function downloadAvailableUpdate(): Promise<UpdateStatus> {
   return getUpdateStatus()
 }
 
+/**
+ * Install a specific past release, downgrades included. The feed is pointed at
+ * that version's archive directory for one check + download, then restored to
+ * the stable channel. A successful install resumes normal `latest` auto-updates
+ * — there is no version pinning.
+ */
+export async function installSpecificVersion(version: unknown): Promise<UpdateStatus> {
+  return installSpecificVersionOwned(version)
+}
+
+async function installSpecificVersionOwned(version: unknown, owner?: symbol): Promise<UpdateStatus> {
+  if ((rollbackOwnsUpdater && owner !== ROLLBACK_OWNER) || installing) return getUpdateStatus()
+  if (!isVersion(version) || compareVersions(version, app.getVersion()) >= 0) return getUpdateStatus()
+  if (!supportsUpdates()) return getUpdateStatus()
+  if (checkPromise || ['checking', 'downloading', 'downloaded'].includes(status.phase)) {
+    return getUpdateStatus()
+  }
+
+  manualCheck = true
+  status.presentationId = ++presentationId
+  transition({ type: 'check', manual: true })
+  lastCheckedAt = Date.now()
+  checkPromise = (async () => {
+    let config: Readonly<DesktopUpdateConfig> | undefined
+    try {
+      config = readPackageUpdateConfig(app.getAppPath())
+      const releases = await fetchDesktopReleases()
+      if (!releases.some(release => release.version === version)) {
+        throw new Error('Selected version is not in the release history')
+      }
+      selectedUpdateVersion = version
+      pendingDowngrade = true
+      autoUpdater.setFeedURL({ provider: 'generic', url: archiveFeedUrl(version, config) })
+      autoUpdater.allowDowngrade = true
+      autoUpdater.allowPrerelease = isPrereleaseVersion(version)
+      const result = await autoUpdater.checkForUpdates()
+      if (result?.updateInfo.version !== version) throw new Error('Update archive does not match the selected version')
+      if (status.phase === 'available' && status.availableVersion === version) {
+        await downloadAvailableUpdateOwned(owner)
+      } else if (status.phase !== 'downloading' && status.phase !== 'downloaded') {
+        transition({ type: 'error', message: '在更新源未找到该版本' })
+      }
+    } catch (error) {
+      await Promise.resolve()
+      transition({ type: 'error', message: errorMessage(error) })
+    } finally {
+      checkPromise = undefined
+      if (config) autoUpdater.setFeedURL({ provider: 'generic', url: stableFeedUrl(config) })
+      autoUpdater.allowDowngrade = false
+      pendingDowngrade = false
+      autoUpdater.allowPrerelease = false
+    }
+  })()
+  await checkPromise
+
+  return getUpdateStatus()
+}
+
 export async function installDownloadedUpdate(): Promise<void> {
-  if (currentStatus().phase !== 'downloaded' || installing) return
+  await installDownloadedUpdateOwned()
+}
+
+async function installDownloadedUpdateOwned(owner?: symbol): Promise<boolean> {
+  if (rollbackOwnsUpdater && owner !== ROLLBACK_OWNER) return false
+  if (status.phase !== 'downloaded' || installing) return false
+  const version = status.availableVersion
+  if (!version || version !== selectedUpdateVersion || (rollbackTarget && version !== rollbackTarget)) {
+    transition({ type: 'error', message: 'downloaded-version-mismatch' }, true)
+    return false
+  }
   installing = true
+  let prepareStarted = false
 
   try {
-    await prepareToInstall?.()
-    autoUpdater().quitAndInstall(false, true)
+    // Persist all fallible journal work before stopping the runtime. The
+    // installer state is not proof that the replacement application launched.
+    if (rollbackTarget) await applicationRollback().markInstalling()
+    else await applicationRollback().recordUpgrade(version)
+    if (!prepareToInstall) throw new Error('updater-not-initialized')
+    prepareStarted = true
+    await prepareToInstall()
+    if (status.phase !== 'downloaded' || status.availableVersion !== version) {
+      throw new Error('downloaded-update-changed-during-install')
+    }
+    autoUpdater.quitAndInstall(false, true)
+    return true
   } catch (error) {
+    let message = errorMessage(error)
+    if (prepareStarted && installFailed) {
+      try { await installFailed() }
+      catch (recoveryError) {
+        message += `; installation failure recovery failed: ${errorMessage(recoveryError)}`
+      }
+    }
     installing = false
-    transition({ type: 'error', message: errorMessage(error) }, true)
+    transition({ type: 'error', message }, true)
+    return false
   }
 }
 
@@ -256,73 +441,68 @@ export function stopUpdateManager(): void {
 function configureUpdater(): void {
   // The download is ours to start: an update the user skipped should not be
   // fetched at all, and update-available is the only place that is known.
-  autoUpdater().autoDownload = false
-  autoUpdater().allowDowngrade = false
-  autoUpdater().autoInstallOnAppQuit = AUTO_INSTALL_ON_APP_QUIT
-  autoUpdater().allowPrerelease = false
-  autoUpdater().logger = {
+  autoUpdater.autoDownload = false
+  // Reset here too: `installSpecificVersion` turns this on transiently, and its
+  // `finally` may not run if the process is killed mid-flow.
+  autoUpdater.allowDowngrade = false
+  autoUpdater.autoInstallOnAppQuit = AUTO_INSTALL_ON_APP_QUIT
+  autoUpdater.allowPrerelease = false
+  autoUpdater.logger = {
     info: (...args: unknown[]) => console.info('[updater]', ...args),
     warn: (...args: unknown[]) => console.warn('[updater]', ...args),
     error: (...args: unknown[]) => console.error('[updater]', ...args),
     debug: (...args: unknown[]) => console.debug('[updater]', ...args)
   }
 
-  autoUpdater().on('checking-for-update', () => {
-    if (isDownloadOnScreen()) return
-    const current = currentStatus()
-    transition({ type: 'check', manual: current.manual, source: current.source })
-  })
-  autoUpdater().on('update-available', (info) => {
-    if (isDownloadOnScreen()) return
-    const offeredByManualCheck = manualCheck || manualCheckRequested
-    manualCheck = false
-    manualCheckRequested = false
-    if (!shouldOfferUpdate(info.version, currentSkippedVersion(), offeredByManualCheck)) {
+  autoUpdater.on('checking-for-update', () =>
+    transition({ type: 'check', manual: status.manual, source: status.source })
+  )
+  autoUpdater.on('update-available', (info) => {
+    // Feed metadata selects the version; archive/policy checks still require an exact match.
+    if (checkingFeed && !selectedUpdateVersion && isVersion(info.version)) selectedUpdateVersion = info.version
+    if (info.version !== selectedUpdateVersion) {
+      transition({ type: 'error', message: 'Update archive does not match the selected version' })
+      return
+    }
+    if (!shouldOfferUpdate(info.version, currentSkippedVersion(), manualCheck || manualCheckRequested)) {
       console.info('[updater] skipping', info.version, 'at the user’s request')
       transition({ type: 'reset' })
       return
     }
     // Offered, not fetched: nothing leaves the network until the user accepts
     // the update, which is the same click that starts the download.
-    transition({ type: 'available', version: info.version, releaseNotes: normalizeReleaseNotes(info.releaseNotes) })
+    transition({ type: 'available', version: info.version, releaseNotes: encodePopupNotesMetadata(info) ?? normalizeReleaseNotes(info.releaseNotes) })
   })
-  autoUpdater().on('download-progress', (progress) =>
+  autoUpdater.on('download-progress', (progress) =>
     transition({ type: 'progress', percent: progress.percent })
   )
-  autoUpdater().on('update-not-available', () => {
-    if (isDownloadOnScreen()) return
-    manualCheck = false
-    manualCheckRequested = false
+  autoUpdater.on('update-not-available', () => {
     transition({ type: 'not-available' })
   })
-  autoUpdater().on('update-downloaded', (info) =>
+  autoUpdater.on('update-downloaded', (info) => {
+    if (info.version !== selectedUpdateVersion) {
+      transition({ type: 'error', message: 'Update archive does not match the selected version' })
+      return
+    }
     transition({ type: 'downloaded', version: info.version })
-  )
-  autoUpdater().on('error', (error) => {
-    manualCheckRequested = false
+  })
+  autoUpdater.on('error', (error) => {
     transition({ type: 'error', message: errorMessage(error) })
   })
 }
 
-function isDownloadOnScreen(): boolean {
-  return downloading || currentStatus().phase === 'downloading'
-}
-
-function nextPresentationId(): number {
-  presentationSerial += 1
-  return presentationSerial
-}
-
 function transition(event: UpdateStateEvent, manualOverride?: boolean): void {
-  status = reduceUpdateStatus(currentStatus(), event)
-  if (manualOverride !== undefined) status.manual = manualOverride
+  status = reduceUpdateStatus(status, event)
+  if (manualOverride !== undefined) {
+    status.manual = manualOverride
+    if (manualOverride) status.source = 'manual'
+  }
+  if (pendingDowngrade && event.type !== 'reset') status.downgrade = true
 
   console.info('[updater] status', status.phase, status.percent ?? '')
-  const next = getUpdateStatus()
   for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send('updates:status-changed', next)
+    if (!window.isDestroyed()) window.webContents.send('updates:status-changed', getUpdateStatus())
   }
-  presentUpdateCard?.(next)
 }
 
 function checkAfterResume(): void {

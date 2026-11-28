@@ -10,8 +10,8 @@ import {
   migrateProfileToGenerations,
   recoverInterruptedMigration,
   rollBackMigration
-} from '../src/main/state/generation-migration'
-import { runProfileStartupMaintenance } from '../src/main/state/profile-startup-maintenance'
+} from '../src/main/profile/generation-migration'
+import { runProfileStartupMaintenance } from '../src/main/profile/profile-startup-maintenance'
 import {
   readDesired,
   registryLayout,
@@ -224,7 +224,6 @@ describe('migration failure paths (issue #250)', () => {
       incompletePluginRestoreId: async () => undefined,
       preparePackageStore: prepareStore,
       demoteMarketGeneration: async () => false,
-      enforceCommunityPluginPolicy: async () => {},
       enforcePendingPluginRemovals: enforce,
       prepareGenerationsForLaunch: prepare,
       shouldDeferProfileMaintenance: async () => false,
@@ -471,7 +470,6 @@ describe('migration failure paths (issue #250)', () => {
       incompletePluginRestoreId: async () => 'removal-exact-retry',
       preparePackageStore: prepareStore,
       demoteMarketGeneration: async () => false,
-      enforceCommunityPluginPolicy: async () => {},
       enforcePendingPluginRemovals: enforce,
       prepareGenerationsForLaunch: prepare,
       shouldDeferProfileMaintenance: async () => false,
@@ -503,7 +501,6 @@ describe('migration failure paths (issue #250)', () => {
       incompletePluginRestoreId: async () => undefined,
       preparePackageStore: async () => undefined,
       demoteMarketGeneration: async () => false,
-      enforceCommunityPluginPolicy: async () => {},
       enforcePendingPluginRemovals: async () => {
         throw new Error('EPERM: could not persist the removal ledger')
       },
@@ -533,7 +530,6 @@ describe('migration failure paths (issue #250)', () => {
       incompletePluginRestoreId: async () => undefined,
       preparePackageStore: async () => undefined,
       demoteMarketGeneration: async () => false,
-      enforceCommunityPluginPolicy: async () => {},
       enforcePendingPluginRemovals: async () => {
         enforcementAttempt += 1
         if (enforcementAttempt === 2) {
@@ -565,7 +561,6 @@ describe('migration failure paths (issue #250)', () => {
       incompletePluginRestoreId: async () => undefined,
       preparePackageStore: async () => undefined,
       demoteMarketGeneration: async () => false,
-      enforceCommunityPluginPolicy: async () => {},
       enforcePendingPluginRemovals: async () => undefined,
       prepareGenerationsForLaunch: async () => {
         throw new Error('projection fixture failure')

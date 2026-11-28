@@ -19,7 +19,7 @@ function setup() {
   const options = {
     ctx, signal: controller.signal, current: () => true, workspaceId: 'project-1',
     request: vi.fn(), activate: vi.fn(),
-    prompt: 'Read https://enterprise.test/prefix/api/v1/dev-toolkit/workbench-guide.md and ask me about my idea.',
+    prompt: 'Read https://dshdesktop.com/workbench/docs/development.md and ask me about my idea.',
     errorText: key => key
   }
   return { options, ctx, input, state, controller }
@@ -45,14 +45,13 @@ describe('new workbench conversation', () => {
     f.options.label = 'Workbench development instructions'
     f.options.compact = true
     f.state.draftRev = 3
-    f.input.setDraft.mockImplementation(text => { f.state.draft = text; f.state.draftRev++ })
     f.input.insertReference = vi.fn(() => true)
-    f.ctx.conversation.input.requestDraftInitialization = vi.fn(() => 'preserved')
+    f.ctx.conversation.input.requestDraftInitialization = vi.fn(() => 'applied')
     await createWorkbenchConversation(f.options)
     expect(f.input.insertReference).toHaveBeenCalledWith({ source: INSTRUCTION_SOURCE, ref: f.options.prompt,
-      label: f.options.label, clipboardText: f.options.prompt }, { start: 0, end: 0, draftRev: 4 })
-    expect(f.ctx.conversation.input.requestDraftInitialization).not.toHaveBeenCalled()
-    expect(f.input.setDraft).toHaveBeenCalledWith('\n\n' + f.options.starter)
+      label: f.options.label, clipboardText: f.options.prompt }, { start: 0, end: 0, draftRev: 3 })
+    expect(f.ctx.conversation.input.requestDraftInitialization).toHaveBeenCalledWith(expect.anything(), { prompt: f.options.starter, whenDraftExists: 'append' })
+    expect(f.input.setDraft).not.toHaveBeenCalled()
     expect(f.input.submit).not.toHaveBeenCalled()
     expect(f.input.addAttachments).not.toHaveBeenCalled()
   })
@@ -60,7 +59,7 @@ describe('new workbench conversation', () => {
   it('uses a durable reference codec that previews, copies and serializes the exact original instructions', async () => {
     const open = vi.fn()
     const source = createInstructionSource(open)
-    const text = 'Original full instructions\nhttps://enterprise.test/prefix/api/v1/dev-toolkit/workbench-guide.md'
+    const text = 'Original full instructions\nhttps://dshdesktop.com/workbench/docs/development.md'
     expect(source.name).toBe(INSTRUCTION_SOURCE)
     expect(source.codec.clipboardText(text)).toBe(text)
     expect(await source.codec.serialize(text)).toBe(text)

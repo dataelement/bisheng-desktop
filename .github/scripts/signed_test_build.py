@@ -12,8 +12,22 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import quote
 
-from feishu_release_notes import bound_code_diff, send_feishu_notification
-from test_change_summary import summarize_changes
+from feishu_release_notes import send_feishu_notification
+from test_change_summary import summarize_changes, UNAVAILABLE as SUMMARY_FALLBACK
+
+def artifact_prefix(value: str) -> str:
+    if (not isinstance(value, str) or len(value) > 64
+            or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", value)
+            or re.fullmatch(r"con|prn|aux|nul|com[1-9]|lpt[1-9]", value)):
+        raise ValueError("Invalid portable release artifact prefix")
+    return value
+
+
+def product_name(value: str) -> str:
+    if not isinstance(value, str) or value.strip() != value or not re.fullmatch(r"[^\W_][\w .-]{0,79}", value):
+        raise ValueError("Invalid release product name")
+    return value
+
 
 INSTALLERS = {
     "macos": [
@@ -24,9 +38,10 @@ INSTALLERS = {
 }
 
 
-def installer_paths(directory: Path, target: str) -> list[tuple[str, Path]]:
+def installer_paths(directory: Path, target: str, prefix: str = "bisheng") -> list[tuple[str, Path]]:
+    prefix = artifact_prefix(prefix)
     platforms = ["macos", "windows"] if target == "all" else [target]
-    installers = [(label, directory / name) for platform in platforms for label, name in INSTALLERS[platform]]
+    installers = [(label, directory / (prefix + name[len("bisheng"):])) for platform in platforms for label, name in INSTALLERS[platform]]
     for _, file in installers:
         if not file.is_file() or file.stat().st_size == 0:
             raise ValueError(f"Missing or empty signed installer: {file.name}")
@@ -82,37 +97,72 @@ def build_test_changes(repository_url: str) -> str:
     earlier = [tag for tag in tags if git("rev-parse", f"refs/tags/{tag}^{{commit}}") != head]
     previous = git("describe", "--tags", "--abbrev=0", *[f"--match={tag}" for tag in earlier], head) if earlier else ""
     revision = f"{previous}..{head}" if previous else head
-    raw = git("log", "--no-merges", "--reverse", "--format=%s%n%b", revision)
-    # An empty tree includes all current code for a first build without a baseline tag.
-    baseline = previous or subprocess.check_output(
-        ["git", "hash-object", "-t", "tree", "--stdin"], input="", text=True,
-    ).strip()
-    diff_range = f"{baseline}..{head}"
-    paths = ("--", ".", ":(exclude)package-lock.json", ":(exclude)pnpm-lock.yaml")
-    statistics = git("diff", "--stat", diff_range, *paths)
-    code = bound_code_diff(git("diff", "--no-ext-diff", "--unified=1", diff_range, *paths))
-    return summarize_changes(raw, statistics, code)
+    raw = git("log", "--no-merges", "--reverse", "--format=%s%x00%b%x00", revision)
+    sections: dict[str, list[str]] = {"功能": [], "修复": [], "性能与改进": [], "其他变更": []}
+    fields = raw.split("\0")
+
+    def markdown(text: str) -> str:
+        return re.sub(r"([\\`*\[\]<>_])", r"\\\1", text)
+
+    for index in range(0, len(fields) - 1, 2):
+        subject, body = fields[index].strip(), fields[index + 1].strip()
+        match = re.match(r"(feat|fix|perf|refactor|build|ci|docs|test|chore)(?:\(([^)]+)\))?!?:\s*(.+)", subject, re.DOTALL)
+        category = "其他变更"
+        title = subject
+        if match:
+            kind, scope, title = match.groups()
+            category = {"feat": "功能", "fix": "修复", "perf": "性能与改进", "refactor": "性能与改进"}.get(kind, category)
+            if scope:
+                title = f"{scope}: {title}"
+        item = f"- {markdown(title)}"
+        if body:
+            item += "\n" + "\n".join(f"  {markdown(line)}" for line in body.splitlines())
+        sections[category].append(item)
+    baseline = f"上一个 tag：`{previous}`" if previous else "无历史版本 tag，列出首次提测变更。"
+    parts = ["**本次提测变更**", baseline, f"构建提交：`{head[:12]}`", "以下列表与说明来自该范围的提交记录，供提测核对。"]
+    for title, items in sections.items():
+        if items:
+            parts.extend([f"**{title}**", "\n".join(items)])
+    if not any(sections.values()):
+        parts.append("该范围没有非合并提交。")
+    return "\n\n".join(parts)
+
+
+def summarize_test_changes(changes: str) -> str:
+    baseline = re.search(r"上一个 tag：`([^`]+)`", changes)
+    if baseline:
+        revision = f"{baseline.group(1)}..HEAD"
+        diff = git("diff", revision, "--", "src", "packages", "build")
+        statistics = git("diff", "--stat", revision)
+    else:
+        diff = git("show", "--format=", "HEAD", "--", "src", "packages", "build")
+        statistics = git("show", "--stat", "--format=", "HEAD")
+    return summarize_changes(changes, statistics, diff[:48000])
 
 
 TEST_SUGGESTIONS = """\
 **测试建议**
-1. 安装与升级：检查全新安装、覆盖升级和启动。
-2. 对话与工具：检查流式输出、工具调用和思考折叠。
-3. 变更回归：逐项验证上述功能和问题修复。
-4. 状态恢复：检查设置、会话在重启和异常退出后的恢复。\
+1. **安装与启动**：全新安装或覆盖升级，验证应用能否正常启动进入主界面。
+2. **基础对话与交互**：新建会话与模型问答交互，验证流式输出、工具调用（Tool Call）与思考过程折叠。
+3. **功能改动验证**：核对本次提测的变更与修复点，验证相关业务流程与插件（如 Office / PPT 等）运行正常。
+4. **配置与状态恢复**：测试修改设置、重启应用或异常退出后，数据与配置状态能否正常持久化与恢复。\
 """
 
 
-def build_notification(version: str, installers: list[tuple[str, Path]], repo_id: str, prefix: str, run_url: str, changes: str = "") -> str:
+def build_notification(version: str, installers: list[tuple[str, Path]], repo_id: str, prefix: str, run_url: str, changes: str = "", product: str = "BISHENG") -> str:
+    product = product_name(product)
     links = "\n".join(f"- [{label}]({download_url(repo_id, prefix, file.name)})" for label, file in installers)
     if len(changes) > 9000:
         changes = changes[:8500].rsplit("\n", 1)[0] + "\n\n变更较多，已截断展示。"
     details = f"\n\n{changes}" if changes else ""
+    if changes:
+        details += f"\n\n[完整提测说明]({download_url(repo_id, prefix, 'test-changes.md')})"
     return (
-        f"**BISHENG {version} 测试打包完成**\n\n"
+        f"**{product} {version} 测试打包完成**\n\n"
         f"**下载地址**\n{links}"
         + details
-        + f"\n\n{TEST_SUGGESTIONS}\n\n[查看 CI 构建详情]({run_url})"
+        + f"\n\n{TEST_SUGGESTIONS}"
+        + f"\n\n[查看 CI 构建详情]({run_url})"
     )
 
 
@@ -122,18 +172,20 @@ def main() -> None:
     parser.add_argument("--target", choices=["all", "macos", "windows"], required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--run-id", required=True)
+    parser.add_argument("--artifact-prefix", type=artifact_prefix, default="bisheng")
+    parser.add_argument("--product-name", type=product_name, default="BISHENG")
     args = parser.parse_args()
     prefix = test_prefix(args.version, args.run_id)
-    repo_id = os.environ.get("MODELSCOPE_REPO_ID", "alexyaojin/bisheng-work")
+    repo_id = os.environ["MODELSCOPE_REPO_ID"]
     token = os.environ["MODELSCOPE_TOKEN"]
     webhook = os.environ["FEISHU_RELEASE_WEBHOOK"]
     if not token or not webhook:
         raise ValueError("ModelScope token and Feishu webhook are required for signed test builds")
-    installers = installer_paths(args.directory, args.target)
+    installers = installer_paths(args.directory, args.target, args.artifact_prefix)
     repository_url = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}"
     changes = build_test_changes(repository_url)
     changes_file = args.directory / "test-changes.md"
-    changes_file.write_text(f"# BISHENG {args.version} 提测说明\n\n{changes}\n", encoding="utf-8")
+    changes_file.write_text(f"# {args.product_name} {args.version} 提测说明\n\n{changes}\n", encoding="utf-8")
     # Import the SDK only for uploads; the notification and selection logic is independently testable.
     from modelscope.hub.api import HubApi
 
@@ -150,7 +202,7 @@ def main() -> None:
         verify_download(url, file.stat().st_size)
         print(f"Verified signed test installer: {file.name}")
     run_url = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{args.run_id}"
-    notes = build_notification(args.version, installers, repo_id, prefix, run_url, changes)
+    notes = build_notification(args.version, installers, repo_id, prefix, run_url, summarize_test_changes(changes), args.product_name)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as stream:

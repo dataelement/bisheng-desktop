@@ -1,16 +1,9 @@
 import { Service } from '@deepseek-ai/cordis'
-import { observeRequestResponse } from './request-status.js'
+import { validateEnterpriseAppId } from './enterprise-apps-contract.js'
+import { createEnterpriseAuthClient, EnterpriseAuthError, enterpriseAuthState as publicState } from './enterprise-auth-client.js'
+export { EnterpriseAuthError } from './enterprise-auth-client.js'
 
 const bindings = new WeakMap()
-
-export class EnterpriseAuthError extends Error {
-  constructor(errorCode, message, status = 503) {
-    super(message)
-    this.name = 'EnterpriseAuthError'
-    this.errorCode = errorCode
-    this.status = status
-  }
-}
 
 function abortError(signal) {
   return signal.reason instanceof EnterpriseAuthError ? signal.reason : new EnterpriseAuthError('request_aborted', 'Enterprise request was cancelled.', 499)
@@ -27,24 +20,15 @@ function bindingFor(ctx) {
   throw new EnterpriseAuthError('authorization_denied', 'This plugin instance is not authorized.', 403)
 }
 
-function publicState(value) {
-  if (!value || typeof value.connected !== 'boolean' || typeof value.sessionVersion !== 'string') {
-    throw new EnterpriseAuthError('request_failed', 'Invalid enterprise authentication state.')
-  }
-  return Object.freeze({
-    connected: value.connected,
-    ...(typeof value.enterpriseId === 'string' ? { enterpriseId: value.enterpriseId } : {}),
-    ...(typeof value.userId === 'string' ? { userId: value.userId } : {}),
-    sessionVersion: value.sessionVersion
-  })
-}
-
 /** Intercept configuration is not identity; Cordis traces the calling context. */
 export function applyEnterpriseAuth(ctx) {
   ctx.provide('enterpriseAuth', {
     [Service.tracker]: { property: 'ctx' },
-    getState() { return { ...bindingFor(this.ctx).state } },
-    async request(path, init = {}) { return bindingFor(this.ctx).request(path, init) }
+    getState() { return bindingFor(this.ctx).client.getState() },
+    async refresh() { return bindingFor(this.ctx).client.refresh() },
+    subscribe(listener) { return bindingFor(this.ctx).client.subscribe(listener) },
+    app(appId, options) { return bindingFor(this.ctx).client.app(appId, options) },
+    async request(path, init = {}) { return bindingFor(this.ctx).client.request(path, init) }
   })
 }
 
@@ -56,37 +40,12 @@ export function inheritEnterpriseAuth(target, source) {
 
 /** Only the trusted loader binds an actual per-instance context. */
 export async function bindEnterpriseAuth(ctx, transport, onRequestSettled) {
-  const lifetime = new AbortController()
-  const binding = { active: true, state: publicState(await transport.state(lifetime.signal)), request }
+  const client = await createEnterpriseAuthClient(transport, { onRequestSettled })
+  const binding = { active: true, client }
   bindings.set(ctx, binding)
-  let refreshing, requestRevision = 0
-  const refresh = () => refreshing ??= transport.state(lifetime.signal).then(value => {
-    if (binding.active) binding.state = publicState(value)
-  }).catch(() => {
-    if (binding.active) binding.state = Object.freeze({ connected: false, sessionVersion: binding.state.sessionVersion })
-  }).finally(() => { refreshing = undefined })
-  const timer = setInterval(() => { void refresh() }, 1000)
-  timer.unref?.()
-  async function request(path, init) {
-    if (!binding.active) throw new EnterpriseAuthError('authorization_denied', 'This plugin instance was revoked.', 403)
-    const signal = init.signal ? AbortSignal.any([init.signal, lifetime.signal]) : lifetime.signal
-    if (signal.aborted) throw abortError(signal)
-    const revision = ++requestRevision
-    const settle = error => {
-      if (binding.active && !signal.aborted && revision === requestRevision) onRequestSettled?.(error)
-    }
-    try {
-      const response = await transport.request(path, { ...init, signal, sessionVersion: binding.state.sessionVersion })
-      return onRequestSettled ? observeRequestResponse(response, signal, settle) : response
-    } catch (error) {
-      settle(error)
-      throw error
-    } finally { if (binding.active) void refresh() }
-  }
   return () => {
     binding.active = false
-    clearInterval(timer)
-    lifetime.abort(new EnterpriseAuthError('authorization_denied', 'This plugin instance was revoked.', 403))
+    client.dispose()
     // Retain a tombstone so old contexts cannot inherit another authorization.
   }
 }
@@ -166,26 +125,31 @@ export function createEnterpriseAuthTransport(origin, capability) {
     }, { highWaterMark: 0 })
     return new Response(bodyStream, { status: response.status, statusText: response.statusText, headers: response.headers })
   }
+
+  const request = async (path, init = {}, appId) => {
+    if (appId !== undefined) validateEnterpriseAppId(appId)
+    if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')) {
+      throw new EnterpriseAuthError('invalid_request', 'An enterprise-relative request path is required.', 400)
+    }
+    let headers
+    try { headers = Object.fromEntries(new Headers(init.headers)) }
+    catch { throw new EnterpriseAuthError('invalid_request', 'Invalid enterprise request headers.', 400) }
+    let body = init.body, bodyEncoding
+    if (body != null && typeof body !== 'string') {
+      if (body instanceof ArrayBuffer) body = new Uint8Array(body)
+      if (!ArrayBuffer.isView(body)) throw new EnterpriseAuthError('invalid_request', 'Unsupported request body.', 400)
+      body = Buffer.from(body.buffer, body.byteOffset, body.byteLength).toString('base64')
+      bodyEncoding = 'base64'
+    }
+    return send('/v1/auth/request', {
+      ...(appId === undefined ? {} : { appId, appBaseUrl: init.appBaseUrl, ...(init.appScopes === undefined ? {} : { appScopes: init.appScopes }) }),
+      path, ...(init.method === undefined ? {} : { method: init.method }), headers,
+      ...(body == null ? {} : { body }), ...(bodyEncoding ? { bodyEncoding } : {}), sessionVersion: init.sessionVersion
+    }, init.signal)
+  }
   return {
     async state(signal) { return publicState(await (await send('/v1/auth/state', undefined, signal)).json()) },
-    async request(path, init = {}) {
-      if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')) {
-        throw new EnterpriseAuthError('invalid_request', 'An enterprise-relative request path is required.', 400)
-      }
-      let headers
-      try { headers = Object.fromEntries(new Headers(init.headers)) }
-      catch { throw new EnterpriseAuthError('invalid_request', 'Invalid enterprise request headers.', 400) }
-      let body = init.body, bodyEncoding
-      if (body != null && typeof body !== 'string') {
-        if (body instanceof ArrayBuffer) body = new Uint8Array(body)
-        if (!ArrayBuffer.isView(body)) throw new EnterpriseAuthError('invalid_request', 'Unsupported request body.', 400)
-        body = Buffer.from(body.buffer, body.byteOffset, body.byteLength).toString('base64')
-        bodyEncoding = 'base64'
-      }
-      return send('/v1/auth/request', {
-        path, ...(init.method === undefined ? {} : { method: init.method }), headers,
-        ...(body == null ? {} : { body }), ...(bodyEncoding ? { bodyEncoding } : {}), sessionVersion: init.sessionVersion
-      }, init.signal)
-    }
+    request,
+    requestApp: (appId, path, init) => request(path, init, appId)
   }
 }

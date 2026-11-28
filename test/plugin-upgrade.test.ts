@@ -1,18 +1,11 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-
-const installMock = vi.hoisted(() => vi.fn())
-vi.mock('../src/main/runtime/profile-plugin-command', () => ({
-  installProfileDependenciesWithDsh: installMock
-}))
-
-const { upgradeMarketInSharedTree } = await import('../src/main/state/plugin-upgrade')
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import { upgradeMarketInSharedTree, marketInstallPendingPath } from '../src/main/profile/plugin-upgrade'
 
 const homes: string[] = []
 afterEach(async () => {
-  installMock.mockReset()
   await Promise.all(homes.splice(0).map((home) => rm(home, { recursive: true, force: true })))
 })
 
@@ -41,33 +34,14 @@ async function fixture() {
   return { home, profile, market, options }
 }
 
-describe('upgradeMarketInSharedTree', () => {
-  it('rejects community market upgrades before touching the profile', async () => {
-    const { profile, options } = await fixture()
+describe('retired shared-tree market upgrade', () => {
+  it('reports retirement without modifying the manifest, package or pending marker', async () => {
+    const { home, profile, market, options } = await fixture()
     const before = await readFile(join(profile, 'package.json'), 'utf8')
-    const result = await upgradeMarketInSharedTree(options)
-    expect(result).toEqual({ ok: false, detail: 'POLICY_DISABLED' })
-    expect(installMock).not.toHaveBeenCalled()
+    expect(await upgradeMarketInSharedTree(options)).toEqual({ ok: false, detail: expect.stringContaining('retired') })
     expect(await readFile(join(profile, 'package.json'), 'utf8')).toBe(before)
-  })
-
-  it.each(['missing', 'unchanged'])('rejects a zero-exit install with an %s active package', async state => {
-    const { profile, market, options } = await fixture()
-    const before = await readFile(join(profile, 'package.json'), 'utf8')
-    if (state === 'missing') await rm(market, { recursive: true })
-    installMock.mockResolvedValue({ ok: true })
-    expect((await upgradeMarketInSharedTree(options)).ok).toBe(false)
-    expect(await readFile(join(profile, 'package.json'), 'utf8')).toBe(before)
-  })
-  it('does not let a community baseline resume a partial market install', async () => {
-    const { ensureMarketBaseline } = await import('../src/main/state/market-baseline')
-    const { profile, options } = await fixture()
-    const before = await readFile(join(profile, 'package.json'), 'utf8')
-    await expect(ensureMarketBaseline({
-      ...options,
-      dshEntryPath: resolve('node_modules/@deepseek-ai/dsh/lib/bin.js')
-    })).rejects.toThrow('POLICY_DISABLED')
-    expect(installMock).not.toHaveBeenCalled()
-    expect(await readFile(join(profile, 'package.json'), 'utf8')).toBe(before)
+    expect(JSON.parse(await readFile(join(market, 'package.json'), 'utf8')).version).toBe('1.39.0')
+    expect((await lstat(market)).isDirectory()).toBe(true)
+    await expect(lstat(marketInstallPendingPath(home))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })

@@ -19,11 +19,11 @@ async function mountCard({ state = 'normal', language = 'zh', listed = true, ori
   dom.window.localStorage.setItem('dsh-workbench-enabled', 'true')
   let client
   dom.window.__ModuleLoader__ = { load({ factory }) {
-    client = factory(name => name === 'react' ? React : name === 'react-dom' ? { createPortal } : name === '@deepseek-ai/cordis' ? { Service: { tracker: Symbol('tracker') } } : { Switch: () => null, Toast: () => null })
+    client = factory(name => name === 'react' ? React : name === 'react-dom' ? { createPortal } : name === '@deepseek-ai/cordis' ? { Service: { tracker: Symbol('tracker') } } : { Button: ({ children, icon, variant, ...props }) => React.createElement('button', props, icon, children), IconDownloadOutlineRegular: () => null, Menu: ({ anchor }) => anchor, Switch: () => null, Toast: () => null })
   } }
-  vm.runInNewContext(code.replace('return { apply, inject:', 'return { createCopy, cloudCardCopy, apply, inject:'), { window: dom.window, document: dom.window.document, setTimeout, clearTimeout, AbortController })
+  vm.runInNewContext(code, { window: dom.window, document: dom.window.document, setTimeout, clearTimeout, AbortController })
   const locale = { active: language }
-  const ctx = { fiber: { entry: { options: { name: 'helper' } } }, locale: { getSnapshot: () => locale, subscribe: () => () => {}, bind: ns => key => (ns.endsWith('.create') ? client.createCopy : client.cloudCardCopy)[language][key] } }
+  const ctx = { fiber: { entry: { options: { name: 'helper' } } }, locale: { bind: () => key => key, getSnapshot: () => locale, subscribe: () => () => {} } }
   const service = new client.Workbenches(ctx, request)
   service.remoteCatalog = listed ? [{ id: 'owner/helper', owner: 'owner', repository: 'helper', name: 'Helper', url: 'https://github.com/owner/helper', category: 'other', categoryName: 'Other', version: state === 'normal' ? '1.0.0' : '1.1.0', distribution: { type: 'npm', name: 'helper', version: '1.1.0' }, description: { zh: 'Description '.repeat(40), en: 'Description '.repeat(40) }, screenshots: [], metrics: { githubStars: { value: 7 }, npmDownloads30d: { value: 12 } } }] : []
   const installed = state !== 'install-failure'
@@ -49,7 +49,7 @@ async function mountCard({ state = 'normal', language = 'zh', listed = true, ori
   if (state === 'catalog-stale') { service.catalogLoaded = true; service.catalogStale = true }
   if (favorite) service.state.favorites = ['owner/helper']
   if (state === 'loading') service.installing = 'owner/helper'
-  if (state === 'restart') service.pendingRestart.add('owner/helper')
+  if (state === 'restart') service.recordApplication('project-helper', { application: 'restart-required' }, 'owner/helper', 'install')
   if (state === 'install-failure' || state === 'update-failure') service.installFailures.set('owner/helper', { kind: state.split('-')[0], message: 'Could not download package: fetch failed '.repeat(20) })
   service.publish()
   const root = createRoot(dom.window.document.getElementById('root'))

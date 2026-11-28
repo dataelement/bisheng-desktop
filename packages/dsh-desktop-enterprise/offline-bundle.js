@@ -3,8 +3,9 @@ import { inflateRawSync } from 'node:zlib'
 import { existsSync } from 'node:fs'
 import { lstat, mkdir, readFile, readdir, rename, rm, statfs, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { generationId, writeGenerationMeta } from 'dsh-desktop-market-installer/generations/registry'
+import { generationId, registryLayout, writeGenerationMeta } from 'dsh-desktop-market-installer/generations/registry'
 import { verifyGenerationPeers } from 'dsh-desktop-market-installer/generations/installer'
+import { ensureEnterpriseStore } from './enterprise-generation-store.js'
 
 export const MAX_ARCHIVE = 512 * 1024 * 1024
 const MAX_EXPANDED = 1024 * 1024 * 1024
@@ -100,9 +101,10 @@ export async function installOfflineBundle(home, bytes, expected, target, option
   }
   const { files, manifest } = validateOfflineBundle(bytes, expected, target)
   const dshEntryPath = options.dshEntryPath
-  const layout = { staging: join(home, 'profiles', '.enterprise-staging'), generations: join(home, 'profiles', '.enterprise-generations') }
-  await mkdir(layout.staging, { recursive: true })
-  await mkdir(layout.generations, { recursive: true })
+  const layout = {
+    staging: await ensureEnterpriseStore(home, '.enterprise-staging'),
+    generations: await ensureEnterpriseStore(home, '.enterprise-generations')
+  }
   const free = await statfs(layout.staging)
   const required = [...files.values()].reduce((size, file) => size + file.data.length, 0) + bytes.length
   if (free.bavail * free.bsize < required * 1.2) fail('Insufficient disk space for plugin installation.')
@@ -125,6 +127,16 @@ export async function installOfflineBundle(home, bytes, expected, target, option
     await rename(staging, directory)
     return { ...generation, directory, manifest }
   } catch (error) { await rm(staging, { recursive: true, force: true }); throw error }
+}
+
+/** Accept only the exact published directory of the corresponding bundle format. */
+export function assertEnterpriseGenerationPath(home, record) {
+  const id = record.generation_id
+  if (typeof id !== 'string' || !/^[a-z0-9+_.-]+$/iu.test(id) || id === '.' || id === '..') fail('Invalid enterprise generation path.')
+  const legacy = join(home, 'profiles', '.enterprise-generations', id)
+  const community = join(registryLayout(home).generations, id)
+  const validCommunity = typeof record.integrity === 'string' && /^[a-f0-9]{64}$/u.test(record.integrity)
+  if (record.directory !== legacy && !(validCommunity && record.directory === community)) fail('Invalid enterprise generation path.')
 }
 
 export async function verifyInstalledBundle(generation, target) {

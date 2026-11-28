@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import vm from 'node:vm'
+import { JSDOM } from 'jsdom'
 import { describe, expect, it, vi } from 'vitest'
 
 const Service = { tracker: Symbol('service-tracker') }
@@ -17,15 +18,12 @@ const UiWorkspaceService = vm.runInNewContext(`(() => {
   ${source.slice(recentStart, recentEnd)}
   return (${source.slice(classStart, classEnd).trim().replace(/;$/, '')})
 })()`, { _deepseek_ai_cordis: { Service: class {} }, AbortController, AbortSignal, console, setTimeout, clearTimeout })
+const document = new JSDOM('<html><head></head><body><button data-dsh-sidebar-new-session>New Session</button></body></html>').window.document
 let apply, Workbenches
 // Workbench routing only runs once the user has switched the feature on.
 const enabledStorage = { getItem: key => key === 'dsh-workbench-enabled' ? 'true' : null, setItem: () => {}, removeItem: () => {} }
-const windowEvents = new EventTarget()
 vm.runInNewContext(workbenchSource, {
-  window: {
-    addEventListener: windowEvents.addEventListener.bind(windowEvents),
-    removeEventListener: windowEvents.removeEventListener.bind(windowEvents),
-    localStorage: enabledStorage, __ModuleLoader__: { load({ factory }) {
+  window: { localStorage: enabledStorage, __ModuleLoader__: { load({ factory }) {
     const client = factory((name) => {
       if (name === 'react') return { createElement() {}, Component: class {} }
       if (name === '@deepseek-ai/cordis') return { Service }
@@ -35,7 +33,7 @@ vm.runInNewContext(workbenchSource, {
     apply = client.apply
     Workbenches = client.Workbenches
   } } },
-  setTimeout, clearTimeout, AbortController
+  document, setTimeout, clearTimeout, AbortController
 })
 
 function mainViewOf(sessionState) {
@@ -49,7 +47,6 @@ function fixture() {
   const workspaceState = { phase: 'ready', items: [{ workspaceId: 'project', path: '/project', createdAt: '2026-01-01T00:00:00Z', sessionIds: [] }], archivedSessionIds: [] }
   const listeners = new Set()
   const subscribe = listener => { listeners.add(listener); return () => listeners.delete(listener) }
-  service.navigationHandlers = new Set()
   service.sessionStarter = null
   service.sessionOpener = null
   service.sessionReuseFilter = null
@@ -134,7 +131,7 @@ function attachWorkbenchRouting(uiWorkspace, sessionState, workspaceState) {
     reflect: { provide: (_name, value) => { controller = value } },
     slots: { inject: vi.fn() },
     effect: (callback, label) => {
-      if (['workbenches: styles', 'workbenches: lifecycle'].includes(label)) return
+      if (label === 'workbenches: lifecycle') return
       const cleanup = callback()
       if (typeof cleanup === 'function') cleanups.push(cleanup)
     }
@@ -174,6 +171,33 @@ function attachWorkbenchRouting(uiWorkspace, sessionState, workspaceState) {
 }
 
 describe('native Workspace navigation with workbench routing', () => {
+  it('hides global creation in every workbench, blocks global commands, and restores after exit or disposal', async () => {
+    const { service, sessionState, workspaceState } = fixture()
+    const { controller, dispose } = attachWorkbenchRouting(service, sessionState, workspaceState)
+    const button = document.querySelector('[data-dsh-sidebar-new-session]')
+    for (const active of ['media-workbench', 'huaxue', 'any-local-workbench']) {
+      controller.state.active = active
+      controller.publish()
+      expect(document.defaultView.getComputedStyle(button).display).toBe('none')
+      service.startSession('project')
+      service.startSession()
+      service.startSession('project', { clearPreviousDraft: false })
+      service.startSession(undefined, { agentPreset: 'cordis', prompt: 'Create a plugin', whenDraftExists: 'append' })
+      expect(service.sessions.create).not.toHaveBeenCalled()
+    }
+    controller.state.active = null
+    controller.publish()
+    expect(document.defaultView.getComputedStyle(button).display).not.toBe('none')
+    service.startSession('project')
+    await vi.waitFor(() => expect(service.sessions.create).toHaveBeenCalledTimes(1))
+    controller.state.active = 'media-workbench'
+    controller.publish()
+    dispose()
+    expect(document.documentElement.hasAttribute('data-dsh-workbench-active')).toBe(false)
+    expect(document.defaultView.getComputedStyle(button).display).not.toBe('none')
+    expect(service.sessionStarter).toBe(null)
+  })
+
   it('filters workspace rows only while a scoped filter is registered', () => {
     const { service } = fixture()
     const listeners = new Set()
@@ -354,7 +378,7 @@ describe('native Workspace navigation with workbench routing', () => {
     dispose()
   })
 
-  it.each(['writer', 'research-notebook', 'media-workbench'])('binds New Session to the active %s workbench', async (workbenchId) => {
+  it.each(['writer', 'research-notebook', 'media-workbench'])('binds the workbench creation action to the active %s workbench', async (workbenchId) => {
     const { service: uiWorkspace, sessionState, workspaceState } = fixture()
     workspaceState.items.push({ workspaceId: 'target-project', path: '/target', createdAt: '2026-01-02T00:00:00Z', sessionIds: [] })
     sessionState.ids.push('old-recent')
@@ -375,11 +399,7 @@ describe('native Workspace navigation with workbench routing', () => {
       notes: {}
     }
     controller.ready = true
-    uiWorkspace.registerSessionStarter((workspaceId) => {
-      controller.run(controller.newSession(workspaceId))
-      return true
-    })
-    uiWorkspace.startSession('target-project')
+    await controller.newSession('target-project')
     await vi.waitFor(() => expect(uiWorkspace.sessions.retain).toHaveBeenCalledWith('new-session', { source: 'mainView' }))
     await controller.queue
 
@@ -397,12 +417,72 @@ describe('native Workspace navigation with workbench routing', () => {
     sessionState.ids.push(blankId)
     sessionState.byId[blankId] = { id: blankId, sessionId: blankId, blank: true, cwd: '/project' }
     workspaceState.items[0].sessionIds.push(blankId)
+    service.registerSessionReuseFilter(id => id !== blankId)
     service.startSession('project')
     await vi.waitFor(() => expect(service.sessions.retain).toHaveBeenCalledWith('new-session', { source: 'mainView' }))
     expect(service.sessions.create).toHaveBeenCalledWith({ workspaceId: 'project' })
     expect(service.sessions.retain).not.toHaveBeenCalledWith(blankId, { source: 'mainView' })
     expect(sessionState.byId['new-session']).toMatchObject({ blank: true, cwd: '/project' })
     expect(workspaceState.items[0].sessionIds).toContain('new-session')
+  })
+
+  it.each([undefined, {}, { agentPreset: 'cordis' }])('reuses an eligible blank for native New Session with options %j without preparing its draft', async (options) => {
+    const { service, sessionState, workspaceState } = fixture()
+    const id = 'ordinary-blank'
+    sessionState.ids.push(id)
+    sessionState.byId[id] = { id, sessionId: id, blank: true, cwd: '/project', projectionValues: { agentPreset: 'cordis' } }
+    workspaceState.items[0].sessionIds.push(id)
+    const starter = vi.fn(() => false)
+    service.registerSessionStarter(starter)
+    service.prepareDraft = vi.fn()
+
+    service.startSession('project', options)
+
+    await vi.waitFor(() => expect(mainViewOf(sessionState)).toBe(id))
+    expect(service.sessions.create).toHaveBeenCalledWith({ workspaceId: 'project', sessionId: id, ...(options?.agentPreset ? { agentPreset: options.agentPreset } : {}) })
+    expect(service.prepareDraft).not.toHaveBeenCalled()
+    expect(starter).toHaveBeenCalledExactlyOnceWith('project')
+  })
+
+  it.each(['cordis', undefined])('combines Desktop visibility and reuse exclusions with preset matching for %s', async (listed) => {
+    const { service, sessionState, workspaceState } = fixture()
+    const ids = ['hidden', 'workbench-owned', 'wrong-preset', 'eligible']
+    sessionState.ids.push(...ids)
+    for (const id of ids) sessionState.byId[id] = {
+      id, sessionId: id, blank: true, cwd: '/project',
+      projectionValues: { agentPreset: id === 'wrong-preset' ? 'other-agent' : listed }
+    }
+    workspaceState.items[0].sessionIds.push(...ids)
+    service.registerSessionFilter(id => id !== 'hidden', () => () => {})
+    service.registerSessionReuseFilter(id => id !== 'workbench-owned')
+
+    await expect(service.connectWorkspace('project', { agentPreset: 'cordis' })).resolves.toBe('eligible')
+
+    expect(service.sessions.create).toHaveBeenCalledWith({ workspaceId: 'project', sessionId: 'eligible', agentPreset: 'cordis' })
+  })
+
+  it.each([
+    [{ whenDraftExists: 'replace' }, true],
+    [{ clearPreviousDraft: true }, true],
+    [{ whenDraftExists: 'keep', clearPreviousDraft: true }, false],
+    [{ whenDraftExists: 'append' }, false],
+    [{ prompt: 'Follow up', whenDraftExists: 'append' }, true]
+  ])('preserves draft options %j when the Desktop starter permits native creation', async (options, prepares) => {
+    const { service } = fixture()
+    const starter = vi.fn(() => false)
+    service.registerSessionStarter(starter)
+    const binding = { sessionId: 'blank' }
+    service.sessions.binding = vi.fn(() => binding)
+    const requestDraftInitialization = vi.fn(() => 'ready')
+    service.ctx.get = vi.fn(() => ({ input: { requestDraftInitialization } }))
+    service.openWorkspace = vi.fn(async (_workspaceId, beforeOpen) => beforeOpen?.('blank'))
+
+    service.startSession('project', options)
+
+    await vi.waitFor(() => expect(service.openWorkspace).toHaveBeenCalledOnce())
+    expect(starter).toHaveBeenCalledExactlyOnceWith('project')
+    if (prepares) expect(requestDraftInitialization).toHaveBeenCalledWith(binding, options)
+    else expect(requestDraftInitialization).not.toHaveBeenCalled()
   })
 
   it('falls back to native New Session after the workbench is closed', async () => {
@@ -617,15 +697,4 @@ describe('native Workspace navigation with workbench routing', () => {
     expect(uiWorkspace.selection.getSnapshot()).toEqual({})
     expect(uiWorkspace.ctx.layout.selectPanel).toHaveBeenLastCalledWith('desktop-workbenches')
   })
-})
-
-it('lets the shared shell handle New Chat while preserving the workbench starter and local record opening', () => {
-  const { service: uiWorkspace } = fixture()
-  const cloud = vi.fn((intent, workspaceId) => intent === 'new' && workspaceId === undefined)
-  const stop = uiWorkspace.registerNavigationHandler(cloud)
-  uiWorkspace.startSession()
-  expect(cloud).toHaveBeenCalledWith('new', undefined)
-  expect(uiWorkspace.sessions.create).not.toHaveBeenCalled()
-  stop()
-  expect(uiWorkspace.navigationHandlers.size).toBe(0)
 })

@@ -40,10 +40,11 @@ export interface EnterpriseModel {
   reasoning?: EnterpriseModelReasoning
   slug?: string
   context_window?: number
+  max_tokens?: number
   input_modalities?: Array<'text' | 'image'>
   supported_reasoning_levels?: Array<{ effort: string; description: string }>
   default_reasoning_level?: string
-  capabilities: { streaming: boolean; tools: boolean; reasoning_content: boolean; vision?: boolean; responses?: boolean }
+  capabilities: { streaming: boolean; tools: boolean; reasoning_content: boolean; vision?: boolean; responses?: boolean; context_window?: number; max_tokens?: number }
   pricing_hint?: EnterprisePricingHint
   usage?: {
     source: 'live' | 'persisted' | 'unavailable'

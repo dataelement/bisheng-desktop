@@ -1,7 +1,9 @@
 node_modules/
 out/
+out-shell/
 dist/
 dist-dev/
+dist-shell/
 .DS_Store
 *.log
 coverage/
@@ -28,10 +30,22 @@ __pycache__/
 docs/plugin-management.zh.md
 docs/default-capabilities.zh.md
 docs/mobile-connection-latency.zh.md
-docs/enterprise-plugin-official-dsh.zh.md
+docs/history/harness-0.2.2-rc.4-rc.5-test-cases.md
 
 # Local pnpm content store
 /.pnpm-store/
 /.build/
 /packages/ppt-runtime/templates/
 /packages/ppt-bundles/
+
+# Local Finder visual-test disk images
+/dist-dmg-preview/
+
+# Local design iterations; production artwork lives in build/dmg/.
+/docs/dmg-install-preview/
+
+# Snapshots fetched by scripts/upstream-diff.mjs. Not source.
+/.upstream-cache/
+
+# Local integration clones, dependency caches, and migration evidence
+/.tmp/

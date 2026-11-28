@@ -29,15 +29,14 @@ export async function createWorkbenchConversation({ ctx, signal, current, worksp
     const input = conversation.input.for(binding.ctx)
     const snapshot = input.state.getSnapshot()
     if (snapshot.draft || snapshot.attachmentIds.length || snapshot.phase !== 'plain') throw new Error(errorText('draftChanged'))
-    if (compact && starter && input.insertReference) {
-      // BiSheng 130 predates append-mode draft initialization. Seed the editable
-      // paragraph first, then insert the native chip without replacing that text.
-      input.setDraft('\n\n' + starter)
-      const seeded = input.state.getSnapshot()
+    if (compact && starter && input.insertReference && conversation.input.requestDraftInitialization) {
       const inserted = input.insertReference({
         source: INSTRUCTION_SOURCE, ref: prompt, label, clipboardText: prompt
-      }, { start: 0, end: 0, draftRev: seeded.draftRev })
+      }, { start: 0, end: 0, draftRev: snapshot.draftRev })
       if (!inserted) throw new Error(errorText('draftChanged'))
+      // Append already starts a new paragraph; leading newlines would create empty rows.
+      const result = conversation.input.requestDraftInitialization(binding, { prompt: starter, whenDraftExists: 'append' })
+      if (result !== 'applied') throw new Error(errorText('draftChanged'))
     } else {
       // Older hosts still receive the complete instructions rather than a broken reference.
       input.setDraft(starter ? prompt + '\n\n' + starter : prompt)

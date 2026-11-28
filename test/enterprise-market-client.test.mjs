@@ -12,7 +12,7 @@ const localeSource = await readFile(new URL('../node_modules/@deepseek-ai/dsh-cl
 const disposers = []
 afterEach(async () => { for (const dispose of disposers.splice(0).reverse()) await dispose(); vi.useRealTimers() })
 
-async function client(initial, language = 'zh') {
+async function client(initial, language = 'zh', workbenches) {
   let account = initial, resolveState
   const events = new Map(), registrations = new Map()
   const dom = new JSDOM('<html lang="zh-CN"><head></head><body></body></html>', { url: 'http://localhost/' })
@@ -38,6 +38,7 @@ async function client(initial, language = 'zh') {
   plugin.apply({
     locale,
     effect: callback => { const dispose = callback(); if (dispose) disposers.push(dispose) },
+    ...(workbenches ? { inject: (names, callback) => { const dispose = callback({ desktopWorkbenches: workbenches }); if (dispose) disposers.push(dispose) } } : {}),
     slots: {
       inject: (_slot, callback) => callback(),
       register: (config, component) => {

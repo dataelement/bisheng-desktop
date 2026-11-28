@@ -35,3 +35,10 @@ jobs:
         run: npx --no-install vitest run test/ppt-windows-font-layout.test.mjs test/ppt-chinese-font-export.test.mjs test/pptx-layout-fidelity.test.mjs
         env:
           DSH_PPT_FONT_EVIDENCE: ${{ runner.temp }}/ppt-font-evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ppt-font-layout-${{ matrix.os }}
+          path: ${{ runner.temp }}/ppt-font-evidence
+          if-no-files-found: ignore
+          retention-days: 7
