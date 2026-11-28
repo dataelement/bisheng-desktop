@@ -35,7 +35,7 @@ function evaluate(expression, ctx) {
     .replace(/needs\.([a-zA-Z0-9_-]+)\./g, (_, name) => 'needs[' + JSON.stringify(name) + '].')
     .replaceAll('\\', '\\\\')
   return vm.runInNewContext('(' + source + ')', {
-    ...ctx, startsWith: (value, prefix) => value.startsWith(prefix), always: () => true, success: () => true
+    ...ctx, startsWith: (value, prefix) => value.startsWith(prefix), always: () => true, success: () => true, failure: () => false
   }, { timeout: 100 })
 }
 function enabledJobs(ctx) {
@@ -46,6 +46,18 @@ function interpolate(value, ctx) {
 }
 
 describe('private desktop release YAML contracts', () => {
+  it('retains failed Office inputs only as scoped diagnostic artifacts', () => {
+    expect(jobs.macos.env?.DSH_OFFICE_SMOKE_DIAGNOSTICS_DIR).toBeUndefined()
+    for (const name of ['Build signed ${{ matrix.label }} package', 'Build isolated ${{ matrix.label }} development package']) {
+      expect(named('macos', name).env.DSH_OFFICE_SMOKE_DIAGNOSTICS_DIR).toBe('${{ runner.temp }}/office-smoke-diagnostics')
+    }
+    const diagnostic = named('macos', 'Preserve failed Office smoke diagnostics')
+    expect(diagnostic.if).toBe('failure()')
+    expect(diagnostic.with.path).toBe('${{ runner.temp }}/office-smoke-diagnostics/')
+    expect(diagnostic.with.name).toBe('office-smoke-diagnostics-${{ matrix.arch }}')
+    expect(diagnostic.with['retention-days']).toBe(7)
+    expect(diagnostic.with['if-no-files-found']).toBe('ignore')
+  })
   it('keeps native targets, locked Node and least privilege; packaging runs only on tags or dispatch', () => {
     expect(workflow.on.pull_request).toBeUndefined()
     expect(workflow.on.push).toEqual({ tags: ['v*'] })
